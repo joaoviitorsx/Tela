@@ -9,7 +9,7 @@ import type {
 } from '../ports/media-transport.js';
 import type { Random } from '../ports/random.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
-import type { ScreenCapture } from '../ports/screen-capture.js';
+import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import type {
   ChannelEvents,
   ChannelOpened,
@@ -148,6 +148,7 @@ export class FakeScreenCapture implements ScreenCapture {
   supported = true;
   denied = false;
   withAudio = false;
+  surface: CaptureSurface = 'monitor';
   lastRequest: unknown = null;
   readonly video = fakeTrack('video');
   readonly audio = fakeTrack('audio');
@@ -160,7 +161,11 @@ export class FakeScreenCapture implements ScreenCapture {
     this.lastRequest = options;
     if (!this.supported) throw 'UNSUPPORTED';
     if (this.denied) throw 'DENIED';
-    return { video: this.video, audio: this.withAudio ? this.audio : null };
+    return {
+      video: this.video,
+      audio: this.withAudio ? this.audio : null,
+      surface: this.surface,
+    };
   }
 }
 

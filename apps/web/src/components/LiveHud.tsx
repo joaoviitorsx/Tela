@@ -1,5 +1,5 @@
 import type { EncodingPreset, PresetId } from '@tela/shared';
-import { IconCheck, IconCopy, IconStop, IconViewers } from './Icon.js';
+import { IconCheck, IconCopy, IconStop, IconViewers, IconWarning } from './Icon.js';
 import { LiveDot } from './LiveDot.js';
 import { QualityPicker } from './QualityPicker.js';
 import { StatsBadge } from './StatsBadge.js';
@@ -11,6 +11,8 @@ type Props = {
   readonly maxPeers: number;
   /** Quantos espectadores estão passando por TURN. */
   readonly relayed: number;
+  /** Escolheu janela em vez de tela inteira, e o áudio do sistema ficou de fora. */
+  readonly audioPerdidoPelaEscolha: boolean;
   readonly copied: boolean;
   readonly onCopy: () => void;
   readonly onStop: () => void;
@@ -40,6 +42,7 @@ export function LiveHud({
   viewers,
   maxPeers,
   relayed,
+  audioPerdidoPelaEscolha,
   copied,
   onCopy,
   onStop,
@@ -122,6 +125,14 @@ export function LiveHud({
         {presetForced && (
           <p role="status" className="text-[12px] text-warn">
             Qualidade reduzida automaticamente — o encoder não estava dando conta.
+          </p>
+        )}
+
+        {audioPerdidoPelaEscolha && (
+          <p role="status" className="flex items-center gap-1.5 text-[12px] text-warn">
+            <IconWarning className="h-3.5 w-3.5 shrink-0" />
+            Sem áudio: o som do sistema só acompanha a tela inteira. Pare e
+            escolha "Tela inteira" no seletor.
           </p>
         )}
       </div>

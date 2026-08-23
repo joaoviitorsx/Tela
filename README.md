@@ -142,6 +142,12 @@ dispara. O encoder é limitado a 75% do estimado, antes disso acontecer.
 baixo) e o áudio como prioritário. Roteador com fila consciente (fq_codel,
 CAKE) deixa o jogo passar na frente; onde ninguém honra, é inerte.
 
+**Tela inteira é o caminho principal.** O seletor já abre nela, e a captura
+pede `crop-and-scale` para o navegador reduzir a resolução dentro do pipeline,
+normalmente na GPU — sem isso, um monitor 1440p ou 4K entrega quadros em
+resolução nativa e o redimensionamento vira trabalho extra 60 vezes por
+segundo, na mesma máquina que roda o jogo.
+
 **Captura ociosa a 5fps.** Sem espectador não há encoder rodando, mas a
 captura de tela continua — e a 1080p60 ela custa GPU e compositor por nada.
 Volta ao framerate cheio quando alguém entra.

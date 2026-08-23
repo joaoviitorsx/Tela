@@ -359,6 +359,48 @@ describe('BroadcastSession — encerramento', () => {
   });
 });
 
+describe('BroadcastSession — tela inteira', () => {
+  it('pede o seletor já na tela inteira', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    // A tela inteira é o caso principal: o jogo está na tela, não numa aba.
+    expect(ctx.screen.lastRequest).toMatchObject({ width: 1920, height: 1080 });
+  });
+
+  it('escolher janela sem áudio avisa que o som ficou de fora', async () => {
+    const ctx = build();
+    ctx.screen.withAudio = false;
+    ctx.screen.surface = 'window';
+    await ctx.session.start(SLUG, TOKEN);
+
+    // O navegador entrega vídeo mudo sem dizer nada; a pessoa só descobre
+    // quando um amigo reclama.
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.audioPerdidoPelaEscolha).toBe(true);
+  });
+
+  it('tela inteira sem áudio NÃO acusa escolha errada', async () => {
+    const ctx = build();
+    ctx.screen.withAudio = false;
+    ctx.screen.surface = 'monitor';
+    await ctx.session.start(SLUG, TOKEN);
+
+    // No Linux a tela inteira também vem sem áudio, e a culpa não é da
+    // escolha — acusar aqui seria mandar o usuário refazer algo que já fez.
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.audioPerdidoPelaEscolha).toBe(false);
+  });
+
+  it('janela COM áudio não acusa nada', async () => {
+    const ctx = build();
+    ctx.screen.withAudio = true;
+    ctx.screen.surface = 'window';
+    await ctx.session.start(SLUG, TOKEN);
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.audioPerdidoPelaEscolha).toBe(false);
+  });
+});
+
 describe('BroadcastSession — áudio', () => {
   it('usa o áudio do getDisplayMedia quando existe (Windows)', async () => {
     const ctx = build();

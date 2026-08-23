@@ -7,7 +7,7 @@ import type {
   QualityLimitation,
 } from '../ports/media-transport.js';
 import type { Scheduler } from '../ports/scheduler.js';
-import type { ScreenCapture } from '../ports/screen-capture.js';
+import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
 import {
   CONTENT_HINT,
@@ -56,6 +56,14 @@ export type BroadcastState =
       readonly maxPeers: number;
       readonly stats: MediaStats | null;
       readonly hasAudio: boolean;
+      /**
+       * `true` quando o usuário escolheu uma janela ou aba em vez da tela
+       * inteira NUM sistema onde isso custa o áudio do sistema.
+       *
+       * O navegador não avisa: ele simplesmente entrega vídeo sem som, e a
+       * pessoa só descobre quando um amigo reclama.
+       */
+      readonly audioPerdidoPelaEscolha: boolean;
     }
   | { readonly status: 'ended'; readonly reason: BroadcastFailure };
 
@@ -127,6 +135,7 @@ export class BroadcastSession {
    */
   private epoch = 0;
   private ceiling: number | null = null;
+  private surface: CaptureSurface = 'desconhecido';
 
   constructor(private readonly deps: BroadcastSessionDeps) {
     this.maxPeers = deps.maxPeers ?? 3;
@@ -198,6 +207,7 @@ export class BroadcastSession {
 
     this.videoTrack = capture.video;
     this.audioTrack = capture.audio;
+    this.surface = capture.surface;
 
     /**
      * A linha que decide se o produto presta.
@@ -258,6 +268,10 @@ export class BroadcastSession {
       maxPeers: this.maxPeers,
       stats: null,
       hasAudio: this.audioTrack !== null,
+      audioPerdidoPelaEscolha:
+        this.audioTrack === null &&
+        this.surface !== 'monitor' &&
+        this.surface !== 'desconhecido',
     });
 
     this.timers.push(

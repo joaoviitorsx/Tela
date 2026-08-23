@@ -117,7 +117,7 @@ function Nota({ children, tone = 'dim' }: { children: ReactNode; tone?: 'dim' | 
 }
 
 const TEXTO_WINDOWS =
-  'No picker do Chrome, escolha "Tela inteira" e marque "Compartilhar áudio do sistema" — é o passo que todo mundo esquece.';
+  'O seletor já abre em "Tela inteira". Só falta marcar "Compartilhar áudio do sistema" antes de confirmar — se esquecer, a transmissão vai muda e o HUD avisa.';
 
 const TEXTO_LINUX =
   'O Chrome no Linux não entrega áudio do sistema, só de aba. Para o som do jogo chegar aos seus amigos, crie um sink virtual, mande o jogo para ele no pavucontrol e escolha o monitor abaixo:';

@@ -255,6 +255,51 @@ export class FakeApi implements TelaApi {
   }
 }
 
+/**
+ * API cuja resposta de `startBroadcast` fica pendurada até você soltar.
+ *
+ * Existe para testar a corrida real: o usuário aperta "parar" enquanto o
+ * servidor ainda não respondeu. Sem uma porta controlável no meio, essa
+ * janela é impossível de reproduzir de forma determinística.
+ */
+export class GatedApi extends FakeApi {
+  release!: () => void;
+  private readonly gate = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+
+  override async startBroadcast(slug: string) {
+    await this.gate;
+    return super.startBroadcast(slug);
+  }
+}
+
+/**
+ * Transporte que falha do jeito que o mundo real falha: o `connect` rejeita
+ * E o evento `closed` dispara. Os dois. É essa dupla notificação que
+ * transformava uma falha em duas tentativas de reconexão, depois quatro.
+ */
+export class ClosingViewerTransport implements ViewerTransport {
+  private readonly emitter = new Emitter<ViewerEvents>();
+  connects = 0;
+  closes = 0;
+
+  async connect(): Promise<void> {
+    this.connects += 1;
+    this.emitter.emit('closed', { reason: 'SIGNAL_CLOSED' });
+    throw new Error('SIGNAL_CLOSED');
+  }
+  async readStats(): Promise<TransportStats | null> {
+    return null;
+  }
+  on<K extends keyof ViewerEvents>(event: K, handler: (p: ViewerEvents[K]) => void) {
+    return this.emitter.on(event, handler);
+  }
+  async close(): Promise<void> {
+    this.closes += 1;
+  }
+}
+
 export class FakeStorage implements Storage {
   readonly rows = new Map<string, string>();
   get(key: string) {

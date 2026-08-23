@@ -5,10 +5,10 @@ import type {
   TransportStats,
   ViewerTransport,
 } from '../ports/media-transport.js';
-import type { Scheduler } from '../ports/scheduler.js';
+import type { Cancel, Scheduler } from '../ports/scheduler.js';
 
 /**
- * A sessão do espectador. Também sem React e sem `livekit-client`.
+ * A sessão do espectador. Sem React e sem conhecer o transporte concreto.
  *
  * Ela cuida do caso que decide o produto para quem recebe o link: o amigo abre
  * a página antes do jogo começar. Em vez de erro, ele vê "offline" e a página
@@ -49,7 +49,26 @@ export class ViewerSession {
   private readonly emitter = new Emitter<ViewerEventMap>();
   private state: ViewerState = { status: 'checking' };
   private transport: ViewerTransport | null = null;
-  private cancels: Array<() => void> = [];
+
+  /**
+   * Duas listas separadas, e a separação é o que impede o bug de reconexão.
+   *
+   * `transportCancels` morre junto com o transporte. `retryCancel` é uma vaga
+   * ÚNICA: agendar de novo substitui o agendamento anterior em vez de somar.
+   * Quando os dois viviam na mesma lista, uma falha que disparava tanto o
+   * `catch` do connect quanto o evento `closed` agendava duas tentativas — e
+   * cada uma agendava duas na rodada seguinte: 1, 2, 4, 8, 16, 32.
+   */
+  private transportCancels: Cancel[] = [];
+  private retryCancel: Cancel | null = null;
+
+  /**
+   * Toda operação assíncrona carrega o epoch em que começou. `open()` e
+   * `close()` incrementam. Um `await` que retorna depois de a sessão ter sido
+   * fechada ou reaberta encontra o epoch mudado e desiste — sem isso, uma
+   * resposta atrasada da API ressuscita uma sessão morta.
+   */
+  private epoch = 0;
   private pollMs = POLL_MIN_MS;
   private slug = '';
   private disposed = false;
@@ -69,51 +88,66 @@ export class ViewerSession {
     this.emitter.emit('state', next);
   }
 
+  private stale(epoch: number): boolean {
+    return this.disposed || this.epoch !== epoch;
+  }
+
   async open(slug: string): Promise<void> {
+    await this.dropTransport();
+    this.cancelRetry();
+
+    this.epoch += 1;
     this.slug = slug;
     this.disposed = false;
     this.pollMs = POLL_MIN_MS;
     this.setState({ status: 'checking' });
-    await this.attempt();
+    await this.attempt(this.epoch);
   }
 
-  private async attempt(): Promise<void> {
-    if (this.disposed) return;
+  private async attempt(epoch: number): Promise<void> {
+    if (this.stale(epoch)) return;
+    this.retryCancel = null; // o agendamento que nos trouxe até aqui já disparou
 
     const status = await this.deps.api.liveStatus(this.slug);
-    if (this.disposed) return;
+    if (this.stale(epoch)) return;
 
-    if (!status.ok || !status.value.live) return this.scheduleRetry();
+    if (!status.ok || !status.value.live) {
+      // Offline vindo de qualquer estado — inclusive de `failed` por sala
+      // cheia. A transmissão acabou; insistir em "lotada" seria mentira.
+      this.goOffline();
+      return this.scheduleRetry(epoch);
+    }
 
     this.setState({ status: 'connecting', slug: this.slug });
 
     const joined = await this.deps.api.join(this.slug);
-    if (this.disposed) return;
+    if (this.stale(epoch)) return;
 
     if (!joined.ok) {
+      // Sala cheia não é erro permanente: alguém sai, a vaga abre.
       if (joined.error === 'VIEWER_LIMIT') {
-        // Sala cheia não é erro permanente: alguém sai, a vaga abre.
         this.setState({ status: 'failed', slug: this.slug, reason: 'FULL' });
-        return this.scheduleRetry();
+        this.advanceBackoff();
+      } else {
+        this.goOffline();
       }
-      return this.scheduleRetry();
+      return this.scheduleRetry(epoch);
     }
 
     const transport = await this.deps.transports.viewer(joined.value.connection.transport);
-    if (this.disposed) {
+    if (this.stale(epoch)) {
       await transport.close();
       return;
     }
     this.transport = transport;
 
-    this.cancels.push(
+    this.transportCancels.push(
       transport.on('reconnecting', () => {
         if (this.state.status === 'watching') {
           this.setState({ status: 'reconnecting', slug: this.slug });
         }
       }),
-      transport.on('reconnected', () => undefined),
-      transport.on('closed', () => void this.onClosed()),
+      transport.on('closed', () => void this.onClosed(epoch)),
     );
 
     try {
@@ -129,10 +163,17 @@ export class ViewerSession {
       });
     } catch {
       await this.dropTransport();
-      return this.scheduleRetry();
+      if (this.stale(epoch)) return;
+      this.goOffline();
+      return this.scheduleRetry(epoch);
     }
 
-    this.cancels.push(
+    if (this.stale(epoch)) {
+      await this.dropTransport();
+      return;
+    }
+
+    this.transportCancels.push(
       this.deps.scheduler.every(this.deps.statsIntervalMs ?? STATS_INTERVAL_MS, () =>
         void this.sampleStats(),
       ),
@@ -143,30 +184,52 @@ export class ViewerSession {
     if (this.state.status !== 'watching' || this.transport === null) return;
     const stats = await this.transport.readStats();
     if (stats === null) return;
+    if (this.state.status !== 'watching') return;
     this.setState({ ...this.state, stats });
   }
 
-  private async onClosed(): Promise<void> {
-    if (this.disposed) return;
+  private async onClosed(epoch: number): Promise<void> {
+    if (this.stale(epoch)) return;
     await this.dropTransport();
-    this.setState({ status: 'offline', slug: this.slug, nextPollMs: POLL_MIN_MS });
+    if (this.stale(epoch)) return;
     this.pollMs = POLL_MIN_MS;
-    this.scheduleRetry();
+    this.goOffline();
+    this.scheduleRetry(epoch);
   }
 
-  private scheduleRetry(): void {
-    if (this.disposed) return;
-    if (this.state.status !== 'failed') {
-      this.setState({ status: 'offline', slug: this.slug, nextPollMs: this.pollMs });
-    }
-    const delay = this.pollMs;
+  private goOffline(): void {
+    this.setState({ status: 'offline', slug: this.slug, nextPollMs: this.pollMs });
+  }
+
+  private advanceBackoff(): void {
     this.pollMs = Math.min(Math.round(this.pollMs * POLL_FACTOR), POLL_MAX_MS);
-    this.cancels.push(this.deps.scheduler.after(delay, () => void this.attempt()));
+  }
+
+  /**
+   * Vaga única. Chamar duas vezes na mesma rodada — o que acontece quando o
+   * `connect` rejeita E o transporte emite `closed` — não agenda duas
+   * tentativas nem avança o backoff duas vezes.
+   */
+  private scheduleRetry(epoch: number): void {
+    if (this.stale(epoch)) return;
+    if (this.retryCancel !== null) return;
+
+    const delay = this.pollMs;
+    this.advanceBackoff();
+    this.retryCancel = this.deps.scheduler.after(delay, () => {
+      this.retryCancel = null;
+      void this.attempt(epoch);
+    });
+  }
+
+  private cancelRetry(): void {
+    this.retryCancel?.();
+    this.retryCancel = null;
   }
 
   private async dropTransport(): Promise<void> {
-    for (const cancel of this.cancels) cancel();
-    this.cancels = [];
+    for (const cancel of this.transportCancels) cancel();
+    this.transportCancels = [];
     const transport = this.transport;
     this.transport = null;
     await transport?.close();
@@ -174,6 +237,8 @@ export class ViewerSession {
 
   async close(): Promise<void> {
     this.disposed = true;
+    this.epoch += 1;
+    this.cancelRetry();
     await this.dropTransport();
   }
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ClosingViewerTransport,
   FakeApi,
   FakePublisherTransport,
   FakeScheduler,
@@ -146,5 +147,101 @@ describe('ViewerSession', () => {
     await ctx.session.open(SLUG);
     expect(ctx.session.getState().status).toBe('offline');
     expect(ctx.scheduler.pending).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Regressões da reconexão.
+ *
+ * O modo de falha real do WebSocket de sinalização notifica DUAS vezes: a
+ * promessa do `connect` rejeita e o handler de fechamento emite `closed`.
+ * Cada notificação agendava uma tentativa, e cada tentativa dobrava a
+ * próxima rodada — 1, 2, 4, 8, 16, 32 conexões concorrentes saindo de uma
+ * aba que o usuário deixou aberta. Autoataque, não bug cosmético.
+ */
+describe('ViewerSession — reconexão não pode multiplicar', () => {
+  function buildClosing() {
+    const api = new FakeApi();
+    const transport = new ClosingViewerTransport();
+    const scheduler = new FakeScheduler();
+    const session = new ViewerSession({
+      api,
+      transports: {
+        publisher: async () => new FakePublisherTransport(),
+        viewer: async () => transport,
+      },
+      scheduler,
+    });
+    return { api, transport, scheduler, session };
+  }
+
+  it('falha dupla (reject + closed) agenda UMA tentativa', async () => {
+    const ctx = buildClosing();
+    await ctx.session.open(SLUG);
+    await settle(20);
+    expect(ctx.scheduler.pending).toBe(1);
+  });
+
+  it('cada rodada faz exatamente uma tentativa, sem dobrar', async () => {
+    const ctx = buildClosing();
+    await ctx.session.open(SLUG);
+    await settle(20);
+
+    const porRodada: number[] = [ctx.transport.connects];
+    for (let i = 0; i < 5; i += 1) {
+      const antes = ctx.transport.connects;
+      ctx.scheduler.advance(60_000);
+      await settle(40);
+      porRodada.push(ctx.transport.connects - antes);
+    }
+    expect(porRodada).toEqual([1, 1, 1, 1, 1, 1]);
+  });
+
+  it('30 rodadas offline não acumulam timers pendentes', async () => {
+    const ctx = build();
+    ctx.api.live = false;
+    await ctx.session.open(SLUG);
+
+    for (let i = 0; i < 30; i += 1) {
+      ctx.scheduler.advance(30_000);
+      await settle();
+    }
+    // Uma única vaga de retry, sempre. Antes, crescia uma por rodada.
+    expect(ctx.scheduler.pending).toBe(1);
+  });
+
+  it('sala cheia volta para offline quando a transmissão acaba', async () => {
+    const ctx = build();
+    ctx.api.joinError = 'VIEWER_LIMIT';
+    await ctx.session.open(SLUG);
+    expect(ctx.session.getState().status).toBe('failed');
+
+    ctx.api.live = false;
+    ctx.scheduler.advance(30_000);
+    await settle();
+
+    // Continuar dizendo "lotada" depois que ninguém está transmitindo é mentira.
+    expect(ctx.session.getState().status).toBe('offline');
+  });
+
+  it('abrir outro slug fecha o transporte anterior', async () => {
+    const api = new FakeApi();
+    const first = new FakeViewerTransport();
+    const second = new FakeViewerTransport();
+    const pool = [first, second];
+    const session = new ViewerSession({
+      api,
+      transports: {
+        publisher: async () => new FakePublisherTransport(),
+        viewer: async () => pool.shift() ?? second,
+      },
+      scheduler: new FakeScheduler(),
+    });
+
+    await session.open(SLUG);
+    await session.open('outro');
+    await settle();
+
+    expect(first.closed).toBe(true);
   });
 });

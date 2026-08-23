@@ -8,3 +8,9 @@ dist/
 !*.example
 coverage/
 target/
+
+# Repros de diagnóstico dos agentes de auditoria. São artefato de investigação,
+# não suíte do projeto: quando um deles aponta bug real, a regressão é
+# reescrita no arquivo de teste que já cobre aquele módulo.
+zz-bughunt*
+**/zz-bughunt*

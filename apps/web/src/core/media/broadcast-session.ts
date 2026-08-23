@@ -91,8 +91,27 @@ export class BroadcastSession {
   private presetId: PresetId = DEFAULT_PRESET_ID;
   private presetForced = false;
   private cpuPressure = 0;
+  /**
+   * Última contagem conhecida de espectadores.
+   *
+   * Sobrevive à travessia `live → reconnecting → live`: quem estava assistindo
+   * não sumiu porque o transmissor perdeu o socket por dois segundos, e zerar
+   * o número no HUD faz o usuário achar que perdeu a audiência.
+   */
+  private viewers = 0;
   private credentials: { slug: string; ownerToken: string } | null = null;
   private transportKind: Connection['transport'] = 'sfu';
+
+  /**
+   * Toda etapa assíncrona do `start()` carrega o epoch em que começou.
+   * `stop()` e `fail()` incrementam.
+   *
+   * Sem isso, parar durante o `connecting` era desfeito: a resposta da API
+   * chegava depois, o código seguia publicando e a sessão voltava para `live`
+   * com as trilhas já paradas — transmissão fantasma, com heartbeat batendo
+   * sem credencial.
+   */
+  private epoch = 0;
 
   constructor(private readonly deps: BroadcastSessionDeps) {}
 
@@ -128,10 +147,14 @@ export class BroadcastSession {
   ): Promise<void> {
     if (this.state.status !== 'idle' && this.state.status !== 'ended') return;
 
+    this.epoch += 1;
+    const epoch = this.epoch;
+
     this.credentials = { slug, ownerToken };
     this.presetId = options.presetId ?? DEFAULT_PRESET_ID;
     this.presetForced = false;
     this.cpuPressure = 0;
+    this.viewers = 0;
     this.setState({ status: 'requesting-capture' });
 
     const preset = presetById(this.presetId);
@@ -149,7 +172,15 @@ export class BroadcastSession {
         systemAudio: true,
       });
     } catch (error) {
+      if (this.stale(epoch)) return;
       return this.fail(error === 'UNSUPPORTED' ? 'CAPTURE_UNSUPPORTED' : 'CAPTURE_DENIED');
+    }
+
+    // O usuário pode ter desistido durante o picker do sistema.
+    if (this.stale(epoch)) {
+      capture.video.stop();
+      capture.audio?.stop();
+      return;
     }
 
     this.videoTrack = capture.video;
@@ -173,6 +204,7 @@ export class BroadcastSession {
       } catch {
         this.audioTrack = null; // transmitir mudo é melhor que não transmitir
       }
+      if (this.stale(epoch)) return this.abandon();
     }
 
     // O usuário pode encerrar pelo controle nativo do browser, fora da nossa UI.
@@ -181,6 +213,7 @@ export class BroadcastSession {
     this.setState({ status: 'connecting', shareUrl: null });
 
     const started = await this.deps.api.startBroadcast(slug, ownerToken);
+    if (this.stale(epoch)) return this.abandon();
     if (!started.ok) {
       return this.fail(started.error === 'OWNER_INVALID' ? 'OWNER_INVALID' : 'UPSTREAM_UNAVAILABLE');
     }
@@ -189,15 +222,22 @@ export class BroadcastSession {
     this.setState({ status: 'connecting', shareUrl });
 
     const transport = await this.deps.transports.publisher(connection.transport);
+    if (this.stale(epoch)) {
+      await transport.close();
+      return this.abandon();
+    }
     this.transport = transport;
     this.transportKind = connection.transport;
 
     try {
       await transport.connect(connection);
+      if (this.stale(epoch)) return this.abandon();
       await transport.publish(toPublishRequest(preset, this.videoTrack, this.audioTrack));
     } catch {
+      if (this.stale(epoch)) return this.abandon();
       return this.fail('TRANSPORT_FAILED');
     }
+    if (this.stale(epoch)) return this.abandon();
 
     this.unsubscribes.push(
       transport.on('viewers', (viewers) => this.onViewers(viewers)),
@@ -310,6 +350,7 @@ export class BroadcastSession {
   }
 
   private onViewers(viewers: number): void {
+    this.viewers = viewers;
     if (this.state.status !== 'live') return;
     if (this.state.viewers === viewers) return;
     this.setState({ ...this.state, viewers });
@@ -332,16 +373,30 @@ export class BroadcastSession {
       slug: this.state.slug,
       presetId: this.presetId,
       presetForced: this.presetForced,
-      viewers: 0,
+      viewers: this.viewers,
       stats: null,
       hasAudio: this.audioTrack !== null,
       transport: this.transportKind,
     });
   }
 
+  /** `true` quando um `stop()` ou `fail()` aconteceu enquanto este await corria. */
+  private stale(epoch: number): boolean {
+    return this.epoch !== epoch;
+  }
+
+  /**
+   * Sai de um `start()` que perdeu a corrida. Não muda o estado — quem venceu
+   * já o definiu — mas solta o que este start alcançou a criar.
+   */
+  private abandon(): void {
+    this.teardown();
+  }
+
   async stop(reason: BroadcastFailure = 'USER_STOPPED'): Promise<void> {
     if (this.state.status === 'idle' || this.state.status === 'ended') return;
 
+    this.epoch += 1;
     const credentials = this.credentials;
     this.teardown();
 
@@ -354,6 +409,7 @@ export class BroadcastSession {
   }
 
   private fail(reason: BroadcastFailure): void {
+    this.epoch += 1;
     this.teardown();
     this.setState({ status: 'ended', reason });
   }

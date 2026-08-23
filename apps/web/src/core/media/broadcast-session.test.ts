@@ -7,6 +7,7 @@ import {
   FakeScheduler,
   FakeScreenCapture,
   FakeViewerTransport,
+  GatedApi,
   P2P_CONNECTION,
   fakeTransports,
 } from '../testing/fakes.js';
@@ -311,5 +312,109 @@ describe('BroadcastSession — áudio', () => {
     await ctx.session.start(SLUG, TOKEN, { audioDeviceId: 'monitor-1' });
     expect(ctx.session.getState().status).toBe('live');
     expect(ctx.publisher.published[0]?.audio).toBeNull();
+  });
+});
+
+/**
+ * Regressões da corrida entre `stop()` e um `start()` ainda em voo.
+ *
+ * O caminho é real e comum: o usuário aperta TRANSMITIR, o servidor demora, e
+ * ele desiste antes da resposta chegar. Sem o guarda de epoch, o `start()`
+ * atrasado seguia publicando e devolvia a sessão para `live` — com as trilhas
+ * já paradas e o heartbeat batendo sem credencial.
+ */
+describe('BroadcastSession — parar durante o connecting', () => {
+  function buildGated() {
+    const api = new GatedApi();
+    const publisher = new FakePublisherTransport();
+    const screen = new FakeScreenCapture();
+    const scheduler = new FakeScheduler();
+    const session = new BroadcastSession({
+      api,
+      transports: fakeTransports(publisher, new FakeViewerTransport()),
+      screen,
+      audio: new FakeAudioCapture(),
+      scheduler,
+      statsIntervalMs: 1_000,
+    });
+    return { api, publisher, screen, scheduler, session };
+  }
+
+  const settle = async (times = 12) => {
+    for (let i = 0; i < times; i += 1) await Promise.resolve();
+  };
+
+  it('o start em voo não ressuscita a sessão parada', async () => {
+    const ctx = buildGated();
+    const started = ctx.session.start(SLUG, TOKEN);
+    await settle();
+    expect(ctx.session.getState().status).toBe('connecting');
+
+    await ctx.session.stop();
+    expect(ctx.session.getState()).toEqual({ status: 'ended', reason: 'USER_STOPPED' });
+
+    ctx.api.release();
+    await started;
+    await settle();
+
+    expect(ctx.session.getState()).toEqual({ status: 'ended', reason: 'USER_STOPPED' });
+    expect(ctx.publisher.connected).toBeNull();
+    expect(ctx.publisher.published).toHaveLength(0);
+  });
+
+  it('não publica trilha nenhuma depois do stop', async () => {
+    const ctx = buildGated();
+    const started = ctx.session.start(SLUG, TOKEN);
+    await settle();
+    await ctx.session.stop();
+    ctx.api.release();
+    await started;
+    await settle();
+
+    expect(ctx.publisher.published).toEqual([]);
+  });
+
+  it('não deixa heartbeat batendo sem credencial', async () => {
+    const ctx = buildGated();
+    const started = ctx.session.start(SLUG, TOKEN);
+    await settle();
+    await ctx.session.stop();
+    ctx.api.release();
+    await started;
+    await settle();
+
+    ctx.scheduler.advance(60_000);
+    await settle();
+
+    expect(ctx.api.pings).toBe(0);
+    expect(ctx.scheduler.pending).toBe(0);
+  });
+
+  it('solta a captura mesmo quando o stop chega antes da conexão', async () => {
+    const ctx = buildGated();
+    const started = ctx.session.start(SLUG, TOKEN);
+    await settle();
+    await ctx.session.stop();
+    ctx.api.release();
+    await started;
+    await settle();
+
+    expect((ctx.screen.video as unknown as { stopped: boolean }).stopped).toBe(true);
+  });
+});
+
+describe('BroadcastSession — contagem de espectadores na reconexão', () => {
+  it('preserva a audiência ao atravessar reconnecting', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.publisher.emit('viewers', 3);
+
+    ctx.publisher.emit('reconnecting', undefined);
+    ctx.publisher.emit('reconnected', undefined);
+
+    const state = ctx.session.getState();
+    // Zerar aqui faria o usuário achar que perdeu a audiência por causa de
+    // dois segundos de socket instável.
+    expect(state.status === 'live' && state.viewers).toBe(3);
   });
 });

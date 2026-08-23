@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.env
+.env.*
+# ...menos os modelos, que são justamente o que deve ser versionado
+!*.example
+coverage/
+target/

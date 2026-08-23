@@ -1,0 +1,36 @@
+# Self-host doméstico — modo P2P.
+#
+# Este arquivo é a resposta a "não tenho VPS". Um container, sem LiveKit e sem
+# Redis: a API só assina tickets e roteia SDP/ICE, e o vídeo vai direto do
+# browser do transmissor para o de cada espectador.
+#
+# Consequências que você precisa aceitar (docs/adr/0002):
+#   - o upstream da SUA casa é replicado por espectador
+#   - cada espectador é um encoder rodando na SUA máquina
+#   - por isso o teto padrão é 3 espectadores
+#
+# Pré-requisitos: uma porta 443 alcançável (ou um domínio via DNS dinâmico) e,
+# se você estiver atrás de CGNAT, um TURN — veja docs/SELF-HOSTING.md §CGNAT.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../../apps/web/dist:/srv/web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    env_file: ../.env.p2p
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo lint typecheck test build
+
+      # Ciclo de dependência não aparece em typecheck nem em teste. Só aqui.
+      - run: pnpm depcruise
+
+      # As fronteiras do AGENTS.md precisam FALHAR quando violadas. Um lint que
+      # passa porque a regra foi apagada por engano é pior que nenhum lint.
+      - name: fronteiras de camada realmente bloqueiam
+        run: |
+          set -e
+          echo "import { Redis } from 'ioredis'; export const x = Redis;" \
+            > apps/api/src/domain/__ci_violacao.ts
+          echo "import { Room } from 'livekit-client'; export const x = Room;" \
+            > apps/web/src/core/__ci_violacao.ts
+          if pnpm exec eslint apps --no-warn-ignored; then
+            echo "::error::o lint aprovou uma violação de fronteira"
+            exit 1
+          fi
+          rm apps/api/src/domain/__ci_violacao.ts apps/web/src/core/__ci_violacao.ts
+          pnpm exec eslint apps packages --no-warn-ignored
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose valida
+        run: |
+          cp infra/.env.example infra/.env
+          cp infra/.env.p2p.example infra/.env.p2p
+          docker compose -f infra/compose/docker-compose.yml config -q
+          docker compose -f infra/compose/docker-compose.dev.yml config -q
+          docker compose -f infra/compose/docker-compose.p2p.yml config -q

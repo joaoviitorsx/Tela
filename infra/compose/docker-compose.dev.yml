@@ -1,0 +1,13 @@
+# Desenvolvimento: só as dependências. A API e o front rodam no host, via
+# `pnpm dev`, para ter hot reload.
+services:
+  livekit:
+    image: livekit/livekit-server:v1.8
+    # --dev usa a chave fixa devkey/secret. NUNCA em produção.
+    command: --dev --bind 0.0.0.0
+    network_mode: host
+
+  redis:
+    image: redis:8-alpine
+    command: redis-server --save '' --appendonly no
+    ports: ['127.0.0.1:6379:6379']

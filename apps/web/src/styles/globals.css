@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+/**
+ * Tokens da §11 da documentação técnica. Não invente cor nova aqui: o produto
+ * inteiro é fundo quase preto para que o jogo seja a única fonte de luz da
+ * tela. Um acento saturado, usado só em AO VIVO e no botão primário.
+ *
+ * Referência de tom: Parsec, Kick. Anti-referência: Zoom, Teams, Meet.
+ */
+@theme {
+  --color-void: #08080a;
+  --color-surface: #121216;
+  --color-line: #232329;
+  --color-muted: #6b6b76;
+  --color-text: #ededf0;
+  --color-accent: #22e07a;
+  --color-danger: #ff4d4d;
+  --color-warn: #ffb020;
+
+  /**
+   * `--color-muted` tem 3,6:1 contra o fundo — passa em texto grande, falha
+   * em corpo pequeno (WCAG AA pede 4,5:1). Metadado de 12–13px usa este.
+   */
+  --color-dim: #8a8a96;
+
+  --font-display: "Geist", "Inter Tight", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Roboto Mono", monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-void);
+    color: var(--color-text);
+    font-family: var(--font-display);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /**
+   * Números em monoespaçada com largura tabular. Sem isso, bitrate e latência
+   * mudam a largura a cada atualização e o HUD inteiro treme de segundo em
+   * segundo — é o detalhe que separa "ferramenta" de "protótipo".
+   */
+  .tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Nunca remover o anel de foco: é a única navegação de quem usa teclado. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  button {
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  input {
+    font: inherit;
+    color: inherit;
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-void);
+  }
+}
+
+@layer utilities {
+  /* Pulso do ponto "AO VIVO". Único movimento decorativo do produto. */
+  @keyframes tela-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .animate-live {
+    animation: tela-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes tela-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .animate-enter {
+    animation: tela-fade-in 220ms var(--ease-out-soft) both;
+  }
+}
+
+/**
+ * Movimento é decoração aqui, não informação — quem pediu para reduzir
+ * animação não perde nada desligando tudo.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

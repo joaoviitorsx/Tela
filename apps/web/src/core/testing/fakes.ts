@@ -51,6 +51,24 @@ export class FakeScheduler implements Scheduler {
     return this.time;
   }
 
+  visivel = true;
+  private readonly ouvintes = new Set<() => void>();
+
+  isVisible(): boolean {
+    return this.visivel;
+  }
+
+  onVisibilityChange(handler: () => void): Cancel {
+    this.ouvintes.add(handler);
+    return () => this.ouvintes.delete(handler);
+  }
+
+  /** Só no fake: simula o usuário trocando de aba para jogar. */
+  setVisivel(valor: boolean): void {
+    this.visivel = valor;
+    for (const h of [...this.ouvintes]) h();
+  }
+
   /** Avança o relógio disparando tudo que vencer no caminho. */
   advance(ms: number): void {
     const target = this.time + ms;
@@ -75,7 +93,11 @@ export class FakeScheduler implements Scheduler {
   }
 }
 
-export type FakeTrack = MediaStreamTrack & { stopped: boolean; fireEnded(): void };
+export type FakeTrack = MediaStreamTrack & {
+  stopped: boolean;
+  fireEnded(): void;
+  constraints: MediaTrackConstraints[];
+};
 
 export function fakeTrack(kind: 'video' | 'audio'): FakeTrack {
   const listeners = new Map<string, Set<() => void>>();
@@ -85,6 +107,10 @@ export function fakeTrack(kind: 'video' | 'audio'): FakeTrack {
     contentHint: '',
     readyState: 'live' as MediaStreamTrackState,
     stopped: false,
+    constraints: [] as MediaTrackConstraints[],
+    async applyConstraints(c: MediaTrackConstraints) {
+      track.constraints.push(c);
+    },
     stop() {
       track.stopped = true;
       track.readyState = 'ended' as MediaStreamTrackState;
@@ -192,6 +218,10 @@ export class FakeMediaTransport implements MediaTransport {
   }
   async setPreset(preset: EncodingPreset): Promise<void> {
     this.presets.push(preset);
+  }
+  ceilings: (number | null)[] = [];
+  async setBitrateCeiling(bps: number | null): Promise<void> {
+    this.ceilings.push(bps);
   }
   async getAggregateStats(): Promise<MediaStats | null> {
     return this.stats;

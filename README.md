@@ -130,6 +130,29 @@ Estas são consequências da arquitetura, não bugs a corrigir depois:
 
 ---
 
+## Não atrapalhar o jogo
+
+É o requisito central, e o produto trabalha em quatro frentes para cumpri-lo:
+
+**Teto de banda com folga.** O WebRTC estima quanto cabe no link e sobe até
+lá — e "até lá" é exatamente onde a fila do roteador enche e o ping do jogo
+dispara. O encoder é limitado a 75% do estimado, antes disso acontecer.
+
+**Prioridade de rede.** O vídeo é marcado como tráfego sacrificável (DSCP
+baixo) e o áudio como prioritário. Roteador com fila consciente (fq_codel,
+CAKE) deixa o jogo passar na frente; onde ninguém honra, é inerte.
+
+**Captura ociosa a 5fps.** Sem espectador não há encoder rodando, mas a
+captura de tela continua — e a 1080p60 ela custa GPU e compositor por nada.
+Volta ao framerate cheio quando alguém entra.
+
+**Aba escondida não faz rede.** Quem deixa a página do espectador aberta e vai
+jogar não recebe nem uma conexão. Medido: 4 conexões em 45s com a aba visível,
+**zero** com ela escondida.
+
+E a degradação automática reage tanto a CPU quanto a **banda** — quando o
+WebRTC diz que a rede é o limitador, o preset desce sozinho.
+
 ## Áudio do jogo — o que muda entre sistemas
 
 Seus amigos precisam **ouvir** o gameplay, e é aqui que Windows e Linux

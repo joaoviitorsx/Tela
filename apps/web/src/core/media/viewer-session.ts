@@ -63,6 +63,10 @@ export class ViewerSession {
   private pollMs = POLL_MIN_MS;
   private slug = '';
   private disposed = false;
+  /** Cancela o listener de visibilidade. */
+  private unwatchVisibility: Cancel | null = null;
+  /** `true` quando a próxima tentativa foi adiada por a aba estar escondida. */
+  private adiadoPorVisibilidade = false;
 
   constructor(private readonly deps: ViewerSessionDeps) {}
 
@@ -99,6 +103,16 @@ export class ViewerSession {
     await this.dropTransport();
     if (this.stale(epoch)) return;
 
+    this.unwatchVisibility?.();
+    this.unwatchVisibility = this.deps.scheduler.onVisibilityChange(() => {
+      // Voltou a olhar: retoma na hora em vez de esperar o próximo tique.
+      if (this.adiadoPorVisibilidade && this.deps.scheduler.isVisible()) {
+        this.adiadoPorVisibilidade = false;
+        this.pollMs = POLL_MIN_MS;
+        void this.attempt(epoch);
+      }
+    });
+
     this.setState({ status: 'checking' });
     await this.attempt(epoch);
   }
@@ -106,6 +120,21 @@ export class ViewerSession {
   private async attempt(epoch: number): Promise<void> {
     if (this.stale(epoch)) return;
     this.retryCancel = null;
+
+    /**
+     * Aba escondida: não faz nada.
+     *
+     * Quem deixou a aba do espectador aberta e foi jogar não precisa de nada
+     * da rede — ele não está olhando. Ficar reconectando gasta o link e a
+     * atenção de uma máquina que está no meio de uma partida, e o produto
+     * inteiro existe para não atrapalhar isso.
+     */
+    if (!this.deps.scheduler.isVisible()) {
+      this.adiadoPorVisibilidade = true;
+      this.goOffline();
+      return;
+    }
+    this.adiadoPorVisibilidade = false;
 
     this.setState({ status: 'connecting', slug: this.slug });
 
@@ -298,6 +327,8 @@ export class ViewerSession {
     this.disposed = true;
     this.epoch += 1;
     this.cancelRetry();
+    this.unwatchVisibility?.();
+    this.unwatchVisibility = null;
     await this.dropTransport();
   }
 }

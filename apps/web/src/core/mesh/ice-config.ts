@@ -18,8 +18,16 @@ export function rtcConfiguration(iceServers: readonly IceServerConfig[]): RTCCon
     // segurança de quem está atrás de CGNAT, não o caminho preferencial.
     iceTransportPolicy: 'all',
     bundlePolicy: 'max-bundle',
-    // Pré-aquece candidatos: encurta o tempo até o primeiro frame.
-    iceCandidatePoolSize: 4,
+    /**
+     * SEM pré-coleta de candidatos.
+     *
+     * Um pool > 0 faz o Chrome abrir sockets UDP e disparar STUN antes de
+     * qualquer negociação existir. Ganha-se alguns milissegundos até o
+     * primeiro frame e paga-se com tráfego e sockets numa máquina que está
+     * rodando um jogo. Num produto cujo requisito central é não atrapalhar o
+     * jogo, essa troca está do lado errado.
+     */
+    iceCandidatePoolSize: 0,
   };
 }
 

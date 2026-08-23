@@ -77,8 +77,31 @@ export type BroadcastSessionDeps = {
 };
 
 const STATS_INTERVAL_MS = 1_000;
-/** Quantas leituras seguidas com `cpu` antes de cair de preset. */
-const CPU_PRESSURE_SAMPLES = 5;
+/** Quantas leituras seguidas com o mesmo limitador antes de cair de preset. */
+const PRESSURE_SAMPLES = 5;
+
+/**
+ * Framerate da captura quando NINGUÉM está assistindo.
+ *
+ * Sem espectador não há encoder rodando — mas a captura de tela continua, e
+ * capturar 1080p60 é trabalho real de GPU e de compositor. Numa máquina que
+ * está rodando um jogo, isso é custo cobrado por nada.
+ *
+ * Cinco quadros por segundo mantém a trilha viva (parar e recomeçar traria o
+ * seletor de tela de volta, o que é inaceitável) e devolve praticamente todo
+ * o custo. O usuário não percebe: não há ninguém do outro lado para ver.
+ */
+const IDLE_CAPTURE_FPS = 5;
+
+/**
+ * Fração da banda estimada que o vídeo pode ocupar.
+ *
+ * Os 25% de folga são a diferença entre transmitir e estrangular o jogo.
+ * Encher o cano faz o pacote do jogo esperar atrás do vídeo na fila do
+ * roteador — é assim que o ping sobe, e nenhum ajuste de bitrate resolve
+ * depois que a fila encheu.
+ */
+const UPLINK_SHARE = 0.75;
 
 export class BroadcastSession {
   private readonly emitter = new Emitter<BroadcastEvents>();
@@ -89,7 +112,9 @@ export class BroadcastSession {
   private timers: Array<() => void> = [];
   private unsubscribes: Array<() => void> = [];
   private presetId: PresetId = DEFAULT_PRESET_ID;
-  private cpuPressure = 0;
+  private pressure = 0;
+  private pressureKind: QualityLimitation = 'none';
+  private capturaOciosa = false;
   private maxPeers = 3;
 
   /**
@@ -101,6 +126,7 @@ export class BroadcastSession {
    * trilhas já paradas.
    */
   private epoch = 0;
+  private ceiling: number | null = null;
 
   constructor(private readonly deps: BroadcastSessionDeps) {
     this.maxPeers = deps.maxPeers ?? 3;
@@ -141,7 +167,9 @@ export class BroadcastSession {
     const epoch = this.epoch;
 
     this.presetId = options.presetId ?? DEFAULT_PRESET_ID;
-    this.cpuPressure = 0;
+    this.pressure = 0;
+    this.pressureKind = 'none';
+    this.capturaOciosa = false;
     this.setState({ status: 'requesting-capture' });
 
     const preset = presetById(this.presetId);
@@ -247,7 +275,24 @@ export class BroadcastSession {
     if (this.state.status !== 'live') return;
 
     this.setState({ ...this.state, stats });
-    this.trackCpuPressure(stats.limitation);
+    this.applyUplinkCeiling(stats.availableBps);
+    this.trackPressure(stats.limitation);
+  }
+
+  /**
+   * Impede o encoder de encher o cano do usuário.
+   *
+   * O WebRTC estima quanto cabe no link e sobe até lá. "Até lá" é exatamente
+   * onde a fila do roteador enche e o ping do jogo dispara — e quando o
+   * controle de congestionamento percebe, o jogador já sentiu. Então o teto é
+   * aplicado ANTES: o vídeo nunca pede mais do que uma fração do estimado.
+   */
+  private applyUplinkCeiling(availableBps: number | null): void {
+    if (availableBps === null || availableBps <= 0) return;
+    const teto = Math.round(availableBps * UPLINK_SHARE);
+    if (teto === this.ceiling) return;
+    this.ceiling = teto;
+    void this.deps.transport.setBitrateCeiling(teto).catch(() => undefined);
   }
 
   /**
@@ -257,16 +302,29 @@ export class BroadcastSession {
    * sequência sustentada significa encode em software, e aí o único remédio é
    * codificar menos pixel — devolvendo CPU para o jogo.
    */
-  private trackCpuPressure(limitation: QualityLimitation): void {
-    if (limitation !== 'cpu') {
-      this.cpuPressure = 0;
+  /**
+   * Degradação automática, por CPU **ou por banda**.
+   *
+   * A versão anterior só olhava `cpu` e ignorava `bandwidth` — o WebRTC dizia
+   * em letras garrafais "estou limitado pela rede" e o produto não fazia nada,
+   * continuava pedindo 8 Mbps de um link que não tinha. Era o caminho direto
+   * para o ping do jogo subir.
+   */
+  private trackPressure(limitation: QualityLimitation): void {
+    if (limitation !== 'cpu' && limitation !== 'bandwidth') {
+      this.pressure = 0;
+      this.pressureKind = 'none';
       return;
     }
-    this.cpuPressure += 1;
-    if (this.cpuPressure < CPU_PRESSURE_SAMPLES) return;
+    if (limitation !== this.pressureKind) {
+      this.pressureKind = limitation;
+      this.pressure = 0;
+    }
+    this.pressure += 1;
+    if (this.pressure < PRESSURE_SAMPLES) return;
 
     const next = nextPresetOnCpuPressure(this.presetId);
-    this.cpuPressure = 0;
+    this.pressure = 0;
     if (next === null) return;
 
     this.presetId = next;
@@ -294,14 +352,36 @@ export class BroadcastSession {
     if (next === this.presetId) return;
 
     this.presetId = next;
-    this.cpuPressure = 0;
+    this.pressure = 0;
+    this.pressureKind = 'none';
     this.setState({ ...this.state, presetId: next, presetForced: false });
     await this.deps.transport.setPreset(presetById(next));
   }
 
   private onPeers(peers: readonly PeerInfo[]): void {
+    this.throttleIdleCapture(peers.length === 0);
     if (this.state.status !== 'live') return;
     this.setState({ ...this.state, peers });
+  }
+
+  /**
+   * Com zero espectadores, captura a 5fps.
+   *
+   * Não há encoder rodando sem peer — mas a captura de tela continua, e a
+   * 1080p60 ela custa GPU e compositor numa máquina que está rodando um jogo.
+   * Ninguém está do outro lado para ver a diferença.
+   */
+  private throttleIdleCapture(ocioso: boolean): void {
+    if (ocioso === this.capturaOciosa) return;
+    const track = this.videoTrack;
+    if (track === null || typeof track.applyConstraints !== 'function') return;
+
+    this.capturaOciosa = ocioso;
+    const alvo = ocioso ? IDLE_CAPTURE_FPS : presetById(this.presetId).main.maxFramerate;
+    void track.applyConstraints({ frameRate: alvo }).catch(() => {
+      // Navegador que recusa restringir a captura continua no framerate cheio.
+      this.capturaOciosa = false;
+    });
   }
 
   /**
@@ -345,6 +425,8 @@ export class BroadcastSession {
     this.audioTrack?.stop();
     this.videoTrack = null;
     this.audioTrack = null;
+    this.ceiling = null;
+    this.capturaOciosa = false;
 
     await this.deps.transport.disconnect();
   }

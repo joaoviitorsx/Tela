@@ -184,6 +184,7 @@ describe('BroadcastSession — qualidade', () => {
       limitation: 'cpu',
       width: 1920,
       height: 1080,
+      availableBps: null,
     };
 
     for (let i = 0; i < 5; i += 1) {
@@ -199,7 +200,7 @@ describe('BroadcastSession — qualidade', () => {
   it('uma leitura isolada com cpu NÃO derruba o preset', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080 };
+    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null };
 
     ctx.transport.stats = { ...base, limitation: 'cpu' };
     ctx.scheduler.advance(1_000);
@@ -225,6 +226,7 @@ describe('BroadcastSession — qualidade', () => {
       limitation: 'cpu',
       width: 1280,
       height: 720,
+      availableBps: null,
     };
 
     for (let i = 0; i < 20; i += 1) {
@@ -244,6 +246,87 @@ describe('BroadcastSession — qualidade', () => {
     await ctx.session.setPreset('p720p60');
     const state = ctx.session.getState();
     expect(state.status === 'live' && state.presetForced).toBe(false);
+  });
+});
+
+describe('BroadcastSession — não atrapalhar o jogo', () => {
+  const amostra = (extra: Record<string, unknown>) => ({
+    fps: 60,
+    bitrateBps: 7_000_000,
+    rttMs: 30,
+    width: 1920,
+    height: 1080,
+    limitation: 'none' as const,
+    availableBps: null,
+    ...extra,
+  });
+
+  it('captura cai para 5fps quando ninguém está assistindo', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.setPeers([]);
+    await settle();
+
+    // Sem espectador não há encoder, mas a captura de tela continua — e a
+    // 1080p60 ela custa GPU numa máquina que está rodando um jogo.
+    expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 5 });
+  });
+
+  it('captura volta ao framerate cheio quando alguém entra', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.setPeers([]);
+    await settle();
+    ctx.transport.setPeers([{ id: 'v_1', connectionState: 'connected', usingRelay: false }]);
+    await settle();
+
+    expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 60 });
+  });
+
+  it('aplica teto de banda com folga, para não encher o cano', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    // O WebRTC estima 10 Mbps disponíveis.
+    ctx.transport.stats = amostra({ availableBps: 10_000_000 });
+
+    ctx.scheduler.advance(1_000);
+    await settle();
+
+    // 75% — os 25% de folga são a diferença entre transmitir e estrangular o
+    // jogo, porque encher a fila do roteador é o que faz o ping subir.
+    expect(ctx.transport.ceilings.at(-1)).toBe(7_500_000);
+  });
+
+  it('limitação por BANDA derruba o preset, não só por CPU', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({ limitation: 'bandwidth' });
+
+    for (let i = 0; i < 5; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle();
+    }
+
+    // Antes o código só olhava `cpu`: o WebRTC dizia "estou limitado pela
+    // rede" e o produto seguia pedindo 8 Mbps de um link que não tinha.
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).toBe('p720p60');
+    expect(state.status === 'live' && state.presetForced).toBe(true);
+  });
+
+  it('alternar entre limitadores não acumula pressão indevida', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    for (let i = 0; i < 4; i += 1) {
+      ctx.transport.stats = amostra({ limitation: i % 2 === 0 ? 'cpu' : 'bandwidth' });
+      ctx.scheduler.advance(1_000);
+      await settle();
+    }
+
+    // Nenhum dos dois chegou a cinco leituras seguidas.
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).toBe('p1080p60');
   });
 });
 

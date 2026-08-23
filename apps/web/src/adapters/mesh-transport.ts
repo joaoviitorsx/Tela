@@ -141,6 +141,10 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       await topology?.setPreset(next);
     },
 
+    async setBitrateCeiling(bps) {
+      await topology?.setCeiling(bps);
+    },
+
     async getAggregateStats(): Promise<MediaStats | null> {
       if (topology !== null) {
         const reports = await topology.collectStats();

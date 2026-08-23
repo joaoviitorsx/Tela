@@ -214,6 +214,7 @@ describe('ViewerSession', () => {
       limitation: 'none',
       width: 1920,
       height: 1080,
+      availableBps: null,
     };
 
     ctx.scheduler.advance(1_000);
@@ -273,6 +274,43 @@ describe('ViewerSession', () => {
     // Todos menos o vencedor precisam ter sido desconectados.
     const vivos = ctx.criados.filter((t) => !t.disconnected);
     expect(vivos.length).toBeLessThanOrEqual(1);
+  });
+
+  it('aba escondida não faz rede nenhuma', async () => {
+    // O espectador foi jogar e deixou a aba aberta. Ele não está olhando —
+    // e o produto inteiro existe para não atrapalhar quem está jogando.
+    const ctx = build((t) => {
+      t.watchError = { code: 'NOT_HOSTING' };
+    });
+    await ctx.session.open(SLUG);
+    await settle();
+    const antes = ctx.criados.length;
+
+    ctx.scheduler.setVisivel(false);
+    for (let i = 0; i < 10; i += 1) {
+      ctx.scheduler.advance(30_000);
+      await settle();
+    }
+
+    expect(ctx.criados.length).toBe(antes);
+  });
+
+  it('voltar para a aba retoma na hora, sem esperar o próximo tique', async () => {
+    const ctx = build((t) => {
+      t.watchError = { code: 'NOT_HOSTING' };
+    });
+    await ctx.session.open(SLUG);
+    await settle();
+
+    ctx.scheduler.setVisivel(false);
+    ctx.scheduler.advance(60_000);
+    await settle();
+    const escondido = ctx.criados.length;
+
+    ctx.scheduler.setVisivel(true);
+    await settle(20);
+
+    expect(ctx.criados.length).toBeGreaterThan(escondido);
   });
 
   it('abrir outro slug desconecta o transporte anterior', async () => {

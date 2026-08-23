@@ -11,5 +11,14 @@ export function makeBrowserScheduler(): Scheduler {
       return () => window.clearTimeout(id);
     },
     now: () => Date.now(),
+
+    isVisible: () =>
+      typeof document === 'undefined' || document.visibilityState === 'visible',
+
+    onVisibilityChange(handler) {
+      if (typeof document === 'undefined') return () => undefined;
+      document.addEventListener('visibilitychange', handler);
+      return () => document.removeEventListener('visibilitychange', handler);
+    },
   };
 }

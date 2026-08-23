@@ -72,6 +72,15 @@ export class MeshTopology {
    */
   private queue: Promise<void> = Promise.resolve();
 
+  /**
+   * Teto de upload, abaixo do preset. `null` = sem teto.
+   *
+   * O preset diz o que o usuário quer; o teto diz o que o link dele aguenta
+   * sem estrangular o jogo. Vence o menor dos dois — encher o cano é
+   * exatamente o que faz o ping do jogo subir.
+   */
+  private ceiling: number | null = null;
+
   constructor(private readonly deps: MeshTopologyDeps) {}
 
   on<K extends keyof TopologyEvents>(
@@ -217,6 +226,13 @@ export class MeshTopology {
     return this.enqueue(() => this.adaptAll(preset));
   }
 
+  setCeiling(bps: number | null): Promise<void> {
+    this.ceiling = bps;
+    const preset = this.preset;
+    if (preset === null) return Promise.resolve();
+    return this.enqueue(() => this.adaptAll(preset));
+  }
+
   private async adaptAll(preset: EncodingPreset): Promise<void> {
     const alvo = [...this.senders.values()].flat();
     await Promise.all(alvo.map((sender) => this.applyPreset([sender], preset)));
@@ -238,8 +254,17 @@ export class MeshTopology {
         const encodings = params.encodings?.length ? params.encodings : [{}];
         encodings[0] = {
           ...encodings[0],
-          maxBitrate: preset.main.maxBitrate,
+          maxBitrate: this.effectiveBitrate(preset),
           maxFramerate: preset.main.maxFramerate,
+          /**
+           * O vídeo é o tráfego SACRIFICÁVEL desta máquina.
+           *
+           * `networkPriority` vira marcação DSCP no pacote. Roteador com fila
+           * consciente (fq_codel, CAKE) usa isso para deixar o jogo passar na
+           * frente; onde ninguém honra, é inerte. Custo zero, e é a única
+           * alavanca que temos sobre o roteador do usuário.
+           */
+          networkPriority: 'low',
         };
         await sender.setParameters({
           ...params,
@@ -267,11 +292,19 @@ export class MeshTopology {
     try {
       const params = sender.getParameters();
       const encodings = params.encodings?.length ? params.encodings : [{}];
-      encodings[0] = { ...encodings[0], maxBitrate: AUDIO_BITRATE };
+      // Áudio tem prioridade ALTA: se algo tem que ceder sob aperto de rede,
+      // é a imagem. Vídeo picotado dá para acompanhar; som picotado, não.
+      encodings[0] = { ...encodings[0], maxBitrate: AUDIO_BITRATE, networkPriority: 'high' };
       await sender.setParameters({ ...params, encodings } as RTCRtpSendParameters);
     } catch {
       // Navegador que recusa o campo continua transmitindo no default.
     }
+  }
+
+  /** O menor entre o que o usuário pediu e o que o link aguenta. */
+  private effectiveBitrate(preset: EncodingPreset): number {
+    if (this.ceiling === null) return preset.main.maxBitrate;
+    return Math.min(preset.main.maxBitrate, this.ceiling);
   }
 
   private enqueue(task: () => Promise<void>): Promise<void> {

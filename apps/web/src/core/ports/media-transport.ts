@@ -31,6 +31,15 @@ export type MediaStats = {
   readonly limitation: QualityLimitation;
   readonly width: number;
   readonly height: number;
+  /**
+   * O que o controle de congestionamento acha que cabe no link, em bits/s.
+   * `null` enquanto ele ainda não estimou.
+   *
+   * É a única leitura que dá para comparar com o que o encoder está pedindo —
+   * e é comparando os dois que dá para saber se estamos enchendo o cano do
+   * usuário, que é o que faz o ping do jogo subir.
+   */
+  readonly availableBps: number | null;
 };
 
 export type TransportEvents = {
@@ -55,6 +64,13 @@ export type MediaTransport = {
   publishAudio(track: MediaStreamTrack): Promise<void>;
   /** Troca de qualidade sem renegociar: `setParameters` nos senders. */
   setPreset(preset: EncodingPreset): Promise<void>;
+  /**
+   * Teto duro de upload, abaixo do preset. `null` remove.
+   *
+   * O preset diz o que o usuário quer; o teto diz o que o link aguenta sem
+   * estrangular o jogo. Vence o menor dos dois.
+   */
+  setBitrateCeiling(bps: number | null): Promise<void>;
 
   /**
    * Em mesh há N senders, então não existe "o sender". O total de upload e o

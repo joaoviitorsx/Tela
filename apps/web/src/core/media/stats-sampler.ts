@@ -53,6 +53,7 @@ export class StatsSampler {
     let height = 0;
     let rttMs = 0;
     let limitation: QualityLimitation = 'none';
+    let available: number | null = null;
     let found = false;
 
     reports.forEach((report, index) => {
@@ -81,6 +82,11 @@ export class StatsSampler {
         if (stat['type'] === 'candidate-pair' && stat['state'] === 'succeeded') {
           // O PIOR RTT, não o melhor: o melhor esconderia o amigo com problema.
           rttMs = Math.max(rttMs, Math.round(Number(stat['currentRoundTripTime'] ?? 0) * 1000));
+
+          // Somado entre peers: em mesh cada conexão estima a própria fatia, e
+          // o que interessa é o total que sai do link de casa.
+          const banda = Number(stat['availableOutgoingBitrate'] ?? 0);
+          if (banda > 0) available = (available ?? 0) + banda;
         }
       });
     });
@@ -102,6 +108,6 @@ export class StatsSampler {
     this.previous.clear();
     for (const [id, reading] of current) this.previous.set(id, reading);
 
-    return { fps: Math.round(fps), bitrateBps, rttMs, limitation, width, height };
+    return { fps: Math.round(fps), bitrateBps, rttMs, limitation, width, height, availableBps: available };
   }
 }

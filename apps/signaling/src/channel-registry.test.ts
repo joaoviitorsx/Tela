@@ -1,0 +1,263 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { OWNERSHIP_GRACE_MS, makeChannelRegistry } from './channel-registry.js';
+import { SpySocket, TestClock, testDeps } from './testing.js';
+
+const SLUG = 'joao';
+const OWNER = 'o'.repeat(43);
+const OUTRO = 'z'.repeat(43);
+
+describe('registro de canais', () => {
+  let clock: TestClock;
+  let registry: ReturnType<typeof makeChannelRegistry>;
+
+  beforeEach(() => {
+    clock = new TestClock();
+    registry = makeChannelRegistry(testDeps(clock, { maxPeers: 3 }));
+  });
+
+  function host(slug = SLUG, ownerToken = OWNER, ip = '1.1.1.1') {
+    const socket = new SpySocket();
+    const conn = registry.accept(socket, ip);
+    conn.receive(JSON.stringify({ type: 'host', slug, ownerToken }));
+    return { socket, conn };
+  }
+
+  function watch(slug = SLUG, ip = '2.2.2.2') {
+    const socket = new SpySocket();
+    const conn = registry.accept(socket, ip);
+    conn.receive(JSON.stringify({ type: 'watch', slug }));
+    return { socket, conn };
+  }
+
+  describe('reivindicar canal', () => {
+    it('transmissor recebe hosting com ICE e teto de peers', () => {
+      const h = host();
+      expect(h.socket.last()).toEqual({
+        type: 'hosting',
+        peerId: 'h_001',
+        iceServers: [{ urls: ['stun:test'] }],
+        maxPeers: 3,
+      });
+    });
+
+    it('recusa slug fora do formato', () => {
+      const h = host('-x-');
+      expect(h.socket.last()).toEqual({ type: 'error', code: 'SLUG_INVALID' });
+      expect(h.socket.closed).toBe(true);
+    });
+
+    it('recusa outro dono no mesmo slug', () => {
+      host();
+      const intruso = host(SLUG, OUTRO, '9.9.9.9');
+      expect(intruso.socket.last()).toEqual({ type: 'error', code: 'SLUG_TAKEN' });
+    });
+
+    it('o mesmo dono reconecta e derruba o socket antigo', () => {
+      const primeiro = host();
+      const segundo = host();
+      expect(primeiro.socket.closed).toBe(true);
+      expect(segundo.socket.last()).toMatchObject({ type: 'hosting' });
+      expect(registry.channelCount).toBe(1);
+    });
+
+    it('o ownerToken nunca volta para o cliente', () => {
+      const h = host();
+      expect(JSON.stringify(h.socket.sent)).not.toContain(OWNER);
+    });
+
+    it('limita tentativas de host por IP', () => {
+      for (let i = 0; i < 5; i += 1) host(`slug-${i}`, OWNER, '5.5.5.5');
+      const excedente = host('slug-x', OWNER, '5.5.5.5');
+      expect(excedente.socket.last()).toEqual({ type: 'error', code: 'RATE_LIMITED' });
+    });
+  });
+
+  describe('entrar como espectador', () => {
+    it('recusa quando ninguém transmite', () => {
+      expect(watch().socket.last()).toEqual({ type: 'error', code: 'NOT_HOSTING' });
+    });
+
+    it('slug inexistente e slug offline devolvem o mesmo erro', () => {
+      host();
+      // canal existe mas o transmissor saiu
+      const h = registry.accept(new SpySocket(), '1.1.1.1');
+      h.disconnect();
+      const a = watch('nunca-existiu');
+      expect(a.socket.last()).toEqual({ type: 'error', code: 'NOT_HOSTING' });
+    });
+
+    it('recebe watching com o id do transmissor', () => {
+      host();
+      const v = watch();
+      expect(v.socket.last()).toEqual({
+        type: 'watching',
+        peerId: 'v_002',
+        hostId: 'h_001',
+        iceServers: [{ urls: ['stun:test'] }],
+      });
+    });
+
+    it('avisa o transmissor da entrada', () => {
+      const h = host();
+      watch();
+      expect(h.socket.ofType('peer-joined')).toEqual([{ type: 'peer-joined', peerId: 'v_002' }]);
+    });
+
+    it('aplica o teto de espectadores', () => {
+      host();
+      watch();
+      watch();
+      watch();
+      expect(watch().socket.last()).toEqual({ type: 'error', code: 'CHANNEL_FULL' });
+      expect(registry.viewerCount(SLUG)).toBe(3);
+    });
+  });
+
+  describe('roteamento (R8: payload opaco)', () => {
+    it('leva o payload do transmissor ao espectador endereçado, sem tocar nele', () => {
+      const h = host();
+      const v1 = watch();
+      const v2 = watch();
+      const payload = { qualquer: 'coisa', aninhado: [1, 2, { x: true }] };
+
+      h.conn.receive(JSON.stringify({ type: 'signal', to: 'v_003', payload }));
+
+      expect(v2.socket.ofType('signal')).toEqual([
+        { type: 'signal', from: 'h_001', payload },
+      ]);
+      expect(v1.socket.ofType('signal')).toEqual([]);
+    });
+
+    it('espectador não precisa endereçar — vai sempre ao transmissor', () => {
+      const h = host();
+      const v = watch();
+      v.conn.receive(JSON.stringify({ type: 'signal', payload: 'oi' }));
+      expect(h.socket.ofType('signal')).toEqual([{ type: 'signal', from: 'v_002', payload: 'oi' }]);
+    });
+
+    it('espectador não alcança outro espectador', () => {
+      host();
+      const v1 = watch();
+      const v2 = watch();
+      v1.conn.receive(JSON.stringify({ type: 'signal', to: 'v_003', payload: 'malicioso' }));
+      expect(v2.socket.ofType('signal')).toEqual([]);
+    });
+
+    it('sinal antes de host/watch é recusado', () => {
+      const socket = new SpySocket();
+      registry.accept(socket, '1.1.1.1').receive(JSON.stringify({ type: 'signal', payload: 1 }));
+      expect(socket.last()).toEqual({ type: 'error', code: 'BAD_MESSAGE' });
+    });
+  });
+
+  describe('saídas e limpeza', () => {
+    it('saída do transmissor derruba os espectadores', () => {
+      const h = host();
+      const v = watch();
+      h.conn.disconnect();
+      expect(v.socket.closed).toBe(true);
+      expect(registry.isHosting(SLUG)).toBe(false);
+    });
+
+    it('saída de espectador avisa o transmissor e libera a vaga', () => {
+      const h = host();
+      const v = watch();
+      v.conn.disconnect();
+      expect(h.socket.ofType('peer-left')).toEqual([{ type: 'peer-left', peerId: 'v_002' }]);
+      expect(registry.viewerCount(SLUG)).toBe(0);
+    });
+
+    it('o dono mantém o slug durante a carência e o recupera', () => {
+      const h = host();
+      h.conn.disconnect();
+
+      clock.advance(OWNERSHIP_GRACE_MS - 1_000);
+      registry.sweep();
+      // Um refresh de página não pode entregar o link para um estranho.
+      expect(host(SLUG, OUTRO, '9.9.9.9').socket.last()).toEqual({
+        type: 'error',
+        code: 'SLUG_TAKEN',
+      });
+      expect(host().socket.last()).toMatchObject({ type: 'hosting' });
+    });
+
+    it('passada a carência, o slug fica livre', () => {
+      host().conn.disconnect();
+      clock.advance(OWNERSHIP_GRACE_MS + 1_000);
+      registry.sweep();
+      expect(registry.channelCount).toBe(0);
+      expect(host(SLUG, OUTRO, '9.9.9.9').socket.last()).toMatchObject({ type: 'hosting' });
+    });
+
+    it('hello recusado não deixa canal fantasma', () => {
+      // NOT_HOSTING é o caminho NORMAL de quem abre o link antes de o
+      // transmissor conectar. Vazar um canal por tentativa faria o Map
+      // crescer para sempre.
+      for (let i = 0; i < 25; i += 1) {
+        const v = watch(`canal-${i}`);
+        v.conn.disconnect();
+      }
+      expect(registry.channelCount).toBe(0);
+    });
+
+    it('socket que não se apresenta é fechado', () => {
+      const socket = new SpySocket();
+      registry.accept(socket, '1.1.1.1');
+      clock.advance(6_000);
+      expect(socket.last()).toEqual({ type: 'error', code: 'HELLO_TIMEOUT' });
+      expect(socket.closed).toBe(true);
+    });
+
+    it('conexão recusada não deixa timer disparando segundo erro', () => {
+      const v = watch();
+      expect(v.socket.sent).toEqual([{ type: 'error', code: 'NOT_HOSTING' }]);
+      clock.advance(10_000);
+      expect(v.socket.sent).toEqual([{ type: 'error', code: 'NOT_HOSTING' }]);
+    });
+
+    it('disconnect atrasado do socket antigo não destrói o canal do novo', () => {
+      const primeiro = host();
+      const segundo = host();
+      // O evento close do socket derrubado chega DEPOIS da reconexão.
+      primeiro.conn.disconnect();
+      expect(registry.isHosting(SLUG)).toBe(true);
+      expect(segundo.socket.closed).toBe(false);
+    });
+  });
+
+  describe('mensagens inválidas', () => {
+    it('JSON quebrado e schema inválido são recusados', () => {
+      const a = new SpySocket();
+      registry.accept(a, '1.1.1.1').receive('{{{');
+      expect(a.last()).toEqual({ type: 'error', code: 'BAD_MESSAGE' });
+
+      const b = new SpySocket();
+      registry.accept(b, '1.1.1.1').receive(JSON.stringify({ type: 'desconhecido' }));
+      expect(b.last()).toEqual({ type: 'error', code: 'BAD_MESSAGE' });
+    });
+
+    it('limita mensagens por conexão', () => {
+      const h = host();
+      for (let i = 0; i < 40; i += 1) {
+        h.conn.receive(JSON.stringify({ type: 'signal', to: 'v_x', payload: i }));
+      }
+      expect(h.socket.last()).toEqual({ type: 'error', code: 'RATE_LIMITED' });
+    });
+
+    it('a janela de mensagens reabre com o tempo', () => {
+      const h = host();
+      for (let i = 0; i < 25; i += 1) {
+        h.conn.receive(JSON.stringify({ type: 'signal', to: 'v_x', payload: i }));
+      }
+      clock.advance(11_000);
+      h.conn.receive(JSON.stringify({ type: 'signal', to: 'v_x', payload: 'ok' }));
+      expect(h.socket.ofType('error')).toEqual([]);
+    });
+
+    it('leave fecha o socket', () => {
+      const h = host();
+      h.conn.receive(JSON.stringify({ type: 'leave' }));
+      expect(h.socket.closed).toBe(true);
+    });
+  });
+});

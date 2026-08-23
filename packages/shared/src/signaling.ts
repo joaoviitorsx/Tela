@@ -1,77 +1,103 @@
 import { z } from 'zod';
 
 /**
- * Protocolo de sinalização do modo P2P.
+ * Protocolo de sinalização do mesh.
  *
- * O servidor aqui NÃO vê mídia. Ele só empurra SDP e ICE entre o transmissor
- * e cada espectador — alguns kilobytes por sessão. É o componente que sobra
- * quando você tira o SFU, e é pequeno o bastante para rodar no Raspberry Pi
- * da sala. A mídia vai direto de browser para browser.
+ * O servidor que fala este protocolo NÃO vê mídia — ele repassa `payload`
+ * opaco entre pares e nada mais. Kilobytes por sessão, contra gigabytes por
+ * hora num SFU. É essa assimetria que torna a arquitetura de custo zero
+ * possível (ADR 0005).
+ *
+ * REGRA R8: `payload` é opaco. O servidor não parseia SDP, não inspeciona
+ * ICE, não guarda histórico. Se você se pegar dando um `z.object({ sdp })`
+ * nele, parou de ser mesh — e o servidor virou parte do caminho da mídia.
+ * Por isso o tipo aqui é `z.unknown()` e não algo mais específico: a
+ * imprecisão é a especificação.
  *
  * Topologia: estrela com o transmissor no centro. Espectador só fala com o
- * transmissor, nunca com outro espectador — sem malha entre espectadores,
- * sem relay em cascata (ver ADR 0002 para por que isso foi rejeitado).
+ * transmissor, nunca com outro espectador.
  */
 
 export const PeerIdSchema = z.string().min(1).max(64);
+export type PeerId = z.infer<typeof PeerIdSchema>;
 
-const SdpSchema = z.object({
-  type: z.enum(['offer', 'answer']),
-  sdp: z.string().max(64_000),
-});
+export const SignalingErrorCodeSchema = z.enum([
+  'SLUG_TAKEN', // já existe transmissão nesse slug, de outro dono
+  'SLUG_INVALID',
+  'NOT_HOSTING', // ninguém transmitindo nesse slug
+  'CHANNEL_FULL', // MAX_PEERS atingido
+  'RATE_LIMITED',
+  'OWNER_INVALID',
+  'BAD_MESSAGE',
+  'HELLO_TIMEOUT', // conectou e não se apresentou
+]);
+export type SignalingErrorCode = z.infer<typeof SignalingErrorCodeSchema>;
 
-const IceCandidateSchema = z.object({
-  candidate: z.string().max(4_000),
-  sdpMid: z.string().nullable().optional(),
-  sdpMLineIndex: z.number().int().nullable().optional(),
-  usernameFragment: z.string().nullable().optional(),
+export const IceServerSchema = z.object({
+  urls: z.union([z.string(), z.array(z.string())]),
+  username: z.string().optional(),
+  credential: z.string().optional(),
 });
-export type IceCandidateInit = z.infer<typeof IceCandidateSchema>;
+export type IceServerConfig = z.infer<typeof IceServerSchema>;
 
 /* ───────────────────── cliente → servidor ───────────────────── */
 
-export const ClientMessageSchema = z.discriminatedUnion('t', [
-  /** Primeiro frame obrigatório. O ticket vai no corpo, nunca na URL —
-   *  query string vaza para log de proxy. */
-  z.object({ t: z.literal('hello'), ticket: z.string().min(1).max(4_000) }),
-  z.object({ t: z.literal('describe'), to: PeerIdSchema.optional(), sdp: SdpSchema }),
-  z.object({ t: z.literal('ice'), to: PeerIdSchema.optional(), candidate: IceCandidateSchema }),
-  z.object({ t: z.literal('bye'), to: PeerIdSchema.optional() }),
-  z.object({ t: z.literal('ping') }),
+export const ClientMessageSchema = z.discriminatedUnion('type', [
+  /** Reivindica o canal. O ownerToken é comparado, nunca logado nem devolvido. */
+  z.object({
+    type: z.literal('host'),
+    slug: z.string().min(1).max(64),
+    ownerToken: z.string().min(43).max(256),
+  }),
+  z.object({ type: z.literal('watch'), slug: z.string().min(1).max(64) }),
+  /** `to` opcional: espectador só tem um destino possível, o transmissor. */
+  z.object({
+    type: z.literal('signal'),
+    to: PeerIdSchema.optional(),
+    payload: z.unknown(),
+  }),
+  z.object({ type: z.literal('leave') }),
 ]);
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
 /* ───────────────────── servidor → cliente ───────────────────── */
 
-export const ServerMessageSchema = z.discriminatedUnion('t', [
+export const ServerMessageSchema = z.discriminatedUnion('type', [
   z.object({
-    t: z.literal('ready'),
-    role: z.enum(['publisher', 'viewer']),
-    room: z.string(),
-    self: PeerIdSchema,
-    peers: z.array(PeerIdSchema),
+    type: z.literal('hosting'),
+    peerId: PeerIdSchema,
+    /**
+     * Credencial de TURN efêmera. Nunca vai no bundle do front: quem a
+     * entrega é o servidor, no momento em que ela é necessária, com validade
+     * curta. Credencial de TURN em bundle estático é credencial pública.
+     */
+    iceServers: z.array(IceServerSchema),
+    maxPeers: z.number().int().min(1),
   }),
-  z.object({ t: z.literal('peer-joined'), peer: PeerIdSchema }),
-  z.object({ t: z.literal('peer-left'), peer: PeerIdSchema }),
-  z.object({ t: z.literal('describe'), from: PeerIdSchema, sdp: SdpSchema }),
-  z.object({ t: z.literal('ice'), from: PeerIdSchema, candidate: IceCandidateSchema }),
-  z.object({ t: z.literal('pong') }),
   z.object({
-    t: z.literal('error'),
-    code: z.enum([
-      'BAD_TICKET',
-      'BAD_MESSAGE',
-      'NO_PUBLISHER',
-      'VIEWER_LIMIT',
-      'PUBLISHER_TAKEN',
-      'HELLO_TIMEOUT',
-    ]),
-    message: z.string().optional(),
+    type: z.literal('watching'),
+    peerId: PeerIdSchema,
+    hostId: PeerIdSchema,
+    iceServers: z.array(IceServerSchema),
   }),
+  z.object({ type: z.literal('peer-joined'), peerId: PeerIdSchema }),
+  z.object({ type: z.literal('peer-left'), peerId: PeerIdSchema }),
+  z.object({ type: z.literal('signal'), from: PeerIdSchema, payload: z.unknown() }),
+  z.object({ type: z.literal('error'), code: SignalingErrorCodeSchema }),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 
-/** Cliente tem este tempo para mandar `hello` antes do socket cair. */
+/* ───────────────────── limites do protocolo ───────────────────── */
+
+/** Cliente tem este tempo para mandar `host` ou `watch` antes do socket cair. */
 export const HELLO_TIMEOUT_MS = 5_000;
-/** Keepalive — proxies matam WebSocket ocioso. */
-export const SIGNAL_PING_INTERVAL_MS = 25_000;
+
+/**
+ * Keepalive. O ping parte do SERVIDOR — o browser responde pong sozinho, sem
+ * que a página precise fazer nada. JavaScript não consegue enviar frame de
+ * ping, então a direção oposta exigiria uma mensagem de aplicação inútil.
+ */
+export const SIGNAL_PING_INTERVAL_MS = 30_000;
+
+/** Frame acima disso derruba a conexão. SDP grande é legítimo; megabyte não é. */
+export const MAX_FRAME_BYTES = 64 * 1024;

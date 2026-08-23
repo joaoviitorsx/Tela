@@ -79,7 +79,7 @@ export function Viewer({ slug }: Props) {
   if (!watching) {
     return (
       <main className="min-h-full">
-        <OfflineState slug={slug} full={state.status === 'failed' && state.reason === 'FULL'} />
+        <OfflineState slug={slug} full={state.status === 'full'} />
       </main>
     );
   }

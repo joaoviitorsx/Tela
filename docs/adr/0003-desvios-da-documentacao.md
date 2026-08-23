@@ -1,6 +1,10 @@
 # ADR 0003 — Desvios da documentação técnica
 
-**Status:** aceita · **Data:** 2026-08-23
+**Status:** parcialmente obsoleta — ver notas por item · **Data:** 2026-08-23
+
+> O changeset 001 (ADR 0005) removeu a camada de servidor HTTP, então os itens
+> 2 e 6 deixaram de existir. O item 3 continua valendo e o item 5 também. O
+> item 1 foi absorvido: a estrutura de camadas do AGENTS.md é agora a única.
 
 Registro dos pontos em que a implementação não seguiu a documentação ao pé da
 letra, com o motivo. AGENTS.md manda os documentos vencerem a intuição — então
@@ -26,7 +30,10 @@ A §6 documenta `POST /broadcast/start { ownerToken }` sem slug, e a §8.2
 implementa `verifyOwner(slug, ownerToken)` — que precisa do slug. Para fechar,
 faltaria um índice reverso `ownerHash → slug` no Redis.
 
-**Implementado:** `{ ownerToken, slug }` no corpo. O cliente sempre sabe o
+**OBSOLETO (ADR 0005):** não há mais API HTTP. O slug e o ownerToken viajam
+na primeira mensagem do WebSocket de sinalização, no `host`.
+
+**O que era:** `{ ownerToken, slug }` no corpo. O cliente sempre sabe o
 próprio slug (está no `localStorage` ao lado do token), então mandá-lo é de
 graça; um índice reverso seria uma segunda fonte de verdade capaz de divergir
 da primeira.
@@ -46,9 +53,13 @@ que também exige 3. Mas o exemplo usado na documentação inteira é `tela.gg/j
 forma precisa e o `jv` só aparece como ilustração.
 
 **Isto merece decisão humana.** Se `jv` deve funcionar, a mudança é trocar
-`{1,23}` por `{0,23}` em `apps/api/src/domain/slug.ts` e no schema de
-`@tela/shared`. Iniciais de duas letras são exatamente o tipo de slug que as
-pessoas querem.
+`{1,23}` por `{0,23}` em `packages/shared/src/schemas.ts` — **um lugar só**.
+
+Correção desta ADR: a versão original dizia "em `domain/slug.ts` e no schema",
+citando dois lugares. Havia **três** cópias da regex, e a terceira era um
+literal inline na UI. Seguir a instrução ao pé da letra teria deixado o front
+rejeitando um slug que a validação aceitava. Hoje `SLUG_RE` mora só em
+`@tela/shared` e todo mundo importa de lá.
 
 ---
 
@@ -75,11 +86,13 @@ justificar toda dependência nova; não havia justificativa.
 
 ---
 
-## 6. Rate limit em memória, não em Redis
+## 6. Rate limit em memória
 
-A §6 define os limites; não define onde o contador mora. Ficou em memória por
-processo, porque no modo P2P doméstico não existe Redis.
+**OBSOLETO na forma original (ADR 0005):** não há mais API HTTP. O rate limit
+vive agora em `apps/signaling/src/limits.ts`, e a limitação continua a mesma e
+continua explícita: o contador é por processo. Com mais de uma instância, cada
+uma conta separado. Não é defesa contra DDoS distribuído.
 
-**Limitação aceita e explícita:** o limite é por processo. Com mais de uma
-instância da API, cada uma conta separado. Não é defesa contra DDoS
-distribuído — isso é trabalho do Caddy e do firewall do provedor.
+Um defeito encontrado por auditoria e já corrigido: a varredura só tinha teto
+de tamanho, então acima de 10.000 baldes ela rodava O(n) em toda mensagem — e
+com baldes vivos não liberava nada. Agora roda no máximo uma vez por minuto.

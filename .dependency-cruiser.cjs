@@ -19,42 +19,40 @@ module.exports = {
         orphan: true,
         pathNot: [
           '\\.(config|d)\\.ts$',
-          'apps/api/src/server\\.ts$',
+          'apps/signaling/src/server\\.ts$',
           'apps/web/src/main\\.tsx$',
           'packages/shared/src/index\\.ts$',
+          '_reference/',
           '\\.test\\.ts$',
         ],
       },
       to: {},
     },
     {
-      name: 'api-domain-puro',
-      severity: 'error',
-      comment: 'domain/ e application/ não podem alcançar infra/ nem http/.',
-      from: { path: 'apps/api/src/(domain|application)/' },
-      to: { path: 'apps/api/src/(infra|http)/' },
-    },
-    {
       name: 'web-core-portavel',
       severity: 'error',
-      comment: 'core/ do web não pode alcançar adapters/, react/ nem components/.',
-      from: { path: 'apps/web/src/core/', pathNot: 'testing/' },
+      comment: 'R1/R2: core/ não pode alcançar adapters/, react/ nem components/.',
+      from: { path: 'apps/web/src/core/', pathNot: 'testing' },
       to: { path: 'apps/web/src/(adapters|react|components|routes)/' },
+    },
+    {
+      name: 'signaling-nao-toca-web',
+      severity: 'error',
+      comment: 'R8: o servidor de sinalização não compartilha código de mídia com o cliente.',
+      from: { path: 'apps/signaling/' },
+      to: { path: 'apps/web/' },
     },
     {
       name: 'sem-dev-dep-em-producao',
       severity: 'error',
-      from: { path: 'apps/(api|web)/src', pathNot: '\\.test\\.ts$' },
+      from: { path: 'apps/(signaling|web)/src', pathNot: '\\.test\\.ts$|testing' },
       to: { dependencyTypes: ['npm-dev'] },
     },
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
     tsPreCompilationDeps: true,
-    exclude: { path: 'node_modules|dist' },
-    // O código usa extensão `.js` em import de `.ts` (exigência do NodeNext).
-    // Sem estas duas opções o cruiser não resolve nada e reporta tudo como
-    // órfão — um falso verde perfeito.
+    exclude: { path: 'node_modules|dist|_reference' },
     enhancedResolveOptions: {
       extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
     },

@@ -4,9 +4,9 @@ import { BigButton } from '../components/BigButton.js';
 import { IconPlay } from '../components/Icon.js';
 import { QualityPicker } from '../components/QualityPicker.js';
 import { SlugPicker } from '../components/SlugPicker.js';
-import { api, identity, preferences } from '../container.js';
+import { identity, preferences } from '../container.js';
 import { isPresetId } from '../core/media/presets.js';
-import { useSlugCheck } from '../react/use-live-status.js';
+import { useSlugCheck } from '../react/use-slug-check.js';
 
 type Props = { readonly onStart: (slug: string, presetId: PresetId) => void };
 
@@ -16,6 +16,11 @@ type Props = { readonly onStart: (slug: string, presetId: PresetId) => void };
  * Cada elemento aqui teve que justificar por que não é o botão de transmitir.
  * A escolha de qualidade passou porque é a única decisão que muda o resultado
  * e que só o usuário sabe responder — ele conhece a internet e a máquina dele.
+ *
+ * Não há mais reserva de slug antes de transmitir: sem API HTTP, quem decide
+ * se o nome está livre é o servidor de sinalização, no `host`. O usuário
+ * descobre ao apertar TRANSMITIR. Em troca, digitar não faz uma requisição por
+ * tecla e não existe endpoint que sirva para varrer quem existe.
  */
 export function Home({ onStart }: Props) {
   const [slug, setSlug] = useState(() => identity.savedSlug() ?? '');
@@ -23,9 +28,6 @@ export function Home({ onStart }: Props) {
     const saved = preferences.read();
     return isPresetId(saved) ? saved : 'p1080p60';
   });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<readonly string[]>([]);
 
   const check = useSlugCheck(slug);
   const presets = useMemo(() => PRESET_ORDER.map((id) => PRESETS[id]), []);
@@ -35,43 +37,18 @@ export function Home({ onStart }: Props) {
     preferences.write(id);
   }, []);
 
-  const handleStart = useCallback(async () => {
+  const handleStart = useCallback(() => {
     const wanted = slug.trim().toLowerCase();
-    if (wanted.length === 0) return;
-
-    setBusy(true);
-    setError(null);
-    setSuggestions([]);
-
-    const result = await api.claim(wanted, identity.ownerToken());
-    setBusy(false);
-
-    if (!result.ok) {
-      // 409 com o slug de outra pessoa: mostra as alternativas em vez de
-      // devolver um erro seco e deixar o usuário inventar sozinho.
-      setSuggestions(result.suggestions);
-      setError(
-        result.error === 'SLUG_TAKEN'
-          ? 'Esse link já é de outra pessoa.'
-          : result.error === 'SLUG_RESERVED'
-            ? 'Esse nome não está disponível.'
-            : result.error === 'RATE_LIMITED'
-              ? 'Muitas tentativas. Espere um pouco.'
-              : 'Não foi possível reservar o link agora.',
-      );
-      return;
-    }
-
-    identity.rememberSlug(result.value.slug);
-    onStart(result.value.slug, presetId);
-  }, [slug, presetId, onStart]);
+    if (check.status !== 'ok') return;
+    identity.rememberSlug(wanted);
+    onStart(wanted, presetId);
+  }, [slug, check, presetId, onStart]);
 
   return (
     <main className="flex min-h-full flex-col items-center justify-center gap-8 px-6 py-16">
       <BigButton
-        onClick={() => void handleStart()}
-        busy={busy}
-        disabled={slug.trim().length < 3}
+        onClick={handleStart}
+        disabled={check.status !== 'ok'}
         icon={<IconPlay className="h-4 w-4" />}
       >
         TRANSMITIR
@@ -79,19 +56,9 @@ export function Home({ onStart }: Props) {
 
       <SlugPicker
         value={slug}
-        onChange={(value) => {
-          setSlug(value);
-          setError(null);
-          setSuggestions([]);
-        }}
-        status={check.status}
-        suggestions={suggestions}
-        onPickSuggestion={(picked) => {
-          setSlug(picked);
-          setSuggestions([]);
-          setError(null);
-        }}
-        error={error}
+        onChange={setSlug}
+        status={check.status === 'ok' ? 'free' : check.status === 'invalid' ? 'invalid' : 'idle'}
+        error={check.status === 'invalid' ? check.message : null}
       />
 
       <QualityPicker presets={presets} value={presetId} onChange={choosePreset} />

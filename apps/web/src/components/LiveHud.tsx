@@ -7,12 +7,15 @@ import { StatsBadge } from './StatsBadge.js';
 type Props = {
   readonly shareUrl: string;
   readonly viewers: number;
+  /** Teto do canal. Mostrar `2/3` diz mais que `2` — o usuário sabe quanto falta. */
+  readonly maxPeers: number;
+  /** Quantos espectadores estão passando por TURN. */
+  readonly relayed: number;
   readonly copied: boolean;
   readonly onCopy: () => void;
   readonly onStop: () => void;
   readonly visible: boolean;
   readonly reconnecting: boolean;
-  readonly transport: 'sfu' | 'p2p';
   readonly presets: readonly EncodingPreset[];
   readonly presetId: PresetId;
   readonly presetForced: boolean;
@@ -35,12 +38,13 @@ type Props = {
 export function LiveHud({
   shareUrl,
   viewers,
+  maxPeers,
+  relayed,
   copied,
   onCopy,
   onStop,
   visible,
   reconnecting,
-  transport,
   presets,
   presetId,
   presetForced,
@@ -75,11 +79,20 @@ export function LiveHud({
 
           <span className="tabular inline-flex items-center gap-1.5 text-[13px] text-dim">
             <IconViewers className="h-4 w-4" />
-            {viewers}
+            {viewers}/{maxPeers}
             <span className="sr-only">
-              {viewers === 1 ? 'espectador' : 'espectadores'}
+              {viewers === 1 ? 'espectador' : 'espectadores'} de {maxPeers}
             </span>
           </span>
+
+          {relayed > 0 && (
+            <span
+              className="tabular text-[12px] text-warn"
+              title="Conexão indireta, via servidor de relay: latência maior e cota consumida."
+            >
+              {relayed} via relay
+            </span>
+          )}
 
           <span className="ml-auto flex items-center gap-3">
             <StatsBadge {...stats} />
@@ -102,9 +115,7 @@ export function LiveHud({
             compact
           />
           <span className="text-[12px] text-muted">
-            {transport === 'p2p'
-              ? 'direto do seu PC — fechar esta aba encerra a transmissão'
-              : 'fechar esta aba encerra a transmissão'}
+            direto do seu PC — fechar esta aba encerra a transmissão
           </span>
         </div>
 

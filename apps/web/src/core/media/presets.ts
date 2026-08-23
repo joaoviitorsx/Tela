@@ -10,7 +10,6 @@ import {
   p2pViewerBudget,
   suggestPreset,
 } from '@tela/shared';
-import type { PublishRequest } from '../ports/media-transport.js';
 
 export { CONTENT_HINT, DEGRADATION_PREFERENCE, VIDEO_CODEC, p2pViewerBudget, suggestPreset };
 export type { EncodingPreset, PresetId };
@@ -47,22 +46,12 @@ export function nextPresetOnCpuPressure(current: PresetId): PresetId | null {
   return SIXTY_FPS_PRESETS[index + 1] ?? null;
 }
 
-/** Traduz o preset para o pedido genérico que o transporte entende. */
-export function toPublishRequest(
-  preset: EncodingPreset,
-  video: MediaStreamTrack,
-  audio: MediaStreamTrack | null,
-): PublishRequest {
-  return {
-    video,
-    audio,
-    maxBitrate: preset.main.maxBitrate,
-    maxFramerate: preset.main.maxFramerate,
-    layers: preset.layers.map((layer) => ({
-      width: layer.width,
-      height: layer.height,
-      maxBitrate: layer.encoding.maxBitrate,
-      maxFramerate: layer.encoding.maxFramerate,
-    })),
-  };
-}
+/**
+ * O transporte recebe o preset inteiro, não uma tradução.
+ *
+ * Antes havia um `toPublishRequest` que achatava o preset em camadas de
+ * simulcast. Em mesh não há simulcast: uma conexão tem um receptor, e o
+ * controle de congestionamento dela já adapta o encoding àquele espectador.
+ * O que resta é aplicar bitrate e framerate iguais em todos os senders
+ * (AGENTS.md R5, quarta regra) — trabalho do `MeshTopology`.
+ */

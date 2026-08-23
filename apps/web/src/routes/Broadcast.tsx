@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BigButton } from '../components/BigButton.js';
 import { LiveHud } from '../components/LiveHud.js';
 import { createBroadcastSession, identity } from '../container.js';
+import type { BroadcastFailure } from '../core/media/broadcast-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useBroadcast } from '../react/use-broadcast.js';
 import { useMediaStats } from '../react/use-media-stats.js';
@@ -14,12 +15,20 @@ type Props = {
   readonly onExit: () => void;
 };
 
-const MOTIVOS: Record<string, string> = {
+/**
+ * `Record<BroadcastFailure, string>`, não `Record<string, string>`: um motivo
+ * novo na união quebra a compilação aqui, em vez de deixar o usuário cair
+ * silenciosamente num texto genérico.
+ */
+const MOTIVOS: Record<BroadcastFailure, string> = {
   CAPTURE_DENIED: 'Você cancelou o compartilhamento de tela.',
-  CAPTURE_UNSUPPORTED: 'Este navegador não permite capturar a tela. Use Chrome ou Firefox no desktop.',
+  CAPTURE_UNSUPPORTED:
+    'Este navegador não permite capturar a tela. Use Chrome ou Firefox no desktop.',
   CAPTURE_ENDED: 'O compartilhamento de tela foi encerrado.',
-  OWNER_INVALID: 'Este link não é seu neste navegador.',
-  UPSTREAM_UNAVAILABLE: 'O servidor de mídia não respondeu.',
+  SLUG_TAKEN: 'Esse link já está sendo usado por outra pessoa. Escolha outro nome.',
+  SLUG_INVALID: 'Esse nome de link não é válido.',
+  RATE_LIMITED: 'Muitas tentativas. Espere um minuto.',
+  SIGNALING_UNAVAILABLE: 'Não foi possível falar com o servidor de sinalização.',
   TRANSPORT_FAILED: 'A conexão de vídeo caiu.',
   USER_STOPPED: 'Transmissão encerrada.',
 };
@@ -31,14 +40,13 @@ export function Broadcast({ slug, presetId, onExit }: Props) {
   const started = useRef(false);
 
   const live = state.status === 'live';
-  const reconnecting = state.status === 'reconnecting';
   const hud = useAutoHide(5_000, live);
   const presets = useMemo(() => PRESET_ORDER.map((id) => PRESETS[id]), []);
   const stats = useMediaStats(live ? state.stats : null);
 
-  useTabTitle(live || reconnecting ? `● tela.gg/${slug}` : 'tela');
+  useTabTitle(live ? `● tela.gg/${slug}` : 'tela');
   useWakeLock(live);
-  useBeforeUnload(live || reconnecting, () => void session.stop('USER_STOPPED'));
+  useBeforeUnload(live, () => void session.stop('USER_STOPPED'));
 
   const copy = useCallback((url: string) => {
     void navigator.clipboard
@@ -66,8 +74,10 @@ export function Broadcast({ slug, presetId, onExit }: Props) {
   const handleStop = useCallback(() => {
     // Só pergunta se tem gente assistindo. Confirmar quando o usuário está
     // sozinho é atrito puro.
-    if (live && state.viewers > 0) {
-      const ok = window.confirm(`${state.viewers} pessoa(s) assistindo. Encerrar mesmo assim?`);
+    if (live && state.peers.length > 0) {
+      const ok = window.confirm(
+        `${state.peers.length} pessoa(s) assistindo. Encerrar mesmo assim?`,
+      );
       if (!ok) return;
     }
     void stop();
@@ -84,7 +94,7 @@ export function Broadcast({ slug, presetId, onExit }: Props) {
     );
   }
 
-  if (!live && !reconnecting) {
+  if (!live) {
     return (
       <main className="flex min-h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="text-[15px] text-dim">
@@ -111,16 +121,17 @@ export function Broadcast({ slug, presetId, onExit }: Props) {
     >
       <LiveHud
         shareUrl={shareUrl}
-        viewers={live ? state.viewers : 0}
+        viewers={state.peers.length}
+        maxPeers={state.maxPeers}
+        relayed={state.peers.filter((peer) => peer.usingRelay).length}
         copied={copied}
         onCopy={() => copy(shareUrl)}
         onStop={handleStop}
-        visible={hud.visible || reconnecting}
-        reconnecting={reconnecting}
-        transport={live ? state.transport : 'sfu'}
+        visible={hud.visible}
+        reconnecting={state.peers.some((p) => p.connectionState === 'disconnected')}
         presets={presets}
-        presetId={live ? state.presetId : presetId}
-        presetForced={live ? state.presetForced : false}
+        presetId={state.presetId}
+        presetForced={state.presetForced}
         onPreset={(id) => void setPreset(id)}
         stats={stats}
       />

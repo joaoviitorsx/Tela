@@ -1,0 +1,112 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { createServer } from 'node:http';
+import { SLUG_RE } from '@tela/shared';
+import { MAX_FRAME_BYTES, SIGNAL_PING_INTERVAL_MS } from '@tela/shared';
+import { WebSocketServer, type WebSocket } from 'ws';
+import { makeChannelRegistry } from './channel-registry.js';
+import { loadConfig } from './config.js';
+import { makeIceProvider, makePeerIdGenerator } from './ice.js';
+
+const config = loadConfig();
+
+const registry = makeChannelRegistry({
+  limits: config.limits,
+  now: () => Date.now(),
+  hash: (input) => createHash('sha256').update(input, 'utf8').digest('hex'),
+  equals: (a, b) => {
+    if (a.length !== b.length) return false;
+    const bufA = Buffer.from(a, 'utf8');
+    const bufB = Buffer.from(b, 'utf8');
+    return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+  },
+  isValidSlug: (slug) => SLUG_RE.test(slug),
+  iceServersFor: makeIceProvider(config),
+  newPeerId: makePeerIdGenerator(),
+  setTimer: (ms, task) => {
+    const id = setTimeout(task, ms);
+    id.unref?.();
+    return () => clearTimeout(id);
+  },
+});
+
+const http = createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, channels: registry.channelCount }));
+    return;
+  }
+  res.writeHead(404).end();
+});
+
+const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
+
+wss.on('connection', (socket: WebSocket, req) => {
+  // Atrás de um proxy o IP real vem no cabeçalho; sem proxy, o socket basta.
+  const forwarded = req.headers['x-forwarded-for'];
+  const remote =
+    (typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : undefined) ??
+    req.socket.remoteAddress ??
+    'desconhecido';
+
+  const connection = registry.accept(
+    {
+      send(message) {
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+      },
+      close() {
+        try {
+          socket.close();
+        } catch {
+          /* socket já morto */
+        }
+      },
+    },
+    remote,
+  );
+
+  socket.on('message', (raw: Buffer | string) => {
+    connection.receive(typeof raw === 'string' ? raw : raw.toString('utf8'));
+  });
+  socket.on('close', () => connection.disconnect());
+  socket.on('error', () => connection.disconnect());
+});
+
+/**
+ * Keepalive e detecção de socket morto.
+ *
+ * O ping parte daqui porque JavaScript de browser não consegue enviar frame de
+ * ping — o browser responde pong sozinho. Quem não responde entre dois ciclos
+ * está morto: proxies e roteadores domésticos deixam conexões meio-abertas
+ * que nunca disparam `close`, e uma dessas segura a vaga do canal para sempre.
+ */
+const alive = new WeakSet<WebSocket>();
+wss.on('connection', (socket) => {
+  alive.add(socket);
+  socket.on('pong', () => alive.add(socket));
+});
+
+const heartbeat = setInterval(() => {
+  for (const socket of wss.clients) {
+    if (!alive.has(socket)) {
+      socket.terminate();
+      continue;
+    }
+    alive.delete(socket);
+    socket.ping();
+  }
+  registry.sweep();
+}, SIGNAL_PING_INTERVAL_MS);
+
+const shutdown = () => {
+  clearInterval(heartbeat);
+  wss.close();
+  http.close(() => process.exit(0));
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+http.listen(config.PORT, config.HOST, () => {
+  console.warn(
+    `[signaling] no ar em ${config.HOST}:${config.PORT} · maxPeers=${config.limits.maxPeers}`,
+  );
+});

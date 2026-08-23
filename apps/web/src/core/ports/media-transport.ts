@@ -1,91 +1,74 @@
-import type { Connection } from '@tela/shared';
+import type { EncodingPreset } from '@tela/shared';
+import type { PeerInfo } from '../mesh/mesh-topology.js';
 
 /**
- * A fronteira que sustenta a Fase 3.
+ * A fronteira que sustenta a Fase 3 e que já provou o próprio valor.
  *
- * `core/` inteiro fala com esta interface. Nenhuma menção a LiveKit, a
- * RTCPeerConnection ou a WebSocket aparece aqui — e é por isso que trocar o
- * transporte (LiveKit → P2P → WHIP no app nativo) não toca em
- * broadcast-session.ts nem em viewer-session.ts.
+ * `core/media/` inteiro fala com esta interface. Quando o transporte trocou de
+ * SFU para mesh (changeset 001), `BroadcastSession` e `ViewerSession`
+ * continuaram valendo — mudou quem implementa a porta, não quem a usa.
  *
- * Regra que faz isso valer alguma coisa (AGENTS.md R2): `livekit-client` só
- * pode ser importado dentro de `adapters/`. O lint quebra se escapar.
+ * REGRA R2: nenhum SDK de SFU no projeto. A implementação viva é
+ * `adapters/mesh-transport.ts`; `adapters/_reference/` é documentação.
  */
 
 export type QualityLimitation = 'none' | 'cpu' | 'bandwidth' | 'other';
 
-export type TransportStats = {
+export type MediaStats = {
   /** Framerate real de saída, medido — não o configurado. */
   readonly fps: number;
-  /** Bits por segundo somados sobre tudo que está saindo (ou entrando). */
+  /**
+   * Bits por segundo. No transmissor é o TOTAL somado sobre os peers: é esse
+   * número que o link de casa precisa aguentar, e é ele que o HUD mostra.
+   */
   readonly bitrateBps: number;
+  /** Pior RTT entre os peers. O melhor esconderia o amigo com problema. */
   readonly rttMs: number;
   /**
    * O campo mais útil do WebRTC. `cpu` significa que o encoder não dá conta
    * (provavelmente encode em software); `bandwidth`, que a rede não dá.
-   * A UI mostra isso como diagnóstico honesto, não como número bonito.
    */
   readonly limitation: QualityLimitation;
   readonly width: number;
   readonly height: number;
 };
 
-export type PublisherEvents = {
-  /** Quantos espectadores o transporte enxerga agora. */
-  viewers: number;
-  reconnecting: void;
-  reconnected: void;
-  /** Fim de linha: só chega quando não há mais reconexão possível. */
-  closed: { reason: string };
-};
-
-export type ViewerEvents = {
-  /** A mídia chegou e está no elemento de vídeo. */
-  track: { hasAudio: boolean };
+export type TransportEvents = {
+  /** Estado da malha mudou: entrou, saiu, ou o caminho virou relay. */
+  peers: readonly PeerInfo[];
+  /** Só no espectador: a mídia chegou. */
+  track: { stream: MediaStream };
   reconnecting: void;
   reconnected: void;
   closed: { reason: string };
-};
-
-export type PublishRequest = {
-  readonly video: MediaStreamTrack;
-  readonly audio: MediaStreamTrack | null;
-  readonly maxBitrate: number;
-  readonly maxFramerate: number;
-  readonly layers: readonly { width: number; height: number; maxBitrate: number; maxFramerate: number }[];
 };
 
 export type Unsubscribe = () => void;
 
-export type PublisherTransport = {
-  connect(connection: Connection): Promise<void>;
-  publish(request: PublishRequest): Promise<void>;
-  readStats(): Promise<TransportStats | null>;
-  on<K extends keyof PublisherEvents>(
+export type MediaTransport = {
+  /** Reivindica o canal e passa a esperar espectadores. */
+  host(slug: string, ownerToken: string): Promise<void>;
+  /** Entra num canal como espectador. */
+  watch(slug: string): Promise<void>;
+
+  publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void>;
+  publishAudio(track: MediaStreamTrack): Promise<void>;
+  /** Troca de qualidade sem renegociar: `setParameters` nos senders. */
+  setPreset(preset: EncodingPreset): Promise<void>;
+
+  /**
+   * Em mesh há N senders, então não existe "o sender". O total de upload e o
+   * pior RTT são os dois números que descrevem a saúde da transmissão.
+   */
+  getAggregateStats(): Promise<MediaStats | null>;
+  peers(): readonly PeerInfo[];
+
+  on<K extends keyof TransportEvents>(
     event: K,
-    handler: (payload: PublisherEvents[K]) => void,
+    handler: (payload: TransportEvents[K]) => void,
   ): Unsubscribe;
-  close(): Promise<void>;
+
+  disconnect(): Promise<void>;
 };
 
-export type ViewerTransport = {
-  /** `sink` recebe o MediaStream pronto para virar `video.srcObject`. */
-  connect(connection: Connection, sink: (stream: MediaStream) => void): Promise<void>;
-  readStats(): Promise<TransportStats | null>;
-  on<K extends keyof ViewerEvents>(
-    event: K,
-    handler: (payload: ViewerEvents[K]) => void,
-  ): Unsubscribe;
-  close(): Promise<void>;
-};
-
-/**
- * Escolhido em runtime pelo campo `transport` da resposta da API.
- *
- * Assíncrono de propósito: o adapter do LiveKit é carregado sob demanda. Quem
- * roda em modo P2P — o self-host doméstico — nunca baixa o SDK do LiveKit.
- */
-export type TransportFactory = {
-  publisher(kind: Connection['transport']): Promise<PublisherTransport>;
-  viewer(kind: Connection['transport']): Promise<ViewerTransport>;
-};
+export type { PeerInfo };

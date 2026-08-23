@@ -1,5 +1,12 @@
 # Prompts para o agente de desenvolvimento — Tela
 
+> **DESATUALIZADO em parte.** O changeset 001 (`TELA-changeset-mesh.md`)
+> substituiu os milestones M1–M5 descritos aqui: a API, o SFU e a camada de
+> infra deixaram de existir. O roadmap válido está na §9 do changeset. Os
+> prompts auxiliares no fim deste arquivo (revisão de arquitetura, checklist
+> de PR) continuam úteis — só troque as regras citadas pelas do AGENTS.md
+> atual, que tem oito e não sete.
+
 > **Como usar:** copie `AGENTS.md` e os dois documentos técnicos para o repositório antes de começar (`AGENTS.md` na raiz, os outros em `docs/`). Depois envie **um milestone por vez** — não cole tudo de uma vez. Agente com sete tarefas na frente atropela as três primeiras.
 
 ---

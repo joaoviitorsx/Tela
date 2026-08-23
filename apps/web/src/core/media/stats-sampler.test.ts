@@ -9,9 +9,15 @@ function report(entries: Record<string, unknown>[]): RTCStatsReport {
   } as unknown as RTCStatsReport;
 }
 
-const outbound = (bytes: number, timestamp: number, extra: Record<string, unknown> = {}) => ({
+const outbound = (
+  bytes: number,
+  timestamp: number,
+  extra: Record<string, unknown> = {},
+  ssrc = 1,
+) => ({
   type: 'outbound-rtp',
   kind: 'video',
+  ssrc,
   bytesSent: bytes,
   timestamp,
   framesPerSecond: 60,
@@ -36,11 +42,53 @@ describe('StatsSampler', () => {
     expect(stats?.bitrateBps).toBe(8_000_000);
   });
 
-  it('soma vários outbound-rtp — é o total que sai do link em P2P', () => {
+  it('soma vários peers — é o total que sai do link em mesh', () => {
     const sampler = new StatsSampler('outbound');
-    sampler.read(report([outbound(0, 1_000), outbound(0, 1_000)]));
-    const stats = sampler.read(report([outbound(500_000, 2_000), outbound(500_000, 2_000)]));
+    sampler.readMany([report([outbound(0, 1_000, {}, 1)]), report([outbound(0, 1_000, {}, 2)])]);
+    const stats = sampler.readMany([
+      report([outbound(500_000, 2_000, {}, 1)]),
+      report([outbound(500_000, 2_000, {}, 2)]),
+    ]);
     expect(stats?.bitrateBps).toBe(8_000_000);
+  });
+
+  it('ADR 0006 A4: espectador que entra NÃO dá pico no bitrate', () => {
+    const sampler = new StatsSampler('outbound');
+    // Um peer transmitindo a 1 Mbps há um tempo.
+    sampler.readMany([report([outbound(0, 1_000, {}, 1)])]);
+    sampler.readMany([report([outbound(125_000, 2_000, {}, 1)])]);
+
+    // Chega um segundo peer com 5 MB já acumulados no contador dele.
+    const stats = sampler.readMany([
+      report([outbound(250_000, 3_000, {}, 1)]),
+      report([outbound(5_000_000, 3_000, {}, 2)]),
+    ]);
+
+    // Somar contadores brutos daria um salto de ~40 Mbps que nunca existiu.
+    expect(stats?.bitrateBps).toBe(1_000_000);
+  });
+
+  it('espectador que sai não deixa buraco nem delta negativo', () => {
+    const sampler = new StatsSampler('outbound');
+    sampler.readMany([report([outbound(0, 1_000, {}, 1)]), report([outbound(0, 1_000, {}, 2)])]);
+    const stats = sampler.readMany([report([outbound(125_000, 2_000, {}, 1)])]);
+    expect(stats?.bitrateBps).toBe(1_000_000);
+  });
+
+  it('reporta o PIOR rtt, não o melhor', () => {
+    const sampler = new StatsSampler('outbound');
+    const stats = sampler.readMany([
+      report([
+        outbound(0, 1_000, {}, 1),
+        { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.02 },
+      ]),
+      report([
+        outbound(0, 1_000, {}, 2),
+        { type: 'candidate-pair', state: 'succeeded', currentRoundTripTime: 0.18 },
+      ]),
+    ]);
+    // O melhor esconderia o amigo com problema.
+    expect(stats?.rttMs).toBe(180);
   });
 
   it('lê qualityLimitationReason', () => {

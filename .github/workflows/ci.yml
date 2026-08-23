@@ -32,25 +32,48 @@ jobs:
       - name: fronteiras de camada realmente bloqueiam
         run: |
           set -e
-          echo "import { Redis } from 'ioredis'; export const x = Redis;" \
-            > apps/api/src/domain/__ci_violacao.ts
-          echo "import { Room } from 'livekit-client'; export const x = Room;" \
-            > apps/web/src/core/__ci_violacao.ts
+          # R1: core/ do web não conhece React
+          echo "import { useState } from 'react'; export const x = useState;" \
+            > apps/web/src/core/__ci_r1.ts
+          # R8: o signaling não parseia SDP
+          echo "export const x = (p: { sdp: string }) => p.sdp;" \
+            > apps/signaling/src/__ci_r8.ts
           if pnpm exec eslint apps --no-warn-ignored; then
             echo "::error::o lint aprovou uma violação de fronteira"
             exit 1
           fi
-          rm apps/api/src/domain/__ci_violacao.ts apps/web/src/core/__ci_violacao.ts
+          rm apps/web/src/core/__ci_r1.ts apps/signaling/src/__ci_r8.ts
           pnpm exec eslint apps packages --no-warn-ignored
 
-  compose:
+      - name: o front estático não carrega SDK de SFU
+        run: |
+          set -e
+          if grep -rl "livekit" apps/web/dist/assets 2>/dev/null; then
+            echo "::error::R2 violada: SDK de SFU foi parar no bundle"
+            exit 1
+          fi
+          echo "bundle limpo"
+
+  signaling:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: docker compose valida
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tela/shared build && pnpm --filter @tela/signaling build
+
+      # O servidor precisa subir de verdade e responder. Um bootstrap quebrado
+      # passa em typecheck e falha só no deploy.
+      - name: sobe e responde
         run: |
-          cp infra/.env.example infra/.env
-          cp infra/.env.p2p.example infra/.env.p2p
-          docker compose -f infra/compose/docker-compose.yml config -q
-          docker compose -f infra/compose/docker-compose.dev.yml config -q
-          docker compose -f infra/compose/docker-compose.p2p.yml config -q
+          set -e
+          PORT=3399 node apps/signaling/dist/server.js &
+          PID=$!
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:3399/health >/dev/null && break
+            sleep 0.25
+          done
+          curl -sf http://127.0.0.1:3399/health | tee /dev/stderr | grep -q '"ok":true'
+          kill $PID

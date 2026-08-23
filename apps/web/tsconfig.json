@@ -4,5 +4,7 @@
     "noEmit": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "vite.config.ts"],
+  "//": "_reference/ é documentação, não código vivo: guarda a implementação do transporte SFU para quem quiser entender a alternativa rejeitada (ADR 0005). Não compila, não é importado, não vai no bundle.",
+  "exclude": ["src/adapters/_reference"]
 }

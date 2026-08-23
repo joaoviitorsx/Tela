@@ -1,25 +1,30 @@
-import type { Connection } from '@tela/shared';
-import type { ApiResult, ClaimOutcome, TelaApi } from '../api/client.js';
+import type { EncodingPreset, IceServerConfig } from '@tela/shared';
 import { Emitter } from '../emitter.js';
 import type { AudioCapture } from '../ports/audio-capture.js';
 import type {
-  PublishRequest,
-  PublisherEvents,
-  PublisherTransport,
-  TransportFactory,
-  TransportStats,
-  ViewerEvents,
-  ViewerTransport,
+  MediaStats,
+  MediaTransport,
+  PeerInfo,
+  TransportEvents,
 } from '../ports/media-transport.js';
+import type { Random } from '../ports/random.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
 import type { ScreenCapture } from '../ports/screen-capture.js';
+import type {
+  ChannelEvents,
+  ChannelOpened,
+  SignalingChannel,
+} from '../ports/signaling-channel.js';
 import type { Storage } from '../ports/storage.js';
-import type { Random } from '../ports/random.js';
 
 /**
- * Fakes que fazem os testes de sessão rodarem sem browser, sem servidor e sem
- * rede — em milissegundos. É o retorno concreto da regra R1: se a lógica de
- * mídia estivesse dentro de `useEffect`, nada disto seria testável.
+ * Fakes in-memory, não mocks.
+ *
+ * Um mock verifica que você chamou o método. Um fake verifica que o
+ * comportamento resultante está certo — e sobrevive a refatoração da
+ * implementação. É o retorno concreto da R1: com a lógica de mídia fora de
+ * `useEffect`, os testes de sessão rodam sem browser, sem rede e sem servidor,
+ * em milissegundos.
  */
 
 export class FakeScheduler implements Scheduler {
@@ -54,7 +59,7 @@ export class FakeScheduler implements Scheduler {
       const due = [...this.tasks.entries()]
         .filter(([, task]) => task.at <= target)
         .sort((a, b) => a[1].at - b[1].at)[0];
-      if (!due || (guard += 1) > 1_000) break;
+      if (due === undefined || (guard += 1) > 1_000) break;
 
       const [id, task] = due;
       this.time = task.at;
@@ -70,7 +75,9 @@ export class FakeScheduler implements Scheduler {
   }
 }
 
-export function fakeTrack(kind: 'video' | 'audio'): MediaStreamTrack {
+export type FakeTrack = MediaStreamTrack & { stopped: boolean; fireEnded(): void };
+
+export function fakeTrack(kind: 'video' | 'audio'): FakeTrack {
   const listeners = new Map<string, Set<() => void>>();
   const track = {
     kind,
@@ -95,7 +102,20 @@ export function fakeTrack(kind: 'video' | 'audio'): MediaStreamTrack {
       for (const handler of listeners.get('ended') ?? []) handler();
     },
   };
-  return track as unknown as MediaStreamTrack & { stopped: boolean; fireEnded(): void };
+  return track as unknown as FakeTrack;
+}
+
+export function fakeStream(tracks: MediaStreamTrack[] = []): MediaStream {
+  return {
+    getTracks: () => tracks,
+    getAudioTracks: () => tracks.filter((t) => t.kind === 'audio'),
+    getVideoTracks: () => tracks.filter((t) => t.kind === 'video'),
+    addTrack: (t: MediaStreamTrack) => tracks.push(t),
+    removeTrack: (t: MediaStreamTrack) => {
+      const i = tracks.indexOf(t);
+      if (i >= 0) tracks.splice(i, 1);
+    },
+  } as unknown as MediaStream;
 }
 
 export class FakeScreenCapture implements ScreenCapture {
@@ -129,216 +149,170 @@ export class FakeAudioCapture implements AudioCapture {
   }
 }
 
-export class FakePublisherTransport implements PublisherTransport {
-  private readonly emitter = new Emitter<PublisherEvents>();
-  readonly published: PublishRequest[] = [];
-  connected: Connection | null = null;
-  closed = false;
-  failOnConnect = false;
-  stats: TransportStats | null = null;
+/* ─────────────────────────── transporte ─────────────────────────── */
 
-  async connect(connection: Connection): Promise<void> {
-    if (this.failOnConnect) throw new Error('connect failed');
-    this.connected = connection;
+export class FakeMediaTransport implements MediaTransport {
+  private readonly emitter = new Emitter<TransportEvents>();
+
+  hosted: { slug: string; ownerToken: string } | null = null;
+  watched: string | null = null;
+  readonly videos: { track: MediaStreamTrack; preset: EncodingPreset }[] = [];
+  readonly audios: MediaStreamTrack[] = [];
+  readonly presets: EncodingPreset[] = [];
+  disconnected = false;
+  stats: MediaStats | null = null;
+  currentPeers: readonly PeerInfo[] = [];
+
+  /** Erros injetáveis: `host`/`watch` rejeitam com estes valores. */
+  hostError: unknown = null;
+  watchError: unknown = null;
+  /** Quando true, `watch` nunca settla — o caso da negociação travada. */
+  hangOnWatch = false;
+
+  async host(slug: string, ownerToken: string): Promise<void> {
+    if (this.hostError !== null) throw this.hostError;
+    this.hosted = { slug, ownerToken };
   }
-  async publish(request: PublishRequest): Promise<void> {
-    this.published.push(request);
+
+  async watch(slug: string): Promise<void> {
+    if (this.watchError !== null) throw this.watchError;
+    if (this.hangOnWatch) return new Promise<void>(() => undefined);
+    this.watched = slug;
   }
-  async readStats(): Promise<TransportStats | null> {
+
+  async publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void> {
+    this.videos.push({ track, preset });
+  }
+  async publishAudio(track: MediaStreamTrack): Promise<void> {
+    this.audios.push(track);
+  }
+  async setPreset(preset: EncodingPreset): Promise<void> {
+    this.presets.push(preset);
+  }
+  async getAggregateStats(): Promise<MediaStats | null> {
     return this.stats;
   }
-  on<K extends keyof PublisherEvents>(event: K, handler: (p: PublisherEvents[K]) => void) {
+  peers(): readonly PeerInfo[] {
+    return this.currentPeers;
+  }
+  on<K extends keyof TransportEvents>(event: K, handler: (p: TransportEvents[K]) => void) {
     return this.emitter.on(event, handler);
   }
-  async close(): Promise<void> {
-    this.closed = true;
+  async disconnect(): Promise<void> {
+    this.disconnected = true;
   }
-  emit<K extends keyof PublisherEvents>(event: K, payload: PublisherEvents[K]): void {
+
+  emit<K extends keyof TransportEvents>(event: K, payload: TransportEvents[K]): void {
     this.emitter.emit(event, payload);
+  }
+
+  /** Simula a chegada da mídia no espectador. */
+  deliver(stream: MediaStream = fakeStream([fakeTrack('video')])): void {
+    this.emit('track', { stream });
+  }
+
+  setPeers(peers: readonly PeerInfo[]): void {
+    this.currentPeers = peers;
+    this.emit('peers', peers);
   }
 }
 
-export class FakeViewerTransport implements ViewerTransport {
-  private readonly emitter = new Emitter<ViewerEvents>();
-  connected: Connection | null = null;
+/* ─────────────────────────── sinalização ─────────────────────────── */
+
+export const TEST_ICE: IceServerConfig[] = [{ urls: ['stun:test'] }];
+
+/**
+ * Canal de sinalização em memória. Dois clientes ligados ao mesmo `Hub`
+ * trocam payload como trocariam pela rede — sem servidor e sem WebSocket.
+ */
+export class FakeSignalingHub {
+  private readonly channels = new Map<string, FakeSignalingChannel>();
+  hostId: string | null = null;
+
+  register(channel: FakeSignalingChannel): void {
+    this.channels.set(channel.selfId, channel);
+    if (channel.role === 'host') this.hostId = channel.selfId;
+  }
+
+  deliver(from: string, payload: unknown, to?: string): void {
+    const target = to ?? this.hostId;
+    if (target === null || target === undefined) return;
+    this.channels.get(target)?.receive(from, payload);
+  }
+
+  announceJoin(peerId: string): void {
+    if (this.hostId === null) return;
+    this.channels.get(this.hostId)?.fire('peer-joined', { peerId });
+  }
+
+  announceLeave(peerId: string): void {
+    if (this.hostId === null) return;
+    this.channels.get(this.hostId)?.fire('peer-left', { peerId });
+  }
+}
+
+export class FakeSignalingChannel implements SignalingChannel {
+  private readonly emitter = new Emitter<ChannelEvents>();
+  readonly sent: { payload: unknown; to?: string }[] = [];
   closed = false;
-  failOnConnect = false;
-  stats: TransportStats | null = null;
-  readonly stream = { getAudioTracks: () => [] } as unknown as MediaStream;
+  hostError: unknown = null;
+  watchError: unknown = null;
 
-  async connect(connection: Connection, sink: (stream: MediaStream) => void): Promise<void> {
-    if (this.failOnConnect) throw new Error('connect failed');
-    this.connected = connection;
-    sink(this.stream);
-  }
-  async readStats(): Promise<TransportStats | null> {
-    return this.stats;
-  }
-  on<K extends keyof ViewerEvents>(event: K, handler: (p: ViewerEvents[K]) => void) {
-    return this.emitter.on(event, handler);
-  }
-  async close(): Promise<void> {
-    this.closed = true;
-  }
-  emit<K extends keyof ViewerEvents>(event: K, payload: ViewerEvents[K]): void {
-    this.emitter.emit(event, payload);
-  }
-}
-
-export function fakeTransports(
-  publisher: PublisherTransport,
-  viewer: ViewerTransport,
-): TransportFactory {
-  return {
-    publisher: async () => publisher,
-    viewer: async () => viewer,
-  };
-}
-
-export const SFU_CONNECTION: Connection = {
-  transport: 'sfu',
-  token: 'jwt',
-  wsUrl: 'wss://test/rtc',
-  room: 'b_joao',
-};
-
-export const P2P_CONNECTION: Connection = {
-  transport: 'p2p',
-  ticket: 'a.b',
-  signalUrl: 'ws://127.0.0.1:3333/api/signal',
-  room: 'b_joao',
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-  maxViewers: 3,
-};
-
-export class FakeApi implements TelaApi {
-  connection: Connection = SFU_CONNECTION;
-  startError: ApiResult<never>['ok'] extends true ? never : null | 'OWNER_INVALID' | 'UPSTREAM_UNAVAILABLE' = null;
-  pingError: null | 'NOT_LIVE' = null;
-  joinError: null | 'NOT_LIVE' | 'VIEWER_LIMIT' = null;
-  live = true;
-  viewers = 0;
-  readonly beacons: { slug: string; ownerToken: string }[] = [];
-  pings = 0;
-
-  async claim(slug: string): Promise<ClaimOutcome> {
-    return { ok: true, value: { slug, shareUrl: `https://tela.gg/${slug}` } };
+  constructor(
+    readonly selfId: string,
+    readonly role: 'host' | 'viewer',
+    private readonly hub?: FakeSignalingHub,
+    private readonly maxPeers = 3,
+  ) {
+    hub?.register(this);
   }
 
-  async startBroadcast(slug: string) {
-    if (this.startError !== null) return { ok: false as const, error: this.startError };
+  async host(): Promise<ChannelOpened> {
+    if (this.hostError !== null) throw this.hostError;
     return {
-      ok: true as const,
-      value: { connection: this.connection, shareUrl: `https://tela.gg/${slug}`, slug },
+      role: 'host',
+      selfId: this.selfId,
+      hostId: null,
+      iceServers: TEST_ICE,
+      maxPeers: this.maxPeers,
     };
   }
 
-  async ping() {
-    this.pings += 1;
-    if (this.pingError !== null) return { ok: false as const, error: this.pingError };
-    return { ok: true as const, value: { viewers: this.viewers } };
+  async watch(): Promise<ChannelOpened> {
+    if (this.watchError !== null) throw this.watchError;
+    return {
+      role: 'viewer',
+      selfId: this.selfId,
+      hostId: this.hub?.hostId ?? 'h_1',
+      iceServers: TEST_ICE,
+      maxPeers: 0,
+    };
   }
 
-  stopBeacon(slug: string, ownerToken: string): void {
-    this.beacons.push({ slug, ownerToken });
+  send(payload: unknown, to?: string): void {
+    this.sent.push(to === undefined ? { payload } : { payload, to });
+    this.hub?.deliver(this.selfId, payload, to);
   }
 
-  async liveStatus() {
-    return this.live
-      ? { ok: true as const, value: { live: true as const, startedAt: 1, viewers: this.viewers } }
-      : { ok: true as const, value: { live: false as const } };
-  }
-
-  async join() {
-    if (this.joinError !== null) return { ok: false as const, error: this.joinError };
-    return { ok: true as const, value: { connection: this.connection, identity: 'v_test' } };
-  }
-}
-
-/**
- * API cuja resposta de `startBroadcast` fica pendurada até você soltar.
- *
- * Existe para testar a corrida real: o usuário aperta "parar" enquanto o
- * servidor ainda não respondeu. Sem uma porta controlável no meio, essa
- * janela é impossível de reproduzir de forma determinística.
- */
-export class GatedApi extends FakeApi {
-  release!: () => void;
-  private readonly gate = new Promise<void>((resolve) => {
-    this.release = resolve;
-  });
-
-  override async startBroadcast(slug: string) {
-    await this.gate;
-    return super.startBroadcast(slug);
-  }
-}
-
-/**
- * Transporte que falha do jeito que o mundo real falha: o `connect` rejeita
- * E o evento `closed` dispara. Os dois. É essa dupla notificação que
- * transformava uma falha em duas tentativas de reconexão, depois quatro.
- */
-export class ClosingViewerTransport implements ViewerTransport {
-  private readonly emitter = new Emitter<ViewerEvents>();
-  connects = 0;
-  closes = 0;
-
-  async connect(): Promise<void> {
-    this.connects += 1;
-    this.emitter.emit('closed', { reason: 'SIGNAL_CLOSED' });
-    throw new Error('SIGNAL_CLOSED');
-  }
-  async readStats(): Promise<TransportStats | null> {
-    return null;
-  }
-  on<K extends keyof ViewerEvents>(event: K, handler: (p: ViewerEvents[K]) => void) {
+  on<K extends keyof ChannelEvents>(event: K, handler: (p: ChannelEvents[K]) => void) {
     return this.emitter.on(event, handler);
   }
-  async close(): Promise<void> {
-    this.closes += 1;
-  }
-}
 
-/**
- * Transporte cujo `connect` fica pendurado até você soltar, e só então entrega
- * a mídia.
- *
- * Reproduz a janela real entre "pedi a conexão" e "o primeiro frame chegou" —
- * segundos, em rede ruim. É nessa janela que o usuário fecha a aba.
- */
-export class GatedViewerTransport implements ViewerTransport {
-  readonly emitter = new Emitter<ViewerEvents>();
-  private release!: () => void;
-  private readonly gate = new Promise<void>((resolve) => {
-    this.release = resolve;
-  });
-  closed = false;
-  readonly stream = { getAudioTracks: () => [] } as unknown as MediaStream;
-
-  /** Simula o primeiro frame chegando. */
-  deliver(): void {
-    this.release();
-  }
-
-  async connect(_connection: Connection, sink: (stream: MediaStream) => void): Promise<void> {
-    await this.gate;
-    sink(this.stream);
-  }
-  async readStats(): Promise<TransportStats | null> {
-    return null;
-  }
-  on<K extends keyof ViewerEvents>(event: K, handler: (p: ViewerEvents[K]) => void) {
-    return this.emitter.on(event, handler);
-  }
-  async close(): Promise<void> {
+  close(): void {
     this.closed = true;
-    this.release();
   }
-  emit<K extends keyof ViewerEvents>(event: K, payload: ViewerEvents[K]): void {
+
+  /** Só no fake: entrega um payload como se tivesse vindo da rede. */
+  receive(from: string, payload: unknown): void {
+    this.emitter.emit('signal', { from, payload });
+  }
+
+  fire<K extends keyof ChannelEvents>(event: K, payload: ChannelEvents[K]): void {
     this.emitter.emit(event, payload);
   }
 }
+
+/* ─────────────────────────── outros ─────────────────────────── */
 
 export class FakeStorage implements Storage {
   readonly rows = new Map<string, string>();
@@ -359,3 +333,11 @@ export class FakeRandom implements Random {
     return new Uint8Array(length).fill(this.fill);
   }
 }
+
+export const shareUrlFor = (slug: string) => `https://tela.gg/${slug}`;
+
+/** Política de slug enxuta: o teste não deve depender da blocklist real. */
+export const TEST_POLICY = {
+  reserved: new Set(['api', 'signal', 'admin']),
+  offensive: new Set(['puta']),
+};

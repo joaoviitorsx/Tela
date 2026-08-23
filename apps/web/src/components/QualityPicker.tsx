@@ -43,7 +43,7 @@ export function QualityPicker({
                 'disabled:opacity-40',
                 active
                   ? 'bg-text text-void font-medium'
-                  : 'text-dim hover:bg-line hover:text-text',
+                  : 'text-muted hover:bg-void hover:text-text',
               ].join(' ')}
             >
               {preset.label.replace(' econômico', '·eco')}
@@ -54,20 +54,31 @@ export function QualityPicker({
     );
   }
 
+  /**
+   * Uma linha, não quatro cartões.
+   *
+   * A tese da tela inicial é "um botão e um campo". Quatro cartões de escolha
+   * empurravam o botão para 10% da página e transformavam a home num painel de
+   * configuração — o oposto do produto. A escolha continua ali, com o mesmo
+   * peso de uma escolha secundária, e a explicação aparece só do preset
+   * selecionado, que é a única que interessa naquele instante.
+   */
+  const selecionado = presets.find((preset) => preset.id === value);
+
   return (
     <fieldset className="w-full max-w-md" disabled={disabled}>
-      <legend className="mb-2 text-[13px] text-dim">Qualidade</legend>
+      <legend className="mb-2 text-[13px] text-muted">Qualidade</legend>
 
-      <div className="grid gap-1.5">
+      <div className="flex flex-wrap gap-1 rounded-md border border-edge bg-surface p-1">
         {presets.map((preset) => {
           const active = preset.id === value;
           return (
             <label
               key={preset.id}
               className={[
-                'flex cursor-pointer items-center gap-3 rounded-md border px-4 py-3',
-                'transition-colors duration-150',
-                active ? 'border-accent bg-surface' : 'border-line hover:border-muted',
+                'tabular flex-1 cursor-pointer rounded-sm px-3 py-2 text-center text-[13px]',
+                'whitespace-nowrap transition-colors duration-150',
+                active ? 'bg-text font-medium text-void' : 'text-muted hover:bg-void hover:text-text',
               ].join(' ')}
             >
               <input
@@ -78,21 +89,16 @@ export function QualityPicker({
                 onChange={() => onChange(preset.id)}
                 className="sr-only"
               />
-              <span
-                className={`h-2.5 w-2.5 shrink-0 rounded-full ${active ? 'bg-accent' : 'bg-line'}`}
-                aria-hidden="true"
-              />
-              <span className="min-w-0">
-                <span className="tabular block text-[15px] leading-tight">{preset.label}</span>
-                <span className="block text-[13px] leading-tight text-dim">{preset.hint}</span>
-              </span>
+              {preset.label.replace(' econômico', ' eco')}
             </label>
           );
         })}
       </div>
 
+      <p className="mt-2 min-h-5 text-[13px] text-muted">{selecionado?.hint}</p>
+
       {forced && (
-        <p role="status" className="mt-2 text-[13px] text-warn">
+        <p role="status" className="mt-1 text-[13px] text-warn">
           Reduzido automaticamente: o encoder não estava dando conta. Você pode subir de novo.
         </p>
       )}

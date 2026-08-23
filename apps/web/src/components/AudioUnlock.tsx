@@ -15,8 +15,8 @@ export function AudioUnlock({ onUnlock }: Props) {
       aria-label="Ativar o som"
       className="animate-enter absolute inset-0 z-30 flex cursor-pointer items-center justify-center bg-void/55 backdrop-blur-[2px]"
     >
-      <span className="flex items-center gap-3 rounded-md border border-line bg-surface px-6 py-4 text-[15px] font-medium">
-        <IconMuted className="h-5 w-5 text-accent" />
+      <span className="flex items-center gap-3 rounded-md border border-edge bg-surface px-6 py-4 text-[15px] font-medium">
+        <IconMuted className="h-5 w-5 text-text" />
         Clique para ativar o som
       </span>
     </button>

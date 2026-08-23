@@ -1,3 +1,5 @@
+import { IconCheck, IconWarning } from './Icon.js';
+
 type Status = 'idle' | 'checking' | 'invalid' | 'free' | 'live';
 
 type Props = {
@@ -9,25 +11,21 @@ type Props = {
   readonly error?: string | null;
 };
 
-const DOT: Record<Status, string> = {
-  idle: 'bg-line',
-  checking: 'bg-muted animate-live',
-  invalid: 'bg-danger',
-  free: 'bg-accent',
-  live: 'bg-warn',
-};
-
 const LABEL: Record<Status, string> = {
   idle: '',
   checking: 'verificando',
-  invalid: '3 a 25 caracteres: letras, números e hífen',
-  free: 'disponível',
+  invalid: '3 a 25 caracteres: letras minúsculas, números e hífen. Não pode começar nem terminar com hífen.',
+  free: 'esse link é válido',
   live: 'alguém está transmitindo neste link agora',
 };
 
 /**
- * Campo único. O prefixo do domínio fica dentro do campo, não numa label
+ * Campo único. O prefixo do domínio fica DENTRO do campo, não numa label
  * acima: o usuário está escolhendo o final de uma URL que ele já vê inteira.
+ *
+ * O estado não é comunicado só por cor. Antes havia um ponto verde/vermelho e
+ * nada mais — invisível para daltônico e para quem tem a tela em luz forte.
+ * Agora vem ícone e frase; a cor só reforça.
  */
 export function SlugPicker({
   value,
@@ -37,7 +35,8 @@ export function SlugPicker({
   onPickSuggestion,
   error,
 }: Props) {
-  const message = error ?? LABEL[status];
+  const problema = status === 'invalid' || Boolean(error);
+  const mensagem = error ?? LABEL[status];
 
   return (
     <div className="w-full max-w-md">
@@ -45,7 +44,12 @@ export function SlugPicker({
         Escolha o final do seu link
       </label>
 
-      <div className="flex items-center gap-0 rounded-md border border-line bg-surface transition-colors focus-within:border-muted">
+      <div
+        className={[
+          'flex items-center rounded-md border bg-surface transition-colors duration-150',
+          problema ? 'border-danger' : 'border-edge focus-within:border-text',
+        ].join(' ')}
+      >
         <span className="tabular select-none py-3 pl-4 text-[15px] text-muted">tela.gg/</span>
         <input
           id="slug"
@@ -57,23 +61,25 @@ export function SlugPicker({
           spellCheck={false}
           maxLength={25}
           aria-describedby="slug-status"
-          aria-invalid={status === 'invalid' || Boolean(error)}
-          className="tabular min-w-0 flex-1 bg-transparent py-3 pr-3 text-[15px] outline-none placeholder:text-line"
-        />
-        <span
-          className={`mr-4 h-2 w-2 shrink-0 rounded-full ${DOT[status]}`}
-          aria-hidden="true"
+          aria-invalid={problema}
+          className="tabular min-w-0 flex-1 bg-transparent py-3 pr-4 text-[15px] outline-none placeholder:text-faint"
         />
       </div>
 
       <p
         id="slug-status"
         role="status"
-        className={`mt-2 min-h-5 text-[13px] ${
-          status === 'invalid' || error ? 'text-danger' : 'text-dim'
+        className={`mt-2 flex min-h-5 items-start gap-1.5 text-[13px] ${
+          problema ? 'text-danger' : 'text-muted'
         }`}
       >
-        {message}
+        {mensagem !== '' &&
+          (problema ? (
+            <IconWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          ) : status === 'free' ? (
+            <IconCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          ) : null)}
+        {mensagem}
       </p>
 
       {suggestions.length > 0 && (
@@ -83,7 +89,7 @@ export function SlugPicker({
               key={slug}
               type="button"
               onClick={() => onPickSuggestion?.(slug)}
-              className="tabular rounded-sm border border-line px-2.5 py-1.5 text-[13px] text-dim transition-colors duration-150 hover:border-muted hover:text-text"
+              className="tabular rounded-sm border border-edge px-2.5 py-1.5 text-[13px] text-muted transition-colors duration-150 hover:border-text hover:text-text"
             >
               {slug}
             </button>

@@ -26,7 +26,7 @@ export function StatsBadge({ resolution, fps, bitrate, rtt, warning }: Props) {
   }
 
   return (
-    <span className="tabular inline-flex items-center gap-2 text-[12px] text-dim">
+    <span className="tabular inline-flex items-center gap-2 text-[12px] text-muted">
       <span>{resolution}</span>
       <Separator />
       <span>{fps}</span>
@@ -40,7 +40,7 @@ export function StatsBadge({ resolution, fps, bitrate, rtt, warning }: Props) {
 
 function Separator() {
   return (
-    <span className="text-line" aria-hidden="true">
+    <span className="text-faint" aria-hidden="true">
       ·
     </span>
   );

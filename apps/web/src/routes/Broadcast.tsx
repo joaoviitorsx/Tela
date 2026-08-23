@@ -99,16 +99,16 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   if (!live) {
     return (
       <main className="flex min-h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-[15px] text-dim">
+        <p className="text-[15px] text-muted">
           {state.status === 'requesting-capture'
             ? 'Escolha a tela ou a janela do jogo…'
             : 'Conectando…'}
         </p>
         <span
-          className="h-1.5 w-24 overflow-hidden rounded-full bg-line"
+          className="h-1.5 w-24 overflow-hidden rounded-full bg-edge/40"
           aria-hidden="true"
         >
-          <span className="block h-full w-1/3 animate-live rounded-full bg-accent" />
+          <span className="block h-full w-1/3 animate-live rounded-full bg-muted" />
         </span>
       </main>
     );
@@ -139,7 +139,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
       />
 
       <div className="flex min-h-screen flex-col items-center justify-center gap-2 px-6 text-center">
-        <p className="tabular text-[15px] text-dim">
+        <p className="tabular text-[15px] text-muted">
           transmitindo — seu jogo está indo para {shareUrl.replace(/^https?:\/\//, '')}
         </p>
         <p className="max-w-sm text-[13px] text-muted">

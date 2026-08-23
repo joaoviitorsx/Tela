@@ -7,21 +7,55 @@
  *
  * Referência de tom: Parsec, Kick. Anti-referência: Zoom, Teams, Meet.
  */
+/**
+ * Cada token tem UM papel. Se você precisar de uma cor que não está aqui, o
+ * que falta é um papel, não um valor — pense qual antes de inventar hex.
+ *
+ * | token    | papel                              | contraste no void |
+ * |----------|------------------------------------|-------------------|
+ * | void     | fundo absoluto                     | —                 |
+ * | surface  | painel elevado (HUD, campo, card)  | —                 |
+ * | line     | divisor DECORATIVO dentro do painel| 1,2:1 (invisível de propósito) |
+ * | edge     | contorno de controle INTERATIVO    | 3,1:1 (WCAG 1.4.11) |
+ * | faint    | texto decorativo (placeholder)     | 2,7:1 (nunca informação) |
+ * | muted    | metadado legível (bitrate, ms, N/3)| 5,9:1 (AA)        |
+ * | text     | conteúdo                           | 17:1              |
+ * | accent   | AO VIVO e botão primário. Só.      | 11,5:1            |
+ * | warn     | degradado mas funcionando          | 10,9:1            |
+ * | danger   | parar e erro                       | 6,1:1             |
+ *
+ * O acento é o recurso mais escasso da tela. A §11 do documento manda usá-lo
+ * "exclusivamente para AO VIVO e o botão primário" — e ele tinha vazado para
+ * oito lugares, o que faz o olho parar de saber onde olhar. Única exceção: o
+ * anel de foco, porque acessibilidade vale mais que pureza de paleta.
+ */
 @theme {
   --color-void: #08080a;
   --color-surface: #121216;
-  --color-line: #232329;
-  --color-muted: #6b6b76;
+
+  /* Divisor decorativo. Baixo contraste é o ponto: ele separa, não informa. */
+  --color-line: #1f1f26;
+
+  /**
+   * Contorno de controle interativo. WCAG 1.4.11 pede 3:1 quando a borda é o
+   * único jeito de saber que ali existe um campo — e era o caso: a borda
+   * anterior tinha 1,28:1, ou seja, não existia para quem enxerga pouco.
+   */
+  --color-edge: #5e5e69;
+
+  /** Só decoração. Placeholder, ponto separador. Nunca carrega informação. */
+  --color-faint: #55555f;
+
+  /**
+   * Metadado legível: bitrate, latência, contagem de espectadores.
+   * Era #6B6B76 (3,8:1) e reprovava em corpo pequeno. Ver docs/adr/0008.
+   */
+  --color-muted: #8a8a96;
+
   --color-text: #ededf0;
   --color-accent: #22e07a;
   --color-danger: #ff4d4d;
   --color-warn: #ffb020;
-
-  /**
-   * `--color-muted` tem 3,6:1 contra o fundo — passa em texto grande, falha
-   * em corpo pequeno (WCAG AA pede 4,5:1). Metadado de 12–13px usa este.
-   */
-  --color-dim: #8a8a96;
 
   --font-display: "Geist", "Inter Tight", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", "Roboto Mono", monospace;

@@ -22,7 +22,7 @@ export function OfflineState({ slug, full = false, maxPeers = 3 }: Props) {
       <p className="tabular text-[17px] text-text">
         {full ? `transmissão lotada (${maxPeers}/${maxPeers})` : `${slug} não está transmitindo`}
       </p>
-      <p className="inline-flex items-center gap-2 text-[13px] text-dim">
+      <p className="inline-flex items-center gap-2 text-[13px] text-muted">
         <span className="h-1.5 w-1.5 rounded-full bg-muted animate-live" aria-hidden="true" />
         {full ? 'aguardando uma vaga' : 'aguardando'}
       </p>

@@ -115,12 +115,12 @@ export function Viewer({ slug }: Props) {
       >
         <LiveDot />
         {/* Latência visível: é prova da qualidade, e este público repara. */}
-        <span className="tabular ml-auto text-[12px] text-dim">{stats.rtt}</span>
+        <span className="tabular ml-auto text-[12px] text-muted">{stats.rtt}</span>
         <button
           type="button"
           onClick={toggleFullscreen}
           aria-label="Tela cheia"
-          className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-sm text-dim transition-colors duration-150 hover:bg-surface hover:text-text"
+          className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
         >
           <IconFullscreen />
         </button>

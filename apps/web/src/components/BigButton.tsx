@@ -12,7 +12,7 @@ type Props = {
 const TONES = {
   accent: 'bg-accent text-void hover:brightness-110 active:brightness-95',
   danger: 'bg-danger text-void hover:brightness-110 active:brightness-95',
-  ghost: 'border border-line bg-surface text-text hover:border-muted',
+  ghost: 'border border-edge bg-surface text-text hover:border-text',
 } as const;
 
 /**

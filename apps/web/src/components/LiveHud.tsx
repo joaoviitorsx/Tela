@@ -59,25 +59,25 @@ export function LiveHud({
         visible ? 'opacity-100' : 'opacity-0',
       ].join(' ')}
     >
-      <div className="pointer-events-auto mx-auto flex max-w-3xl flex-col gap-2 rounded-md border border-line bg-surface/95 p-3 backdrop-blur-sm">
+      <div className="pointer-events-auto mx-auto flex max-w-3xl flex-col gap-2 rounded-md border border-edge bg-surface/95 p-3 backdrop-blur-sm">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           {reconnecting ? <LiveDot label="RECONECTANDO" tone="warn" /> : <LiveDot />}
 
           <button
             type="button"
             onClick={onCopy}
-            className="tabular group inline-flex min-h-8 items-center gap-2 rounded-sm px-2 text-[13px] text-text transition-colors duration-150 hover:bg-line"
+            className="tabular group inline-flex min-h-8 items-center gap-2 rounded-sm px-2 text-[13px] text-text transition-colors duration-150 hover:bg-void"
           >
             {shareUrl.replace(/^https?:\/\//, '')}
             {copied ? (
-              <IconCheck className="h-3.5 w-3.5 text-accent" />
+              <IconCheck className="h-3.5 w-3.5 text-text" />
             ) : (
               <IconCopy className="h-3.5 w-3.5 text-muted group-hover:text-text" />
             )}
             <span className="sr-only">{copied ? 'link copiado' : 'copiar link'}</span>
           </button>
 
-          <span className="tabular inline-flex items-center gap-1.5 text-[13px] text-dim">
+          <span className="tabular inline-flex items-center gap-1.5 text-[13px] text-muted">
             <IconViewers className="h-4 w-4" />
             {viewers}/{maxPeers}
             <span className="sr-only">
@@ -99,7 +99,7 @@ export function LiveHud({
             <button
               type="button"
               onClick={onStop}
-              className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-line px-2.5 text-[13px] text-dim transition-colors duration-150 hover:border-danger hover:text-danger"
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-edge px-2.5 text-[13px] text-muted transition-colors duration-150 hover:border-danger hover:text-danger"
             >
               <IconStop className="h-3 w-3" />
               parar

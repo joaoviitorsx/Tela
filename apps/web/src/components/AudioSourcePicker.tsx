@@ -35,9 +35,22 @@ export function AudioSourcePicker({
   onRequestDevices,
   buscando,
 }: Props) {
+  /**
+   * Recolhido por padrão.
+   *
+   * A instrução do Linux é longa e traz um comando de terminal — necessário
+   * para quem precisa, e ruído para quem não precisa. Deixá-la aberta na tela
+   * inicial fazia o produto parecer um manual. O resumo diz em uma linha o que
+   * acontece com o áudio neste sistema; quem quiser os detalhes abre.
+   */
   return (
-    <section className="w-full max-w-md">
-      <h2 className="mb-2 text-[13px] text-dim">Áudio do jogo</h2>
+    <details className="group w-full max-w-md">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-[13px] text-muted transition-colors duration-150 hover:text-text">
+        <span className="inline-block transition-transform duration-150 group-open:rotate-90">›</span>
+        Áudio do jogo — {RESUMO[mode]}
+      </summary>
+
+      <div className="mt-3">
       {mode === 'display-media' && <Nota>{TEXTO_WINDOWS}</Nota>}
       {mode === 'unsupported' && <Nota tone="warn">{textoSemSuporte(os)}</Nota>}
 
@@ -45,7 +58,7 @@ export function AudioSourcePicker({
         <div className="flex flex-col gap-2">
           <Nota>{TEXTO_LINUX}</Nota>
 
-          <pre className="tabular overflow-x-auto rounded-md border border-line bg-surface p-3 text-[12px] leading-relaxed text-dim">
+          <pre className="tabular overflow-x-auto rounded-md border border-edge bg-surface p-3 text-[12px] leading-relaxed text-muted">
 {`pactl load-module module-null-sink sink_name=tela_cap \\
   sink_properties=device.description=TelaCapture
 pactl load-module module-loopback source=tela_cap.monitor \\
@@ -57,7 +70,7 @@ pactl load-module module-loopback source=tela_cap.monitor \\
               type="button"
               onClick={onRequestDevices}
               disabled={buscando}
-              className="inline-flex min-h-10 items-center justify-center rounded-md border border-line px-4 text-[13px] text-text transition-colors duration-150 hover:border-muted disabled:opacity-50"
+              className="inline-flex min-h-10 items-center justify-center rounded-md border border-edge px-4 text-[13px] text-text transition-colors duration-150 hover:border-text disabled:opacity-50"
             >
               {buscando ? 'procurando…' : 'procurar entradas de áudio'}
             </button>
@@ -70,7 +83,7 @@ pactl load-module module-loopback source=tela_cap.monitor \\
                 id="audio-src"
                 value={value ?? ''}
                 onChange={(event) => onChange(event.target.value || null)}
-                className="min-h-10 rounded-md border border-line bg-surface px-3 text-[13px] outline-none transition-colors focus:border-muted"
+                className="min-h-10 rounded-md border border-edge bg-surface px-3 text-[13px] outline-none transition-colors focus:border-muted"
               >
                 <option value="">transmitir sem áudio</option>
                 {devices.map((device) => (
@@ -83,13 +96,21 @@ pactl load-module module-loopback source=tela_cap.monitor \\
           )}
         </div>
       )}
-    </section>
+      </div>
+    </details>
   );
 }
 
+/** O que o usuário precisa saber em uma linha, antes de decidir se abre. */
+const RESUMO: Record<Props['mode'], string> = {
+  'display-media': 'vem junto com a tela',
+  'monitor-device': 'precisa de um passo a mais no Linux',
+  unsupported: 'não disponível neste sistema',
+};
+
 function Nota({ children, tone = 'dim' }: { children: ReactNode; tone?: 'dim' | 'warn' }) {
   return (
-    <p className={`text-[13px] leading-relaxed ${tone === 'warn' ? 'text-warn' : 'text-dim'}`}>
+    <p className={`text-[13px] leading-relaxed ${tone === 'warn' ? 'text-warn' : 'text-muted'}`}>
       {children}
     </p>
   );

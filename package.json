@@ -15,7 +15,8 @@
     "check": "turbo lint typecheck test build",
     "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
     "e2e": "node e2e/mesh.e2e.mjs",
-    "deploy": "pnpm --filter @tela/shared build && pnpm --filter @tela/web build && pnpm --filter @tela/signaling build && pnpm --filter @tela/signaling exec wrangler deploy"
+    "deploy": "pnpm --filter @tela/shared build && pnpm --filter @tela/web build && pnpm --filter @tela/signaling build && node scripts/check-deploy.mjs && pnpm --filter @tela/signaling exec wrangler deploy",
+    "prod": "node scripts/check-prod.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

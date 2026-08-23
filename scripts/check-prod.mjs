@@ -1,0 +1,41 @@
+/**
+ * Responde "o que está no ar?" em um comando.
+ *
+ *   pnpm prod                        usa a URL de PROD_URL ou a padrão
+ *   PROD_URL=https://... pnpm prod
+ */
+import { execSync } from 'node:child_process';
+
+const url = (process.env.PROD_URL ?? 'https://tela-signaling.platinum-diver.workers.dev').replace(/\/+$/, '');
+
+const head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+
+const resposta = await fetch(`${url}/version.json`, { cache: 'no-store' }).catch(() => null);
+
+/**
+ * O SPA fallback devolve `index.html` com status 200 para qualquer caminho que
+ * não exista — então `resposta.ok` não prova nada aqui. Um build sem carimbo
+ * responde HTML, e é preciso ler o corpo para saber.
+ */
+let prod = null;
+if (resposta !== null && resposta.ok) {
+  const corpo = await resposta.text();
+  try {
+    prod = JSON.parse(corpo);
+  } catch {
+    prod = null;
+  }
+}
+
+if (prod === null || typeof prod.commit !== 'string') {
+  console.error(`local : ${head}`);
+  console.error(`no ar : sem carimbo de versão em ${url}`);
+  console.error('        build anterior a este mecanismo — publique de novo com `pnpm deploy`.');
+  process.exit(1);
+}
+const igual = prod.commit === head;
+
+console.warn(`local : ${head}`);
+console.warn(`no ar : ${prod.commit}  (${prod.data})${prod.sujo ? '  [árvore suja]' : ''}`);
+console.warn(igual ? '\n  em dia.' : '\n  DESATUALIZADO — rode `pnpm deploy`.');
+process.exit(igual ? 0 : 1);

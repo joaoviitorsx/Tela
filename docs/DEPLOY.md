@@ -86,6 +86,24 @@ do lado do front é `VITE_SIGNAL_URL`.
 Precisa de TLS: sem `wss://`, o browser recusa a conexão a partir de uma página
 `https://`. Qualquer proxy reverso com certificado resolve.
 
+### Saber o que está no ar
+
+```bash
+pnpm prod
+# local : 57eb50a
+# no ar : 57eb50a  (2026-08-23T22:27:29Z)
+#   em dia.
+```
+
+Compara o commit publicado com o seu HEAD. Existe porque a pergunta "a versão
+certa está no ar?" já foi respondida errado aqui: um build antigo ficou de pé
+parecendo atual, e correções que já estavam no repositório não estavam na URL
+sendo testada.
+
+`pnpm deploy` também se recusa a publicar se `apps/web/dist` não corresponder
+ao HEAD — `wrangler deploy` sozinho envia o que estiver na pasta, mesmo que
+seja da semana passada, e isso não dá erro nenhum.
+
 ### Verificar
 
 ```bash

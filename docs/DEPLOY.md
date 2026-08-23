@@ -25,10 +25,15 @@ Uma conta gratuita, sem cartão. Duas publicações.
 ### 1. Sinalização (Workers + Durable Objects)
 
 ```bash
-pnpm --filter @tela/shared build
-pnpm --filter @tela/signaling build
-pnpm --filter @tela/signaling exec wrangler deploy
+pnpm release
 ```
+
+Um comando: constrói o pacote compartilhado, o front e o Worker, confere que o
+build corresponde ao HEAD e publica.
+
+**Não use `pnpm deploy`** — `deploy` é comando EMBUTIDO do pnpm (copia um
+pacote do workspace para uma pasta) e engole qualquer script com esse nome. O
+deploy simplesmente não roda, e a mensagem de erro não diz isso.
 
 O `wrangler.toml` já traz o binding do Durable Object e a migração
 `new_sqlite_classes` — **obrigatória no plano gratuito**, porque Durable
@@ -100,7 +105,7 @@ certa está no ar?" já foi respondida errado aqui: um build antigo ficou de pé
 parecendo atual, e correções que já estavam no repositório não estavam na URL
 sendo testada.
 
-`pnpm deploy` também se recusa a publicar se `apps/web/dist` não corresponder
+`pnpm release` também se recusa a publicar se `apps/web/dist` não corresponder
 ao HEAD — `wrangler deploy` sozinho envia o que estiver na pasta, mesmo que
 seja da semana passada, e isso não dá erro nenhum.
 

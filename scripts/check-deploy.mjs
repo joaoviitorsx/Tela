@@ -17,7 +17,7 @@ const head = execSync('git rev-parse --short HEAD', { cwd: raiz, encoding: 'utf8
 if (carimbo.commit !== head) {
   console.error(
     `[deploy] o build em dist/ é do commit ${carimbo.commit}, mas HEAD é ${head}.\n` +
-      '         Rode `pnpm deploy` (que reconstrói) em vez de `wrangler deploy` direto.',
+      '         Rode `pnpm release` (que reconstrói) em vez de `wrangler deploy` direto.',
   );
   process.exit(1);
 }

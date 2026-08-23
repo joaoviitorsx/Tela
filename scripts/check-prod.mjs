@@ -37,5 +37,5 @@ const igual = prod.commit === head;
 
 console.warn(`local : ${head}`);
 console.warn(`no ar : ${prod.commit}  (${prod.data})${prod.sujo ? '  [árvore suja]' : ''}`);
-console.warn(igual ? '\n  em dia.' : '\n  DESATUALIZADO — rode `pnpm deploy`.');
+console.warn(igual ? '\n  em dia.' : '\n  DESATUALIZADO — rode `pnpm release`.');
 process.exit(igual ? 0 : 1);

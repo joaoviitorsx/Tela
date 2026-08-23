@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
-import { SLUG_RE } from '@tela/shared';
+import { SLUG_RE, isBlockedSlug } from '@tela/shared';
 import { MAX_FRAME_BYTES, SIGNAL_PING_INTERVAL_MS } from '@tela/shared';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { makeChannelRegistry } from './channel-registry.js';
@@ -19,7 +19,7 @@ const registry = makeChannelRegistry({
     const bufB = Buffer.from(b, 'utf8');
     return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
   },
-  isValidSlug: (slug) => SLUG_RE.test(slug),
+  isValidSlug: (slug) => SLUG_RE.test(slug) && !isBlockedSlug(slug),
   iceServersFor: makeIceProvider(config),
   newPeerId: makePeerIdGenerator(),
   setTimer: (ms, task) => {
@@ -32,7 +32,7 @@ const registry = makeChannelRegistry({
 const http = createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, channels: registry.channelCount }));
+    res.end(JSON.stringify({ ok: true, runtime: 'node', channels: registry.channelCount }));
     return;
   }
   res.writeHead(404).end();
@@ -97,10 +97,33 @@ const heartbeat = setInterval(() => {
   registry.sweep();
 }, SIGNAL_PING_INTERVAL_MS);
 
+/**
+ * Desligamento que realmente desliga.
+ *
+ * `wss.close()` para de aceitar conexões novas mas NÃO encerra as abertas, e
+ * `http.close()` só chama o callback quando a última terminar. Com um único
+ * WebSocket vivo o processo nunca saía: em systemd ou Docker isso vira
+ * timeout de shutdown em todo deploy, e o "encerramento gracioso" acaba
+ * entregando RST aos clientes em vez de um close limpo.
+ */
 const shutdown = () => {
   clearInterval(heartbeat);
+  for (const socket of wss.clients) {
+    try {
+      socket.close(1001, 'servidor encerrando');
+    } catch {
+      socket.terminate();
+    }
+  }
   wss.close();
   http.close(() => process.exit(0));
+
+  // Cliente que ignora o close educado não pode segurar o desligamento.
+  const forcar = setTimeout(() => {
+    for (const socket of wss.clients) socket.terminate();
+    process.exit(0);
+  }, 3_000);
+  forcar.unref?.();
 };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

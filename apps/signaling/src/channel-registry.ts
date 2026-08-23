@@ -170,6 +170,18 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           iceServers: deps.iceServersFor(peer.id),
           maxPeers: deps.limits.maxPeers,
         });
+
+        /**
+         * Reapresenta quem já está assistindo.
+         *
+         * O transmissor é quem oferece a mídia. Sem isto, um host que
+         * reconectou nunca ofertava para os espectadores que continuaram no
+         * canal — eles seguravam vaga com uma conexão morta até o ICE
+         * desistir, e nada na tela dizia o motivo.
+         */
+        for (const viewer of existing?.viewers.values() ?? []) {
+          socket.send({ type: 'peer-joined', peerId: viewer.id });
+        }
       }
 
       function joinChannel(slug: string): void {

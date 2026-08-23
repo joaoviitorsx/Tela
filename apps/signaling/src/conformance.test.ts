@@ -48,6 +48,16 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(host.closed()).toBe(true);
   });
 
+  it('a blocklist vale no SERVIDOR, não só no formulário', async () => {
+    // Pelo WebSocket cru não existe formulário: qualquer um pediria `api` ou
+    // `admin` direto. A validação do cliente é conveniência, não defesa.
+    const d = criar();
+    for (const proibido of ['api', 'admin', 'signal', 'transmitir', 'recuperar']) {
+      const host = await d.host(`h-${proibido}`, proibido, OWNER);
+      expect(errorOf(host)).toBe('SLUG_INVALID');
+    }
+  });
+
   it('espectador sem transmissor recebe NOT_HOSTING', async () => {
     const d = criar();
     expect(errorOf(await d.watch('v', SLUG))).toBe('NOT_HOSTING');
@@ -177,6 +187,16 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(errorOf(host)).toBeUndefined();
   });
 
+  it('substituir o host NÃO derruba os espectadores', async () => {
+    const d = criar();
+    await d.host('h1', SLUG, OWNER);
+    const viewer = await d.watch('v', SLUG);
+    await d.host('h2', SLUG, OWNER);
+
+    // Reconexão do dono (refresh, troca de rede) não pode custar a audiência.
+    expect(viewer.closed()).toBe(false);
+  });
+
   it('mensagem fora do schema é recusada e fecha a conexão', async () => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER);
@@ -187,3 +207,79 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(host.closed()).toBe(true);
   });
 });
+
+
+/**
+ * Hibernação — só a implementação em Durable Object tem.
+ *
+ * Este bloco existe porque o motivo de haver uma SEGUNDA implementação é
+ * justamente a hibernação, e ela nunca era exercitada: o driver reconstruía
+ * nada e o estado em memória sempre sobrevivia nos testes. Foi exatamente
+ * nesse caminho não testado que um estranho conseguia assumir um canal ao
+ * vivo.
+ */
+describe.each(implementacoes.filter(([, criar]) => criar().hibernar !== undefined))(
+  'hibernação — %s',
+  (_nome, criar) => {
+    it('o dono do canal SOBREVIVE ao despejo de memória', async () => {
+      const d = criar();
+      await d.host('h', SLUG, OWNER);
+
+      d.hibernar?.();
+
+      // Antes, o ownerHash morava numa variável de instância. Depois do
+      // despejo ele voltava null, a checagem de dono passava a aceitar
+      // qualquer um, e o intruso derrubava o transmissor e assumia o canal.
+      const intruso = await d.host('x', SLUG, OUTRO);
+      expect(errorOf(intruso)).toBe('SLUG_TAKEN');
+    });
+
+    it('o dono verdadeiro reassume depois do despejo', async () => {
+      const d = criar();
+      const primeiro = await d.host('h1', SLUG, OWNER);
+      d.hibernar?.();
+
+      const segundo = await d.host('h2', SLUG, OWNER);
+      expect(errorOf(segundo)).toBeUndefined();
+      expect(primeiro.closed()).toBe(true);
+    });
+
+    it('espectadores continuam no canal depois do despejo', async () => {
+      const d = criar();
+      const host = await d.host('h', SLUG, OWNER);
+      const viewer = await d.watch('v', SLUG);
+
+      d.hibernar?.();
+
+      // O roteamento precisa continuar funcionando a partir dos attachments.
+      await d.signal('h', { candidate: 'depois do despejo' }, peerIdOf(viewer));
+      expect(ofType(viewer, 'signal')).toEqual([
+        { type: 'signal', from: peerIdOf(host), payload: { candidate: 'depois do despejo' } },
+      ]);
+    });
+
+    it('o teto de espectadores continua valendo depois do despejo', async () => {
+      const d = criar();
+      await d.host('h', SLUG, OWNER);
+      await d.watch('v1', SLUG);
+      await d.watch('v2', SLUG);
+
+      d.hibernar?.();
+
+      await d.watch('v3', SLUG);
+      expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
+    });
+
+    it('a posse resiste à saída do host, dentro da carência', async () => {
+      const d = criar();
+      await d.host('h', SLUG, OWNER);
+      d.disconnect('h');
+      d.hibernar?.();
+
+      // Um refresh de página não pode entregar o slug — o link já foi mandado
+      // para os amigos.
+      expect(errorOf(await d.host('x', SLUG, OUTRO))).toBe('SLUG_TAKEN');
+      expect(errorOf(await d.host('h2', SLUG, OWNER))).toBeUndefined();
+    });
+  },
+);

@@ -29,7 +29,24 @@ export const RESERVED: ReadonlySet<string> = new Set([
   'join',
   'claim',
   'broadcast',
+  // Rotas do próprio front. Faltavam, e o efeito era silencioso: quem
+  // reservasse `transmitir` recebia um link que a rota nunca resolve como
+  // espectador — o amigo abria e via a tela inicial.
+  'transmitir',
+  'recuperar',
 ]);
+
+/**
+ * `true` quando o slug não pode ser reivindicado.
+ *
+ * Existe para que os DOIS servidores apliquem a mesma regra. Antes ela vivia
+ * só no cliente, e pelo WebSocket cru o servidor aceitava `api`, `admin` e
+ * termos ofensivos sem piscar — a validação era uma sugestão.
+ */
+export function isBlockedSlug(slug: string): boolean {
+  const normalizado = slug.trim().toLowerCase();
+  return RESERVED.has(normalizado) || OFFENSIVE.has(normalizado);
+}
 
 /**
  * Lista mínima e deliberadamente curta. Não é moderação de conteúdo — é só

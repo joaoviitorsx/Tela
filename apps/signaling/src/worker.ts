@@ -6,6 +6,7 @@ import {
   SLUG_RE,
   type ServerMessage,
   type SignalingErrorCode,
+  isBlockedSlug,
 } from '@tela/shared';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
 
@@ -43,10 +44,27 @@ import { DEFAULT_LIMITS, type Limits } from './limits.js';
  * REGRA R8: o `payload` atravessa opaco. Este arquivo nunca olha dentro.
  */
 
-/** O que fica preso a cada socket e sobrevive à hibernação. */
+/**
+ * O que fica preso a cada socket e sobrevive à hibernação.
+ *
+ * Tudo que o objeto precisa saber e não pode perder mora AQUI. Variável de
+ * instância não serve: com WebSocket Hibernation o Durable Object é despejado
+ * da memória enquanto os sockets seguem abertos, e ao acordar só existe
+ * `getWebSockets()` mais os attachments.
+ *
+ * O `ownerHash` viajava numa variável de instância, e depois do despejo ele
+ * voltava `null` — momento em que a checagem de dono passava a aceitar
+ * qualquer um, e um estranho derrubava o transmissor e assumia o canal ao
+ * vivo. Agora ele viaja com o socket do host.
+ */
 type Attachment = {
   readonly peerId: string;
   readonly role: 'host' | 'viewer';
+  /** Só no socket do host: sha256 do ownerToken de quem reivindicou. */
+  readonly ownerHash?: string;
+  /** Janela de rate limit desta conexão, também à prova de hibernação. */
+  readonly janelaInicio: number;
+  readonly janelaContagem: number;
 };
 
 export type Env = {
@@ -86,6 +104,20 @@ export type HibernatableSocket = {
 export type DurableContext = {
   acceptWebSocket(socket: HibernatableSocket): void;
   getWebSockets(): HibernatableSocket[];
+  /**
+   * Armazenamento do objeto. Guarda UMA coisa: o dono do canal durante a
+   * carência depois que o transmissor sai.
+   *
+   * Sem isso, um refresh de página devolveria o slug ao primeiro estranho que
+   * o pedisse — e o link já mandado aos amigos passaria a apontar para outra
+   * transmissão. É o mesmo comportamento do servidor Node, que as duas
+   * implementações precisam ter.
+   */
+  storage?: {
+    get<T>(key: string): Promise<T | undefined>;
+    put<T>(key: string, value: T): Promise<void>;
+    delete(key: string): Promise<boolean>;
+  };
 };
 
 export type DurableObjectNamespace = {
@@ -115,9 +147,19 @@ export type ChannelDeps = {
  * de host que existir — se não houver nenhum, o canal está livre, que é
  * exatamente a semântica desejada.
  */
-export class ChannelRoom {
-  private ownerHash: string | null = null;
+/**
+ * Depois que o transmissor sai, o canal guarda o dono por este tempo.
+ *
+ * Mesmo valor do servidor Node: as duas implementações precisam ter a mesma
+ * semântica, senão o comportamento do produto muda com o lugar do deploy.
+ */
+export const OWNERSHIP_GRACE_MS = 5 * 60_000;
 
+type PosseGuardada = { readonly ownerHash: string; readonly ate: number };
+
+const CHAVE_POSSE = 'posse';
+
+export class ChannelRoom {
   constructor(
     private readonly ctx: DurableContext,
     private readonly deps: ChannelDeps,
@@ -137,6 +179,26 @@ export class ChannelRoom {
     if (typeof raw !== 'object' || raw === null) return null;
     const value = raw as Attachment;
     return typeof value.peerId === 'string' ? value : null;
+  }
+
+  /**
+   * Quem é o dono deste canal, sobrevivendo à hibernação.
+   *
+   * Primeiro o socket do host, que carrega o hash consigo. Se não houver host
+   * conectado, o armazenamento — que guarda a posse pela carência, para um
+   * refresh de página não entregar o slug a um estranho.
+   */
+  private async donoAtual(): Promise<string | null> {
+    const host = this.host();
+    if (host !== null && typeof host.at.ownerHash === 'string') return host.at.ownerHash;
+
+    const guardada = await this.ctx.storage?.get<PosseGuardada>(CHAVE_POSSE);
+    if (guardada === undefined) return null;
+    if (guardada.ate <= Date.now()) {
+      await this.ctx.storage?.delete(CHAVE_POSSE);
+      return null;
+    }
+    return guardada.ownerHash;
   }
 
   private peers(): { socket: HibernatableSocket; at: Attachment }[] {
@@ -165,6 +227,7 @@ export class ChannelRoom {
     if (raw.length > MAX_FRAME_BYTES) {
       return this.fail(socket, 'BAD_MESSAGE');
     }
+    if (!this.dentroDoLimite(socket)) return this.fail(socket, 'RATE_LIMITED');
 
     let json: unknown;
     try {
@@ -195,6 +258,33 @@ export class ChannelRoom {
     }
   }
 
+  /**
+   * Rate limit por conexão, guardado no attachment.
+   *
+   * Contador em variável de instância não sobreviveria à hibernação, e o
+   * servidor ficaria sem proteção nenhuma justamente no caminho que a
+   * plataforma mais usa. O attachment viaja com o socket.
+   *
+   * O teto é o mesmo do servidor Node: a troca de ICE é em rajada, e um teto
+   * pensado para tráfego constante derrubaria transmissões legítimas.
+   */
+  private dentroDoLimite(socket: HibernatableSocket): boolean {
+    const at = this.attachmentOf(socket);
+    if (at === null) return true; // ainda não se apresentou; `claim`/`join` limitam
+
+    const agora = Date.now();
+    const reiniciou = agora - at.janelaInicio >= this.deps.limits.messageWindowMs;
+    const contagem = reiniciou ? 1 : at.janelaContagem + 1;
+
+    socket.serializeAttachment({
+      ...at,
+      janelaInicio: reiniciou ? agora : at.janelaInicio,
+      janelaContagem: contagem,
+    } satisfies Attachment);
+
+    return contagem <= this.deps.limits.messageLimit;
+  }
+
   private async claim(
     socket: HibernatableSocket,
     slug: string,
@@ -203,24 +293,41 @@ export class ChannelRoom {
   ): Promise<void> {
     // O slug do Durable Object vence: ele veio da URL e determinou qual
     // instância atendeu. Divergir significa cliente confuso ou malicioso.
-    if (claimed !== slug || !SLUG_RE.test(slug)) return this.fail(socket, 'SLUG_INVALID');
+    // A blocklist vale no SERVIDOR, não só no formulário: pelo WebSocket cru
+    // qualquer um pediria `api` ou `admin`.
+    if (claimed !== slug || !SLUG_RE.test(slug) || isBlockedSlug(slug)) {
+      return this.fail(socket, 'SLUG_INVALID');
+    }
 
     const hash = await this.deps.hash(ownerToken);
-    const existing = this.host();
+    const dono = await this.donoAtual();
 
-    if (existing !== null) {
-      if (this.ownerHash !== null && !this.deps.equals(this.ownerHash, hash)) {
-        return this.fail(socket, 'SLUG_TAKEN');
-      }
-      // Mesmo dono reconectando: derruba o socket anterior.
-      existing.socket.close(1000, 'substituido');
-    } else if (this.ownerHash !== null && !this.deps.equals(this.ownerHash, hash)) {
+    // Existe dono e não é você: o canal é de outra pessoa, com ou sem alguém
+    // conectado neste instante.
+    if (dono !== null && !this.deps.equals(dono, hash)) {
       return this.fail(socket, 'SLUG_TAKEN');
     }
 
-    this.ownerHash = hash;
+    /**
+     * A ORDEM importa: o socket novo assume ANTES de o antigo ser derrubado.
+     *
+     * Fechar primeiro dispara o `webSocketClose` do antigo enquanto o novo
+     * ainda não tem attachment — e o objeto, sem enxergar host algum,
+     * concluía que o transmissor tinha ido embora e derrubava todos os
+     * espectadores. Quem dava F5 perdia a audiência.
+     */
+    const anterior = this.host();
     const peerId = this.deps.newPeerId('h');
-    socket.serializeAttachment({ peerId, role: 'host' } satisfies Attachment);
+    socket.serializeAttachment({
+      peerId,
+      role: 'host',
+      ownerHash: hash,
+      janelaInicio: Date.now(),
+      janelaContagem: 0,
+    } satisfies Attachment);
+
+    // Mesmo dono reconectando (refresh, troca de rede): derruba o antigo.
+    anterior?.socket.close(1000, 'substituido');
 
     this.send(socket, {
       type: 'hosting',
@@ -228,6 +335,18 @@ export class ChannelRoom {
       iceServers: await this.deps.iceServersFor(peerId),
       maxPeers: this.deps.limits.maxPeers,
     });
+
+    /**
+     * O host novo precisa saber quem JÁ está no canal.
+     *
+     * Ele é quem oferece a mídia. Sem esta reapresentação, um transmissor que
+     * reconectou nunca ofertava para quem já estava assistindo — o espectador
+     * segurava uma vaga com uma conexão morta até o ICE desistir, e nada na
+     * tela explicava por quê.
+     */
+    for (const viewer of this.viewers()) {
+      this.send(socket, { type: 'peer-joined', peerId: viewer.at.peerId });
+    }
   }
 
   private async join(socket: HibernatableSocket, slug: string, wanted: string): Promise<void> {
@@ -242,7 +361,12 @@ export class ChannelRoom {
     }
 
     const peerId = this.deps.newPeerId('v');
-    socket.serializeAttachment({ peerId, role: 'viewer' } satisfies Attachment);
+    socket.serializeAttachment({
+      peerId,
+      role: 'viewer',
+      janelaInicio: Date.now(),
+      janelaContagem: 0,
+    } satisfies Attachment);
 
     this.send(socket, {
       type: 'watching',
@@ -271,10 +395,34 @@ export class ChannelRoom {
     const at = this.attachmentOf(socket);
     if (at === null) return;
 
+    if (at.role === 'host' && typeof at.ownerHash === 'string') {
+      /**
+       * Guarda a posse pela carência.
+       *
+       * Sem isso, um refresh de página devolveria o slug ao primeiro estranho
+       * que o pedisse, e o link que a pessoa já mandou para os amigos passaria
+       * a apontar para outra transmissão.
+       */
+      void this.ctx.storage?.put<PosseGuardada>(CHAVE_POSSE, {
+        ownerHash: at.ownerHash,
+        ate: Date.now() + OWNERSHIP_GRACE_MS,
+      });
+    }
+
     if (at.role === 'host') {
-      // Transmissor saiu: avisa ANTES de fechar. Socket fechado em silêncio
-      // não distingue "o transmissor saiu" de "o servidor caiu", e as duas
-      // coisas pedem reações opostas.
+      /**
+       * Socket de host JÁ SUBSTITUÍDO não derruba nada.
+       *
+       * Quando o dono reconecta — refresh, troca de rede — o socket antigo
+       * fecha e o `webSocketClose` dele chega depois. Sem esta checagem, o
+       * fechamento atrasado do socket velho derrubava todos os espectadores
+       * do host NOVO: a pessoa dava F5 e perdia a audiência.
+       */
+      if (this.host() !== null) return;
+
+      // Transmissor saiu de verdade: avisa ANTES de fechar. Socket fechado em
+      // silêncio não distingue "o transmissor saiu" de "o servidor caiu", e as
+      // duas coisas pedem reações opostas.
       for (const viewer of this.viewers()) {
         this.send(viewer.socket, { type: 'peer-left', peerId: at.peerId });
         viewer.socket.close(1000, 'host saiu');

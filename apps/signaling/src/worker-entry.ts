@@ -67,7 +67,15 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/health') {
-      return new Response(JSON.stringify({ ok: true }), {
+      /**
+       * `channels: null` de propósito, e não omitido.
+       *
+       * Com um Durable Object por slug não existe um lugar que enxergue todos
+       * os canais — a contagem que o servidor Node dá simplesmente não tem
+       * equivalente aqui. Dizer `null` é honesto; omitir o campo faria a
+       * resposta parecer a mesma coisa com um dado faltando.
+       */
+      return new Response(JSON.stringify({ ok: true, runtime: 'durable-object', channels: null }), {
         headers: { 'content-type': 'application/json' },
       });
     }

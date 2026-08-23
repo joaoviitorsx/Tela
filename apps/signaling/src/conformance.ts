@@ -29,6 +29,14 @@ export type ConformanceDriver = {
   signal(id: string, payload: unknown, to?: string): Promise<void>;
   /** Fecha a conexão como o transporte faria. */
   disconnect(id: string): void;
+  /**
+   * Simula a hibernação da plataforma, quando ela existe.
+   *
+   * Só o Durable Object hiberna. No servidor Node não há o que simular, e a
+   * ausência do gancho é o que diz isso — em vez de um teste que finge
+   * cobrir um caminho que não existe ali.
+   */
+  hibernar?(): void;
 };
 
 export const OWNER = 'o'.repeat(43);

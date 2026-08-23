@@ -189,14 +189,15 @@ pnpm turbo lint typecheck test build   # tem que passar antes de qualquer entreg
 pnpm depcruise                         # ciclos de dependência
 ```
 
-208 testes, todos sem browser e sem rede: a lógica de mídia vive em classes
+272 testes, todos sem browser e sem rede: a lógica de mídia vive em classes
 puras com `RTCPeerConnection` injetada, então a negociação inteira é
 exercitável em milissegundos.
 
 O servidor tem duas implementações — Node portátil e Durable Object — porque
 sob hibernação o modelo de estado é genuinamente diferente. Uma bateria de
-conformidade roda as mesmas 18 expectativas contra as duas, então elas não
-divergem em silêncio.
+conformidade roda as mesmas expectativas contra as duas — incluindo o ciclo de
+hibernação, que é o motivo de a segunda existir e o caminho onde um estranho
+já conseguiu assumir um canal ao vivo.
 
 ---
 

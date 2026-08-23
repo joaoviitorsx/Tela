@@ -1,4 +1,4 @@
-import { SLUG_RE, type ServerMessage } from '@tela/shared';
+import { SLUG_RE, type ServerMessage, isBlockedSlug } from '@tela/shared';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
 import { type RegistryDeps, type Socket } from './channel-registry.js';
 
@@ -73,7 +73,9 @@ export function testDeps(clock: TestClock, overrides: Partial<Limits> = {}): Reg
       return h.toString(16).padStart(8, '0').repeat(8);
     },
     equals: (a, b) => a.length === b.length && a === b,
-    isValidSlug: (slug) => SLUG_RE.test(slug),
+    // MESMA regra de produção. Uma política de teste mais frouxa que a real
+    // faz a suíte aprovar exatamente o que o servidor deveria recusar.
+    isValidSlug: (slug) => SLUG_RE.test(slug) && !isBlockedSlug(slug),
     iceServersFor: () => [{ urls: ['stun:test'] }],
     newPeerId: (prefix) => `${prefix}_${(counter += 1).toString().padStart(3, '0')}`,
   };

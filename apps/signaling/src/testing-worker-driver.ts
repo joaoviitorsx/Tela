@@ -19,11 +19,23 @@ class FakeHibernatableSocket implements HibernatableSocket {
   closed = false;
   private attachment: unknown = null;
 
+  /**
+   * O runtime chama `webSocketClose` quando o socket fecha — inclusive quando
+   * quem fechou foi o próprio servidor.
+   *
+   * Sem isto, todo fechamento iniciado pelo servidor era invisível para a
+   * suíte de conformidade: substituir um host "passava" no teste enquanto na
+   * produção derrubava todos os espectadores.
+   */
+  aoFechar: (() => void) | null = null;
+
   send(data: string): void {
     this.sent.push(JSON.parse(data) as ServerMessage);
   }
   close(): void {
+    if (this.closed) return;
     this.closed = true;
+    this.aoFechar?.();
   }
   serializeAttachment(value: unknown): void {
     // O runtime real serializa: passar por JSON garante que nada de vivo
@@ -37,6 +49,7 @@ class FakeHibernatableSocket implements HibernatableSocket {
 
 class FakeDurableContext implements DurableContext {
   private readonly sockets: FakeHibernatableSocket[] = [];
+  private readonly dados = new Map<string, unknown>();
 
   acceptWebSocket(socket: HibernatableSocket): void {
     this.sockets.push(socket as FakeHibernatableSocket);
@@ -45,6 +58,15 @@ class FakeDurableContext implements DurableContext {
   getWebSockets(): HibernatableSocket[] {
     return this.sockets.filter((s) => !s.closed);
   }
+
+  readonly storage = {
+    get: async <T>(key: string): Promise<T | undefined> => this.dados.get(key) as T | undefined,
+    put: async <T>(key: string, value: T): Promise<void> => {
+      // Passa por JSON como o runtime faz: nada de vivo atravessa.
+      this.dados.set(key, JSON.parse(JSON.stringify(value)));
+    },
+    delete: async (key: string): Promise<boolean> => this.dados.delete(key),
+  };
 }
 
 /**
@@ -69,6 +91,21 @@ export function makeWorkerDriver(): ConformanceDriver {
     return created;
   }
 
+  /**
+   * Simula a hibernação: o objeto é despejado da memória e reconstruído sobre
+   * o MESMO contexto, com os mesmos sockets abertos.
+   *
+   * É o único jeito de exercitar o motivo de existir esta segunda
+   * implementação. Sem isto, o caminho que a plataforma mais usa nunca era
+   * testado — e foi exatamente ali que um estranho conseguia assumir um canal
+   * ao vivo.
+   */
+  function hibernar(): void {
+    for (const [slug, atual] of rooms) {
+      rooms.set(slug, { room: new ChannelRoom(atual.ctx, deps), ctx: atual.ctx });
+    }
+  }
+
   const client = (id: string): ConformanceClient => ({
     id,
     received: () => sockets.get(id)?.sent ?? [],
@@ -81,9 +118,12 @@ export function makeWorkerDriver(): ConformanceDriver {
     sockets.set(id, socket);
     slugOf.set(id, slug);
 
-    const { room } = roomFor(slug);
-    room.accept(socket);
-    await room.handleMessage(socket, slug, JSON.stringify(message));
+    const alvo = roomFor(slug);
+    alvo.room.accept(socket);
+    // O runtime avisa o objeto quando o socket fecha, inclusive quando foi o
+    // próprio servidor que fechou.
+    socket.aoFechar = () => roomFor(slug).room.handleClose(socket);
+    await alvo.room.handleMessage(socket, slug, JSON.stringify(message));
     return client(id);
   }
 
@@ -106,11 +146,9 @@ export function makeWorkerDriver(): ConformanceDriver {
     },
     disconnect(id) {
       const socket = sockets.get(id);
-      const slug = slugOf.get(id);
-      if (socket === undefined || slug === undefined) return;
-      const { room } = roomFor(slug);
-      room.handleClose(socket);
-      socket.closed = true;
+      if (socket === undefined) return;
+      socket.close();
     },
+    hibernar,
   };
 }

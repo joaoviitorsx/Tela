@@ -1,4 +1,9 @@
-name = "tela-signaling"
+# O nome vira a URL que o usuário manda para os amigos:
+#   tela.<conta>.workers.dev/joao
+# Por isso é o nome do PRODUTO, não do componente. Este Worker serve o front
+# inteiro além da sinalização — chamá-lo de "signaling" seria descrever a
+# menor parte do que ele faz.
+name = "tela"
 main = "dist/worker-entry.js"
 compatibility_date = "2026-08-01"
 # Necessário para `new Request(...)` preservar headers customizados no fetch

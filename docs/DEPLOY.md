@@ -34,13 +34,17 @@ O `wrangler.toml` já traz o binding do Durable Object e a migração
 `new_sqlite_classes` — **obrigatória no plano gratuito**, porque Durable
 Objects com backend key-value continuam sendo recurso pago.
 
-Anote a URL que o deploy imprime (`https://tela-signaling.<conta>.workers.dev`).
-O endpoint de sinalização é `wss://<essa-url>/signal/<slug>`.
+Anote a URL que o deploy imprime (`https://tela.<conta>.workers.dev`). Ela é
+o produto inteiro: o front sai dela, e o link que você manda para os amigos é
+`https://tela.<conta>.workers.dev/seuslug`.
+
+Para um link curto de verdade, aponte um domínio próprio para o Worker em
+Workers → Custom Domains. É o único custo do projeto (~R$ 40/ano).
 
 ### 2. Front (Pages)
 
 ```bash
-VITE_SIGNAL_URL=wss://tela-signaling.SUACONTA.workers.dev/signal \
+VITE_SIGNAL_URL=wss://tela.SUACONTA.workers.dev/signal \
   pnpm --filter @tela/web build
 pnpm --filter @tela/web exec wrangler pages deploy dist --project-name tela
 ```
@@ -85,7 +89,7 @@ Precisa de TLS: sem `wss://`, o browser recusa a conexão a partir de uma págin
 ### Verificar
 
 ```bash
-curl -s https://tela-signaling.SUACONTA.workers.dev/health
+curl -s https://tela.SUACONTA.workers.dev/health
 # {"ok":true}
 
 # no servidor portátil o health também conta os canais abertos

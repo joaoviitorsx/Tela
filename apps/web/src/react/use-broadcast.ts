@@ -1,15 +1,8 @@
-import { useCallback, useMemo, useSyncExternalStore } from 'react';
-import type { PresetId } from '../core/media/presets.js';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { BroadcastSession, BroadcastState } from '../core/media/broadcast-session.js';
+import type { PresetId } from '../core/media/presets.js';
 
-/**
- * Ponte fina entre a sessão e o React. Zero lógica.
- *
- * `useSyncExternalStore` em vez de `useState` + `useEffect` porque a sessão JÁ
- * é a fonte da verdade — duplicar o estado num store React criaria duas
- * versões da mesma coisa, e uma delas ficaria velha (AGENTS.md R1).
- */
-export function useBroadcast(session: BroadcastSession): {
+export type BroadcastControls = {
   state: BroadcastState;
   start: (
     slug: string,
@@ -19,26 +12,46 @@ export function useBroadcast(session: BroadcastSession): {
   ) => Promise<void>;
   stop: () => Promise<void>;
   setPreset: (presetId: PresetId) => Promise<void>;
-} {
+};
+
+/**
+ * Ponte fina entre a sessão e o React. Zero lógica.
+ *
+ * `useSyncExternalStore` em vez de `useState` + `useEffect` porque a sessão JÁ
+ * é a fonte da verdade — duplicar o estado num store React criaria duas
+ * versões da mesma coisa, e uma delas ficaria velha (AGENTS.md R1).
+ *
+ * # As ações precisam ser REFERENCIALMENTE ESTÁVEIS
+ *
+ * Elas dependem só de `session`, nunca de `state`. Isso não é otimização: é
+ * correção.
+ *
+ * Quando `start` era recriado a cada mudança de estado, todo efeito que o
+ * tivesse nas dependências re-rodava a cada transição — e o cleanup desse
+ * efeito parava a transmissão. Na prática: a primeira transição
+ * (`idle → requesting-capture`) já matava a sessão, e o usuário via
+ * "Transmissão encerrada" antes mesmo do seletor de tela aparecer.
+ *
+ * Em produção, não só em desenvolvimento.
+ */
+export function useBroadcast(session: BroadcastSession): BroadcastControls {
   const state = useSyncExternalStore(
     useCallback((listener) => session.subscribe(listener), [session]),
     useCallback(() => session.getState(), [session]),
     useCallback(() => session.getState(), [session]),
   );
 
-  return useMemo(
-    () => ({
-      state,
-      start: (slug, ownerToken, presetId, audioDeviceId) =>
-        session.start(slug, ownerToken, {
-          ...(presetId === undefined ? {} : { presetId }),
-          ...(audioDeviceId === null || audioDeviceId === undefined
-            ? {}
-            : { audioDeviceId }),
-        }),
-      stop: () => session.stop('USER_STOPPED'),
-      setPreset: (presetId) => session.setPreset(presetId),
-    }),
-    [session, state],
+  const start = useCallback<BroadcastControls['start']>(
+    (slug, ownerToken, presetId, audioDeviceId) =>
+      session.start(slug, ownerToken, {
+        ...(presetId === undefined ? {} : { presetId }),
+        ...(audioDeviceId === null || audioDeviceId === undefined ? {} : { audioDeviceId }),
+      }),
+    [session],
   );
+
+  const stop = useCallback(() => session.stop('USER_STOPPED'), [session]);
+  const setPreset = useCallback((presetId: PresetId) => session.setPreset(presetId), [session]);
+
+  return { state, start, stop, setPreset };
 }

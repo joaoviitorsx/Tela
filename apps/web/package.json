@@ -20,9 +20,11 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
     "@tela/tsconfig": "workspace:*",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "happy-dom": "^20.11.6",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2",
     "vite": "^7.0.0",

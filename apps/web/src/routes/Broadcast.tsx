@@ -1,5 +1,5 @@
 import { PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BigButton } from '../components/BigButton.js';
 import { LiveHud } from '../components/LiveHud.js';
 import { createBroadcastSession, identity } from '../container.js';
@@ -39,7 +39,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
   const { state, start, stop, setPreset } = useBroadcast(session);
   const [copied, setCopied] = useState(false);
-  const started = useRef(false);
 
   const live = state.status === 'live';
   const hud = useAutoHide(5_000, live);
@@ -64,9 +63,20 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   // usuário sai daqui direto para o Ctrl+V no Discord.
   useEffect(() => session.on('started', ({ shareUrl }) => copy(shareUrl)), [session, copy]);
 
+  /**
+   * Inicia ao montar, encerra ao desmontar.
+   *
+   * NÃO há guarda de "já iniciou". React em StrictMode monta, desmonta e monta
+   * de novo; com a guarda, o segundo mount encontrava a sessão já encerrada
+   * pelo cleanup do primeiro e não reiniciava — o usuário via "Transmissão
+   * encerrada" sem nada ter acontecido. `start()` já sai cedo se a sessão não
+   * estiver ociosa, então re-executar é seguro.
+   *
+   * As dependências são só valores estáveis. Se uma ação do hook entrar aqui
+   * sem ser estável, o cleanup passa a rodar a cada render e derruba a
+   * transmissão — foi exatamente esse o bug.
+   */
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
     void start(slug, identity.ownerToken(), presetId, audioDeviceId);
     return () => {
       void session.stop('USER_STOPPED');

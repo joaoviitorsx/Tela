@@ -304,11 +304,24 @@ export class BroadcastSession {
     this.setState({ ...this.state, peers });
   }
 
+  /**
+   * A transição vem ANTES da limpeza, e a ordem importa.
+   *
+   * Enquanto `stop()` esperava o teardown para só então marcar `ended`, a
+   * sessão passava um intervalo em `connecting` já condenada — e um `start()`
+   * que chegasse nesse intervalo era recusado pela guarda de status. É
+   * exatamente o que acontece no ciclo montar/desmontar/montar do React em
+   * StrictMode: o remount pedia para transmitir, era recusado em silêncio, e
+   * o usuário via "Transmissão encerrada" sem nada ter acontecido.
+   *
+   * Marcar primeiro também é melhor para quem clica em "parar": a UI responde
+   * na hora, e a liberação de câmera, socket e timers segue por baixo.
+   */
   async stop(reason: BroadcastFailure = 'USER_STOPPED'): Promise<void> {
     if (this.state.status === 'idle' || this.state.status === 'ended') return;
     this.epoch += 1;
-    await this.teardown();
     this.setState({ status: 'ended', reason });
+    await this.teardown();
   }
 
   private fail(reason: BroadcastFailure): void {

@@ -22,7 +22,15 @@ export type ViewerState =
       readonly stats: MediaStats | null;
     }
   | { readonly status: 'reconnecting'; readonly slug: string }
-  | { readonly status: 'full'; readonly slug: string };
+  | { readonly status: 'full'; readonly slug: string }
+  /**
+   * Negociou e a mídia nunca chegou.
+   *
+   * O caso típico é NAT simétrico dos dois lados sem TURN: o WebRTC troca SDP,
+   * monta tudo, e nenhum pacote atravessa. Merece estado próprio porque a
+   * ação do usuário é diferente de "offline" — não adianta esperar.
+   */
+  | { readonly status: 'sem-conexao'; readonly slug: string };
 
 export type ViewerEventMap = { state: ViewerState };
 
@@ -176,6 +184,12 @@ export class ViewerSession {
       // estado offline para qualquer status ≠ watching e desmonta o <video>,
       // então a mídia voltava e a tela ficava morta.
       transport.on('reconnected', () => this.onReconnected(epoch)),
+      /**
+       * Canal caído com o vídeo chegando: não é problema DESTE espectador.
+       * Ele continua vendo — a conexão é direta com quem transmite, e o
+       * servidor nunca esteve no caminho da mídia.
+       */
+      transport.on('signaling-lost', () => undefined),
       transport.on('closed', () => void this.onClosed(epoch)),
     );
 
@@ -197,6 +211,11 @@ export class ViewerSession {
       if (isSignalingError(error) && error.code === 'CHANNEL_FULL') {
         // Sala cheia não é erro permanente: alguém sai, a vaga abre.
         this.setState({ status: 'full', slug: this.slug });
+        this.advanceBackoff();
+      } else if (error instanceof Error && error.message === 'CONNECT_TIMEOUT') {
+        // O canal abriu, o SDP foi trocado, e a mídia não veio. Isso não é
+        // "ninguém transmitindo" — é a rede entre os dois não fechando.
+        this.setState({ status: 'sem-conexao', slug: this.slug });
         this.advanceBackoff();
       } else {
         this.goOffline();

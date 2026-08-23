@@ -137,6 +137,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         maxPeers={state.maxPeers}
         relayed={state.peers.filter((peer) => peer.usingRelay).length}
         audioPerdidoPelaEscolha={state.audioPerdidoPelaEscolha}
+        semSinalizacao={state.semSinalizacao}
         copied={copied}
         onCopy={() => copy(shareUrl)}
         onStop={handleStop}

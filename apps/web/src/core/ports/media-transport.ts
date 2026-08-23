@@ -49,6 +49,17 @@ export type TransportEvents = {
   track: { stream: MediaStream };
   reconnecting: void;
   reconnected: void;
+  /**
+   * O canal de sinalização caiu, mas a MÍDIA continua.
+   *
+   * É evento separado de `closed` porque a consequência é totalmente
+   * diferente, e confundir os dois quebrava a promessa central da
+   * arquitetura: o servidor não está no caminho da mídia, então não deveria
+   * estar no caminho da falha. Quem já está conectado continua vendo; só
+   * espectadores novos não entram.
+   */
+  'signaling-lost': void;
+  /** A mídia acabou. Aí sim é fim. */
   closed: { reason: string };
 };
 

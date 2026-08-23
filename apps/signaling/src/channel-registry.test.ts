@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { OWNERSHIP_GRACE_MS, makeChannelRegistry } from './channel-registry.js';
+import { DEFAULT_LIMITS } from './limits.js';
 import { SpySocket, TestClock, testDeps } from './testing.js';
 
 const SLUG = 'joao';
@@ -66,9 +67,17 @@ describe('registro de canais', () => {
     });
 
     it('limita tentativas de host por IP', () => {
-      for (let i = 0; i < 5; i += 1) host(`slug-${i}`, OWNER, '5.5.5.5');
+      for (let i = 0; i < DEFAULT_LIMITS.hostLimit; i += 1) host(`slug-${i}`, OWNER, '5.5.5.5');
       const excedente = host('slug-x', OWNER, '5.5.5.5');
       expect(excedente.socket.last()).toEqual({ type: 'error', code: 'RATE_LIMITED' });
+    });
+
+    it('o teto de host aguenta recarregar a página várias vezes', () => {
+      // Atrás de CGNAT vários usuários dividem o mesmo IP, e cinco F5
+      // trancavam a pessoa fora do próprio canal.
+      for (let i = 0; i < 10; i += 1) {
+        expect(host(SLUG, OWNER, '7.7.7.7').socket.last()).toMatchObject({ type: 'hosting' });
+      }
     });
   });
 
@@ -238,10 +247,31 @@ describe('registro de canais', () => {
 
     it('limita mensagens por conexão', () => {
       const h = host();
-      for (let i = 0; i < 40; i += 1) {
+      for (let i = 0; i < DEFAULT_LIMITS.messageLimit + 10; i += 1) {
         h.conn.receive(JSON.stringify({ type: 'signal', to: 'v_x', payload: i }));
       }
       expect(h.socket.last()).toEqual({ type: 'error', code: 'RATE_LIMITED' });
+    });
+
+    it('aguenta três espectadores entrando ao mesmo tempo', () => {
+      // O caso de uso CENTRAL: colar o link no Discord e três amigos clicarem.
+      // A troca de ICE é em rajada — cada peer custa uma oferta mais um
+      // candidato por vez, e em rede real são dezenas de candidatos.
+      const h = host();
+      for (let i = 0; i < 3; i += 1) watch(SLUG, `9.9.9.${i}`);
+
+      // 3 peers × (1 oferta + ~40 candidatos) numa rajada.
+      for (let peer = 0; peer < 3; peer += 1) {
+        for (let msg = 0; msg < 41; msg += 1) {
+          h.conn.receive(
+            JSON.stringify({ type: 'signal', to: `v_00${peer + 2}`, payload: { candidate: msg } }),
+          );
+        }
+      }
+
+      // O transmissor NÃO pode ser derrubado no meio da negociação.
+      expect(h.socket.ofType('error')).toEqual([]);
+      expect(h.socket.closed).toBe(false);
     });
 
     it('a janela de mensagens reabre com o tempo', () => {

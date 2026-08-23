@@ -64,7 +64,15 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         deps.channel.on('peer-joined', ({ peerId }) => mesh.admit(peerId)),
         deps.channel.on('peer-left', ({ peerId }) => mesh.drop(peerId)),
         deps.channel.on('signal', ({ from, payload }) => void mesh.handleSignal(from, payload)),
-        deps.channel.on('closed', ({ reason }) => emitter.emit('closed', { reason })),
+        /**
+         * Queda do canal NÃO é queda da transmissão.
+         *
+         * As `RTCPeerConnection` já estabelecidas seguem funcionando sem o
+         * servidor — é literalmente o argumento da arquitetura. Emitir
+         * `closed` aqui derrubava tudo em menos de dois segundos e
+         * contradizia o que o README, a regra R8 e a ADR 0005 afirmam.
+         */
+        deps.channel.on('closed', () => emitter.emit('signaling-lost', undefined)),
       );
     },
 
@@ -86,26 +94,36 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           media.addTrack(track);
           link.minimizePlayoutDelay();
 
-          if (!delivered && track.kind === 'video') {
-            delivered = true;
-            emitter.emit('track', { stream: media });
-            return;
-          }
           /**
-           * O áudio quase sempre chega DEPOIS do primeiro frame de vídeo.
+           * `ontrack` NÃO significa que o vídeo está chegando.
            *
-           * Emitir só uma vez deixava a sessão com `hasAudio: false` para
-           * sempre — e é esse campo que decide se o overlay "clique para
-           * ativar o som" aparece. Sem ele o espectador fica mudo sem nunca
-           * saber que existe som para ouvir.
+           * Ele dispara quando o transceiver é montado a partir do SDP — antes
+           * de um único pacote de mídia atravessar a rede. Declarar "assistindo"
+           * aqui era o motivo de o espectador ver uma tela preta com o produto
+           * afirmando que estava tudo bem: o elemento de vídeo existia, o
+           * estado dizia `watching`, e nenhum frame nunca chegava.
+           *
+           * O sinal correto é o `unmute` da trilha remota: ela nasce `muted` e
+           * desmuta quando os primeiros pacotes de fato aterrissam. Se o ICE
+           * não fechar — o caso de quem precisa de TURN e não tem — o `unmute`
+           * simplesmente não vem, e o relógio da sessão trata como falha em
+           * vez de deixar a pessoa olhando para o preto.
            */
-          if (delivered && track.kind === 'audio') {
+          const anunciar = () => {
+            if (track.kind === 'video') {
+              if (delivered) return;
+              delivered = true;
+            }
             emitter.emit('track', { stream: media });
-          }
+          };
+
+          if (track.muted) track.addEventListener('unmute', anunciar, { once: true });
+          else anunciar();
         },
         onStateChange: (state) => {
           if (state === 'disconnected') emitter.emit('reconnecting', undefined);
           if (state === 'connected' && delivered) emitter.emit('reconnected', undefined);
+          // Sem TURN, um par atrás de NAT simétrico chega exatamente aqui.
           if (state === 'failed') emitter.emit('closed', { reason: 'ICE_FAILED' });
         },
       });
@@ -118,7 +136,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           });
         }),
         deps.channel.on('peer-left', () => emitter.emit('closed', { reason: 'HOST_LEFT' })),
-        deps.channel.on('closed', ({ reason }) => emitter.emit('closed', { reason })),
+        // Idem no espectador: perder o canal não é perder o vídeo.
+        deps.channel.on('closed', () => emitter.emit('signaling-lost', undefined)),
       );
     },
 

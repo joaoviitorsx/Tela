@@ -13,6 +13,8 @@ type Props = {
   readonly relayed: number;
   /** Escolheu janela em vez de tela inteira, e o áudio do sistema ficou de fora. */
   readonly audioPerdidoPelaEscolha: boolean;
+  /** Canal de sinalização caiu: quem assiste continua, ninguém novo entra. */
+  readonly semSinalizacao: boolean;
   readonly copied: boolean;
   readonly onCopy: () => void;
   readonly onStop: () => void;
@@ -43,6 +45,7 @@ export function LiveHud({
   maxPeers,
   relayed,
   audioPerdidoPelaEscolha,
+  semSinalizacao,
   copied,
   onCopy,
   onStop,
@@ -125,6 +128,14 @@ export function LiveHud({
         {presetForced && (
           <p role="status" className="text-[12px] text-warn">
             Qualidade reduzida automaticamente — o encoder não estava dando conta.
+          </p>
+        )}
+
+        {semSinalizacao && (
+          <p role="status" className="flex items-center gap-1.5 text-[12px] text-warn">
+            <IconWarning className="h-3.5 w-3.5 shrink-0" />
+            Servidor fora do ar. Quem já está assistindo continua vendo — mas
+            ninguém novo consegue entrar pelo link.
           </p>
         )}
 

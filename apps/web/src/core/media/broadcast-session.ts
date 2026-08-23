@@ -57,6 +57,11 @@ export type BroadcastState =
       readonly stats: MediaStats | null;
       readonly hasAudio: boolean;
       /**
+       * O canal de sinalização caiu. Quem já está assistindo continua vendo;
+       * só espectadores novos não conseguem entrar.
+       */
+      readonly semSinalizacao: boolean;
+      /**
        * `true` quando o usuário escolheu uma janela ou aba em vez da tela
        * inteira NUM sistema onde isso custa o áudio do sistema.
        *
@@ -245,6 +250,7 @@ export class BroadcastSession {
 
     this.unsubscribes.push(
       this.deps.transport.on('peers', (peers) => this.onPeers(peers)),
+      this.deps.transport.on('signaling-lost', () => this.onSignalingLost()),
       this.deps.transport.on('closed', () => void this.stop('TRANSPORT_FAILED')),
     );
 
@@ -268,6 +274,7 @@ export class BroadcastSession {
       maxPeers: this.maxPeers,
       stats: null,
       hasAudio: this.audioTrack !== null,
+      semSinalizacao: false,
       audioPerdidoPelaEscolha:
         this.audioTrack === null &&
         this.surface !== 'monitor' &&
@@ -370,6 +377,19 @@ export class BroadcastSession {
     this.pressureKind = 'none';
     this.setState({ ...this.state, presetId: next, presetForced: false });
     await this.deps.transport.setPreset(presetById(next));
+  }
+
+  /**
+   * A transmissão CONTINUA sem o servidor de sinalização.
+   *
+   * Antes isso chamava `stop()` e matava tudo em menos de dois segundos —
+   * exatamente o oposto do que a arquitetura promete. Agora o produto só
+   * avisa que ninguém novo consegue entrar, e quem está assistindo continua.
+   */
+  private onSignalingLost(): void {
+    if (this.state.status !== 'live') return;
+    if (this.state.semSinalizacao) return;
+    this.setState({ ...this.state, semSinalizacao: true });
   }
 
   private onPeers(peers: readonly PeerInfo[]): void {

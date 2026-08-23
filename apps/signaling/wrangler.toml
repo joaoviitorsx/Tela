@@ -36,9 +36,22 @@ new_sqlite_classes = ["ChannelDurableObject"]
 MAX_PEERS = "3"
 STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
 
-# TURN é opcional e só entra se você tiver um. Configure como secret, nunca
-# aqui — este arquivo é versionado:
-#   npx wrangler secret put TURN_SECRET
+# TURN — necessário para a cauda de conexões que não fecham direto.
+#
+# Sem relay, um par atrás de NAT restritivo dos DOIS lados nunca conecta: o
+# WebRTC troca SDP, monta tudo, e nenhum pacote atravessa. O espectador fica
+# olhando para uma tela preta. É a causa mais comum de "conectou e não
+# aparece nada" entre máquinas em redes diferentes.
+#
+# Cloudflare Realtime TURN: 1.000 GB grátis por mês, credencial efêmera por
+# peer. Crie a chave em Dash → Realtime → TURN e configure como SECRET (este
+# arquivo é versionado):
+#
+#   wrangler secret put TURN_KEY_ID
+#   wrangler secret put TURN_KEY_API_TOKEN
+#
+# Alternativa com coturn próprio:
+#   wrangler secret put TURN_SECRET
 # [vars]
 # TURN_URL = "turn:turn.seudominio.com:3478"
 # TURN_TTL_SECONDS = "600"

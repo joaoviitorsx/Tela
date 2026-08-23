@@ -59,12 +59,28 @@ pnpm --filter @tela/web exec wrangler pages deploy dist --project-name tela
 `display-capture=(self)` — sem ele, `getDisplayMedia` é bloqueado e o botão
 TRANSMITIR não faz nada.
 
-### 3. TURN, se você tiver
+### 3. TURN — faça isto se o vídeo aparecer preto
 
-```bash
-pnpm --filter @tela/signaling exec wrangler secret put TURN_SECRET
-# e descomente TURN_URL em wrangler.toml
-```
+Sem relay, um par atrás de NAT restritivo dos **dois** lados nunca fecha
+conexão direta: o WebRTC troca SDP, monta tudo, e nenhum pacote atravessa. O
+espectador vê tela preta enquanto quem transmite vê "AO VIVO". É a causa mais
+comum de falha entre máquinas em redes diferentes.
+
+**Cloudflare Realtime TURN** — 1.000 GB grátis por mês, e você já tem conta:
+
+1. Dash → **Realtime** → **TURN** → criar uma chave
+2. ```bash
+   pnpm --filter @tela/signaling exec wrangler secret put TURN_KEY_ID
+   pnpm --filter @tela/signaling exec wrangler secret put TURN_KEY_API_TOKEN
+   pnpm release
+   ```
+
+O servidor passa a emitir credencial efêmera por espectador. O HUD mostra
+quantos estão passando por relay — relay funciona, mas custa latência e cota,
+então é bom saber.
+
+Alternativa com coturn próprio: `wrangler secret put TURN_SECRET` e
+descomente `TURN_URL` no `wrangler.toml`.
 
 ---
 

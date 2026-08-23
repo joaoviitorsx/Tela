@@ -15,9 +15,34 @@ export type Limits = {
 
 export const DEFAULT_LIMITS: Limits = {
   maxPeers: 3,
-  messageLimit: 30,
+
+  /**
+   * Teto de mensagens por conexão, por janela.
+   *
+   * Era 30 por 10s e derrubava o caso de uso CENTRAL do produto: colar o link
+   * no Discord e três amigos clicarem ao mesmo tempo. Cada espectador custa ao
+   * transmissor uma oferta mais um candidato ICE por vez — medido em 11
+   * mensagens num ambiente isolado, onde só existem candidatos de host. Em
+   * rede real, com STUN e TURN, cada peer gera candidatos para IPv4 e IPv6,
+   * UDP e TCP, e o número sobe muito. Três entradas simultâneas estouravam o
+   * teto e o servidor FECHAVA o socket do transmissor no meio da negociação.
+   *
+   * A troca de ICE é inerentemente em rajada: qualquer teto pensado para
+   * tráfego constante está errado aqui. 240 por 10s ainda limita um abusador
+   * a 24 mensagens por segundo sustentadas, e deixa folga de uma ordem de
+   * grandeza para o uso legítimo.
+   */
+  messageLimit: 240,
   messageWindowMs: 10_000,
-  hostLimit: 5,
+
+  /**
+   * Tentativas de `host` por IP.
+   *
+   * Sobe de 5 para 20: atrás de CGNAT vários usuários compartilham o mesmo IP,
+   * e cinco recarregamentos de página trancavam a pessoa fora do próprio
+   * canal. Continua barrando quem tenta reservar centenas de slugs.
+   */
+  hostLimit: 20,
   hostWindowMs: 60_000,
 };
 

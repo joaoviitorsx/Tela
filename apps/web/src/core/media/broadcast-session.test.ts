@@ -350,12 +350,30 @@ describe('BroadcastSession — encerramento', () => {
     expect(ctx.session.getState().status).toBe('ended');
   });
 
-  it('queda do canal encerra a sessão', async () => {
+  it('queda da MÍDIA encerra a sessão', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    ctx.transport.emit('closed', { reason: 'SIGNAL_CLOSED' });
+    ctx.transport.emit('closed', { reason: 'ICE_FAILED' });
     await settle();
     expect(ctx.session.getState().status).toBe('ended');
+  });
+
+  it('queda do SERVIDOR não encerra a transmissão', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.setPeers([{ id: 'v_1', connectionState: 'connected', usingRelay: false }]);
+
+    ctx.transport.loseSignaling();
+    await settle();
+
+    // A conexão é direta: o servidor nunca esteve no caminho da mídia, então
+    // não pode estar no caminho da falha. Derrubar aqui contradizia o README,
+    // a regra R8 e a ADR 0005 — e matava tudo em menos de dois segundos.
+    const state = ctx.session.getState();
+    expect(state.status).toBe('live');
+    expect(state.status === 'live' && state.semSinalizacao).toBe(true);
+    expect(state.status === 'live' && state.peers).toHaveLength(1);
+    expect(ctx.screen.video.stopped).toBe(false);
   });
 });
 

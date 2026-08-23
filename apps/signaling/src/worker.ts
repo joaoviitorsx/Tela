@@ -58,6 +58,20 @@ export type Env = {
   TURN_URL?: string;
   TURN_SECRET?: string;
   TURN_TTL_SECONDS?: string;
+  /**
+   * Cloudflare Realtime TURN.
+   *
+   * Sem relay, um par atrás de NAT restritivo dos dois lados nunca fecha
+   * conexão direta — o WebRTC troca SDP, monta tudo, e nenhum pacote
+   * atravessa. O espectador fica olhando para uma tela preta.
+   *
+   * O serviço da Cloudflare tem 1.000 GB grátis por mês, e as credenciais são
+   * efêmeras por peer. Configure com:
+   *   wrangler secret put TURN_KEY_ID
+   *   wrangler secret put TURN_KEY_API_TOKEN
+   */
+  TURN_KEY_ID?: string;
+  TURN_KEY_API_TOKEN?: string;
 };
 
 /* ─────────────────────────── tipos mínimos da plataforma ─────────────────────────── */
@@ -357,13 +371,20 @@ export function makeChannelDeps(env: Env, crypto: WebCryptoLike): ChannelDeps {
 
     async iceServersFor(peerId) {
       const servers: IceServerConfig[] = [{ urls: stun }];
+
+      const cloudflare = await cloudflareTurn(env, ttlSegundos(env));
+      if (cloudflare !== null) {
+        servers.push(cloudflare);
+        return servers;
+      }
+
       if (env.TURN_URL === undefined || env.TURN_SECRET === undefined) return servers;
 
       // `use-auth-secret` do coturn: usuário e senha derivados, com validade
       // curta. Credencial estática num front público é um relay aberto para a
       // internet inteira, rodando na sua cota.
-      const ttl = Number(env.TURN_TTL_SECONDS ?? 600);
-      const expiry = Math.floor(Date.now() / 1000) + (Number.isFinite(ttl) ? ttl : 600);
+      const ttl = ttlSegundos(env);
+      const expiry = Math.floor(Date.now() / 1000) + ttl;
       const username = `${expiry}:${peerId}`;
 
       const key = await crypto.subtle.importKey(
@@ -383,4 +404,45 @@ export function makeChannelDeps(env: Env, crypto: WebCryptoLike): ChannelDeps {
       return servers;
     },
   };
+}
+
+
+function ttlSegundos(env: Env): number {
+  const bruto = Number(env.TURN_TTL_SECONDS ?? 600);
+  return Number.isFinite(bruto) && bruto > 0 ? bruto : 600;
+}
+
+/**
+ * Credenciais efêmeras do Cloudflare Realtime TURN.
+ *
+ * Uma requisição por peer que entra — barata e cacheável, mas mesmo sem cache
+ * é uma chamada por espectador, não por pacote. Falha em silêncio: se o TURN
+ * não puder ser obtido, a conexão ainda pode fechar direto, e derrubar a
+ * entrada por causa disso seria trocar uma degradação por uma falha.
+ */
+async function cloudflareTurn(env: Env, ttl: number): Promise<IceServerConfig | null> {
+  const { TURN_KEY_ID: id, TURN_KEY_API_TOKEN: token } = env;
+  if (id === undefined || token === undefined) return null;
+
+  try {
+    const resposta = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ ttl }),
+      },
+    );
+    if (!resposta.ok) return null;
+
+    const corpo = (await resposta.json()) as { iceServers?: IceServerConfig };
+    const servidores = corpo.iceServers;
+    if (servidores === undefined || servidores.urls === undefined) return null;
+    return servidores;
+  } catch {
+    return null;
+  }
 }

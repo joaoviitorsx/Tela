@@ -245,6 +245,11 @@ export class FakeMediaTransport implements MediaTransport {
     this.emitter.emit(event, payload);
   }
 
+  /** Simula a queda do servidor de sinalização com a mídia ainda fluindo. */
+  loseSignaling(): void {
+    this.emit('signaling-lost', undefined);
+  }
+
   /** Simula a chegada da mídia no espectador. */
   deliver(stream: MediaStream = fakeStream([fakeTrack('video')])): void {
     this.emit('track', { stream });

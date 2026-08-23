@@ -84,7 +84,7 @@ describe('ViewerSession', () => {
     expect(ctx.session.getState().status).toBe('full');
 
     cheio = false;
-    ctx.scheduler.advance(30_000);
+    ctx.scheduler.advance(10_000);
     await settle(20);
 
     // Continuar dizendo "lotada" depois que ninguém transmite é mentira.
@@ -159,6 +159,21 @@ describe('ViewerSession', () => {
     expect(ctx.session.getState().status).toBe('watching');
   });
 
+  it('queda do SERVIDOR não tira o espectador do ar', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().deliver();
+    expect(ctx.session.getState().status).toBe('watching');
+
+    ctx.ultimo().loseSignaling();
+    await settle(20);
+
+    // A conexão com quem transmite é direta. Perder o servidor não é perder
+    // o vídeo — é só não conseguir mais entrar em canais novos.
+    expect(ctx.session.getState().status).toBe('watching');
+    expect(ctx.ultimo().disconnected).toBe(false);
+  });
+
   it('queda do transmissor volta para offline e reconecta depois', async () => {
     const ctx = build();
     await ctx.session.open(SLUG);
@@ -185,7 +200,9 @@ describe('ViewerSession', () => {
     ctx.scheduler.advance(20_000);
     await settle(40);
 
-    expect(ctx.session.getState().status).toBe('offline');
+    // Negociou e a mídia nunca veio: é estado próprio, não "offline". A ação
+    // de quem lê é diferente — não adianta só esperar.
+    expect(ctx.session.getState().status).toBe('sem-conexao');
     expect(ctx.scheduler.pending).toBeGreaterThan(0);
   });
 

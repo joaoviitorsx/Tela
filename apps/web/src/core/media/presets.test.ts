@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { P2P_LIMITS, p2pViewerBudget, suggestPreset } from '@tela/shared';
+import { P2P_LIMITS, SIXTY_FPS_PRESETS, p2pViewerBudget, suggestPreset } from '@tela/shared';
 import { PRESETS, PRESET_IDS, isPresetId, nextPresetOnCpuPressure } from './presets.js';
 
 describe('presets', () => {
@@ -15,14 +15,24 @@ describe('presets', () => {
     }
   });
 
-  it('todo preset mantém 60fps na camada principal — resolução cai antes do framerate', () => {
-    for (const id of PRESET_IDS) expect(PRESETS[id].main.maxFramerate).toBe(60);
+  it('resolução e bitrate caem antes do framerate — só o último degrau abre mão dos 60fps', () => {
+    for (const id of SIXTY_FPS_PRESETS) expect(PRESETS[id].main.maxFramerate).toBe(60);
+    // A exceção é deliberada e única: abaixo de ~3,5 Mbps a alternativa a
+    // 30fps não é "60fps pior", é não transmitir (changeset 001 §7.3).
+    const excecoes = PRESET_IDS.filter((id) => PRESETS[id].main.maxFramerate < 60);
+    expect(excecoes).toEqual(['p720p30']);
+  });
+
+  it('a escada de presets desce monotonicamente em bitrate', () => {
+    const bitrates = PRESET_IDS.map((id) => PRESETS[id].main.maxBitrate);
+    expect([...bitrates].sort((a, b) => b - a)).toEqual(bitrates);
   });
 
   it('degrada um degrau por vez e para no último', () => {
     expect(nextPresetOnCpuPressure('p1080p60')).toBe('p720p60');
     expect(nextPresetOnCpuPressure('p720p60')).toBe('p720p60eco');
-    expect(nextPresetOnCpuPressure('p720p60eco')).toBeNull();
+    expect(nextPresetOnCpuPressure('p720p60eco')).toBe('p720p30');
+    expect(nextPresetOnCpuPressure('p720p30')).toBeNull();
   });
 
   it('isPresetId rejeita lixo vindo do localStorage', () => {
@@ -57,8 +67,15 @@ describe('orçamento P2P', () => {
 
   it('sugere o melhor preset que cabe no upload dividido pelos espectadores', () => {
     expect(suggestPreset(100_000_000, 1)).toBe('p1080p60');
-    expect(suggestPreset(15_000_000, 3)).toBe('p720p60eco');
     expect(suggestPreset(20_000_000, 2)).toBe('p720p60');
-    expect(suggestPreset(2_000_000, 1)).toBe('p720p60eco');
+    expect(suggestPreset(15_000_000, 3)).toBe('p720p60eco');
+    // 2 Mbps × 0,7 = 1,4 Mbps: nem o eco cabe. Aqui 30fps é a diferença entre
+    // transmitir e não transmitir.
+    expect(suggestPreset(2_000_000, 1)).toBe('p720p30');
+  });
+
+  it('só desce para 30fps quando 60fps não cabe de jeito nenhum', () => {
+    // 4 Mbps × 0,7 = 2,8 Mbps → ainda cabe o eco (2,5 Mbps) a 60fps.
+    expect(suggestPreset(4_000_000, 1)).toBe('p720p60eco');
   });
 });

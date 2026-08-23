@@ -14,8 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Sem `with: version` de propósito: a versão do pnpm vem do campo
+      # "packageManager" do package.json. Declarar nos dois lugares faz o
+      # action abortar com "Multiple versions of pnpm specified".
       - uses: pnpm/action-setup@v4
-        with: { version: 10 }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
 

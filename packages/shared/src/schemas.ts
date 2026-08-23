@@ -10,7 +10,7 @@ export const SlugSchema = z.string().regex(SLUG_RE);
 /** 32 bytes aleatórios em base64url = 43 chars. É a credencial, não há senha. */
 export const OwnerTokenSchema = z.string().min(43).max(64);
 
-export const PresetIdSchema = z.enum(['p1080p60', 'p720p60', 'p720p60eco']);
+export const PresetIdSchema = z.enum(['p1080p60', 'p720p60', 'p720p60eco', 'p720p30']);
 
 export const TransportKindSchema = z.enum(['sfu', 'p2p']);
 export type TransportKind = z.infer<typeof TransportKindSchema>;

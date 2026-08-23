@@ -18,7 +18,7 @@ export type SimulcastLayer = {
   readonly encoding: LayerEncoding;
 };
 
-export type PresetId = 'p1080p60' | 'p720p60' | 'p720p60eco';
+export type PresetId = 'p1080p60' | 'p720p60' | 'p720p60eco' | 'p720p30';
 
 export type EncodingPreset = {
   readonly id: PresetId;
@@ -73,14 +73,50 @@ export const PRESET_720P60_ECO: EncodingPreset = {
   ],
 };
 
+/**
+ * Último recurso, e o ÚNICO preset que abre mão dos 60fps.
+ *
+ * A regra do produto é perder resolução antes de framerate, e gameplay a 30fps
+ * é uma experiência diferente — por isso este degrau só existe abaixo de
+ * ~3,5 Mbps de upload disponível, onde a alternativa não é "60fps pior", é
+ * "não transmitir". Changeset 001 §7.3 o exige; ADR 0004 registra a ressalva.
+ *
+ * `degradationPreference: 'maintain-framerate'` continua valendo DENTRO dele:
+ * uma vez em 30fps, a adaptação em tempo real ainda prefere borrar a travar.
+ */
+export const PRESET_720P30: EncodingPreset = {
+  id: 'p720p30',
+  label: '720p30',
+  hint: 'Upload muito limitado. ~1,8 Mbps. Único preset abaixo de 60fps.',
+  upstreamBps: 2_500_000,
+  main: { maxBitrate: 1_800_000, maxFramerate: 30, priority: 'high' },
+  layers: [
+    { width: 1280, height: 720, encoding: { maxBitrate: 1_800_000, maxFramerate: 30 } },
+    { width: 854, height: 480, encoding: { maxBitrate: 700_000, maxFramerate: 30 } },
+  ],
+};
+
 export const PRESETS = {
   p1080p60: PRESET_1080P60,
   p720p60: PRESET_720P60,
   p720p60eco: PRESET_720P60_ECO,
+  p720p30: PRESET_720P30,
 } as const;
 
-/** Ordem de exibição: melhor primeiro. A UI itera nisto, não em Object.keys. */
-export const PRESET_ORDER: readonly PresetId[] = ['p1080p60', 'p720p60', 'p720p60eco'];
+/**
+ * Ordem de exibição e de degradação: melhor primeiro. A UI e a queda automática
+ * por CPU iteram nisto, não em `Object.keys` — ordem de chave de objeto é
+ * detalhe de runtime, não contrato.
+ */
+export const PRESET_ORDER: readonly PresetId[] = [
+  'p1080p60',
+  'p720p60',
+  'p720p60eco',
+  'p720p30',
+];
+
+/** Presets que preservam 60fps. `p720p30` é a única exceção deliberada. */
+export const SIXTY_FPS_PRESETS: readonly PresetId[] = ['p1080p60', 'p720p60', 'p720p60eco'];
 
 /** Codec único. VP9/AV1 comprimem melhor mas não têm HW encode universal. */
 export const VIDEO_CODEC = 'h264' as const;
@@ -122,11 +158,19 @@ export function p2pViewerBudget(
   return Math.max(0, Math.min(byBandwidth, P2P_LIMITS.maxViewersBrowser));
 }
 
-/** Melhor preset que cabe num upstream, para sugerir em vez de deixar o usuário adivinhar. */
+/**
+ * Melhor preset que cabe num upstream, para sugerir em vez de deixar o usuário
+ * adivinhar.
+ *
+ * A escada desce por RESOLUÇÃO e BITRATE primeiro, e só toca no framerate no
+ * último degrau. É por isso que `p720p60eco` fica entre `p720p60` e `p720p30`:
+ * a ~3,5 Mbps por espectador ainda dá para manter 60fps, e manter é a regra.
+ */
 export function suggestPreset(uplinkBitsPerSecond: number, viewers: number): PresetId {
   const budget = uplinkBitsPerSecond * P2P_LIMITS.uplinkHeadroom;
   const perViewer = budget / Math.max(1, viewers);
   if (perViewer >= PRESET_1080P60.main.maxBitrate) return 'p1080p60';
   if (perViewer >= PRESET_720P60.main.maxBitrate) return 'p720p60';
-  return 'p720p60eco';
+  if (perViewer >= PRESET_720P60_ECO.main.maxBitrate) return 'p720p60eco';
+  return 'p720p30';
 }

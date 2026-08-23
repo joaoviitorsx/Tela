@@ -28,11 +28,32 @@ describe('presets', () => {
     expect([...bitrates].sort((a, b) => b - a)).toEqual(bitrates);
   });
 
-  it('degrada um degrau por vez e para no último', () => {
+  it('degrada um degrau por vez e para no último que preserva 60fps', () => {
     expect(nextPresetOnCpuPressure('p1080p60')).toBe('p720p60');
     expect(nextPresetOnCpuPressure('p720p60')).toBe('p720p60eco');
-    expect(nextPresetOnCpuPressure('p720p60eco')).toBe('p720p30');
+    // NÃO desce para p720p30: mesma resolução do eco, então cortaria framerate
+    // sem aliviar o encoder — o oposto do que a pressão de CPU pede.
+    expect(nextPresetOnCpuPressure('p720p60eco')).toBeNull();
     expect(nextPresetOnCpuPressure('p720p30')).toBeNull();
+  });
+
+  it('a escada de CPU nunca chega a um preset abaixo de 60fps', () => {
+    const visitados: string[] = ['p1080p60'];
+    let atual = nextPresetOnCpuPressure('p1080p60');
+    while (atual !== null) {
+      visitados.push(atual);
+      atual = nextPresetOnCpuPressure(atual);
+    }
+    for (const id of visitados) {
+      expect(PRESETS[id as keyof typeof PRESETS].main.maxFramerate).toBe(60);
+    }
+  });
+
+  it('p720p30 não alivia CPU — só existe para upload limitado', () => {
+    // Se um dia isso deixar de ser verdade, o degrau pode voltar para a escada.
+    const eco = PRESETS.p720p60eco.layers.map((l) => l.width * l.height);
+    const p30 = PRESETS.p720p30.layers.map((l) => l.width * l.height);
+    expect(p30).toEqual(eco);
   });
 
   it('isPresetId rejeita lixo vindo do localStorage', () => {

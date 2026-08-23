@@ -208,6 +208,65 @@ describe('hub de sinalização', () => {
     expect(pub.socket.last()).toEqual({ t: 'pong' });
   });
 
+  it('hello recusado não deixa sala fantasma no registro', () => {
+    // NO_PUBLISHER é o caminho NORMAL de quem abre o link na janela entre o
+    // /broadcast/start e o hello do transmissor. Vazar uma sala por tentativa
+    // faria o Map crescer para sempre e a métrica roomCount mentir.
+    for (let i = 0; i < 25; i += 1) {
+      const socket = new SpySocket();
+      const conn = hub.accept(socket);
+      conn.receive(
+        JSON.stringify({ t: 'hello', ticket: ticketFor('viewer', `v_${i}`, `b_sala${i}`) }),
+      );
+      conn.disconnect();
+    }
+    expect(hub.roomCount).toBe(0);
+  });
+
+  it('ticket recusado não deixa timer disparando erro num socket fechado', () => {
+    const socket = new SpySocket();
+    hub.accept(socket).receive(JSON.stringify({ t: 'hello', ticket: 'lixo' }));
+    expect(socket.sent).toEqual([{ t: 'error', code: 'BAD_TICKET' }]);
+
+    vi.advanceTimersByTime(10_000);
+    // Sem clearTimeout no fail, chegaria um segundo erro (HELLO_TIMEOUT).
+    expect(socket.sent).toEqual([{ t: 'error', code: 'BAD_TICKET' }]);
+  });
+
+  it('espectador desalojado pela mesma identidade para de rotear', () => {
+    const pub = connect('publisher', 'p_1');
+    const antigo = connect('viewer', 'v_1');
+    const novo = connect('viewer', 'v_1');
+
+    expect(antigo.socket.closed).toBe(true);
+    expect(novo.socket.last()).toMatchObject({ t: 'ready', role: 'viewer' });
+
+    // O socket desalojado tenta continuar falando em nome de v_1.
+    antigo.conn.receive(
+      JSON.stringify({ t: 'describe', sdp: { type: 'answer', sdp: 'do zumbi' } }),
+    );
+    expect(pub.socket.ofType('describe')).toEqual([]);
+
+    // O legítimo continua funcionando.
+    novo.conn.receive(
+      JSON.stringify({ t: 'describe', sdp: { type: 'answer', sdp: 'do legítimo' } }),
+    );
+    expect(pub.socket.ofType('describe')).toEqual([
+      { t: 'describe', from: 'v_1', sdp: { type: 'answer', sdp: 'do legítimo' } },
+    ]);
+  });
+
+  it('reentrada da mesma identidade não consome vaga extra', () => {
+    connect('publisher', 'p_1');
+    connect('viewer', 'v_1');
+    connect('viewer', 'v_2');
+    connect('viewer', 'v_3');
+    // v_1 reconecta: reaproveita a própria vaga em vez de tomar VIEWER_LIMIT.
+    const reentrada = connect('viewer', 'v_1');
+    expect(reentrada.socket.last()).toMatchObject({ t: 'ready', role: 'viewer' });
+    expect(hub.countViewers('b_joao')).toBe(3);
+  });
+
   it('closeRoom derruba todo mundo', () => {
     const pub = connect('publisher', 'p_1');
     const v1 = connect('viewer', 'v_1');

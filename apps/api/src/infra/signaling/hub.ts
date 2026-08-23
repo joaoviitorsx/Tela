@@ -67,6 +67,7 @@ export function makeSignalingHub(deps: HubDeps) {
   };
 
   const dropIfEmpty = (name: string) => {
+    if (name === '') return;
     const room = rooms.get(name);
     if (room && room.publisher === null && room.viewers.size === 0) rooms.delete(name);
   };
@@ -106,6 +107,8 @@ export function makeSignalingHub(deps: HubDeps) {
       let peer: Peer | null = null;
       let roomName: string | null = null;
       let closed = false;
+      /** Sala que o hello tentou entrar, mesmo quando a entrada foi recusada. */
+      let lastRoom = '';
 
       const helloTimer = setTimeout(() => {
         if (peer === null && !closed) {
@@ -117,14 +120,25 @@ export function makeSignalingHub(deps: HubDeps) {
       helloTimer.unref?.();
 
       function fail(code: SignalErrorCode): void {
+        // Sem este clearTimeout, toda conexão recusada segurava um timer até
+        // HELLO_TIMEOUT_MS e disparava um segundo frame de erro num socket
+        // que já estava fechado.
+        clearTimeout(helloTimer);
         socket.send({ t: 'error', code });
         socket.close();
+        // `roomOf` registra a sala antes da validação, e um hello recusado
+        // sai sem `peer` — então o `disconnect` retorna cedo e nunca chama
+        // `dropIfEmpty`. `NO_PUBLISHER` é o caminho NORMAL de um espectador
+        // que chega na janela entre o /broadcast/start e o hello do
+        // transmissor, então isso vazava uma sala por tentativa, para sempre.
+        if (peer === null && roomName === null) dropIfEmpty(lastRoom);
       }
 
       function handleHello(ticket: string): void {
         const claims = verifyTicket(deps.secret, ticket, Math.floor(deps.now() / 1000));
         if (claims === null) return fail('BAD_TICKET');
 
+        lastRoom = claims.room;
         const room = roomOf(claims.room);
 
         if (claims.role === 'publisher') {
@@ -139,7 +153,15 @@ export function makeSignalingHub(deps: HubDeps) {
           room.publisher = peer;
         } else {
           if (room.publisher === null) return fail('NO_PUBLISHER');
-          if (room.viewers.size >= deps.maxViewers) return fail('VIEWER_LIMIT');
+          const previous = room.viewers.get(claims.identity);
+          if (previous === undefined && room.viewers.size >= deps.maxViewers) {
+            return fail('VIEWER_LIMIT');
+          }
+          // Ticket é bearer e vale 15 minutos: a mesma identidade pode aparecer
+          // duas vezes. Sem fechar o socket anterior, ele continuava roteando
+          // SDP assinado como o mesmo peer, atropelando a negociação do socket
+          // legítimo — e a saída de um derrubava a PeerConnection do outro.
+          previous?.socket.close();
           peer = { id: claims.identity, role: 'viewer', socket };
           room.viewers.set(peer.id, peer);
         }
@@ -182,6 +204,10 @@ export function makeSignalingHub(deps: HubDeps) {
         if (peer === null || roomName === null) return fail('BAD_TICKET');
         const room = rooms.get(roomName);
         if (!room) return;
+        // Mesma checagem de identidade do `disconnect`: um socket desalojado
+        // por outra conexão com a mesma identidade não pode continuar falando
+        // em nome dela.
+        if (peerIn(room, peer.id) !== peer) return;
         const target = resolveTarget(room, message.to, peer);
         if (target === null) return;
         if (message.t === 'describe') {

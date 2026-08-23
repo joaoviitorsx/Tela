@@ -22,9 +22,23 @@ declare module 'fastify' {
 export const rateLimitPlugin = fp(async (app: FastifyInstance) => {
   const buckets = new Map<string, Bucket>();
 
-  // Varredura preguiçosa: sem timer periódico segurando o event loop.
+  /**
+   * Varredura preguiçosa: sem timer periódico segurando o event loop.
+   *
+   * O `lastSweepAt` não é otimização, é proteção. Só o teto de tamanho fazia a
+   * varredura O(n) rodar em TODA requisição acima de 10.000 baldes — e se os
+   * baldes estivessem vivos (a regra de `claim` tem janela de uma hora), ela
+   * não liberava nada e ainda pagava 10.000 iterações por request. Degrau de
+   * performance auto-infligido justamente sob carga.
+   */
+  const SWEEP_INTERVAL_MS = 60_000;
+  const SWEEP_THRESHOLD = 10_000;
+  let lastSweepAt = 0;
+
   const sweep = (now: number) => {
-    if (buckets.size < 10_000) return;
+    if (buckets.size < SWEEP_THRESHOLD) return;
+    if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
+    lastSweepAt = now;
     for (const [key, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(key);
   };
 

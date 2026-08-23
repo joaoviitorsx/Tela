@@ -251,6 +251,47 @@ describe('ViewerSession — reconexão não pode multiplicar', () => {
     expect(scheduler.pending).toBe(0);
   });
 
+  it('reconnecting volta para watching quando a mídia retorna', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    expect(ctx.session.getState().status).toBe('watching');
+
+    ctx.viewer.emit('reconnecting', undefined);
+    expect(ctx.session.getState().status).toBe('reconnecting');
+
+    // Sem isto, `reconnecting` era beco sem saída: a rota renderiza o estado
+    // offline para qualquer status ≠ watching e desmonta o <video>, então a
+    // mídia voltava e a tela ficava morta até o usuário recarregar.
+    ctx.viewer.emit('reconnected', undefined);
+    expect(ctx.session.getState().status).toBe('watching');
+  });
+
+  it('negociação que nunca settla não deixa a aba presa em connecting', async () => {
+    const api = new FakeApi();
+    const transport = new GatedViewerTransport();
+    const scheduler = new FakeScheduler();
+    const session = new ViewerSession({
+      api,
+      transports: {
+        publisher: async () => new FakePublisherTransport(),
+        viewer: async () => transport,
+      },
+      scheduler,
+    });
+
+    void session.open(SLUG);
+    await settle(20);
+    expect(session.getState().status).toBe('connecting');
+
+    // O primeiro frame nunca chega. Sem relógio, a promessa do connect não
+    // resolve nem rejeita e nenhum timer sobra para tirar a aba de lá.
+    scheduler.advance(20_000);
+    await settle(40);
+
+    expect(session.getState().status).toBe('offline');
+    expect(scheduler.pending).toBeGreaterThan(0);
+  });
+
   it('abrir outro slug fecha o transporte anterior', async () => {
     const api = new FakeApi();
     const first = new FakeViewerTransport();

@@ -308,7 +308,7 @@ export class ClosingViewerTransport implements ViewerTransport {
  * segundos, em rede ruim. É nessa janela que o usuário fecha a aba.
  */
 export class GatedViewerTransport implements ViewerTransport {
-  private readonly emitter = new Emitter<ViewerEvents>();
+  readonly emitter = new Emitter<ViewerEvents>();
   private release!: () => void;
   private readonly gate = new Promise<void>((resolve) => {
     this.release = resolve;
@@ -334,6 +334,9 @@ export class GatedViewerTransport implements ViewerTransport {
   async close(): Promise<void> {
     this.closed = true;
     this.release();
+  }
+  emit<K extends keyof ViewerEvents>(event: K, payload: ViewerEvents[K]): void {
+    this.emitter.emit(event, payload);
   }
 }
 

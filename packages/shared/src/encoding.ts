@@ -115,7 +115,16 @@ export const PRESET_ORDER: readonly PresetId[] = [
   'p720p30',
 ];
 
-/** Presets que preservam 60fps. `p720p30` é a única exceção deliberada. */
+/**
+ * Presets que preservam 60fps. `p720p30` é a única exceção deliberada, e fica
+ * de fora porque a escada de degradação por CPU só pode andar por aqui.
+ *
+ * O motivo é aritmético: `p720p30` tem EXATAMENTE a mesma resolução do
+ * `p720p60eco` (1280×720 e 854×480). Descer esse degrau por pressão de CPU
+ * não codifica um pixel a menos — só corta o framerate pela metade, que é o
+ * oposto de `degradationPreference: 'maintain-framerate'` e da R5. Ele existe
+ * para upload limitado (`suggestPreset`), não para encoder saturado.
+ */
 export const SIXTY_FPS_PRESETS: readonly PresetId[] = ['p1080p60', 'p720p60', 'p720p60eco'];
 
 /** Codec único. VP9/AV1 comprimem melhor mas não têm HW encode universal. */

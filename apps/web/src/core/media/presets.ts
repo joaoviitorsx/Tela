@@ -5,6 +5,7 @@ import {
   PRESET_ORDER,
   PRESETS as SHARED_PRESETS,
   type PresetId,
+  SIXTY_FPS_PRESETS,
   VIDEO_CODEC,
   p2pViewerBudget,
   suggestPreset,
@@ -30,14 +31,20 @@ export function isPresetId(value: unknown): value is PresetId {
  * Degradação automática por pressão de CPU.
  *
  * `qualityLimitationReason === 'cpu'` sustentado significa encode em software,
- * e nenhuma configuração de bitrate conserta isso — só codificar menos pixel.
+ * e nenhuma configuração de bitrate conserta isso — só codificar MENOS PIXEL.
  * Desce um degrau por vez; do último, não desce mais (a UI avisa em vez de
  * fingir que resolveu).
+ *
+ * A escada anda apenas por `SIXTY_FPS_PRESETS`, e não pelo `PRESET_ORDER`
+ * inteiro. `p720p30` fecha a ordem de exibição mas tem a mesma resolução do
+ * `p720p60eco` — descer até ele por pressão de CPU cortaria o framerate pela
+ * metade sem tirar um pixel do encoder, exatamente o que
+ * `maintain-framerate` e a R5 proíbem. Ele é degrau de UPLOAD, não de CPU.
  */
 export function nextPresetOnCpuPressure(current: PresetId): PresetId | null {
-  const index = PRESET_ORDER.indexOf(current);
-  const next = PRESET_ORDER[index + 1];
-  return next ?? null;
+  const index = SIXTY_FPS_PRESETS.indexOf(current);
+  if (index === -1) return null; // já está fora da escada de CPU
+  return SIXTY_FPS_PRESETS[index + 1] ?? null;
 }
 
 /** Traduz o preset para o pedido genérico que o transporte entende. */

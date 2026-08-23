@@ -44,6 +44,14 @@ const POLL_MIN_MS = 5_000;
 const POLL_MAX_MS = 30_000;
 const POLL_FACTOR = 1.5;
 const STATS_INTERVAL_MS = 1_000;
+/**
+ * Teto para a negociação. O `connect` de um transporte P2P só resolve quando
+ * o primeiro frame chega — e se a oferta SDP nunca vier (transmissor caiu
+ * entre o `start` e o `hello`, ICE não fecha, hub aceitou e travou), a
+ * promessa não resolve NEM rejeita. Sem este relógio a aba fica "conectando"
+ * para sempre, sem nenhum timer agendado para tirá-la de lá.
+ */
+const CONNECT_TIMEOUT_MS = 15_000;
 
 export class ViewerSession {
   private readonly emitter = new Emitter<ViewerEventMap>();
@@ -61,6 +69,8 @@ export class ViewerSession {
    */
   private transportCancels: Cancel[] = [];
   private retryCancel: Cancel | null = null;
+  /** Guardado para devolver a mídia ao voltar de `reconnecting`. */
+  private stream: MediaStream | null = null;
 
   /**
    * Toda operação assíncrona carrega o epoch em que começou. `open()` e
@@ -147,24 +157,31 @@ export class ViewerSession {
           this.setState({ status: 'reconnecting', slug: this.slug });
         }
       }),
+      // Sem este par, `reconnecting` era um beco sem saída: a mídia voltava e
+      // a tela ficava morta, porque a rota renderiza o estado offline para
+      // qualquer status diferente de `watching` e desmonta o <video>.
+      transport.on('reconnected', () => this.onReconnected(epoch)),
       transport.on('closed', () => void this.onClosed(epoch)),
     );
 
     try {
-      await transport.connect(joined.value.connection, (stream) => {
-        // O callback de mídia dispara quando o primeiro frame chega, que pode
-        // ser depois de o usuário ter fechado a aba ou trocado de slug.
-        // Publicar `watching` aqui ressuscitaria uma sessão morta.
-        if (this.stale(epoch)) return;
-        this.pollMs = POLL_MIN_MS;
-        this.setState({
-          status: 'watching',
-          slug: this.slug,
-          stream,
-          hasAudio: stream.getAudioTracks().length > 0,
-          stats: null,
-        });
-      });
+      await this.withTimeout(
+        transport.connect(joined.value.connection, (stream) => {
+          // O callback de mídia dispara quando o primeiro frame chega, que
+          // pode ser depois de o usuário ter fechado a aba ou trocado de slug.
+          // Publicar `watching` aqui ressuscitaria uma sessão morta.
+          if (this.stale(epoch)) return;
+          this.pollMs = POLL_MIN_MS;
+          this.stream = stream;
+          this.setState({
+            status: 'watching',
+            slug: this.slug,
+            stream,
+            hasAudio: stream.getAudioTracks().length > 0,
+            stats: null,
+          });
+        }),
+      );
     } catch {
       await this.dropTransport();
       if (this.stale(epoch)) return;
@@ -190,6 +207,49 @@ export class ViewerSession {
     if (stats === null) return;
     if (this.state.status !== 'watching') return;
     this.setState({ ...this.state, stats });
+  }
+
+  /**
+   * Corre a promessa contra o relógio. Uma negociação que nunca settla vira
+   * uma rejeição, que o chamador já sabe transformar em nova tentativa.
+   */
+  private withTimeout<T>(promise: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const cancel = this.deps.scheduler.after(CONNECT_TIMEOUT_MS, () => {
+        if (settled) return;
+        settled = true;
+        reject(new Error('CONNECT_TIMEOUT'));
+      });
+      promise.then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          cancel();
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (settled) return;
+          settled = true;
+          cancel();
+          reject(error instanceof Error ? error : new Error('CONNECT_FAILED'));
+        },
+      );
+    });
+  }
+
+  private onReconnected(epoch: number): void {
+    if (this.stale(epoch)) return;
+    if (this.state.status !== 'reconnecting') return;
+    const stream = this.stream;
+    if (stream === null) return;
+    this.setState({
+      status: 'watching',
+      slug: this.slug,
+      stream,
+      hasAudio: stream.getAudioTracks().length > 0,
+      stats: null,
+    });
   }
 
   private async onClosed(epoch: number): Promise<void> {
@@ -234,6 +294,7 @@ export class ViewerSession {
   private async dropTransport(): Promise<void> {
     for (const cancel of this.transportCancels) cancel();
     this.transportCancels = [];
+    this.stream = null;
     const transport = this.transport;
     this.transport = null;
     await transport?.close();

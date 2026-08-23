@@ -245,6 +245,36 @@ describe('ViewerSession', () => {
     expect(ctx.criados.every((t) => t.disconnected)).toBe(true);
   });
 
+  it('dois open() concorrentes: o obsoleto não derruba o transporte do vivo', async () => {
+    // React em StrictMode monta, desmonta e monta de novo — dois `open`
+    // correm juntos. A tentativa obsoleta chegava a fechar o transporte da
+    // tentativa viva, e a rejeição resultante era reportada como "offline"
+    // quando o motivo real era outro.
+    const ctx = build((t) => {
+      t.watchError = { code: 'CHANNEL_FULL' };
+    });
+
+    const primeiro = ctx.session.open(SLUG);
+    const segundo = ctx.session.open(SLUG);
+    await Promise.all([primeiro, segundo]);
+    await settle(30);
+
+    // O motivo real precisa sobreviver à corrida.
+    expect(ctx.session.getState().status).toBe('full');
+  });
+
+  it('dois open() concorrentes não deixam transporte órfão vivo', async () => {
+    const ctx = build();
+    const primeiro = ctx.session.open(SLUG);
+    const segundo = ctx.session.open('outro');
+    await Promise.all([primeiro, segundo]);
+    await settle(30);
+
+    // Todos menos o vencedor precisam ter sido desconectados.
+    const vivos = ctx.criados.filter((t) => !t.disconnected);
+    expect(vivos.length).toBeLessThanOrEqual(1);
+  });
+
   it('abrir outro slug desconecta o transporte anterior', async () => {
     const ctx = build();
     await ctx.session.open(SLUG);

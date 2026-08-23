@@ -84,15 +84,23 @@ export class ViewerSession {
   }
 
   async open(slug: string): Promise<void> {
-    await this.dropTransport();
-    this.cancelRetry();
-
+    // O epoch sobe ANTES de qualquer await. React em StrictMode monta, desmonta
+    // e monta de novo, então dois `open` correm juntos — e o segundo precisa
+    // invalidar o primeiro no instante em que começa, não depois do primeiro
+    // `await`. Sem isso os dois seguem vivos e um pisa no outro.
     this.epoch += 1;
+    const epoch = this.epoch;
+
     this.slug = slug;
     this.disposed = false;
     this.pollMs = POLL_MIN_MS;
+
+    this.cancelRetry();
+    await this.dropTransport();
+    if (this.stale(epoch)) return;
+
     this.setState({ status: 'checking' });
-    await this.attempt(this.epoch);
+    await this.attempt(epoch);
   }
 
   private async attempt(epoch: number): Promise<void> {
@@ -101,11 +109,20 @@ export class ViewerSession {
 
     this.setState({ status: 'connecting', slug: this.slug });
 
+    /**
+     * O transporte é LOCAL desta tentativa até dar certo.
+     *
+     * Publicá-lo em `this.transport` antes da hora fazia uma tentativa obsoleta
+     * derrubar, na limpeza dela, o transporte de uma tentativa viva — e a
+     * rejeição que sobrava era reportada como "offline" quando o motivo real
+     * era outro (canal cheio, por exemplo). Estado de uma tentativa só vira
+     * estado da sessão quando a tentativa vence.
+     */
     const transport = this.deps.transport();
-    this.transport = transport;
+    const cancels: Cancel[] = [];
 
     let delivered = false;
-    this.transportCancels.push(
+    cancels.push(
       transport.on('track', ({ stream }) => {
         if (this.stale(epoch)) return;
         delivered = true;
@@ -131,10 +148,20 @@ export class ViewerSession {
       transport.on('closed', () => void this.onClosed(epoch)),
     );
 
+    const abandonar = async (): Promise<void> => {
+      for (const cancel of cancels) cancel();
+      cancels.length = 0;
+      if (this.transport === transport) {
+        this.transport = null;
+        this.stream = null;
+      }
+      await transport.disconnect();
+    };
+
     try {
       await this.withTimeout(transport.watch(this.slug), epoch, () => delivered);
     } catch (error) {
-      await this.dropTransport();
+      await abandonar();
       if (this.stale(epoch)) return;
       if (isSignalingError(error) && error.code === 'CHANNEL_FULL') {
         // Sala cheia não é erro permanente: alguém sai, a vaga abre.
@@ -147,15 +174,18 @@ export class ViewerSession {
     }
 
     if (this.stale(epoch)) {
-      await this.dropTransport();
+      await abandonar();
       return;
     }
 
-    this.transportCancels.push(
+    // Venceu: agora sim vira estado da sessão.
+    cancels.push(
       this.deps.scheduler.every(this.deps.statsIntervalMs ?? STATS_INTERVAL_MS, () =>
         void this.sampleStats(),
       ),
     );
+    this.transport = transport;
+    this.transportCancels = cancels;
   }
 
   /**

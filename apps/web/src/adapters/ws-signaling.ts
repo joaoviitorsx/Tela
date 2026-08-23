@@ -18,20 +18,31 @@ import type {
  * Único arquivo do front que sabe que WebSocket existe. O núcleo fala com a
  * porta; trocar por um broker gerenciado é reescrever só este arquivo.
  */
-export function makeWsSignaling(url: string): SignalingChannel {
+export function makeWsSignaling(baseUrl: string): SignalingChannel {
   const emitter = new Emitter<ChannelEvents>();
 
   let socket: WebSocket | null = null;
   let opened = false;
   let closedByUs = false;
 
+  /**
+   * O slug vai NA URL, além de ir na primeira mensagem.
+   *
+   * Não é redundância: em Durable Objects o caminho é o que decide qual
+   * instância atende (`idFromName`), então sem ele todos os canais cairiam no
+   * mesmo objeto. O servidor portátil ignora o caminho, e o Worker valida que
+   * os dois batem — cliente que diverge é confuso ou malicioso.
+   */
+  const endpoint = (slug: string) => `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(slug)}`;
+
   function attach(
     resolve: (value: ChannelOpened) => void,
     reject: (error: SignalingError) => void,
     hello: ClientMessage,
+    slug: string,
   ): void {
     let settled = false;
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(endpoint(slug));
     socket = ws;
 
     const timer = window.setTimeout(() => {
@@ -127,13 +138,13 @@ export function makeWsSignaling(url: string): SignalingChannel {
   return {
     host(slug, ownerToken) {
       return new Promise<ChannelOpened>((resolve, reject) => {
-        attach(resolve, reject, { type: 'host', slug, ownerToken });
+        attach(resolve, reject, { type: 'host', slug, ownerToken }, slug);
       });
     },
 
     watch(slug) {
       return new Promise<ChannelOpened>((resolve, reject) => {
-        attach(resolve, reject, { type: 'watch', slug });
+        attach(resolve, reject, { type: 'watch', slug }, slug);
       });
     },
 

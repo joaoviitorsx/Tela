@@ -11,7 +11,9 @@ export default defineConfig({
     // existe só para o front falar `/signal` no mesmo origin durante o
     // desenvolvimento.
     proxy: {
-      '/signal': {
+      // `^/signal` e não `/signal`: o slug vai no caminho (`/signal/joao`),
+      // porque em Durable Objects é ele que escolhe a instância.
+      '^/signal/.*': {
         target: 'ws://127.0.0.1:3333',
         ws: true,
         changeOrigin: true,

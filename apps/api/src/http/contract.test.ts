@@ -217,6 +217,32 @@ describe('contrato HTTP', () => {
       expect((await app.inject({ method: 'GET', url: '/api/live/joao' })).json()).toEqual({ live: false });
     });
 
+    it('estranho não gasta a cota de ping do transmissor', async () => {
+      await claim('joao');
+      await post('/api/broadcast/start', { slug: 'joao', ownerToken: OWNER });
+
+      // Slug é público. Um atacante que só conhece o link martela o endpoint
+      // com credencial inválida; cada tentativa é 401 e NÃO pode consumir o
+      // balde do dono — senão derruba a transmissão em 30s.
+      for (let i = 0; i < 30; i += 1) {
+        expect((await post('/api/broadcast/ping', { slug: 'joao', ownerToken: OTHER })).statusCode).toBe(401);
+      }
+
+      const legitimo = await post('/api/broadcast/ping', { slug: 'joao', ownerToken: OWNER });
+      expect(legitimo.statusCode).toBe(200);
+    });
+
+    it('o dono ainda tem teto próprio depois de autenticado', async () => {
+      await claim('joao');
+      await post('/api/broadcast/start', { slug: 'joao', ownerToken: OWNER });
+
+      let ultimo = 200;
+      for (let i = 0; i < 15; i += 1) {
+        ultimo = (await post('/api/broadcast/ping', { slug: 'joao', ownerToken: OWNER })).statusCode;
+      }
+      expect(ultimo).toBe(429);
+    });
+
     it('stop repetido continua 200 — sendBeacon não trata erro', async () => {
       await claim('joao');
       await post('/api/broadcast/stop', { slug: 'joao', ownerToken: OWNER });

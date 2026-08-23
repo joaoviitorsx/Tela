@@ -30,13 +30,20 @@ export function makeRedisSlugRepository(redis: Redis): SlugRepository {
       return await redis.hget(key(slug), 'ownerHash');
     },
 
-    /** Slug em uso nunca expira: o TTL é empurrado para frente a cada acesso. */
+    /**
+     * Slug em uso nunca expira: o TTL é empurrado para frente a cada acesso.
+     *
+     * O `EXPIRE ... XX` vem PRIMEIRO e é o que decide. `HSET` cria a chave
+     * quando ela não existe — então a ordem ingênua (hset, depois expire)
+     * fazia `touch()` num slug inexistente ou já expirado materializar um
+     * registro fantasma, sem `ownerHash`, com 180 dias de vida. O adapter em
+     * memória sempre retornou cedo nesse caso; os dois divergiam do mesmo
+     * contrato de port.
+     */
     async touch(slug, now) {
-      await redis
-        .multi()
-        .hset(key(slug), 'lastSeenAt', now)
-        .expire(key(slug), SLUG_TTL_SECONDS)
-        .exec();
+      const alive = await redis.expire(key(slug), SLUG_TTL_SECONDS, 'XX');
+      if (alive !== 1) return;
+      await redis.hset(key(slug), 'lastSeenAt', now);
     },
 
     async exists(slug) {

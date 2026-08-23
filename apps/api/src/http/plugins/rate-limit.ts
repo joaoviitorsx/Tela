@@ -53,5 +53,12 @@ export const RATE_RULES = {
   claim: { limit: 5, windowSeconds: 3600 },
   join: { limit: 20, windowSeconds: 60 },
   start: { limit: 10, windowSeconds: 60 },
+  /** Por transmissor autenticado. 12/min = folga sobre o heartbeat de 10s. */
   ping: { limit: 12, windowSeconds: 60 },
+  /**
+   * Por IP, aplicado ANTES da autenticação. Generoso para não atrapalhar uma
+   * casa com dois transmissores atrás do mesmo NAT, e ainda assim suficiente
+   * para que ninguém use este endpoint como amplificador.
+   */
+  pingAttempt: { limit: 60, windowSeconds: 60 },
 } as const satisfies Record<string, RateRule>;

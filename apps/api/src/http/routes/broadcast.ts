@@ -13,9 +13,22 @@ import { RATE_RULES } from '../plugins/rate-limit.js';
  */
 export async function broadcastRoutes(app: FastifyInstance, deps: Deps): Promise<void> {
   const limitStart = app.rateLimit(RATE_RULES.start);
-  // Limite do ping é por transmissor, não por IP: uma casa com dois
-  // transmissores atrás do mesmo NAT não pode derrubar um ao outro.
-  const limitPing = app.rateLimit(RATE_RULES.ping, (req: FastifyRequest) => {
+
+  /**
+   * O ping tem DOIS limites, e a ordem entre eles é a defesa.
+   *
+   * O balde por slug só é tocado DEPOIS de a credencial ser verificada. Slug é
+   * público por construção — é o produto inteiro — então um balde por slug
+   * aplicado antes da autenticação deixaria qualquer pessoa que conhece o link
+   * gastar a cota do transmissor com 12 requisições por minuto e lixo no
+   * ownerToken. O heartbeat legítimo tomaria 429, `live:{slug}` expiraria em
+   * 30s e a transmissão cairia. Negação de serviço de uma linha de curl.
+   *
+   * Antes da autenticação vale o balde por IP, que o atacante paga do próprio
+   * bolso.
+   */
+  const limitPingByIp = app.rateLimit(RATE_RULES.pingAttempt);
+  const limitPingByOwner = app.rateLimit(RATE_RULES.ping, (req: FastifyRequest) => {
     const body = req.body as { slug?: unknown } | undefined;
     return typeof body?.slug === 'string' ? body.slug : req.ip;
   });
@@ -51,10 +64,13 @@ export async function broadcastRoutes(app: FastifyInstance, deps: Deps): Promise
 
   app.post(
     '/broadcast/ping',
-    { preHandler: (req, _reply, done) => (limitPing(req), done()) },
+    { preHandler: (req, _reply, done) => (limitPingByIp(req), done()) },
     async (req, reply) => {
       const owner = await auth(req);
       if (!owner.ok) return deny(reply, owner.error);
+
+      // Só agora, com o dono provado, o balde do slug é consumido.
+      limitPingByOwner(req);
 
       const result = await deps.heartbeatBroadcast(owner.value);
       if (!result.ok) return deny(reply, result.error);

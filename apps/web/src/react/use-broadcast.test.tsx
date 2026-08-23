@@ -8,6 +8,7 @@ import {
   FakeMediaTransport,
   FakeScheduler,
   FakeScreenCapture,
+  createStream,
   shareUrlFor,
 } from '../core/testing/fakes.js';
 import { useBroadcast } from './use-broadcast.js';
@@ -37,6 +38,7 @@ function build() {
     audio: new FakeAudioCapture(),
     scheduler: new FakeScheduler(),
     shareUrlFor,
+    createStream,
   });
   return { session, transport, screen };
 }

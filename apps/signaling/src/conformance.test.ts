@@ -154,11 +154,17 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(errorOf(await d.watch('novo', SLUG))).toBeUndefined();
   });
 
-  it('saída do transmissor derruba os espectadores', async () => {
+  it('saída do transmissor AVISA os espectadores antes de derrubar', async () => {
     const d = criar();
-    await d.host('h', SLUG, OWNER);
+    const host = await d.host('h', SLUG, OWNER);
     const viewer = await d.watch('v', SLUG);
     d.disconnect('h');
+
+    // Socket fechado em silêncio não distingue "o transmissor saiu" de "o
+    // servidor caiu" — e o espectador ficava "assistindo" vídeo congelado.
+    expect(ofType(viewer, 'peer-left')).toEqual([
+      { type: 'peer-left', peerId: peerIdOf(host) },
+    ]);
     expect(viewer.closed()).toBe(true);
   });
 

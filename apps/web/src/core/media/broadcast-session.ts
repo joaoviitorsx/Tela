@@ -9,6 +9,8 @@ import type {
 import type { Scheduler } from '../ports/scheduler.js';
 import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
+import type { Prioridade } from '@tela/shared';
+import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
   DEFAULT_PRESET_ID,
@@ -62,6 +64,16 @@ export type BroadcastState =
        */
       readonly semSinalizacao: boolean;
       /**
+       * A mídia capturada, para o transmissor ver o que está mandando.
+       *
+       * Também é diagnóstico: preview preto significa que a CAPTURA falhou,
+       * e não a rede. Sem ela, "está preto" tem duas causas possíveis e
+       * nenhuma forma de distinguir.
+       */
+      readonly preview: MediaStream | null;
+      /** O que ceder sob aperto de rede: fluidez (padrão) ou nitidez. */
+      readonly prioridade: Prioridade;
+      /**
        * `true` quando o usuário escolheu uma janela ou aba em vez da tela
        * inteira NUM sistema onde isso custa o áudio do sistema.
        *
@@ -85,6 +97,8 @@ export type BroadcastSessionDeps = {
   scheduler: Scheduler;
   /** Monta o link público a partir do slug. Sem servidor, quem sabe é o front. */
   shareUrlFor: (slug: string) => string;
+  /** `MediaStream` é global de browser; `core/` não constrói um direto. */
+  createStream: (tracks: readonly MediaStreamTrack[]) => MediaStream;
   maxPeers?: number;
   statsIntervalMs?: number;
 };
@@ -107,14 +121,24 @@ const PRESSURE_SAMPLES = 5;
 const IDLE_CAPTURE_FPS = 5;
 
 /**
- * Fração da banda estimada que o vídeo pode ocupar.
+ * Tempo de graça antes de derrubar a captura para 5fps.
  *
- * Os 25% de folga são a diferença entre transmitir e estrangular o jogo.
- * Encher o cano faz o pacote do jogo esperar atrás do vídeo na fila do
- * roteador — é assim que o ping sobe, e nenhum ajuste de bitrate resolve
- * depois que a fila encheu.
+ * Um peer pode sumir por um instante durante renegociação. Sem a graça, a
+ * captura ia a 5fps e voltava a 60 na sequência, e cada troca dessas é uma
+ * reconfiguração visível — travadinha causada justamente pela otimização que
+ * deveria ajudar.
  */
-const UPLINK_SHARE = 0.75;
+const OCIOSO_GRACA_MS = 10_000;
+
+/**
+ * Leituras ignoradas antes de qualquer degradação automática.
+ *
+ * No início da transmissão o encoder ainda está subindo e o controle de
+ * congestionamento ainda está sondando: `cpu` e `bandwidth` aparecem por
+ * alguns segundos mesmo numa máquina folgada. Degradar aí é punir o usuário
+ * por um transiente que ia passar sozinho.
+ */
+const AQUECIMENTO_AMOSTRAS = 8;
 
 export class BroadcastSession {
   private readonly emitter = new Emitter<BroadcastEvents>();
@@ -139,8 +163,12 @@ export class BroadcastSession {
    * trilhas já paradas.
    */
   private epoch = 0;
-  private ceiling: number | null = null;
+  private readonly governor = new UplinkGovernor();
+  private amostras = 0;
+  private ociosoDesde: number | null = null;
   private surface: CaptureSurface = 'desconhecido';
+  private preview: MediaStream | null = null;
+  private prioridade: Prioridade = 'fluidez';
 
   constructor(private readonly deps: BroadcastSessionDeps) {
     this.maxPeers = deps.maxPeers ?? 3;
@@ -184,6 +212,10 @@ export class BroadcastSession {
     this.pressure = 0;
     this.pressureKind = 'none';
     this.capturaOciosa = false;
+    this.governor.reset();
+    this.amostras = 0;
+    this.ociosoDesde = null;
+    this.prioridade = 'fluidez';
     this.setState({ status: 'requesting-capture' });
 
     const preset = presetById(this.presetId);
@@ -213,6 +245,10 @@ export class BroadcastSession {
     this.videoTrack = capture.video;
     this.audioTrack = capture.audio;
     this.surface = capture.surface;
+
+    // Só vídeo: incluir o áudio faria o preview tocar o som do jogo de volta
+    // nos alto-falantes, criando eco para quem transmite.
+    this.preview = this.deps.createStream([capture.video]);
 
     /**
      * A linha que decide se o produto presta.
@@ -275,6 +311,8 @@ export class BroadcastSession {
       stats: null,
       hasAudio: this.audioTrack !== null,
       semSinalizacao: false,
+      preview: this.preview,
+      prioridade: this.prioridade,
       audioPerdidoPelaEscolha:
         this.audioTrack === null &&
         this.surface !== 'monitor' &&
@@ -295,6 +333,7 @@ export class BroadcastSession {
     if (stats === null) return;
     if (this.state.status !== 'live') return;
 
+    this.amostras += 1;
     this.setState({ ...this.state, stats });
     this.applyUplinkCeiling(stats.availableBps);
     this.trackPressure(stats.limitation);
@@ -309,10 +348,10 @@ export class BroadcastSession {
    * aplicado ANTES: o vídeo nunca pede mais do que uma fração do estimado.
    */
   private applyUplinkCeiling(availableBps: number | null): void {
-    if (availableBps === null || availableBps <= 0) return;
-    const teto = Math.round(availableBps * UPLINK_SHARE);
-    if (teto === this.ceiling) return;
-    this.ceiling = teto;
+    const teto = this.governor.observe(availableBps, presetById(this.presetId));
+    // `null` na maioria das leituras: o governador só devolve valor quando a
+    // mudança compensa reconfigurar o encoder.
+    if (teto === null) return;
     void this.deps.transport.setBitrateCeiling(teto).catch(() => undefined);
   }
 
@@ -332,6 +371,9 @@ export class BroadcastSession {
    * para o ping do jogo subir.
    */
   private trackPressure(limitation: QualityLimitation): void {
+    // Aquecimento: no começo tudo parece apertado, e passa sozinho.
+    if (this.amostras <= AQUECIMENTO_AMOSTRAS) return;
+
     if (limitation !== 'cpu' && limitation !== 'bandwidth') {
       this.pressure = 0;
       this.pressureKind = 'none';
@@ -355,6 +397,79 @@ export class BroadcastSession {
     // `catch` obrigatório: fire-and-forget aqui já produziu unhandled
     // rejection quando colidiu com uma troca manual de qualidade.
     void this.deps.transport.setPreset(presetById(next)).catch(() => undefined);
+  }
+
+  /**
+   * Escolhe o que ceder quando os bits não dão para tudo.
+   *
+   * `fluidez` segura os 60fps e deixa borrar — certo para gameplay, onde o
+   * movimento é a informação. `nitidez` segura a resolução e deixa o
+   * framerate cair — certo quando o DETALHE é a informação, como um mapa ou
+   * texto na tela.
+   *
+   * Não renegocia: é `setParameters` nos senders, ninguém pisca.
+   */
+  async setPrioridade(prioridade: Prioridade): Promise<void> {
+    if (this.prioridade === prioridade) return;
+    this.prioridade = prioridade;
+    if (this.state.status === 'live') this.setState({ ...this.state, prioridade });
+    await this.deps.transport.setPrioridade(prioridade);
+  }
+
+  /**
+   * Troca o que está sendo transmitido, sem derrubar ninguém.
+   *
+   * Abre o seletor de novo e substitui a trilha nos senders já negociados.
+   * Quem está assistindo não pisca: o SDP não muda. É o que permite alternar
+   * entre tela inteira e uma janela específica no meio da transmissão, que é
+   * como as pessoas de fato usam — mostram o jogo, depois o navegador,
+   * depois o jogo de novo.
+   */
+  async switchSource(): Promise<void> {
+    if (this.state.status !== 'live') return;
+    const epoch = this.epoch;
+    const preset = presetById(this.presetId);
+
+    let capture;
+    try {
+      capture = await this.deps.screen.request({
+        width: preset.layers[0].width,
+        height: preset.layers[0].height,
+        frameRate: preset.main.maxFramerate,
+        systemAudio: true,
+      });
+    } catch {
+      // Cancelar o seletor é desistir da troca, não da transmissão.
+      return;
+    }
+    if (this.stale(epoch)) {
+      capture.video.stop();
+      capture.audio?.stop();
+      return;
+    }
+
+    const anterior = this.videoTrack;
+    capture.video.contentHint = CONTENT_HINT;
+    capture.video.addEventListener('ended', () => void this.stop('CAPTURE_ENDED'));
+
+    this.videoTrack = capture.video;
+    this.surface = capture.surface;
+    this.preview = this.deps.createStream([capture.video]);
+
+    await this.deps.transport.replaceVideo(capture.video);
+
+    // Só depois de a nova estar no ar: parar antes deixaria um buraco visível.
+    anterior?.stop();
+
+    if (this.state.status !== 'live') return;
+    this.setState({
+      ...this.state,
+      preview: this.preview,
+      audioPerdidoPelaEscolha:
+        this.audioTrack === null &&
+        this.surface !== 'monitor' &&
+        this.surface !== 'desconhecido',
+    });
   }
 
   /**
@@ -406,14 +521,33 @@ export class BroadcastSession {
    * Ninguém está do outro lado para ver a diferença.
    */
   private throttleIdleCapture(ocioso: boolean): void {
-    if (ocioso === this.capturaOciosa) return;
+    const agora = this.deps.scheduler.now();
+
+    if (!ocioso) {
+      this.ociosoDesde = null;
+      if (this.capturaOciosa) this.setCaptureFps(presetById(this.presetId).main.maxFramerate, false);
+      return;
+    }
+
+    // Ficou ocioso agora: marca a hora e espera. Um peer pode sumir por um
+    // instante durante renegociação, e derrubar a captura a cada piscada
+    // produziria justamente a travadinha que a otimização quer evitar.
+    if (this.ociosoDesde === null) {
+      this.ociosoDesde = agora;
+      return;
+    }
+    if (this.capturaOciosa) return;
+    if (agora - this.ociosoDesde < OCIOSO_GRACA_MS) return;
+
+    this.setCaptureFps(IDLE_CAPTURE_FPS, true);
+  }
+
+  private setCaptureFps(frameRate: number, ocioso: boolean): void {
     const track = this.videoTrack;
     if (track === null || typeof track.applyConstraints !== 'function') return;
-
     this.capturaOciosa = ocioso;
-    const alvo = ocioso ? IDLE_CAPTURE_FPS : presetById(this.presetId).main.maxFramerate;
-    void track.applyConstraints({ frameRate: alvo }).catch(() => {
-      // Navegador que recusa restringir a captura continua no framerate cheio.
+    void track.applyConstraints({ frameRate }).catch(() => {
+      // Navegador que recusa restringir a captura segue no framerate cheio.
       this.capturaOciosa = false;
     });
   }
@@ -459,7 +593,10 @@ export class BroadcastSession {
     this.audioTrack?.stop();
     this.videoTrack = null;
     this.audioTrack = null;
-    this.ceiling = null;
+    this.preview = null;
+    this.governor.reset();
+    this.amostras = 0;
+    this.ociosoDesde = null;
     this.capturaOciosa = false;
 
     await this.deps.transport.disconnect();
@@ -483,6 +620,8 @@ function failureFor(error: unknown): BroadcastFailure {
       return 'SLUG_INVALID';
     case 'RATE_LIMITED':
       return 'RATE_LIMITED';
+    case 'SIGNAL_UNREACHABLE':
+      return 'SIGNALING_UNAVAILABLE';
     default:
       return 'SIGNALING_UNAVAILABLE';
   }

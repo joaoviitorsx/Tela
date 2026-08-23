@@ -269,7 +269,19 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           if (peer.role === 'host') {
             channel.host = null;
             channel.emptySince = deps.now();
-            for (const viewer of channel.viewers.values()) viewer.socket.close();
+            for (const viewer of channel.viewers.values()) {
+              /**
+               * AVISA antes de fechar.
+               *
+               * Fechar o socket calado deixa o espectador sem saber se o
+               * transmissor saiu ou se o servidor caiu — e as duas coisas
+               * pedem reações opostas: no primeiro caso a mídia acabou, no
+               * segundo ela continua. Sem o aviso, ele ficava "assistindo"
+               * um vídeo congelado.
+               */
+              viewer.socket.send({ type: 'peer-left', peerId: peer.id });
+              viewer.socket.close();
+            }
             channel.viewers.clear();
           } else {
             channel.viewers.delete(peer.id);

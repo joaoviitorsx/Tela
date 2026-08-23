@@ -63,6 +63,39 @@ describe('ViewerSession', () => {
     expect(ctx.session.getState().status).toBe('watching');
   });
 
+  it('servidor inalcançável NÃO é reportado como "sem transmissão"', async () => {
+    // Foi o bug do Brave: o WebSocket não abria, o cliente reportava
+    // NOT_HOSTING, e o usuário via "ninguém está transmitindo, aguardando"
+    // enquanto a transmissão estava no ar o tempo todo. Todo bloqueio de
+    // navegador, proxy ou queda de rede virava a mesma mensagem errada.
+    const ctx = build((t) => {
+      t.watchError = { code: 'SIGNAL_UNREACHABLE' };
+    });
+    await ctx.session.open(SLUG);
+    await settle();
+
+    expect(ctx.session.getState().status).toBe('sem-servidor');
+  });
+
+  it('servidor volta e o espectador entra sozinho', async () => {
+    let bloqueado = true;
+    const ctx = build((t) => {
+      if (bloqueado) t.watchError = { code: 'SIGNAL_UNREACHABLE' };
+    });
+    await ctx.session.open(SLUG);
+    await settle();
+    expect(ctx.session.getState().status).toBe('sem-servidor');
+
+    bloqueado = false;
+    // Só até a nova tentativa: passar de 15s dispararia o relógio da
+    // negociação antes de a mídia chegar, que é outro caso.
+    ctx.scheduler.advance(8_000);
+    await settle(20);
+    ctx.ultimo().deliver();
+
+    expect(ctx.session.getState().status).toBe('watching');
+  });
+
   it('canal cheio vira estado próprio e continua tentando', async () => {
     const ctx = build((t) => {
       t.watchError = { code: 'CHANNEL_FULL' };

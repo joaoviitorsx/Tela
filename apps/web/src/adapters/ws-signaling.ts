@@ -42,7 +42,15 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
     slug: string,
   ): void {
     let settled = false;
-    const ws = new WebSocket(endpoint(slug));
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(endpoint(slug));
+    } catch {
+      // Navegador que recusa abrir o socket (política, esquema bloqueado):
+      // não conseguimos falar com o servidor, e isso não é "sem transmissão".
+      reject({ code: 'SIGNAL_UNREACHABLE' });
+      return;
+    }
     socket = ws;
 
     const timer = window.setTimeout(() => {
@@ -117,11 +125,20 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       }
     });
 
+    /**
+     * Socket que fecha ou falha ANTES da resposta do servidor não diz nada
+     * sobre haver transmissão — diz que não conseguimos falar com o servidor.
+     *
+     * Reportar `NOT_HOSTING` aqui foi um erro caro: um usuário no Brave via
+     * "ninguém está transmitindo, aguardando" e ficava esperando por uma
+     * transmissão que estava no ar. Todo bloqueio de navegador, proxy
+     * corporativo ou queda de rede virava a mesma mensagem errada.
+     */
     ws.addEventListener('close', () => {
       window.clearTimeout(timer);
       if (!settled) {
         settled = true;
-        reject({ code: 'NOT_HOSTING' });
+        reject({ code: 'SIGNAL_UNREACHABLE' });
         return;
       }
       if (opened && !closedByUs) emitter.emit('closed', { reason: 'SIGNAL_CLOSED' });
@@ -131,7 +148,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      reject({ code: 'NOT_HOSTING' });
+      reject({ code: 'SIGNAL_UNREACHABLE' });
     });
   }
 

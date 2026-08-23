@@ -37,8 +37,11 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
 
 export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
-  const { state, start, stop, setPreset } = useBroadcast(session);
+  const { state, start, stop, setPreset, switchSource, setPrioridade } = useBroadcast(session);
   const [copied, setCopied] = useState(false);
+  // Aberto por padrão: transmitir às cegas é o que produz "achei que estava
+  // funcionando". O usuário fecha se atrapalhar.
+  const [previewAberto, setPreviewAberto] = useState(true);
 
   const live = state.status === 'live';
   const hud = useAutoHide(5_000, live);
@@ -138,10 +141,16 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         relayed={state.peers.filter((peer) => peer.usingRelay).length}
         audioPerdidoPelaEscolha={state.audioPerdidoPelaEscolha}
         semSinalizacao={state.semSinalizacao}
+        preview={state.preview}
+        previewAberto={previewAberto}
+        onTogglePreview={() => setPreviewAberto((v) => !v)}
+        onSwitchSource={() => void switchSource()}
+        prioridade={state.prioridade}
+        onPrioridade={(p) => void setPrioridade(p)}
         copied={copied}
         onCopy={() => copy(shareUrl)}
         onStop={handleStop}
-        visible={hud.visible}
+        visible={hud.visible || previewAberto}
         reconnecting={state.peers.some((p) => p.connectionState === 'disconnected')}
         presets={presets}
         presetId={state.presetId}

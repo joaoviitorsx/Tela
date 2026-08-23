@@ -130,8 +130,35 @@ export const SIXTY_FPS_PRESETS: readonly PresetId[] = ['p1080p60', 'p720p60', 'p
 /** Codec único. VP9/AV1 comprimem melhor mas não têm HW encode universal. */
 export const VIDEO_CODEC = 'h264' as const;
 
-/** Perder resolução, nunca framerate. */
+/** Perder resolução, nunca framerate. O padrão do produto. */
 export const DEGRADATION_PREFERENCE = 'maintain-framerate' as const;
+
+/**
+ * O que ceder quando os bits não dão para tudo.
+ *
+ * `fluidez` (padrão) segura os 60fps e deixa a imagem borrar — é o certo para
+ * gameplay, onde movimento é a informação.
+ *
+ * `nitidez` segura a resolução e deixa o framerate cair. Existe porque cena
+ * carregada a 1080p60 borra de verdade, e para quem está mostrando algo onde
+ * o DETALHE é a informação — um mapa, um inventário, texto — a imagem nítida
+ * a 30fps é melhor que a fluida e ilegível.
+ *
+ * A R5 trava `maintain-framerate` como padrão, e ele continua sendo o padrão.
+ * Esta é uma escolha explícita do usuário, registrada na ADR 0009.
+ */
+export type Prioridade = 'fluidez' | 'nitidez';
+
+// O tipo é declarado à mão: `@tela/shared` compila sem a lib DOM, e puxá-la
+// inteira só por um literal traria `window` e `document` para um pacote que
+// também roda no servidor.
+export const DEGRADATION_BY_PRIORITY: Record<
+  Prioridade,
+  'maintain-framerate' | 'maintain-resolution'
+> = {
+  fluidez: 'maintain-framerate',
+  nitidez: 'maintain-resolution',
+};
 
 /** Sem isso o Chrome trata a captura como 'detail' e gameplay vira slideshow. */
 export const CONTENT_HINT = 'motion' as const;

@@ -30,6 +30,16 @@ export const SignalingErrorCodeSchema = z.enum([
   'OWNER_INVALID',
   'BAD_MESSAGE',
   'HELLO_TIMEOUT', // conectou e não se apresentou
+  /**
+   * O canal nem chegou a abrir.
+   *
+   * Nunca vem do servidor — é o cliente reportando que não conseguiu falar
+   * com ele. Existe porque tratar isso como `NOT_HOSTING` transformava todo
+   * problema de rede, proxy ou bloqueio de navegador em "ninguém está
+   * transmitindo", e o usuário ficava esperando por uma transmissão que
+   * estava no ar o tempo todo.
+   */
+  'SIGNAL_UNREACHABLE',
 ]);
 export type SignalingErrorCode = z.infer<typeof SignalingErrorCodeSchema>;
 

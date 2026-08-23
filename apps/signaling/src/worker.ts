@@ -272,8 +272,13 @@ export class ChannelRoom {
     if (at === null) return;
 
     if (at.role === 'host') {
-      // Transmissor saiu: os espectadores não têm mais o que assistir.
-      for (const viewer of this.viewers()) viewer.socket.close(1000, 'host saiu');
+      // Transmissor saiu: avisa ANTES de fechar. Socket fechado em silêncio
+      // não distingue "o transmissor saiu" de "o servidor caiu", e as duas
+      // coisas pedem reações opostas.
+      for (const viewer of this.viewers()) {
+        this.send(viewer.socket, { type: 'peer-left', peerId: at.peerId });
+        viewer.socket.close(1000, 'host saiu');
+      }
       return;
     }
 

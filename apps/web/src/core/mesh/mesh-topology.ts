@@ -1,4 +1,9 @@
-import { DEGRADATION_PREFERENCE, type EncodingPreset, type IceServerConfig } from '@tela/shared';
+import {
+  DEGRADATION_BY_PRIORITY,
+  type EncodingPreset,
+  type IceServerConfig,
+  type Prioridade,
+} from '@tela/shared';
 import { Emitter } from '../emitter.js';
 import { PeerLink } from './peer-link.js';
 
@@ -80,6 +85,7 @@ export class MeshTopology {
    * exatamente o que faz o ping do jogo subir.
    */
   private ceiling: number | null = null;
+  private prioridade: Prioridade = 'fluidez';
 
   constructor(private readonly deps: MeshTopologyDeps) {}
 
@@ -226,6 +232,39 @@ export class MeshTopology {
     return this.enqueue(() => this.adaptAll(preset));
   }
 
+  /**
+   * Troca a trilha de vídeo em todos os peers, sem renegociar.
+   *
+   * `replaceTrack` opera no sender já negociado, então o SDP não muda e nada
+   * do outro lado percebe — nem um piscar. Renegociar aqui derrubaria a
+   * imagem de todo mundo a cada troca de janela.
+   */
+  replaceVideo(track: MediaStreamTrack, stream: MediaStream): Promise<void> {
+    this.stream = stream;
+    this.tracks = [track, ...this.tracks.filter((t) => t.kind !== 'video')];
+
+    return this.enqueue(async () => {
+      for (const senders of this.senders.values()) {
+        for (const sender of senders) {
+          if (sender.track?.kind !== 'video') continue;
+          try {
+            await sender.replaceTrack(track);
+          } catch {
+            // Peer fechando no meio da troca; o estado dele cuida do resto.
+          }
+        }
+      }
+      if (this.preset !== null) await this.adaptAll(this.preset);
+    });
+  }
+
+  setPrioridade(prioridade: Prioridade): Promise<void> {
+    this.prioridade = prioridade;
+    const preset = this.preset;
+    if (preset === null) return Promise.resolve();
+    return this.enqueue(() => this.adaptAll(preset));
+  }
+
   setCeiling(bps: number | null): Promise<void> {
     this.ceiling = bps;
     const preset = this.preset;
@@ -269,8 +308,8 @@ export class MeshTopology {
         await sender.setParameters({
           ...params,
           encodings,
-          // Perder resolução, nunca framerate.
-          degradationPreference: DEGRADATION_PREFERENCE,
+          // O que ceder sob aperto: por padrão resolução, nunca framerate.
+          degradationPreference: DEGRADATION_BY_PRIORITY[this.prioridade],
         } as RTCRtpSendParameters);
       } catch {
         // Firefox ainda recusa `degradationPreference` em setParameters. O

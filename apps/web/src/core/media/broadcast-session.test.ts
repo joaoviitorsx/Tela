@@ -5,6 +5,7 @@ import {
   FakeMediaTransport,
   FakeScheduler,
   FakeScreenCapture,
+  createStream,
   shareUrlFor,
 } from '../testing/fakes.js';
 import { BroadcastSession } from './broadcast-session.js';
@@ -27,6 +28,7 @@ function build() {
     audio,
     scheduler,
     shareUrlFor,
+    createStream,
     statsIntervalMs: 1_000,
   });
 
@@ -187,7 +189,8 @@ describe('BroadcastSession — qualidade', () => {
       availableBps: null,
     };
 
-    for (let i = 0; i < 5; i += 1) {
+    // Aquecimento (8) mais a sequência de pressão (5).
+    for (let i = 0; i < 14; i += 1) {
       ctx.scheduler.advance(1_000);
       await settle(4);
     }
@@ -203,11 +206,13 @@ describe('BroadcastSession — qualidade', () => {
     const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null };
 
     ctx.transport.stats = { ...base, limitation: 'cpu' };
-    ctx.scheduler.advance(1_000);
-    await settle(4);
+    for (let i = 0; i < 10; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
 
     ctx.transport.stats = { ...base, limitation: 'none' };
-    for (let i = 0; i < 6; i += 1) {
+    for (let i = 0; i < 14; i += 1) {
       ctx.scheduler.advance(1_000);
       await settle(4);
     }
@@ -229,7 +234,7 @@ describe('BroadcastSession — qualidade', () => {
       availableBps: null,
     };
 
-    for (let i = 0; i < 20; i += 1) {
+    for (let i = 0; i < 30; i += 1) {
       ctx.scheduler.advance(1_000);
       await settle(4);
     }
@@ -261,40 +266,104 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     ...extra,
   });
 
-  it('captura cai para 5fps quando ninguém está assistindo', async () => {
+  /** Avança N leituras de estatística de um segundo cada. */
+  async function tique(ctx: ReturnType<typeof build>, vezes: number) {
+    for (let i = 0; i < vezes; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+  }
+
+  it('captura cai para 5fps depois de um tempo de graça sem espectador', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
+
     ctx.transport.setPeers([]);
     await settle();
+    // A graça existe porque um peer some por um instante em toda
+    // renegociação, e derrubar a captura a cada piscada é a travadinha que a
+    // otimização deveria evitar.
+    expect(ctx.screen.video.constraints.at(-1)).toBeUndefined();
 
-    // Sem espectador não há encoder, mas a captura de tela continua — e a
-    // 1080p60 ela custa GPU numa máquina que está rodando um jogo.
+    ctx.scheduler.advance(11_000);
+    ctx.transport.setPeers([]);
+    await settle();
     expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 5 });
+  });
+
+  it('peer que pisca NÃO derruba a captura', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const peer = [{ id: 'v_1', connectionState: 'connected' as const, usingRelay: false }];
+
+    for (let i = 0; i < 5; i += 1) {
+      ctx.transport.setPeers([]);
+      await settle();
+      ctx.scheduler.advance(2_000);
+      ctx.transport.setPeers(peer);
+      await settle();
+    }
+
+    expect(ctx.screen.video.constraints).toEqual([]);
   });
 
   it('captura volta ao framerate cheio quando alguém entra', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
+
     ctx.transport.setPeers([]);
     await settle();
+    ctx.scheduler.advance(11_000);
+    ctx.transport.setPeers([]);
+    await settle();
+    expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 5 });
+
     ctx.transport.setPeers([{ id: 'v_1', connectionState: 'connected', usingRelay: false }]);
     await settle();
-
     expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 60 });
   });
 
-  it('aplica teto de banda com folga, para não encher o cano', async () => {
+  it('RUÍDO na estimativa de banda não reconfigura o encoder', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    // O WebRTC estima 10 Mbps disponíveis.
-    ctx.transport.stats = amostra({ availableBps: 10_000_000 });
 
-    ctx.scheduler.advance(1_000);
-    await settle();
+    // Banda de sobra, mas oscilando. Nenhum teto se justifica: aplicar um
+    // acima do que o preset já pede só reconfiguraria o encoder à toa.
+    const ruido = [16, 14, 17, 13, 18, 12, 16, 15, 17, 14, 16, 15, 17, 13];
+    for (const mbps of ruido) {
+      ctx.transport.stats = amostra({ availableBps: mbps * 1_000_000 });
+      await tique(ctx, 1);
+    }
 
-    // 75% — os 25% de folga são a diferença entre transmitir e estrangular o
-    // jogo, porque encher a fila do roteador é o que faz o ping subir.
-    expect(ctx.transport.ceilings.at(-1)).toBe(7_500_000);
+    expect(ctx.transport.ceilings).toEqual([]);
+  });
+
+  it('banda APERTADA e oscilando reconfigura UMA vez, não a cada segundo', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // A versão anterior aplicava 75% do valor CRU a cada segundo — o encoder
+    // recebia um alvo diferente por segundo e nunca assentava. Foi
+    // exatamente isso que os usuários relataram como travamento.
+    const ruido = [5.5, 4.6, 5.3, 4.8, 5.6, 4.5, 5.2, 4.9, 5.4, 4.7, 5.1, 5.0, 5.3, 4.8, 5.2, 4.9];
+    for (const mbps of ruido) {
+      ctx.transport.stats = amostra({ availableBps: mbps * 1_000_000 });
+      await tique(ctx, 1);
+    }
+
+    expect(ctx.transport.ceilings.length).toBeLessThanOrEqual(1);
+  });
+
+  it('queda REAL e sustentada de banda aplica teto com folga', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({ availableBps: 4_000_000 });
+    await tique(ctx, 20);
+
+    const teto = ctx.transport.ceilings.at(-1);
+    expect(teto).toBeGreaterThan(0);
+    // Os 25% de folga são a diferença entre transmitir e estrangular o jogo.
+    expect(teto).toBeLessThanOrEqual(4_000_000 * 0.8);
   });
 
   it('limitação por BANDA derruba o preset, não só por CPU', async () => {
@@ -302,26 +371,34 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     await ctx.session.start(SLUG, TOKEN);
     ctx.transport.stats = amostra({ limitation: 'bandwidth' });
 
-    for (let i = 0; i < 5; i += 1) {
-      ctx.scheduler.advance(1_000);
-      await settle();
-    }
+    // Aquecimento mais a sequência de pressão.
+    await tique(ctx, 14);
 
-    // Antes o código só olhava `cpu`: o WebRTC dizia "estou limitado pela
-    // rede" e o produto seguia pedindo 8 Mbps de um link que não tinha.
     const state = ctx.session.getState();
     expect(state.status === 'live' && state.presetId).toBe('p720p60');
     expect(state.status === 'live' && state.presetForced).toBe(true);
+  });
+
+  it('aperto no INÍCIO da transmissão não degrada nada', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({ limitation: 'cpu' });
+
+    // No começo o encoder ainda está subindo e o estimador ainda está
+    // sondando: `cpu` aparece por alguns segundos mesmo em máquina folgada.
+    await tique(ctx, 7);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).toBe('p1080p60');
   });
 
   it('alternar entre limitadores não acumula pressão indevida', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
 
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 20; i += 1) {
       ctx.transport.stats = amostra({ limitation: i % 2 === 0 ? 'cpu' : 'bandwidth' });
-      ctx.scheduler.advance(1_000);
-      await settle();
+      await tique(ctx, 1);
     }
 
     // Nenhum dos dois chegou a cinco leituras seguidas.
@@ -374,6 +451,99 @@ describe('BroadcastSession — encerramento', () => {
     expect(state.status === 'live' && state.semSinalizacao).toBe(true);
     expect(state.status === 'live' && state.peers).toHaveLength(1);
     expect(ctx.screen.video.stopped).toBe(false);
+  });
+});
+
+describe('BroadcastSession — trocar fonte e prioridade', () => {
+  it('trocar a fonte NÃO renegocia — substitui a trilha nos senders', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const original = ctx.transport.videos.length;
+
+    await ctx.session.switchSource();
+
+    // Republicar faria todo espectador piscar. `replaceTrack` não toca no SDP.
+    expect(ctx.transport.videos).toHaveLength(original);
+    expect(ctx.transport.substituidas).toHaveLength(1);
+  });
+
+  it('trocar a fonte atualiza o preview', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const antes = ctx.session.getState();
+    await ctx.session.switchSource();
+    const depois = ctx.session.getState();
+
+    expect(antes.status === 'live' && depois.status === 'live').toBe(true);
+    expect(depois.status === 'live' && depois.preview).not.toBe(
+      antes.status === 'live' ? antes.preview : null,
+    );
+  });
+
+  it('cancelar o seletor desiste da troca, não da transmissão', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.screen.denied = true;
+
+    await ctx.session.switchSource();
+
+    expect(ctx.session.getState().status).toBe('live');
+    expect(ctx.transport.substituidas).toHaveLength(0);
+  });
+
+  it('prioridade começa em fluidez — 60fps é a regra do produto', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.prioridade).toBe('fluidez');
+  });
+
+  it('escolher nitidez segura a resolução e deixa o framerate ceder', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.setPrioridade('nitidez');
+
+    // Cena carregada a 1080p60 borra de verdade; quem mostra um mapa ou texto
+    // prefere nítido a 30fps do que fluido e ilegível.
+    expect(ctx.transport.prioridades).toEqual(['nitidez']);
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.prioridade).toBe('nitidez');
+  });
+
+  it('escolher a mesma prioridade não reconfigura nada', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.setPrioridade('fluidez');
+    expect(ctx.transport.prioridades).toEqual([]);
+  });
+});
+
+describe('BroadcastSession — preview da captura', () => {
+  it('expõe a mídia capturada para quem transmite conferir', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.preview).not.toBeNull();
+  });
+
+  it('o preview leva o vídeo mas NÃO o áudio', async () => {
+    const ctx = build();
+    ctx.screen.withAudio = true;
+    await ctx.session.start(SLUG, TOKEN);
+
+    const state = ctx.session.getState();
+    const preview = state.status === 'live' ? state.preview : null;
+    // Tocar o áudio do jogo de volta nos alto-falantes de quem está jogando
+    // cria eco — e o navegador pode capturar esse eco de volta.
+    expect(preview?.getVideoTracks()).toHaveLength(1);
+    expect(preview?.getAudioTracks()).toHaveLength(0);
+  });
+
+  it('some junto com a sessão', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.stop();
+    expect(ctx.session.getState().status).toBe('ended');
   });
 });
 

@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import type { BroadcastSession, BroadcastState } from '../core/media/broadcast-session.js';
+import type { Prioridade } from '@tela/shared';
 import type { PresetId } from '../core/media/presets.js';
 
 export type BroadcastControls = {
@@ -12,6 +13,9 @@ export type BroadcastControls = {
   ) => Promise<void>;
   stop: () => Promise<void>;
   setPreset: (presetId: PresetId) => Promise<void>;
+  /** Abre o seletor de novo e troca a fonte sem derrubar espectadores. */
+  switchSource: () => Promise<void>;
+  setPrioridade: (prioridade: Prioridade) => Promise<void>;
 };
 
 /**
@@ -52,6 +56,11 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
 
   const stop = useCallback(() => session.stop('USER_STOPPED'), [session]);
   const setPreset = useCallback((presetId: PresetId) => session.setPreset(presetId), [session]);
+  const switchSource = useCallback(() => session.switchSource(), [session]);
+  const setPrioridade = useCallback(
+    (prioridade: Prioridade) => session.setPrioridade(prioridade),
+    [session],
+  );
 
-  return { state, start, stop, setPreset };
+  return { state, start, stop, setPreset, switchSource, setPrioridade };
 }

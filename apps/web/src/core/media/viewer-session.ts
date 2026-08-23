@@ -30,7 +30,15 @@ export type ViewerState =
    * monta tudo, e nenhum pacote atravessa. Merece estado próprio porque a
    * ação do usuário é diferente de "offline" — não adianta esperar.
    */
-  | { readonly status: 'sem-conexao'; readonly slug: string };
+  | { readonly status: 'sem-conexao'; readonly slug: string }
+  /**
+   * Não conseguimos nem falar com o servidor.
+   *
+   * Diferente de "offline": ali existe servidor e não existe transmissão;
+   * aqui não se sabe, porque a pergunta não chegou. Bloqueio de navegador,
+   * proxy corporativo, rede caída.
+   */
+  | { readonly status: 'sem-servidor'; readonly slug: string };
 
 export type ViewerEventMap = { state: ViewerState };
 
@@ -211,6 +219,9 @@ export class ViewerSession {
       if (isSignalingError(error) && error.code === 'CHANNEL_FULL') {
         // Sala cheia não é erro permanente: alguém sai, a vaga abre.
         this.setState({ status: 'full', slug: this.slug });
+        this.advanceBackoff();
+      } else if (isSignalingError(error) && error.code === 'SIGNAL_UNREACHABLE') {
+        this.setState({ status: 'sem-servidor', slug: this.slug });
         this.advanceBackoff();
       } else if (error instanceof Error && error.message === 'CONNECT_TIMEOUT') {
         // O canal abriu, o SDP foi trocado, e a mídia não veio. Isso não é

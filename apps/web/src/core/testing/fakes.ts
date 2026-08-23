@@ -224,6 +224,14 @@ export class FakeMediaTransport implements MediaTransport {
   async setPreset(preset: EncodingPreset): Promise<void> {
     this.presets.push(preset);
   }
+  readonly substituidas: MediaStreamTrack[] = [];
+  async replaceVideo(track: MediaStreamTrack): Promise<void> {
+    this.substituidas.push(track);
+  }
+  readonly prioridades: string[] = [];
+  async setPrioridade(prioridade: string): Promise<void> {
+    this.prioridades.push(prioridade);
+  }
   ceilings: (number | null)[] = [];
   async setBitrateCeiling(bps: number | null): Promise<void> {
     this.ceilings.push(bps);
@@ -379,6 +387,9 @@ export class FakeRandom implements Random {
 }
 
 export const shareUrlFor = (slug: string) => `https://tela.gg/${slug}`;
+
+export const createStream = (tracks: readonly MediaStreamTrack[]): MediaStream =>
+  fakeStream([...tracks]);
 
 /** Política de slug enxuta: o teste não deve depender da blocklist real. */
 export const TEST_POLICY = {

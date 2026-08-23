@@ -86,7 +86,9 @@ export function Viewer({ slug }: Props) {
               ? 'cheio'
               : state.status === 'sem-conexao'
                 ? 'sem-conexao'
-                : 'offline'
+                : state.status === 'sem-servidor'
+                  ? 'sem-servidor'
+                  : 'offline'
           }
         />
       </main>

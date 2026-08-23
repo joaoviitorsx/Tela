@@ -1,4 +1,4 @@
-import type { EncodingPreset } from '@tela/shared';
+import type { EncodingPreset, Prioridade } from '@tela/shared';
 import type { PeerInfo } from '../mesh/mesh-topology.js';
 
 /**
@@ -75,6 +75,16 @@ export type MediaTransport = {
   publishAudio(track: MediaStreamTrack): Promise<void>;
   /** Troca de qualidade sem renegociar: `setParameters` nos senders. */
   setPreset(preset: EncodingPreset): Promise<void>;
+  /**
+   * Troca a fonte de vídeo sem derrubar ninguém.
+   *
+   * `replaceTrack` substitui o que sai por um sender existente e NÃO mexe no
+   * SDP: quem está assistindo não pisca, não renegocia, não reconecta. É a
+   * diferença entre trocar de janela e recomeçar a transmissão.
+   */
+  replaceVideo(track: MediaStreamTrack): Promise<void>;
+  /** O que ceder quando os bits não dão para tudo: fluidez ou nitidez. */
+  setPrioridade(prioridade: Prioridade): Promise<void>;
   /**
    * Teto duro de upload, abaixo do preset. `null` remove.
    *

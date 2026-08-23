@@ -25,6 +25,15 @@ export type MeshTransportDeps = {
   readonly createConnection?: (config: RTCConfiguration) => RTCPeerConnection;
 };
 
+/**
+ * Quanto tempo a mídia pode ficar em silêncio antes de ser dada por encerrada.
+ *
+ * Uma troca de rede ou um soluço de ICE emudece a trilha por alguns segundos
+ * e ela volta. Declarar o fim na primeira pausa faria o espectador cair
+ * sozinho toda vez que o Wi-Fi oscilasse.
+ */
+const MEDIA_GRACE_MS = 8_000;
+
 export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   const emitter = new Emitter<TransportEvents>();
   const outbound = new StatsSampler('outbound');
@@ -119,6 +128,38 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
           if (track.muted) track.addEventListener('unmute', anunciar, { once: true });
           else anunciar();
+
+          if (track.kind !== 'video') return;
+
+          /**
+           * Fim da mídia, detectado pela própria mídia.
+           *
+           * Antes isso vinha do canal de sinalização — mas o canal e a mídia
+           * são caminhos independentes, e é o argumento da arquitetura que
+           * sejam. Depois de separar os dois eventos, o espectador deixou de
+           * perceber o transmissor saindo quando o canal fechava primeiro:
+           * ficava "assistindo" um vídeo congelado.
+           *
+           * A trilha remota emudece quando param de chegar pacotes. Uma
+           * pausa curta acontece em toda reconexão de rede, então há uma
+           * carência antes de declarar o fim.
+           */
+          track.addEventListener('ended', () => emitter.emit('closed', { reason: 'HOST_LEFT' }));
+
+          let silencio: ReturnType<typeof setTimeout> | null = null;
+          track.addEventListener('mute', () => {
+            emitter.emit('reconnecting', undefined);
+            silencio ??= setTimeout(() => {
+              if (track.muted) emitter.emit('closed', { reason: 'MEDIA_STOPPED' });
+            }, MEDIA_GRACE_MS);
+          });
+          track.addEventListener('unmute', () => {
+            if (silencio !== null) {
+              clearTimeout(silencio);
+              silencio = null;
+            }
+            if (delivered) emitter.emit('reconnected', undefined);
+          });
         },
         onStateChange: (state) => {
           if (state === 'disconnected') emitter.emit('reconnecting', undefined);
@@ -158,6 +199,17 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       preset = next;
       // Sem renegociar: `setParameters` nos senders existentes. Ninguém pisca.
       await topology?.setPreset(next);
+    },
+
+    async replaceVideo(track) {
+      const media = mediaStream();
+      for (const antiga of media.getVideoTracks()) media.removeTrack(antiga);
+      media.addTrack(track);
+      await topology?.replaceVideo(track, media);
+    },
+
+    async setPrioridade(prioridade) {
+      await topology?.setPrioridade(prioridade);
     },
 
     async setBitrateCeiling(bps) {

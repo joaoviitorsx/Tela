@@ -1,4 +1,5 @@
-import type { EncodingPreset, PresetId } from '@tela/shared';
+import type { EncodingPreset, PresetId, Prioridade } from '@tela/shared';
+import { CapturePreview } from './CapturePreview.js';
 import { IconCheck, IconCopy, IconStop, IconViewers, IconWarning } from './Icon.js';
 import { LiveDot } from './LiveDot.js';
 import { QualityPicker } from './QualityPicker.js';
@@ -15,6 +16,13 @@ type Props = {
   readonly audioPerdidoPelaEscolha: boolean;
   /** Canal de sinalização caiu: quem assiste continua, ninguém novo entra. */
   readonly semSinalizacao: boolean;
+  /** A mídia capturada, para quem transmite conferir o que está mandando. */
+  readonly preview: MediaStream | null;
+  readonly previewAberto: boolean;
+  readonly onTogglePreview: () => void;
+  readonly onSwitchSource: () => void;
+  readonly prioridade: Prioridade;
+  readonly onPrioridade: (p: Prioridade) => void;
   readonly copied: boolean;
   readonly onCopy: () => void;
   readonly onStop: () => void;
@@ -46,6 +54,12 @@ export function LiveHud({
   relayed,
   audioPerdidoPelaEscolha,
   semSinalizacao,
+  preview,
+  previewAberto,
+  onTogglePreview,
+  onSwitchSource,
+  prioridade,
+  onPrioridade,
   copied,
   onCopy,
   onStop,
@@ -104,6 +118,14 @@ export function LiveHud({
             <StatsBadge {...stats} />
             <button
               type="button"
+              onClick={onSwitchSource}
+              title="Escolher outra tela ou janela sem derrubar quem está assistindo"
+              className="inline-flex min-h-8 items-center rounded-sm border border-edge px-2.5 text-[13px] text-muted transition-colors duration-150 hover:border-text hover:text-text"
+            >
+              trocar tela
+            </button>
+            <button
+              type="button"
               onClick={onStop}
               className="inline-flex min-h-8 items-center gap-1.5 rounded-sm border border-edge px-2.5 text-[13px] text-muted transition-colors duration-150 hover:border-danger hover:text-danger"
             >
@@ -113,6 +135,14 @@ export function LiveHud({
           </span>
         </div>
 
+        <div className="border-t border-line pt-2">
+          <CapturePreview
+            stream={preview}
+            aberto={previewAberto}
+            onToggle={onTogglePreview}
+          />
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
           <QualityPicker
             presets={presets}
@@ -120,6 +150,34 @@ export function LiveHud({
             onChange={onPreset}
             compact
           />
+
+          <div
+            className="flex items-center gap-1"
+            role="group"
+            aria-label="O que priorizar quando a rede apertar"
+          >
+            {(['fluidez', 'nitidez'] as const).map((opcao) => (
+              <button
+                key={opcao}
+                type="button"
+                onClick={() => onPrioridade(opcao)}
+                aria-pressed={prioridade === opcao}
+                title={
+                  opcao === 'fluidez'
+                    ? 'Segura os 60fps e deixa borrar. Certo para gameplay.'
+                    : 'Segura a resolução e deixa o framerate cair. Certo quando o detalhe importa.'
+                }
+                className={[
+                  'min-h-8 rounded-sm px-2.5 text-[12px] transition-colors duration-150',
+                  prioridade === opcao
+                    ? 'bg-text font-medium text-void'
+                    : 'text-muted hover:bg-void hover:text-text',
+                ].join(' ')}
+              >
+                {opcao}
+              </button>
+            ))}
+          </div>
           <span className="text-[12px] text-muted">
             direto do seu PC — fechar esta aba encerra a transmissão
           </span>

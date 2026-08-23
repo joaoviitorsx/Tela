@@ -62,6 +62,7 @@ export function createBroadcastSession(): BroadcastSession {
     audio: audioCapture,
     scheduler,
     shareUrlFor,
+    createStream: (tracks) => new MediaStream([...tracks]),
   });
 }
 

@@ -1,4 +1,4 @@
-type Motivo = 'offline' | 'cheio' | 'sem-conexao';
+type Motivo = 'offline' | 'cheio' | 'sem-conexao' | 'sem-servidor';
 
 type Props = {
   readonly slug: string;
@@ -26,7 +26,7 @@ export function OfflineState({ slug, motivo = 'offline', maxPeers = 3 }: Props) 
       <p className="inline-flex items-center gap-2 text-[13px] text-muted">
         <span
           className={`h-1.5 w-1.5 rounded-full animate-live ${
-            motivo === 'sem-conexao' ? 'bg-warn' : 'bg-muted'
+            motivo === 'sem-conexao' || motivo === 'sem-servidor' ? 'bg-warn' : 'bg-muted'
           }`}
           aria-hidden="true"
         />
@@ -50,6 +50,12 @@ const TEXTO: Record<
     titulo: `transmissão lotada (${maxPeers}/${maxPeers})`,
     situacao: 'aguardando uma vaga',
     explicacao: 'Assim que alguém sair, você entra sozinho.',
+  }),
+  'sem-servidor': () => ({
+    titulo: 'não foi possível falar com o servidor',
+    situacao: 'tentando de novo',
+    explicacao:
+      'A conexão com o servidor não abriu. Pode ser bloqueio do navegador (escudos do Brave, extensões de privacidade), proxy da rede, ou o servidor fora do ar. Tente desativar os escudos para este site.',
   }),
   'sem-conexao': () => ({
     titulo: 'não foi possível conectar ao vídeo',

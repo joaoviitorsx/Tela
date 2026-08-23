@@ -85,8 +85,21 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         onTrack: (track) => {
           media.addTrack(track);
           link.minimizePlayoutDelay();
+
           if (!delivered && track.kind === 'video') {
             delivered = true;
+            emitter.emit('track', { stream: media });
+            return;
+          }
+          /**
+           * O áudio quase sempre chega DEPOIS do primeiro frame de vídeo.
+           *
+           * Emitir só uma vez deixava a sessão com `hasAudio: false` para
+           * sempre — e é esse campo que decide se o overlay "clique para
+           * ativar o som" aparece. Sem ele o espectador fica mudo sem nunca
+           * saber que existe som para ouvir.
+           */
+          if (delivered && track.kind === 'audio') {
             emitter.emit('track', { stream: media });
           }
         },

@@ -1,5 +1,6 @@
 import { OFFENSIVE, RESERVED } from '@tela/shared';
 import { makeBrowserAudioCapture } from './adapters/browser-audio-capture.js';
+import { makeBrowserPlatform } from './adapters/browser-platform.js';
 import { makeBrowserScheduler } from './adapters/browser-scheduler.js';
 import { makeBrowserScreenCapture } from './adapters/browser-screen-capture.js';
 import { makeCryptoRandom } from './adapters/crypto-random.js';
@@ -21,6 +22,11 @@ import type { MediaTransport } from './core/ports/media-transport.js';
  */
 const storage = makeLocalStorage();
 const scheduler = makeBrowserScheduler();
+const audioCapture = makeBrowserAudioCapture();
+
+/** De onde vem o áudio do jogo depende do sistema. Ver `AudioSourcePicker`. */
+export const platform = makeBrowserPlatform();
+export const audio = audioCapture;
 
 /**
  * Endereço do servidor de sinalização.
@@ -53,7 +59,7 @@ export function createBroadcastSession(): BroadcastSession {
   return new BroadcastSession({
     transport: createTransport(),
     screen: makeBrowserScreenCapture(),
-    audio: makeBrowserAudioCapture(),
+    audio: audioCapture,
     scheduler,
     shareUrlFor,
   });

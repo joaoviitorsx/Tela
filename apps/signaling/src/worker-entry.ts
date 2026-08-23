@@ -72,19 +72,31 @@ export default {
       });
     }
 
-    if (request.headers.get('Upgrade') !== 'websocket') {
-      return new Response('esperado WebSocket', { status: 426 });
+    if (url.pathname === '/signal' || url.pathname.startsWith('/signal/')) {
+      if (request.headers.get('Upgrade') !== 'websocket') {
+        return new Response('esperado WebSocket', { status: 426 });
+      }
+
+      // O slug decide QUAL Durable Object atende, então todos os peers de um
+      // canal caem na mesma instância sem roteamento nosso.
+      const slug = url.pathname.replace(/^\/signal\/?/, '').toLowerCase();
+      if (!SLUG_RE.test(slug)) return new Response('slug inválido', { status: 400 });
+
+      const id = env.CHANNELS.idFromName(slug);
+      const headers = new Headers(request.headers);
+      headers.set(SLUG_HEADER, slug);
+
+      return await env.CHANNELS.get(id).fetch(new Request(request.url, { headers }));
     }
 
-    // `/signal/<slug>`: o slug decide QUAL Durable Object atende, então todos
-    // os peers de um canal caem na mesma instância sem roteamento nosso.
-    const slug = url.pathname.replace(/^\/signal\/?/, '').toLowerCase();
-    if (!SLUG_RE.test(slug)) return new Response('slug inválido', { status: 400 });
-
-    const id = env.CHANNELS.idFromName(slug);
-    const headers = new Headers(request.headers);
-    headers.set(SLUG_HEADER, slug);
-
-    return await env.CHANNELS.get(id).fetch(new Request(request.url, { headers }));
+    /**
+     * Todo o resto é o front estático, servido pelo MESMO Worker.
+     *
+     * Uma origem só: o WebSocket vira `wss://<host>/signal/<slug>` sem CORS,
+     * sem variável de build e sem uma segunda publicação para esquecer de
+     * fazer. E requisição de asset estático não conta na cota de Workers.
+     */
+    if (env.ASSETS !== undefined) return await env.ASSETS.fetch(request);
+    return new Response('front não publicado neste Worker', { status: 404 });
   },
 };

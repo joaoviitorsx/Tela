@@ -11,7 +11,12 @@ import type { BroadcastSession, BroadcastState } from '../core/media/broadcast-s
  */
 export function useBroadcast(session: BroadcastSession): {
   state: BroadcastState;
-  start: (slug: string, ownerToken: string, presetId?: PresetId) => Promise<void>;
+  start: (
+    slug: string,
+    ownerToken: string,
+    presetId?: PresetId,
+    audioDeviceId?: string | null,
+  ) => Promise<void>;
   stop: () => Promise<void>;
   setPreset: (presetId: PresetId) => Promise<void>;
 } {
@@ -24,8 +29,13 @@ export function useBroadcast(session: BroadcastSession): {
   return useMemo(
     () => ({
       state,
-      start: (slug, ownerToken, presetId) =>
-        session.start(slug, ownerToken, presetId ? { presetId } : {}),
+      start: (slug, ownerToken, presetId, audioDeviceId) =>
+        session.start(slug, ownerToken, {
+          ...(presetId === undefined ? {} : { presetId }),
+          ...(audioDeviceId === null || audioDeviceId === undefined
+            ? {}
+            : { audioDeviceId }),
+        }),
       stop: () => session.stop('USER_STOPPED'),
       setPreset: (presetId) => session.setPreset(presetId),
     }),

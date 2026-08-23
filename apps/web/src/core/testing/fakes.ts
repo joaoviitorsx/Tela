@@ -140,6 +140,10 @@ export class FakeScreenCapture implements ScreenCapture {
 
 export class FakeAudioCapture implements AudioCapture {
   fails = false;
+  permitido = true;
+  async requestPermission() {
+    return this.permitido;
+  }
   async listMonitors() {
     return [{ id: 'monitor-1', label: 'TelaCapture Monitor' }];
   }

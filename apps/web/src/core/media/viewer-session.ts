@@ -132,8 +132,10 @@ export class ViewerSession {
           status: 'watching',
           slug: this.slug,
           stream,
+          // Reavaliado a cada `track`: o áudio costuma chegar depois do vídeo,
+          // e é este campo que faz aparecer o overlay de ativar o som.
           hasAudio: stream.getAudioTracks().length > 0,
-          stats: null,
+          stats: this.state.status === 'watching' ? this.state.stats : null,
         });
       }),
       transport.on('reconnecting', () => {

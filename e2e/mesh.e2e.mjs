@@ -99,6 +99,16 @@ const resultado = await host.evaluate(
     const track = stream.getVideoTracks()[0];
     track.contentHint = 'motion';
 
+    // Áudio de verdade: um oscilador no lugar da trilha do jogo. É o que prova
+    // que quem assiste OUVE, e não só vê.
+    const audioCtx = new AudioContext();
+    const osc = audioCtx.createOscillator();
+    osc.frequency.value = 440;
+    const dest = audioCtx.createMediaStreamDestination();
+    osc.connect(dest);
+    osc.start();
+    const audioTrack = dest.stream.getAudioTracks()[0];
+
     const transport = makeMeshTransport({
       channel: makeWsSignaling(
         `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`,
@@ -108,13 +118,17 @@ const resultado = await host.evaluate(
 
     await transport.host(slug, 'o'.repeat(43));
     await transport.publishVideo(track, shared.PRESET_720P60);
+    // Publicado DEPOIS do vídeo, como acontece de verdade — o sink virtual do
+    // Linux resolve uns instantes depois da captura de tela.
+    await transport.publishAudio(audioTrack);
     void base;
-    return { hosted: true, contentHint: track.contentHint };
+    return { hosted: true, contentHint: track.contentHint, temAudio: Boolean(audioTrack) };
   },
   [SLUG, WEB],
 );
 ok(resultado.hosted, 'transmissor reivindicou o canal pelo signaling real');
 ok(resultado.contentHint === 'motion', 'contentHint=motion aplicado na trilha');
+ok(resultado.temAudio, 'trilha de áudio publicada depois do vídeo');
 
 // O espectador já estava na página, em polling. Ele deve conectar sozinho.
 console.log('   ...esperando o espectador conectar sozinho (polling de 5s)');
@@ -153,6 +167,40 @@ if (conectou) {
   ok(agregado !== null, `estatísticas agregadas: ${JSON.stringify(agregado)}`);
   ok(agregado?.bitrateBps > 0, `bitrate real medido: ${agregado?.bitrateBps} bps`);
   ok(agregado?.fps > 0, `framerate real medido: ${agregado?.fps} fps`);
+
+  console.log('\n   Áudio: quem assiste precisa OUVIR o gameplay');
+  let comAudio = null;
+  for (let i = 0; i < 15; i += 1) {
+    comAudio = await viewer.evaluate(() => {
+      const v = document.querySelector('video');
+      const s = v?.srcObject;
+      if (!s) return null;
+      const a = s.getAudioTracks();
+      return {
+        trilhas: a.length,
+        viva: a[0]?.readyState === 'live',
+        // O overlay só aparece se a sessão soube que existe áudio.
+        overlay: Boolean([...document.querySelectorAll('button')].find((b) =>
+          b.textContent?.includes('ativar o som'),
+        )),
+      };
+    });
+    if (comAudio?.trilhas > 0) break;
+    await viewer.waitForTimeout(1000);
+  }
+  ok(comAudio?.trilhas > 0, `espectador recebeu trilha de áudio (${JSON.stringify(comAudio)})`);
+  ok(comAudio?.viva, 'trilha de áudio está viva no espectador');
+  ok(
+    comAudio?.overlay,
+    'overlay "clique para ativar o som" apareceu — sem ele o espectador fica mudo sem saber',
+  );
+
+  const rtpAudio = await viewer.evaluate(async () => {
+    await new Promise((r) => setTimeout(r, 2000));
+    const stats = await window.__viewerPc?.getStats?.();
+    return stats ? true : 'sem acesso direto';
+  });
+  void rtpAudio;
 
   console.log('\n   Troca de qualidade ao vivo NÃO pode derrubar quem assiste');
   await host.evaluate(async () => {

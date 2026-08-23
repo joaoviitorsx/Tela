@@ -51,6 +51,8 @@ type Attachment = {
 
 export type Env = {
   CHANNELS: DurableObjectNamespace;
+  /** Front estático servido pelo mesmo Worker. Ver `wrangler.toml`. */
+  ASSETS?: { fetch(request: Request): Promise<Response> };
   MAX_PEERS?: string;
   STUN_URLS?: string;
   TURN_URL?: string;

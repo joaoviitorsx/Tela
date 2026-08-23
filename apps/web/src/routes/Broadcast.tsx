@@ -12,6 +12,8 @@ import { useBeforeUnload, useTabTitle, useWakeLock } from '../react/use-page-eff
 type Props = {
   readonly slug: string;
   readonly presetId: PresetId;
+  /** Só usado no Linux, onde o áudio do sistema não vem com a tela. */
+  readonly audioDeviceId: string | null;
   readonly onExit: () => void;
 };
 
@@ -33,7 +35,7 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
   USER_STOPPED: 'Transmissão encerrada.',
 };
 
-export function Broadcast({ slug, presetId, onExit }: Props) {
+export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
   const { state, start, stop, setPreset } = useBroadcast(session);
   const [copied, setCopied] = useState(false);
@@ -65,11 +67,11 @@ export function Broadcast({ slug, presetId, onExit }: Props) {
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void start(slug, identity.ownerToken(), presetId);
+    void start(slug, identity.ownerToken(), presetId, audioDeviceId);
     return () => {
       void session.stop('USER_STOPPED');
     };
-  }, [session, start, slug, presetId]);
+  }, [session, start, slug, presetId, audioDeviceId]);
 
   const handleStop = useCallback(() => {
     // Só pergunta se tem gente assistindo. Confirmar quando o usuário está

@@ -1,3 +1,12 @@
+# NÃO existe `_redirects` aqui de propósito.
+#
+# O SPA fallback é feito por `not_found_handling = "single-page-application"`
+# no wrangler.toml do Worker. Um `_redirects` com `/* /index.html 200` junto
+# disso é recusado pela Cloudflare como laço infinito.
+#
+# Se você publicar em Cloudflare Pages (em vez do Worker), aí SIM precisa de
+# um `_redirects` com essa regra — ver docs/DEPLOY.md.
+
 /*
   # Sem display-capture=(self), getDisplayMedia é bloqueado e o botão
   # TRANSMITIR simplesmente não faz nada.

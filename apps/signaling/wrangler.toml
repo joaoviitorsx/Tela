@@ -5,6 +5,17 @@ compatibility_date = "2026-08-01"
 # interno para o Durable Object.
 compatibility_flags = ["nodejs_compat"]
 
+# O front estático sai do mesmo Worker. `single-page-application` é o SPA
+# fallback: sem ele, o link que a pessoa mandou para os amigos — /joao — dá
+# 404, porque não existe arquivo com esse nome.
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# O Worker precisa ver a requisição ANTES dos assets, senão /signal nunca
+# chega ao Durable Object.
+run_worker_first = ["/signal/*", "/health"]
+
 [[durable_objects.bindings]]
 name = "CHANNELS"
 class_name = "ChannelDurableObject"

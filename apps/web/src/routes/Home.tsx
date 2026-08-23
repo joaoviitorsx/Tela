@@ -1,14 +1,18 @@
 import { PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
 import { useCallback, useMemo, useState } from 'react';
+import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
 import { BigButton } from '../components/BigButton.js';
 import { IconPlay } from '../components/Icon.js';
 import { QualityPicker } from '../components/QualityPicker.js';
 import { SlugPicker } from '../components/SlugPicker.js';
-import { identity, preferences } from '../container.js';
+import { identity, platform, preferences } from '../container.js';
 import { isPresetId } from '../core/media/presets.js';
+import { useAudioSources } from '../react/use-audio-sources.js';
 import { useSlugCheck } from '../react/use-slug-check.js';
 
-type Props = { readonly onStart: (slug: string, presetId: PresetId) => void };
+type Props = {
+  readonly onStart: (slug: string, presetId: PresetId, audioDeviceId: string | null) => void;
+};
 
 /**
  * Um botão e um campo. Sem header, sem logo, sem rodapé, sem "como funciona".
@@ -29,8 +33,12 @@ export function Home({ onStart }: Props) {
     return isPresetId(saved) ? saved : 'p1080p60';
   });
 
+  const [audioDeviceId, setAudioDeviceId] = useState<string | null>(null);
   const check = useSlugCheck(slug);
   const presets = useMemo(() => PRESET_ORDER.map((id) => PRESETS[id]), []);
+  const fontes = useAudioSources();
+  const os = platform.osName();
+  const modoAudio = platform.systemAudio();
 
   const choosePreset = useCallback((id: PresetId) => {
     setPresetId(id);
@@ -41,8 +49,8 @@ export function Home({ onStart }: Props) {
     const wanted = slug.trim().toLowerCase();
     if (check.status !== 'ok') return;
     identity.rememberSlug(wanted);
-    onStart(wanted, presetId);
-  }, [slug, check, presetId, onStart]);
+    onStart(wanted, presetId, audioDeviceId);
+  }, [slug, check, presetId, audioDeviceId, onStart]);
 
   return (
     <main className="flex min-h-full flex-col items-center justify-center gap-8 px-6 py-16">
@@ -62,6 +70,16 @@ export function Home({ onStart }: Props) {
       />
 
       <QualityPicker presets={presets} value={presetId} onChange={choosePreset} />
+
+      <AudioSourcePicker
+        os={os}
+        mode={modoAudio}
+        devices={fontes.devices}
+        value={audioDeviceId}
+        onChange={setAudioDeviceId}
+        onRequestDevices={fontes.procurar}
+        buscando={fontes.buscando}
+      />
     </main>
   );
 }

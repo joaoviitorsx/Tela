@@ -174,6 +174,61 @@ describe('MeshTopology — R5: encoding IDÊNTICO em todos os peers', () => {
   });
 });
 
+describe('MeshTopology — áudio', () => {
+  it('trilha adicionada DEPOIS chega em quem já estava conectado', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle(20);
+    expect(ctx.factory.created[0]?.getSenders()).toHaveLength(1);
+
+    // O áudio do sink virtual resolve uns instantes depois da tela. Um
+    // espectador que entrou no meio ficaria mudo para sempre, sem aviso.
+    const audio = fakeTrack('audio');
+    await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
+    await settle(20);
+
+    const kinds = ctx.factory.created[0]?.getSenders().map((s) => s.track.kind);
+    expect(kinds).toEqual(['video', 'audio']);
+  });
+
+  it('não duplica sender quando a mesma trilha é republicada', async () => {
+    const ctx = build();
+    const audio = fakeTrack('audio');
+    await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle(20);
+
+    await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
+    await settle(20);
+
+    expect(ctx.factory.created[0]?.getSenders()).toHaveLength(2);
+  });
+
+  it('áudio recebe bitrate de jogo, não de voz', async () => {
+    const ctx = build();
+    const audio = fakeTrack('audio');
+    await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle(20);
+
+    const senderAudio = ctx.factory.created[0]?.getSenders().find((s) => s.track.kind === 'audio');
+    // O default do WebRTC assume voz e aperta demais: música de jogo vira lata.
+    expect(senderAudio?.applied.at(-1)?.encodings?.[0]?.maxBitrate).toBe(128_000);
+  });
+
+  it('o preset de vídeo não é aplicado no sender de áudio', async () => {
+    const ctx = build();
+    const audio = fakeTrack('audio');
+    await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle(20);
+
+    const senderAudio = ctx.factory.created[0]?.getSenders().find((s) => s.track.kind === 'audio');
+    expect(senderAudio?.applied.at(-1)?.encodings?.[0]?.maxFramerate).toBeUndefined();
+  });
+});
+
 describe('MeshTopology — roteamento e limpeza', () => {
   it('entrega sinal ao peer correto', async () => {
     const ctx = build();

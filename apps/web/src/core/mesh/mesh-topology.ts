@@ -39,6 +39,9 @@ export type MeshTopologyDeps = {
   readonly maxPeers: number;
 };
 
+/** Áudio de jogo, não de voz: 128 kbps preserva música e efeitos. */
+const AUDIO_BITRATE = 128_000;
+
 export class MeshTopology {
   private readonly emitter = new Emitter<TopologyEvents>();
   private readonly links = new Map<string, PeerLink>();
@@ -158,7 +161,17 @@ export class MeshTopology {
     }
   }
 
-  /** Publica (ou republica) a mídia para todo mundo. */
+  /**
+   * Publica (ou republica) a mídia para todo mundo.
+   *
+   * Trilha adicionada DEPOIS que um peer já conectou também precisa chegar
+   * nele. O caso real é o áudio: a captura de tela resolve primeiro, o áudio
+   * do sink virtual vem uns instantes depois, e um espectador que entrou no
+   * meio ficaria sem som para sempre — sem erro, sem aviso, só silêncio.
+   *
+   * `addTrack` numa conexão já estabelecida dispara `negotiationneeded`, e o
+   * perfect negotiation do `PeerLink` cuida da renegociação.
+   */
   publish(stream: MediaStream, tracks: readonly MediaStreamTrack[], preset: EncodingPreset): Promise<void> {
     this.stream = stream;
     this.tracks = [...tracks];
@@ -170,8 +183,27 @@ export class MeshTopology {
         this.waiting.delete(peerId);
         this.attach(peerId);
       }
+      // Quem já estava conectado recebe o que ainda não tinha.
+      for (const [peerId, link] of this.links) this.syncTracks(peerId, link, stream);
       await this.adaptAll(preset);
     });
+  }
+
+  /** Garante que este peer tem um sender para cada trilha publicada. */
+  private syncTracks(peerId: string, link: PeerLink, stream: MediaStream): void {
+    const senders = this.senders.get(peerId) ?? [];
+    const enviadas = new Set(senders.map((sender) => sender.track).filter(Boolean));
+
+    for (const track of this.tracks) {
+      if (enviadas.has(track)) continue;
+      try {
+        senders.push(link.addTrack(track, stream));
+      } catch {
+        // Conexão fechando no meio. O `connectionstatechange` cuida do resto.
+        return;
+      }
+    }
+    this.senders.set(peerId, senders);
   }
 
   /**
@@ -196,6 +228,10 @@ export class MeshTopology {
    */
   private async applyPreset(senders: readonly RTCRtpSender[], preset: EncodingPreset): Promise<void> {
     for (const sender of senders) {
+      if (sender.track?.kind === 'audio') {
+        await this.applyAudioParams(sender);
+        continue;
+      }
       if (sender.track?.kind !== 'video') continue;
       try {
         const params = sender.getParameters();
@@ -215,6 +251,26 @@ export class MeshTopology {
         // Firefox ainda recusa `degradationPreference` em setParameters. O
         // encoding continua aplicado; não vale derrubar o peer por isso.
       }
+    }
+  }
+
+  /**
+   * Parâmetros do áudio do jogo.
+   *
+   * 128 kbps porque o WebRTC assume voz e aperta demais por padrão — trilha
+   * de jogo com música vira lata. E o bitrate é o ÚNICO ajuste feito aqui:
+   * DTX e RED se negociam no SDP, e ligá-los seria ruim de propósito. DTX
+   * corta o que ele acha que é silêncio, e em jogo isso vira gaguejo; RED
+   * manda redundância, e redundância custa latência.
+   */
+  private async applyAudioParams(sender: RTCRtpSender): Promise<void> {
+    try {
+      const params = sender.getParameters();
+      const encodings = params.encodings?.length ? params.encodings : [{}];
+      encodings[0] = { ...encodings[0], maxBitrate: AUDIO_BITRATE };
+      await sender.setParameters({ ...params, encodings } as RTCRtpSendParameters);
+    } catch {
+      // Navegador que recusa o campo continua transmitindo no default.
     }
   }
 

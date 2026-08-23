@@ -1,0 +1,31 @@
+name = "tela-signaling"
+main = "dist/worker-entry.js"
+compatibility_date = "2026-08-01"
+# Necessário para `new Request(...)` preservar headers customizados no fetch
+# interno para o Durable Object.
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "CHANNELS"
+class_name = "ChannelDurableObject"
+
+# SQLite-backed é OBRIGATÓRIO no plano gratuito — Durable Objects com backend
+# key-value continuam sendo recurso pago. Este projeto não escreve em storage
+# (o estado vive nos attachments dos sockets), mas a migração precisa existir.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChannelDurableObject"]
+
+[vars]
+MAX_PEERS = "3"
+STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
+
+# TURN é opcional e só entra se você tiver um. Configure como secret, nunca
+# aqui — este arquivo é versionado:
+#   npx wrangler secret put TURN_SECRET
+# [vars]
+# TURN_URL = "turn:turn.seudominio.com:3478"
+# TURN_TTL_SECONDS = "600"
+
+[observability]
+enabled = true

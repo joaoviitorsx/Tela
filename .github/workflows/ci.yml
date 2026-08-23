@@ -64,6 +64,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tela/shared build && pnpm --filter @tela/signaling build
 
+      # O entry point do Worker não tem teste — ele não decide nada, delega
+      # tudo para ChannelRoom, que a suíte de conformidade cobre. Mas ele
+      # precisa pelo menos existir compilado, senão o deploy quebra.
+      - name: o entry point do Worker compilou
+        run: test -f apps/signaling/dist/worker-entry.js
+
       # O servidor precisa subir de verdade e responder. Um bootstrap quebrado
       # passa em typecheck e falha só no deploy.
       - name: sobe e responde

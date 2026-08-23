@@ -11,32 +11,64 @@ TURN embutido. Tudo isso saiu junto com o SFU (ADR 0005).
 
 ---
 
-## O front
-
-```bash
-pnpm install
-VITE_SIGNAL_URL=wss://signal.seudominio.com pnpm --filter @tela/web build
-# publique apps/web/dist/
-```
-
-`VITE_SIGNAL_URL` é o endereço público do WebSocket de sinalização. Sem ela, o
-front assume `/signal` no mesmo host — que é o que vale em desenvolvimento,
-onde o Vite faz proxy.
-
-**SPA fallback é obrigatório.** `tela.gg/joao` precisa servir o `index.html`,
-senão o link que a pessoa mandou para os amigos dá 404. Cada hospedagem tem seu
-jeito: um `_redirects` com `/* /index.html 200`, um `404.html` copiado do
-`index.html`, ou uma regra de rewrite. Confira antes de mandar o primeiro link.
+A plataforma recomendada é Cloudflare (Pages + Workers), pelos motivos
+verificados na [ADR 0007](adr/0007-onde-hospedar.md). O servidor portátil
+continua existindo e roda em qualquer lugar que rode Node — é a saída se a
+cota apertar ou se você preferir outro provedor.
 
 ---
 
-## O signaling
+## Caminho recomendado — Cloudflare
+
+Uma conta gratuita, sem cartão. Duas publicações.
+
+### 1. Sinalização (Workers + Durable Objects)
+
+```bash
+pnpm --filter @tela/shared build
+pnpm --filter @tela/signaling build
+pnpm --filter @tela/signaling exec wrangler deploy
+```
+
+O `wrangler.toml` já traz o binding do Durable Object e a migração
+`new_sqlite_classes` — **obrigatória no plano gratuito**, porque Durable
+Objects com backend key-value continuam sendo recurso pago.
+
+Anote a URL que o deploy imprime (`https://tela-signaling.<conta>.workers.dev`).
+O endpoint de sinalização é `wss://<essa-url>/signal/<slug>`.
+
+### 2. Front (Pages)
+
+```bash
+VITE_SIGNAL_URL=wss://tela-signaling.SUACONTA.workers.dev/signal \
+  pnpm --filter @tela/web build
+pnpm --filter @tela/web exec wrangler pages deploy dist --project-name tela
+```
+
+`apps/web/public/_redirects` já resolve o SPA fallback e
+`apps/web/public/_headers` já manda o `Permissions-Policy` com
+`display-capture=(self)` — sem ele, `getDisplayMedia` é bloqueado e o botão
+TRANSMITIR não faz nada.
+
+### 3. TURN, se você tiver
+
+```bash
+pnpm --filter @tela/signaling exec wrangler secret put TURN_SECRET
+# e descomente TURN_URL em wrangler.toml
+```
+
+---
+
+## Caminho portátil — qualquer host de Node
 
 ```bash
 pnpm --filter @tela/shared build
 pnpm --filter @tela/signaling build
 node apps/signaling/dist/server.js
 ```
+
+Serve para Koyeb, Railway, uma VPS ou a sua própria máquina. A única mudança
+do lado do front é `VITE_SIGNAL_URL`.
 
 | Variável | Para quê |
 |---|---|
@@ -53,9 +85,17 @@ Precisa de TLS: sem `wss://`, o browser recusa a conexão a partir de uma págin
 ### Verificar
 
 ```bash
-curl -s https://signal.seudominio.com/health
+curl -s https://tela-signaling.SUACONTA.workers.dev/health
+# {"ok":true}
+
+# no servidor portátil o health também conta os canais abertos
+curl -s http://127.0.0.1:3333/health
 # {"ok":true,"channels":0}
 ```
+
+Depois, com um amigo de verdade: abra `chrome://webrtc-internals` durante a
+transmissão e veja qual par de candidatos ICE venceu. Se for `relay`, você
+está passando por TURN — funciona, com latência a mais.
 
 ---
 
@@ -107,6 +147,8 @@ lá. Isso é estado esperado, com mensagem clara — não é crash.
 | Vídeo trava e o ping do jogo sobe | upstream saturado: baixe o preset ou o número de espectadores |
 | HUD diz "CPU no limite" | encode em software. Confira `chrome://gpu` → *Video Encode: Hardware accelerated* |
 | Reiniciou o signaling e os slugs sumiram | esperado: ele não persiste nada. Transmissões em curso continuam; só entradas novas param |
+| Erro de cota no Worker | o free tier são 100k requisições/dia, e reseta 00:00 UTC (ADR 0007) |
+| `wrangler deploy` reclama de Durable Object | falta a migração `new_sqlite_classes` — o backend key-value é pago |
 
 Para medir latência glass-to-glass de verdade, veja a §18 da documentação
 técnica — é medição humana, com câmera a 240fps. `RTCStats` mede rede, não

@@ -1,0 +1,4 @@
+# Sem diretório, sem busca, sem descoberta: o link só existe para quem o
+# recebeu. Indexar transmissões seria o oposto do produto.
+User-agent: *
+Disallow: /

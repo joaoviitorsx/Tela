@@ -1,0 +1,5 @@
+# SPA fallback. Sem isto, o link que a pessoa mandou para os amigos —
+# tela.gg/joao — dá 404, porque não existe arquivo com esse nome.
+# O 200 (e não 301) preserva a URL na barra de endereço, que é o que o
+# roteador do front lê.
+/*    /index.html   200

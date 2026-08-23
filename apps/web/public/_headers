@@ -1,0 +1,10 @@
+/*
+  # Sem display-capture=(self), getDisplayMedia é bloqueado e o botão
+  # TRANSMITIR simplesmente não faz nada.
+  Permissions-Policy: display-capture=(self), microphone=(self), camera=(), geolocation=()
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

@@ -30,14 +30,15 @@ vai haver.
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Front estático  ·  hospedagem de arquivos       │
+│  Front estático  ·  Cloudflare Pages (grátis)    │
 │  React + core/ (portável) + adapters/mesh        │
 └──────────────────┬───────────────────────────────┘
                    │ WebSocket — só SDP e ICE, nunca mídia
                    ▼
 ┌──────────────────────────────────────────────────┐
-│  Signaling  ·  ~450 linhas, sem estado durável   │
-│  canais por slug, relay de payload OPACO         │
+│  Signaling  ·  Durable Objects (grátis)          │
+│  um objeto por slug, relay de payload OPACO      │
+│  hiberna com os sockets abertos → custo zero     │
 └──────────────────────────────────────────────────┘
 
      STUN público   ·   TURN só para a cauda (CGNAT)
@@ -120,6 +121,9 @@ Estas são consequências da arquitetura, não bugs a corrigir depois:
 - **O slug não é permanente.** O signaling não persiste nada. Seu link fica
   reservado enquanto você transmite, mais 5 minutos de carência para
   reconexão. Reiniciar o processo limpa tudo.
+- **Cota diária no free tier.** 100.000 requisições/dia no Worker. Uma
+  transmissão gasta dezenas de mensagens de sinalização, não milhares — mas o
+  teto existe, e estourar dá erro claro, não degradação silenciosa.
 - **Nada foi medido em hardware real.** Latência glass-to-glass, encode em
   hardware e impacto no FPS do jogo exigem uma pessoa com máquina, rede e
   amigos. O roteiro está na §18 da documentação técnica.
@@ -140,9 +144,14 @@ pnpm turbo lint typecheck test build   # tem que passar antes de qualquer entreg
 pnpm depcruise                         # ciclos de dependência
 ```
 
-172 testes, todos sem browser e sem rede: a lógica de mídia vive em classes
+208 testes, todos sem browser e sem rede: a lógica de mídia vive em classes
 puras com `RTCPeerConnection` injetada, então a negociação inteira é
 exercitável em milissegundos.
+
+O servidor tem duas implementações — Node portátil e Durable Object — porque
+sob hibernação o modelo de estado é genuinamente diferente. Uma bateria de
+conformidade roda as mesmas 18 expectativas contra as duas, então elas não
+divergem em silêncio.
 
 ---
 
@@ -168,6 +177,7 @@ trade-off consciente, com página de exportação em `/recuperar`.
 | [`AGENTS.md`](AGENTS.md) | As oito regras inegociáveis |
 | [`docs/adr/`](docs/adr/) | Por que as decisões são o que são |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Subir o front e o signaling |
+| [`docs/adr/0007`](docs/adr/0007-onde-hospedar.md) | Por que Cloudflare, e o que foi descartado |
 | [`docs/TELA-changeset-mesh.md`](docs/TELA-changeset-mesh.md) | A mudança de SFU para mesh |
 
 Comece pela [ADR 0005](docs/adr/0005-mesh-p2p.md) se quiser entender a

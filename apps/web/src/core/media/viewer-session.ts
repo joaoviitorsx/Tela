@@ -152,6 +152,10 @@ export class ViewerSession {
 
     try {
       await transport.connect(joined.value.connection, (stream) => {
+        // O callback de mídia dispara quando o primeiro frame chega, que pode
+        // ser depois de o usuário ter fechado a aba ou trocado de slug.
+        // Publicar `watching` aqui ressuscitaria uma sessão morta.
+        if (this.stale(epoch)) return;
         this.pollMs = POLL_MIN_MS;
         this.setState({
           status: 'watching',

@@ -300,6 +300,43 @@ export class ClosingViewerTransport implements ViewerTransport {
   }
 }
 
+/**
+ * Transporte cujo `connect` fica pendurado até você soltar, e só então entrega
+ * a mídia.
+ *
+ * Reproduz a janela real entre "pedi a conexão" e "o primeiro frame chegou" —
+ * segundos, em rede ruim. É nessa janela que o usuário fecha a aba.
+ */
+export class GatedViewerTransport implements ViewerTransport {
+  private readonly emitter = new Emitter<ViewerEvents>();
+  private release!: () => void;
+  private readonly gate = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+  closed = false;
+  readonly stream = { getAudioTracks: () => [] } as unknown as MediaStream;
+
+  /** Simula o primeiro frame chegando. */
+  deliver(): void {
+    this.release();
+  }
+
+  async connect(_connection: Connection, sink: (stream: MediaStream) => void): Promise<void> {
+    await this.gate;
+    sink(this.stream);
+  }
+  async readStats(): Promise<TransportStats | null> {
+    return null;
+  }
+  on<K extends keyof ViewerEvents>(event: K, handler: (p: ViewerEvents[K]) => void) {
+    return this.emitter.on(event, handler);
+  }
+  async close(): Promise<void> {
+    this.closed = true;
+    this.release();
+  }
+}
+
 export class FakeStorage implements Storage {
   readonly rows = new Map<string, string>();
   get(key: string) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ClosingViewerTransport,
   FakeApi,
+  GatedViewerTransport,
   FakePublisherTransport,
   FakeScheduler,
   FakeViewerTransport,
@@ -222,6 +223,32 @@ describe('ViewerSession — reconexão não pode multiplicar', () => {
 
     // Continuar dizendo "lotada" depois que ninguém está transmitindo é mentira.
     expect(ctx.session.getState().status).toBe('offline');
+  });
+
+  it('close() durante o connect não publica watching depois', async () => {
+    const api = new FakeApi();
+    const transport = new GatedViewerTransport();
+    const scheduler = new FakeScheduler();
+    const session = new ViewerSession({
+      api,
+      transports: {
+        publisher: async () => new FakePublisherTransport(),
+        viewer: async () => transport,
+      },
+      scheduler,
+    });
+
+    void session.open(SLUG);
+    await settle();
+    expect(session.getState().status).toBe('connecting');
+
+    // Usuário fecha a aba enquanto o primeiro frame ainda não chegou.
+    await session.close();
+    transport.deliver();
+    await settle(30);
+
+    expect(session.getState().status).not.toBe('watching');
+    expect(scheduler.pending).toBe(0);
   });
 
   it('abrir outro slug fecha o transporte anterior', async () => {

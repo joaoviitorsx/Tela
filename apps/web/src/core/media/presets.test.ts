@@ -59,6 +59,21 @@ describe('orçamento P2P', () => {
     expect(p2pViewerBudget(5_000_000, PRESETS.p720p60eco)).toBe(1);
   });
 
+  it('medição falha (NaN, Infinity, zero, negativo) não vira teto sem sentido', () => {
+    for (const ruim of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1]) {
+      const n = p2pViewerBudget(ruim, PRESETS.p1080p60);
+      expect(Number.isFinite(n)).toBe(true);
+      expect(n).toBeGreaterThanOrEqual(0);
+    }
+    expect(p2pViewerBudget(Number.NaN, PRESETS.p1080p60)).toBe(0);
+  });
+
+  it('sem medição confiável, sugere o degrau mais conservador', () => {
+    // Errar para baixo custa nitidez; errar para cima custa a transmissão.
+    expect(suggestPreset(Number.NaN, 1)).toBe('p720p30');
+    expect(suggestPreset(0, 1)).toBe('p720p30');
+  });
+
   it('nunca passa do teto do browser, por melhor que seja o link', () => {
     expect(p2pViewerBudget(1_000_000_000, PRESETS.p720p60eco)).toBe(
       P2P_LIMITS.maxViewersBrowser,

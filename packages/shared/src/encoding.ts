@@ -152,6 +152,10 @@ export function p2pViewerBudget(
   uplinkBitsPerSecond: number,
   preset: EncodingPreset,
 ): number {
+  // Medição de banda falha. Quando falha, entrega NaN ou Infinity — e um NaN
+  // que atravessa `Math.min` sai NaN do outro lado, vira `maxViewers: NaN` na
+  // UI e transforma um erro de medição num teto de espectadores sem sentido.
+  if (!Number.isFinite(uplinkBitsPerSecond) || uplinkBitsPerSecond <= 0) return 0;
   const usable = uplinkBitsPerSecond * P2P_LIMITS.uplinkHeadroom;
   const perViewer = preset.main.maxBitrate;
   const byBandwidth = Math.floor(usable / perViewer);
@@ -167,6 +171,9 @@ export function p2pViewerBudget(
  * a ~3,5 Mbps por espectador ainda dá para manter 60fps, e manter é a regra.
  */
 export function suggestPreset(uplinkBitsPerSecond: number, viewers: number): PresetId {
+  // Sem medição confiável, sugere o degrau mais conservador em vez de chutar
+  // alto: errar para baixo custa nitidez, errar para cima custa a transmissão.
+  if (!Number.isFinite(uplinkBitsPerSecond) || uplinkBitsPerSecond <= 0) return 'p720p30';
   const budget = uplinkBitsPerSecond * P2P_LIMITS.uplinkHeadroom;
   const perViewer = budget / Math.max(1, viewers);
   if (perViewer >= PRESET_1080P60.main.maxBitrate) return 'p1080p60';

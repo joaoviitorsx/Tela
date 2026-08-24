@@ -1,7 +1,14 @@
 import { PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BigButton } from '../components/BigButton.js';
+import { CapturePreview } from '../components/CapturePreview.js';
+import { LiveDot } from '../components/LiveDot.js';
 import { LiveHud } from '../components/LiveHud.js';
+import { Panel, PanelSection } from '../components/Panel.js';
+import { QualityPicker } from '../components/QualityPicker.js';
+import { SignalChain } from '../components/SignalChain.js';
+import { ViewerSlots } from '../components/ViewerSlots.js';
+import { VolumeControl } from '../components/VolumeControl.js';
 import {
   createBroadcastSession,
   identity,
@@ -39,6 +46,40 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
   USER_STOPPED: 'Transmissão encerrada.',
 };
 
+/** O único motivo que não é falha. Todo o resto merece o tom de alerta. */
+const ENCERRAMENTO_NORMAL: BroadcastFailure = 'USER_STOPPED';
+
+/**
+ * O console de quem transmite.
+ *
+ * # O problema que esta tela tinha
+ *
+ * Um painel amontoado no topo, que sumia sozinho em cinco segundos, e mais
+ * nada — duas linhas de texto cinza ancoradas no rodapé para não ficarem
+ * atrás do painel. Todo o resto da tela era preto. A informação que responde
+ * "meus amigos estão vendo?" e "está bom?" existia, mas espremida a 12px
+ * dentro do elemento que desaparece.
+ *
+ * # A regra desta tela agora
+ *
+ * **Console quando tem alguém aqui, plaqueta quando não tem.**
+ *
+ * O corpo da página some junto com o HUD e no lugar fica uma plaqueta — LED
+ * AO VIVO, o link e a contagem — porque quem captura a tela inteira está
+ * mandando esta página para os amigos junto com o jogo. Deixar um console
+ * denso permanentemente aceso seria transformar a tela deles num painel de
+ * controle. Ao primeiro movimento do mouse tudo volta.
+ *
+ * Não há animação em JS aqui, nem laço contínuo: a troca é `opacity` em CSS,
+ * que roda no compositor. Esta página convive com um jogo na mesma máquina.
+ *
+ * # Sobreposição do painel: resolvida na estrutura, não com `padding`
+ *
+ * O remendo anterior empurrava o texto para `pb-[14vh]` porque o HUD era
+ * `fixed` e cobria o centro a 1366×768. O HUD agora é `sticky` em fluxo:
+ * ocupa a própria altura e não cobre nada, em altura de tela nenhuma, com
+ * qualquer quantidade de avisos abertos.
+ */
 export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
   const { state, start, stop, setPreset, switchSource, setPrioridade, setVolumeTransmissao } =
@@ -74,17 +115,39 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const [previewAberto, setPreviewAberto] = useState(true);
 
   const live = state.status === 'live';
+
   /**
-   * O HUD volta a sumir sozinho, como a docstring sempre prometeu.
+   * O HUD e o console somem juntos, e nenhum dos dois some enquanto está
+   * sendo OPERADO.
    *
-   * Antes ele ficava preso em `visible` enquanto o preview estivesse aberto —
-   * e o preview abre POR PADRÃO, então na prática a regra estava revogada em
-   * silêncio e o painel nunca sumia. O que substitui o remendo é a condição
-   * certa: não esconder o que está sendo USADO. `useAutoHide` com `enabled:
-   * false` já mantém tudo visível, então não é preciso um segundo mecanismo.
+   * "Operado" é a palavra exata, e ela custou uma iteração: a primeira versão
+   * fixava o console no `pointerenter`, e o resultado é que soltar o mouse em
+   * cima dele — que é onde o mouse fica depois de clicar em TRANSMITIR —
+   * segurava tudo aceso para sempre. Quem sai para o jogo com alt-tab não move
+   * o ponteiro, então nenhum `pointerleave` chega e a página fica ligada
+   * mandando o console para os amigos junto com o jogo.
+   *
+   * O que fixa, então:
+   *
+   * - foco de teclado dentro do console (`focusin`/`focusout`), senão quem
+   *   tabula perde de vista o controle que acabou de alcançar;
+   * - o controle de volume reportando uso próprio, que é o caso do arraste:
+   *   segurar o cursor parado num valor por cinco segundos é normal, e é
+   *   exatamente o defeito que `onAtivo` existe para evitar.
+   *
+   * Passar o mouse por cima NÃO fixa — não precisa: `useAutoHide` já rearma o
+   * relógio em qualquer `mousemove`. Enquanto a pessoa está de fato mexendo,
+   * o movimento sozinho mantém tudo visível.
+   *
+   * O HUD continua com o par ponteiro/foco dele, intocado. Lá é uma barra
+   * fina, e ela nunca fica debaixo do cursor por acidente.
    */
   const [mexendoNoHud, setMexendoNoHud] = useState(false);
-  const hud = useAutoHide(5_000, live && !mexendoNoHud);
+  const [focoNoConsole, setFocoNoConsole] = useState(false);
+  const [mexendoNoVolume, setMexendoNoVolume] = useState(false);
+  const emUso = mexendoNoHud || focoNoConsole || mexendoNoVolume;
+
+  const hud = useAutoHide(5_000, live && !emUso);
   const presets = useMemo(() => PRESET_ORDER.map((id) => PRESETS[id]), []);
   const stats = useMediaStats(live ? state.stats : null);
 
@@ -139,88 +202,287 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   }, [live, state, stop]);
 
   if (state.status === 'ended') {
+    const falhou = state.reason !== ENCERRAMENTO_NORMAL;
     return (
-      <main className="flex min-h-full flex-col items-center justify-center gap-6 px-6 text-center">
-        <p className="text-[17px]">{MOTIVOS[state.reason] ?? 'Transmissão encerrada.'}</p>
-        <BigButton onClick={onExit} tone="ghost">
-          voltar
-        </BigButton>
-      </main>
+      <Moldura>
+        <PanelSection rotulo={falhou ? 'não deu para transmitir' : 'transmissão encerrada'}>
+          <div className="flex flex-col items-start gap-5 py-4">
+            <p className={`text-[17px] leading-relaxed ${falhou ? 'text-warn' : 'text-text'}`}>
+              {MOTIVOS[state.reason] ?? 'Transmissão encerrada.'}
+            </p>
+            <BigButton onClick={onExit} tone="ghost">
+              voltar para o início
+            </BigButton>
+          </div>
+        </PanelSection>
+      </Moldura>
     );
   }
 
   if (!live) {
+    const pedindoTela = state.status === 'requesting-capture';
     return (
-      <main className="flex min-h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-[15px] text-muted">
-          {state.status === 'requesting-capture'
-            ? 'Escolha a tela ou a janela do jogo…'
-            : 'Conectando…'}
-        </p>
-        <span
-          className="h-1.5 w-24 overflow-hidden rounded-full bg-edge/40"
-          aria-hidden="true"
-        >
-          <span className="block h-full w-1/3 animate-live rounded-full bg-muted" />
-        </span>
-      </main>
+      <Moldura>
+        <PanelSection rotulo={pedindoTela ? 'escolha o que transmitir' : 'abrindo o canal'}>
+          <div className="flex flex-col gap-4 py-4">
+            <p className="text-[17px] text-text">
+              {pedindoTela
+                ? 'Escolha a tela ou a janela do jogo na caixa do navegador.'
+                : 'Reservando tela.gg/' + slug + ' e abrindo a conexão…'}
+            </p>
+            <p className="max-w-[52ch] text-[13px] leading-relaxed text-muted">
+              {pedindoTela
+                ? 'Prefira "Tela inteira": é o único modo em que o áudio do sistema acompanha o vídeo, e é o caminho mais barato para a sua placa.'
+                : 'Se o nome já estiver em uso, você volta para a tela inicial com o aviso — nada é enviado antes disso.'}
+            </p>
+            <span
+              className="mt-1 h-[2px] w-full max-w-[220px] overflow-hidden rounded-full bg-line"
+              aria-hidden="true"
+            >
+              <span className="animate-scan block h-full w-1/5 bg-gradient-to-r from-transparent via-text to-transparent" />
+            </span>
+          </div>
+        </PanelSection>
+      </Moldura>
     );
   }
 
   const shareUrl = state.shareUrl;
+  const conectados = state.peers.filter((p) => p.connectionState === 'connected').length;
+  const conectando = state.peers.length - conectados;
+  const relayed = state.peers.filter((peer) => peer.usingRelay).length;
+
+  /**
+   * O diagnóstico do momento, silenciado quando a degradação já aconteceu.
+   *
+   * `presetForced` explica a mesma coisa com mais detalhe e com o que fazer a
+   * respeito. Mostrar os dois juntos daria "CPU no limite — reduzindo
+   * qualidade" logo acima de "Qualidade reduzida — o encode está pesando na
+   * máquina": o mesmo aviso, duas vezes, em dois tons diferentes.
+   */
+  const avisoMomentaneo = state.presetForced ? null : stats.warning;
+
+  /**
+   * O mesmo desenho da tela inicial, com os números MEDIDOS no lugar dos
+   * previstos — e ele É a leitura da transmissão, não uma ilustração ao lado
+   * dela.
+   *
+   * Uma versão intermediária tinha uma seção "ENVIANDO" com resolução,
+   * quadros, subida e latência em grade, E este caminho logo abaixo com os
+   * mesmos quatro números. Escrever a mesma coisa duas vezes na mesma tela é
+   * pior do que não escrever: obriga o leitor a conferir se são iguais. A
+   * grade saiu; ficou o caminho, que já dá aos números o que faltava — rótulo,
+   * corpo legível e a posição em que cada um acontece.
+   *
+   * Nada é calculado aqui: os quatro já vinham de `useMediaStats`.
+   */
+  const caminho = [
+    { rotulo: 'sua tela', valor: stats.resolution, nota: 'resolução que a captura entrega' },
+    {
+      rotulo: 'seu PC codifica',
+      valor: stats.fps,
+      nota: 'quadros por segundo saindo do encoder',
+      alerta: state.presetForced,
+    },
+    {
+      rotulo: 'sobe direto',
+      valor: stats.bitrate,
+      nota: 'total somado sobre todos os espectadores',
+    },
+    {
+      rotulo: 'chega nos amigos',
+      valor: stats.rtt,
+      nota: 'pior latência entre eles — o melhor esconderia quem está mal',
+      alerta: relayed > 0,
+    },
+  ];
 
   return (
-    <main
-      className="relative min-h-full"
-      onMouseMove={hud.show}
-    >
+    <main className="relative flex min-h-dvh flex-col" onMouseMove={hud.show}>
       <LiveHud
         shareUrl={shareUrl}
         viewers={state.peers.length}
         maxPeers={state.maxPeers}
-        relayed={state.peers.filter((peer) => peer.usingRelay).length}
-        audioPerdidoPelaEscolha={state.audioPerdidoPelaEscolha}
-        hasAudio={state.hasAudio}
-        volumeAudio={volumeAudio}
-        volumeAjustavel={state.volumeAjustavel}
-        onVolumeAudio={aplicarVolume}
         semSinalizacao={state.semSinalizacao}
-        preview={state.preview}
-        previewAberto={previewAberto}
-        onTogglePreview={() => setPreviewAberto((v) => !v)}
         semSinal={state.capturaSemImagem}
+        audioPerdidoPelaEscolha={state.audioPerdidoPelaEscolha}
+        presetForced={state.presetForced}
+        motivoDegradacao={state.motivoDegradacao}
+        aviso={avisoMomentaneo}
         onSwitchSource={() => void switchSource()}
-        prioridade={state.prioridade}
-        onPrioridade={(p) => void setPrioridade(p)}
         copied={copied}
         onCopy={() => copy(shareUrl)}
         onStop={handleStop}
         visible={hud.visible}
         onInteracao={setMexendoNoHud}
         reconnecting={state.peers.some((p) => p.connectionState === 'disconnected')}
-        presets={presets}
-        presetId={state.presetId}
-        presetForced={state.presetForced}
-        motivoDegradacao={state.motivoDegradacao}
-        onPreset={(id) => void setPreset(id)}
-        stats={stats}
       />
 
-      {/*
-        Ancorado embaixo, não no centro da viewport.
-        O painel é `fixed top-0` e chega a 387px de altura com o preview
-        aberto; centralizado, este texto ficava ATRÁS dele em qualquer laptop
-        1366×768. Empurrar para baixo resolve em toda altura de tela, sem
-        depender de medir o painel.
-      */}
-      <div className="flex min-h-dvh flex-col items-center justify-end gap-2 px-6 pb-[14vh] text-center">
-        <p className="tabular text-[15px] text-muted">
-          transmitindo — seu jogo está indo para {shareUrl.replace(/^https?:\/\//, '')}
-        </p>
-        <p className="max-w-sm text-[13px] text-muted">
-          Não precisa manter esta página visível. Ela só não pode ser fechada.
-        </p>
+      <div className="relative flex flex-1 items-center px-3 pb-4 pt-3 sm:px-5 sm:pb-6">
+        {/*
+          A plaqueta: o que resta quando ninguém está mexendo. Não é decoração
+          — é o estado de repouso do aparelho, e é o que os amigos veem se o
+          transmissor deixar esta aba visível durante a captura de tela cheia.
+        */}
+        <div
+          aria-hidden={hud.visible}
+          className={[
+            'pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3',
+            'transition-opacity duration-300',
+            hud.visible ? 'opacity-0' : 'opacity-100',
+          ].join(' ')}
+        >
+          <LiveDot />
+          <p className="tabular text-[clamp(20px,3.4vw,30px)] text-text">
+            {shareUrl.replace(/^https?:\/\//, '')}
+          </p>
+          <p className="tabular text-[13px] text-muted">
+            {conectados} de {state.maxPeers} assistindo · {stats.rtt}
+          </p>
+        </div>
+
+        <div
+          onFocusCapture={() => setFocoNoConsole(true)}
+          onBlurCapture={() => setFocoNoConsole(false)}
+          className={[
+            'mx-auto w-full max-w-[1180px] transition-opacity duration-300',
+            hud.visible ? 'opacity-100' : 'opacity-0',
+          ].join(' ')}
+        >
+          <Panel>
+            <div className="flex flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] lg:items-stretch">
+              {/*
+                `justify-center`: a coluna esticada pela coluna de
+                instrumentos ficava com um vazio pendurado embaixo do botão de
+                ocultar. Centrado, o vazio vira margem em volta da prévia.
+              */}
+              <PanelSection
+                rotulo="o que seus amigos estão vendo"
+                className="flex flex-col justify-center py-4"
+              >
+                <CapturePreview
+                  stream={state.preview}
+                  aberto={previewAberto}
+                  onToggle={() => setPreviewAberto((v) => !v)}
+                  semSinal={state.capturaSemImagem}
+                />
+              </PanelSection>
+
+              <div className="flex flex-col border-t border-line lg:border-l lg:border-t-0">
+                <PanelSection rotulo="qualidade" className="py-4">
+                  <div className="flex flex-col gap-3">
+                    <QualityPicker
+                      presets={presets}
+                      value={state.presetId}
+                      onChange={(id) => void setPreset(id)}
+                      compact
+                    />
+
+                    <div className="flex flex-col gap-2">
+                      <p className="serigrafia">se a rede apertar</p>
+                      <div
+                        className="flex items-center gap-1 rounded-md border border-edge bg-void p-1"
+                        role="group"
+                        aria-label="O que priorizar quando a rede apertar"
+                      >
+                        {(['fluidez', 'nitidez'] as const).map((opcao) => (
+                          <button
+                            key={opcao}
+                            type="button"
+                            onClick={() => void setPrioridade(opcao)}
+                            aria-pressed={state.prioridade === opcao}
+                            title={
+                              opcao === 'fluidez'
+                                ? 'Segura os 60fps e deixa borrar. Certo para gameplay.'
+                                : 'Segura a resolução e deixa o framerate cair. Certo quando o detalhe importa.'
+                            }
+                            className={[
+                              'min-h-11 flex-1 rounded-sm px-2.5 text-[12px] transition-colors duration-150',
+                              state.prioridade === opcao
+                                ? 'bg-text font-medium text-void'
+                                : 'text-muted hover:bg-surface hover:text-text',
+                            ].join(' ')}
+                          >
+                            {opcao}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[12px] leading-relaxed text-muted">
+                        {state.prioridade === 'fluidez'
+                          ? 'Segura os 60fps e deixa a imagem borrar nas cenas rápidas. É o certo para gameplay, onde o movimento é a informação.'
+                          : 'Segura a resolução e deixa o framerate cair. Certo quando o detalhe é a informação — mapa, inventário, texto.'}
+                      </p>
+                    </div>
+                  </div>
+                </PanelSection>
+
+                {/*
+                  O rótulo é metade da correção, não enfeite. Quem transmite
+                  abaixava o alto-falante e o som continuava alto para os
+                  amigos — a captura do sistema pega o stream ANTES do volume
+                  de saída do aparelho, então aquele controle nunca teve efeito
+                  sobre a transmissão. Dizer "que os amigos ouvem" resolve a
+                  confusão; a barra dá o poder que faltava.
+                */}
+                {state.hasAudio && (
+                  <PanelSection rotulo="volume que os amigos ouvem" className="border-t border-line py-4">
+                    <VolumeControl
+                      volume={volumeAudio}
+                      mudo={volumeAudio === 0}
+                      ajustavel={state.volumeAjustavel}
+                      ativo
+                      onVolume={aplicarVolume}
+                      onAlternar={() => aplicarVolume(volumeAudio === 0 ? 1 : 0)}
+                      passo={0.05}
+                      onAtivo={setMexendoNoVolume}
+                    />
+                    {!state.volumeAjustavel && (
+                      <p className="mt-2 text-[12px] leading-relaxed text-muted">
+                        Este navegador não deixa ajustar o volume da transmissão. O som sai como
+                        o sistema entregou.
+                      </p>
+                    )}
+                  </PanelSection>
+                )}
+
+                <PanelSection rotulo="espectadores" className="border-t border-line py-4">
+                  <div className="flex flex-col gap-2">
+                    <ViewerSlots
+                      total={state.maxPeers}
+                      conectados={conectados}
+                      viaRelay={relayed}
+                      conectando={conectando}
+                    />
+                    <p className="text-[12px] leading-relaxed text-muted">
+                      Direto do seu PC para o deles. Fechar esta aba encerra a transmissão —
+                      deixá-la atrás do jogo não.
+                    </p>
+                  </div>
+                </PanelSection>
+              </div>
+            </div>
+
+            <div className="border-t border-line bg-surface px-4 py-4 sm:px-6">
+              <SignalChain rotulo="caminho do vídeo agora" nodes={caminho} />
+            </div>
+          </Panel>
+        </div>
       </div>
+    </main>
+  );
+}
+
+/**
+ * A moldura dos estados que não são "ao vivo".
+ *
+ * Eram três telas de texto solto centralizado, cada uma com uma composição
+ * própria. Passar todas pela mesma chapa que a tela inicial e o console usam é
+ * o que faz o produto parecer um produto, e não quatro páginas parecidas.
+ */
+function Moldura({ children }: { readonly children: React.ReactNode }) {
+  return (
+    <main className="flex min-h-dvh items-center justify-center px-4 py-8 sm:px-6">
+      <Panel className="w-full max-w-[620px]">{children}</Panel>
     </main>
   );
 }

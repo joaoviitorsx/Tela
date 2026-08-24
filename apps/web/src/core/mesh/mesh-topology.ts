@@ -61,6 +61,15 @@ function escalaPara(track: MediaStreamTrack | null, preset: EncodingPreset): num
   return atual / alvo;
 }
 
+/**
+ * Teto de tentativas de `setParameters` por sender.
+ *
+ * Um navegador que recusa sempre não vai passar a aceitar na centésima vez, e
+ * insistir por segundo até o fim da transmissão trocaria um defeito silencioso
+ * por um barulhento.
+ */
+const MAX_TENTATIVAS_PARAMS = 3;
+
 /** Áudio de jogo, não de voz: 128 kbps preserva música e efeitos. */
 const AUDIO_BITRATE = 128_000;
 
@@ -356,7 +365,7 @@ export class MeshTopology {
        * disputando a GPU com o jogo.
        */
       if (!params.encodings?.length) {
-        this.pendentes.add(sender);
+        this.marcarPendente(sender);
         continue;
       }
 
@@ -427,10 +436,18 @@ export class MeshTopology {
          */
         try {
           await sender.setParameters({ ...params, encodings } as RTCRtpSendParameters);
-          this.pendentes.delete(sender);
+          /**
+           * Aplicou o essencial, mas ficou SEM `degradationPreference`.
+           *
+           * Não é sucesso: dois peers com políticas de degradação diferentes
+           * quebram a R5, o Chrome deixa de reaproveitar o encoder e viram N
+           * encoders disputando a GPU com o jogo. Continua na fila para tentar
+           * os parâmetros completos de novo, com teto de tentativas.
+           */
+          this.marcarPendente(sender);
         } catch {
           // Falhou duas vezes: fica na fila para a próxima amostra de stats.
-          this.pendentes.add(sender);
+          this.marcarPendente(sender);
         }
       }
     }
@@ -442,8 +459,12 @@ export class MeshTopology {
    * `attach` chama `applyPreset` em fire-and-forget e é a ÚNICA chamada que um
    * peer recebe em regime estacionário — sem esta fila, um peer que falhasse
    * na primeira tentativa nunca mais seria configurado.
+   *
+   * O número é a contagem de tentativas. Sem teto, um sender que rejeita
+   * sempre viraria uma chamada de `setParameters` por segundo para sempre —
+   * trocar um defeito silencioso por um barulhento não é conserto.
    */
-  private readonly pendentes = new Set<RTCRtpSender>();
+  private readonly pendentes = new Map<RTCRtpSender, number>();
 
   /**
    * Nova tentativa para quem ficou de fora, no ritmo das estatísticas.
@@ -453,11 +474,22 @@ export class MeshTopology {
    */
   private async reaplicarPendentes(): Promise<void> {
     if (this.pendentes.size === 0 || this.preset === null) return;
-    const alvo = [...this.pendentes].filter((sender) => sender.track !== null);
+    const alvo = [...this.pendentes.keys()].filter((sender) => sender.track !== null);
     this.pendentes.clear();
     if (alvo.length === 0) return;
     await this.applyPreset(alvo, this.preset);
   }
+
+  /** Enfileira para nova tentativa, até o teto. Depois disso, desiste calado. */
+  private marcarPendente(sender: RTCRtpSender): void {
+    const tentativas = (this.tentativasAnteriores.get(sender) ?? 0) + 1;
+    this.tentativasAnteriores.set(sender, tentativas);
+    if (tentativas > MAX_TENTATIVAS_PARAMS) return;
+    this.pendentes.set(sender, tentativas);
+  }
+
+  /** Sobrevive ao `clear()` da fila: é o histórico, não a fila. */
+  private readonly tentativasAnteriores = new Map<RTCRtpSender, number>();
 
   /**
    * Parâmetros do áudio do jogo.

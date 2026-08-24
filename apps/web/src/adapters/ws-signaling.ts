@@ -49,6 +49,8 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
 
   /** A mesma reivindicação, guardada para refazer depois de uma queda. */
   let saudacao: ClientMessage | null = null;
+  /** Já emitimos um `closed` definitivo: o eco do socket não deve repetir. */
+  let encerrado = false;
   let slugAtual = '';
   let tentativa = 0;
   let religar: number | null = null;
@@ -173,7 +175,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
         aoFalhar({ code: 'SIGNAL_UNREACHABLE' });
         return;
       }
-      if (opened && !closedByUs) {
+      if (opened && !closedByUs && !encerrado) {
         emitter.emit('closed', { reason: 'SIGNAL_CLOSED' });
         agendarReconexao();
       }
@@ -214,9 +216,18 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
         },
         (erro) => {
           if (NAO_ADIANTA_INSISTIR.has(erro.code)) {
-            // Alguém assumiu o slug enquanto estávamos fora. Insistir só
-            // esconderia isso do usuário.
+            /**
+             * Alguém assumiu o slug enquanto estávamos fora. Insistir só
+             * esconderia isso do usuário.
+             *
+             * `encerrado` antes de emitir: o `ws.close()` do ramo de erro faz
+             * o listener de close disparar em seguida com `opened = true`, e
+             * um `SIGNAL_CLOSED` espúrio por cima apagava o motivo real —
+             * a tela dizia "servidor fora do ar" para sempre em vez de
+             * "você perdeu o slug".
+             */
             saudacao = null;
+            encerrado = true;
             emitter.emit('closed', { reason: erro.code });
             return;
           }
@@ -239,6 +250,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
          * também deixava a reconexão inverificável.
          */
         closedByUs = false;
+        encerrado = false;
         saudacao = hello;
         slugAtual = slug;
         tentativa = 0;
@@ -255,6 +267,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       return new Promise<ChannelOpened>((resolve, reject) => {
         const hello: ClientMessage = { type: 'watch', slug };
         closedByUs = false;
+        encerrado = false;
         saudacao = hello;
         slugAtual = slug;
         tentativa = 0;
@@ -280,6 +293,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
 
     close() {
       closedByUs = true;
+      encerrado = true;
       saudacao = null;
       if (religar !== null) {
         window.clearTimeout(religar);

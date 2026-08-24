@@ -34,6 +34,9 @@ export type MeshTransportDeps = {
  */
 const MEDIA_GRACE_MS = 8_000;
 
+/** Motivos em que o canal não volta: o slug deixou de ser nosso. */
+const PERDA_DEFINITIVA: ReadonlySet<string> = new Set(['SLUG_TAKEN', 'SLUG_INVALID']);
+
 export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   const emitter = new Emitter<TransportEvents>();
   const outbound = new StatsSampler('outbound');
@@ -81,7 +84,18 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
          * `closed` aqui derrubava tudo em menos de dois segundos e
          * contradizia o que o README, a regra R8 e a ADR 0005 afirmam.
          */
-        deps.channel.on('closed', () => emitter.emit('signaling-lost', undefined)),
+        /**
+         * Perder o CANAL é diferente de perder o SLUG.
+         *
+         * O primeiro é transitório e a mídia continua; o segundo é definitivo
+         * e nada do que o usuário faça nesta aba traz o slug de volta.
+         * Colapsar os dois em `signaling-lost` fazia a tela dizer "servidor
+         * fora do ar" para sempre depois que outra pessoa assumia o canal.
+         */
+        deps.channel.on('closed', ({ reason }) => {
+          if (PERDA_DEFINITIVA.has(reason)) emitter.emit('closed', { reason });
+          else emitter.emit('signaling-lost', undefined);
+        }),
         /**
          * O canal voltou sozinho. Duas coisas nesta ordem:
          *

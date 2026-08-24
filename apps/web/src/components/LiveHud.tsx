@@ -83,12 +83,23 @@ export function LiveHud({
    * último evento apagar o outro, e o painel sumiria debaixo do cursor. Mesmo
    * defeito que já apareceu no controle de volume; não repetir.
    */
-  const [comPonteiro, setComPonteiro] = useState(false);
+  /**
+   * Só TECLADO fixa a barra. Ponteiro parado, não.
+   *
+   * `useAutoHide` já rearma em qualquer `mousemove`, então mexer o mouse
+   * mantém tudo visível sem ninguém precisar fixar nada. O que fixar por
+   * ponteiro fazia era o oposto do desejado: quem soltava o mouse aqui e ia
+   * jogar deixava a barra acesa para sempre, e ela é capturada junto com o
+   * jogo em tela cheia.
+   *
+   * `:focus-visible` e não `focus`: clique de mouse também foca, e nada
+   * desfaz um foco.
+   */
   const [comFoco, setComFoco] = useState(false);
 
   useEffect(() => {
-    onInteracao(comPonteiro || comFoco);
-  }, [comPonteiro, comFoco, onInteracao]);
+    onInteracao(comFoco);
+  }, [comFoco, onInteracao]);
 
   /*
     Todos os alertas num lugar só, na ordem em que doem: sem imagem (ninguém
@@ -133,9 +144,10 @@ export function LiveHud({
 
   return (
     <div
-      onPointerEnter={() => setComPonteiro(true)}
-      onPointerLeave={() => setComPonteiro(false)}
-      onFocusCapture={() => setComFoco(true)}
+      onFocusCapture={(event) => {
+        const alvo = event.target as HTMLElement;
+        setComFoco(typeof alvo.matches === 'function' && alvo.matches(':focus-visible'));
+      }}
       onBlurCapture={() => setComFoco(false)}
       className={[
         'pointer-events-none sticky top-0 z-20 px-3 pt-3 sm:px-5 sm:pt-4',
@@ -143,7 +155,15 @@ export function LiveHud({
         visible ? 'opacity-100' : 'opacity-0',
       ].join(' ')}
     >
-      <div className="pointer-events-auto mx-auto flex max-w-[1180px] flex-col gap-2 rounded-md border border-edge bg-surface/95 p-2.5 backdrop-blur-sm sm:p-3">
+      <div /*
+        `bg-void/95` e não `bg-surface/95`. A regra da própria chapa diz que
+        controle não senta em `surface`, e a medição explica por quê: `edge`
+        sobre `surface` dá 2,92:1, abaixo dos 3:1 que a WCAG 1.4.11 exige
+        quando a borda é o único jeito de ver que ali existe um controle.
+        Sobre `void` dá 3,13:1 e passa. Aqui moram "trocar tela" e "parar" —
+        justamente os dois controles que operam a transmissão inteira.
+      */
+      className="pointer-events-auto mx-auto flex max-w-[1180px] flex-col gap-2 rounded-md border border-edge bg-void/95 p-2.5 backdrop-blur-sm sm:p-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {reconnecting ? <LiveDot label="RECONECTANDO" tone="warn" /> : <LiveDot />}
 

@@ -60,20 +60,36 @@ export function VolumeControl({
    * mouse enquanto o teclado tinha o foco fazia o mesmo. Some quando NENHUM
    * dos dois está presente — nunca quando um deles sai.
    */
-  const [comPonteiro, setComPonteiro] = useState(false);
+  /**
+   * ARRASTE e TECLADO fixam o HUD. Ponteiro parado, não.
+   *
+   * Passar o mouse por cima não precisa fixar nada: o `useAutoHide` já rearma
+   * o relógio em qualquer `mousemove`, então enquanto a pessoa mexe está tudo
+   * visível de qualquer forma. Fixar por ponteiro deixava o painel aceso para
+   * sempre quando alguém soltava o mouse ali e ia jogar — e ele é capturado
+   * junto com o jogo.
+   *
+   * `:focus-visible` e não `focus`: clique de mouse também foca, e nada
+   * desfaz um foco.
+   */
+  const [arrastando, setArrastando] = useState(false);
   const [comFoco, setComFoco] = useState(false);
 
   useEffect(() => {
-    onAtivo(comPonteiro || comFoco);
-  }, [comPonteiro, comFoco, onAtivo]);
+    onAtivo(arrastando || comFoco);
+  }, [arrastando, comFoco, onAtivo]);
 
   return (
     <div
-      className="pointer-events-auto flex items-center gap-2 [touch-action:manipulation]"
-      onFocusCapture={() => setComFoco(true)}
+      className="group pointer-events-auto flex items-center gap-2 [touch-action:manipulation]"
+      onFocusCapture={(event) => {
+        const alvo = event.target as HTMLElement;
+        setComFoco(typeof alvo.matches === 'function' && alvo.matches(':focus-visible'));
+      }}
       onBlurCapture={() => setComFoco(false)}
-      onPointerEnter={() => setComPonteiro(true)}
-      onPointerLeave={() => setComPonteiro(false)}
+      onPointerDown={() => setArrastando(true)}
+      onPointerUp={() => setArrastando(false)}
+      onPointerCancel={() => setArrastando(false)}
     >
       {/*
         44px de alvo, não 36: este HUD é usado no celular, e ali o dedo não
@@ -112,8 +128,14 @@ export function VolumeControl({
           */}
           <span
             aria-hidden="true"
-            className={`tabular w-9 text-right text-[12px] tabular-nums transition-opacity duration-150 ${
-              ativo ? 'text-muted opacity-100' : 'opacity-0'
+            /*
+              A leitura aparece por CSS (`group-hover`, `focus-within`) e não
+              pelo `ativo`. Antes as duas coisas eram a mesma variável, e
+              separar o "mostrar o número" do "não deixar o HUD sumir" é o que
+              permite o ponteiro fazer só a primeira.
+            */
+            className={`tabular w-9 text-right text-[12px] tabular-nums text-muted opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100 ${
+              ativo ? 'opacity-100' : ''
             }`}
           >
             {mudo ? '—' : `${porcento}%`}

@@ -238,7 +238,9 @@ export function Viewer({ slug }: Props) {
           type="button"
           onClick={toggleFullscreen}
           aria-label={emTelaCheia ? 'Sair da tela cheia' : 'Tela cheia'}
-          className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
+          // `shrink-0`: numa linha flex apertada o botão era espremido para 16×44 em
+          // 320/360/390px — declarado 44 quadrado, entregue como um risco.
+          className="pointer-events-auto inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
         >
           {emTelaCheia ? <IconExitFullscreen /> : <IconFullscreen />}
         </button>

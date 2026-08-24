@@ -16,11 +16,32 @@ import { execSync } from 'node:child_process';
 // `pnpm prod` respondia "sem carimbo de versão" mesmo com o deploy certo no
 // ar. Ferramenta de verificação que mente é pior que nenhuma: some com a
 // única defesa automática contra publicar coisa velha.
-const url = (process.env.PROD_URL ?? 'https://tela.streaming.workers.dev').replace(/\/+$/, '');
+/**
+ * Duas URLs durante a troca de subdomínio da conta.
+ *
+ * Apontar só para a nova deixava esta checagem cega enquanto a troca não
+ * acontecia — e ela existe justamente para acusar bundle velho no ar. Tenta a
+ * nova, cai para a antiga, e imprime qual respondeu.
+ *
+ * Quando a antiga parar de existir de vez, apague-a daqui: candidata morta que
+ * ninguém remove é como esta checagem ficou cega da primeira vez.
+ */
+const CANDIDATAS = process.env.PROD_URL
+  ? [process.env.PROD_URL]
+  : ['https://tela.transmissao.workers.dev', 'https://tela.tela-signaling.workers.dev'];
 
 const head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
 
-const resposta = await fetch(`${url}/version.json`, { cache: 'no-store' }).catch(() => null);
+let url = CANDIDATAS[0];
+let resposta = null;
+for (const candidata of CANDIDATAS) {
+  const r = await fetch(`${candidata}/version.json`, { cache: 'no-store' }).catch(() => null);
+  if (r !== null && r.ok) {
+    url = candidata;
+    resposta = r;
+    break;
+  }
+}
 
 /**
  * O SPA fallback devolve `index.html` com status 200 para qualquer caminho que

@@ -353,7 +353,20 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         </div>
 
         <div
-          onFocusCapture={() => setFocoNoConsole(true)}
+          onFocusCapture={(event) => {
+            /**
+             * `:focus-visible`, e não `focus` cru.
+             *
+             * Clique de mouse TAMBÉM foca, e nada desfaz um foco: qualquer
+             * clique em "copiar link" ou num preset travava o painel aceso
+             * para sempre — e ele é capturado junto com o jogo em tela cheia.
+             * `:focus-visible` é a heurística do próprio navegador para
+             * "chegou aqui pelo teclado", que é o único caso em que esconder
+             * seria hostil.
+             */
+            const alvo = event.target as HTMLElement;
+            setFocoNoConsole(typeof alvo.matches === 'function' && alvo.matches(':focus-visible'));
+          }}
           onBlurCapture={() => setFocoNoConsole(false)}
           className={[
             'mx-auto w-full max-w-[1180px] transition-opacity duration-300',
@@ -371,9 +384,17 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
                 rotulo="o que seus amigos estão vendo"
                 className="flex flex-col justify-center py-4"
               >
+                {/*
+                  `hud.visible &&` não é redundante com a opacidade do console.
+                  Opacidade zero NÃO para o vídeo: medido, 30 quadros por
+                  segundo continuavam sendo entregues a um elemento invisível,
+                  na máquina que está rodando o jogo. É o mesmo custo que já
+                  tinha sido removido de um `<video>` 1×1 escondido, de volta
+                  em tamanho de coluna.
+                */}
                 <CapturePreview
                   stream={state.preview}
-                  aberto={previewAberto}
+                  aberto={previewAberto && hud.visible}
                   onToggle={() => setPreviewAberto((v) => !v)}
                   semSinal={state.capturaSemImagem}
                 />

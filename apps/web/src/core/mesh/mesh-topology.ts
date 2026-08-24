@@ -386,8 +386,26 @@ export class MeshTopology {
          * (que é coletivo pela R5) e da trilha (que é uma só). A invariante do
          * encoder reaproveitado continua de pé.
          */
-        scaleResolutionDownBy: escalaPara(sender.track, preset),
-          ...encodings[0],
+        ...encodings[0],
+          /**
+           * O ÚNICO parâmetro que de fato tira pixel do encoder — e ele
+           * precisa vir DEPOIS do spread.
+           *
+           * Estava antes, e `{ a: 1, ...obj }` deixa `obj.a` vencer: o
+           * `scaleResolutionDownBy` que o Chrome já tinha (1) sobrescrevia o
+           * calculado a cada chamada. Confirmado em Chromium real — descer a
+           * escada mudava o bitrate e mantinha 1920×1080@60, exatamente o
+           * 0,0201 bit por pixel que o comentário abaixo diz querer evitar.
+           * A correção existia no código e nunca entrou em vigor.
+           *
+           * Pior: um peer que entrasse DEPOIS da degradação recebia escala
+           * 1.5 enquanto o antigo ficava em 1.0 — parâmetros divergentes,
+           * violação da R5, e o Chrome parando de reaproveitar o encoder.
+           *
+           * O fake de sender do projeto não tem `getSettings`, então
+           * `escalaPara` devolvia 1 em todos os testes e ninguém viu.
+           */
+          scaleResolutionDownBy: escalaPara(sender.track, preset),
           maxBitrate: this.effectiveBitrate(preset),
           maxFramerate: preset.main.maxFramerate,
           /**

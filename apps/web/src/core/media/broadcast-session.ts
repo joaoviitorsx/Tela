@@ -287,8 +287,6 @@ export class BroadcastSession {
      * que estavam esperando entram de uma vez e o controle de congestionamento
      * sobe procurando o limite do link, N vezes em paralelo.
      */
-    const lembrado = Number(this.deps.uplinkMemory?.read() ?? '');
-    if (Number.isFinite(lembrado) && lembrado > 0) this.governor.seed(lembrado);
     this.pressure = 0;
     this.pressureKind = 'none';
     this.capturaOciosa = false;
@@ -296,6 +294,21 @@ export class BroadcastSession {
     this.amostras = 0;
     this.ociosoDesde = null;
     this.prioridade = 'fluidez';
+    // Estado que sobrevivia entre transmissões e não devia.
+    this.calmaria = 0;
+    this.semImagem = 0;
+    this.desdeGravacao = 0;
+
+    /**
+     * A semente vem DEPOIS do `reset()`.
+     *
+     * Estava antes, e o `reset()` quatro linhas abaixo a apagava — medido:
+     * `seed(4 Mbps)` seguido de `reset()` deixa a estimativa em `null`, e a
+     * sessão real passava os oito segundos de aquecimento sem teto nenhum.
+     * Exatamente o buraco que a semente existe para fechar.
+     */
+    const lembrado = Number(this.deps.uplinkMemory?.read() ?? '');
+    if (Number.isFinite(lembrado) && lembrado > 0) this.governor.seed(lembrado);
     this.setState({ status: 'requesting-capture' });
 
     const preset = presetById(this.presetId);
@@ -539,7 +552,19 @@ export class BroadcastSession {
 
     const next = nextPresetOnCpuPressure(this.presetId);
     this.pressure = 0;
-    if (next === null) return;
+
+    if (next === null) {
+      /**
+       * Fundo da escada: não há degrau para descer, mas a CAUSA mudou e a tela
+       * precisa saber. Retornar aqui congelava a mensagem no motivo anterior —
+       * o usuário lia "sua subida não comporta" enquanto o problema já era
+       * encode pesado, e ia procurar no lugar errado.
+       */
+      if (this.state.status === 'live' && this.state.motivoDegradacao !== this.pressureKind) {
+        this.setState({ ...this.state, motivoDegradacao: this.pressureKind });
+      }
+      return;
+    }
 
     const causa = this.pressureKind;
     this.presetId = next;

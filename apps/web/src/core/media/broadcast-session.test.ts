@@ -65,7 +65,9 @@ describe('BroadcastSession — caminho feliz', () => {
   it('publica o vídeo com o preset escolhido', async () => {
     await ctx.session.start(SLUG, TOKEN, { presetId: 'p720p60' });
     expect(ctx.transport.videos).toHaveLength(1);
-    expect(ctx.transport.videos[0]?.preset.main.maxBitrate).toBe(4_000_000);
+    // 5,5 Mbps e não 4: a escada foi recalibrada por bits por pixel, e 720p60
+    // a 4 Mbps entregava 0,072 bpp — abaixo do que movimento alto exige.
+    expect(ctx.transport.videos[0]?.preset.main.maxBitrate).toBe(5_500_000);
   });
 
   it('pede captura na resolução e no framerate do preset', async () => {
@@ -163,13 +165,13 @@ describe('BroadcastSession — qualidade', () => {
   it('troca de preset ao vivo NÃO republica — só ajusta os senders', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    await ctx.session.setPreset('p720p60eco');
+    await ctx.session.setPreset('p480p60');
 
     // Republicar renegociaria e faria todo mundo piscar.
     expect(ctx.transport.videos).toHaveLength(1);
-    expect(ctx.transport.presets.at(-1)?.id).toBe('p720p60eco');
+    expect(ctx.transport.presets.at(-1)?.id).toBe('p480p60');
     const state = ctx.session.getState();
-    expect(state.status === 'live' && state.presetId).toBe('p720p60eco');
+    expect(state.status === 'live' && state.presetId).toBe('p480p60');
   });
 
   it('trocar para o mesmo preset não faz nada', async () => {
@@ -199,7 +201,9 @@ describe('BroadcastSession — qualidade', () => {
     }
 
     const state = ctx.session.getState();
-    expect(state.status === 'live' && state.presetId).toBe('p720p60');
+    // Um degrau abaixo de 1080p60 é 900p60 desde a recalibração — a escada
+    // ganhou degraus intermediários para cair sem despencar.
+    expect(state.status === 'live' && state.presetId).toBe('p900p60');
     expect(state.status === 'live' && state.presetForced).toBe(true);
   });
 
@@ -224,9 +228,9 @@ describe('BroadcastSession — qualidade', () => {
     expect(state.status === 'live' && state.presetId).toBe('p1080p60');
   });
 
-  it('a escada de CPU nunca chega a 30fps', async () => {
+  it('a escada de CPU anda e nunca chega a 30fps', async () => {
     const ctx = build();
-    await ctx.session.start(SLUG, TOKEN, { presetId: 'p720p60eco' });
+    await ctx.session.start(SLUG, TOKEN, { presetId: 'p480p60' });
     ctx.transport.stats = {
       fps: 20,
       bitrateBps: 2_000_000,
@@ -242,10 +246,15 @@ describe('BroadcastSession — qualidade', () => {
       await settle(4);
     }
 
-    // p720p30 tem a mesma resolução do eco: descer não aliviaria o encoder,
-    // só cortaria framerate. A escada para aqui.
+    /**
+     * A escada agora ANDA até o piso — antes parava um degrau antes, porque o
+     * degrau seguinte tinha a mesma resolução e só cortaria framerate. Com a
+     * tabela recalibrada cada degrau tira pixel, então descer sempre alivia o
+     * encoder. O que continua valendo é o outro lado da regra: nem o piso
+     * abre mão dos 60fps.
+     */
     const state = ctx.session.getState();
-    expect(state.status === 'live' && state.presetId).toBe('p720p60eco');
+    expect(state.status === 'live' && state.presetId).toBe('p360p60');
   });
 
   it('escolha manual limpa a marca de forçado', async () => {
@@ -378,7 +387,9 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     await tique(ctx, 14);
 
     const state = ctx.session.getState();
-    expect(state.status === 'live' && state.presetId).toBe('p720p60');
+    // Um degrau abaixo de 1080p60 passou a ser 900p60: a escada recalibrada
+    // ganhou degraus intermediários, então cair não é mais despencar.
+    expect(state.status === 'live' && state.presetId).toBe('p900p60');
     expect(state.status === 'live' && state.presetForced).toBe(true);
   });
 

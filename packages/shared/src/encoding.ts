@@ -18,7 +18,32 @@ export type SimulcastLayer = {
   readonly encoding: LayerEncoding;
 };
 
-export type PresetId = 'p1080p60' | 'p720p60' | 'p720p60eco' | 'p720p30';
+/**
+ * Escada calibrada por BITS POR PIXEL, não por rótulo bonito.
+ *
+ * A tabela anterior vendia resolução e entregava fome: `p1080p60` a 8 Mbps são
+ * 0,064 bpp, e conteúdo de movimento alto — um flick de CS, onde a tela
+ * inteira muda de quadro para quadro e vetor de movimento não ajuda — precisa
+ * de 0,10 a 0,20. O encoder só tinha uma saída, subir o QP, e QP alto É o
+ * quadriculado. Acontecia com UM espectador num link de fibra, sem teto de
+ * upload nenhum: não era a rede, era a tabela.
+ *
+ * Referências: YouTube recomenda 12 Mbps para 1080p60 em H.264; o OBS usa
+ * 5,8 Mbps como MÍNIMO para 1080p60; e realtime (1 passe, CBR, sem B-frames,
+ * sem lookahead) custa 10–20% a mais que o mesmo alvo em VOD.
+ *
+ * Todos os degraus agora são 60fps, e cada um tira PIXEL de verdade. Some o
+ * `p720p30`, que tinha a mesma resolução do degrau acima e só cortava
+ * framerate — no orçamento dele cabe 360p60, que preserva o movimento, que é
+ * a informação em gameplay.
+ */
+export type PresetId =
+  | 'p1080p60'
+  | 'p900p60'
+  | 'p720p60'
+  | 'p600p60'
+  | 'p480p60'
+  | 'p360p60';
 
 export type EncodingPreset = {
   readonly id: PresetId;
@@ -31,76 +56,90 @@ export type EncodingPreset = {
   readonly layers: readonly [SimulcastLayer, SimulcastLayer];
 };
 
+/**
+ * Cada degrau abaixo mantém ~0,10 bit por pixel — o piso para conteúdo de
+ * movimento alto sem virar bloco. É o número que a tabela antiga não tinha:
+ * ela variava de 0,045 a 0,072 conforme o degrau, sem critério.
+ */
 export const PRESET_1080P60: EncodingPreset = {
   id: 'p1080p60',
   label: '1080p60',
-  hint: 'Fibra. ~8 Mbps de subida por espectador.',
-  upstreamBps: 11_000_000,
+  hint: 'Fibra boa. ~12 Mbps de subida por espectador.',
+  upstreamBps: 16_000_000,
+  main: { maxBitrate: 12_000_000, maxFramerate: 60, priority: 'high' },
+  layers: [
+    { width: 1920, height: 1080, encoding: { maxBitrate: 12_000_000, maxFramerate: 60 } },
+    { width: 1280, height: 720, encoding: { maxBitrate: 4_000_000, maxFramerate: 30 } },
+  ],
+};
+
+export const PRESET_900P60: EncodingPreset = {
+  id: 'p900p60',
+  label: '900p60',
+  hint: 'Fibra comum. ~8 Mbps por espectador.',
+  upstreamBps: 10_600_000,
   main: { maxBitrate: 8_000_000, maxFramerate: 60, priority: 'high' },
   layers: [
-    { width: 1920, height: 1080, encoding: { maxBitrate: 8_000_000, maxFramerate: 60 } },
-    { width: 1280, height: 720, encoding: { maxBitrate: 3_000_000, maxFramerate: 30 } },
+    { width: 1600, height: 900, encoding: { maxBitrate: 8_000_000, maxFramerate: 60 } },
+    { width: 1024, height: 576, encoding: { maxBitrate: 2_600_000, maxFramerate: 30 } },
   ],
 };
 
 export const PRESET_720P60: EncodingPreset = {
   id: 'p720p60',
   label: '720p60',
-  hint: 'Conexão comum. ~4 Mbps por espectador.',
-  upstreamBps: 5_200_000,
-  main: { maxBitrate: 4_000_000, maxFramerate: 60, priority: 'high' },
+  hint: 'Conexão comum. ~5,5 Mbps por espectador.',
+  upstreamBps: 7_300_000,
+  main: { maxBitrate: 5_500_000, maxFramerate: 60, priority: 'high' },
   layers: [
-    { width: 1280, height: 720, encoding: { maxBitrate: 4_000_000, maxFramerate: 60 } },
-    { width: 854, height: 480, encoding: { maxBitrate: 1_200_000, maxFramerate: 30 } },
+    { width: 1280, height: 720, encoding: { maxBitrate: 5_500_000, maxFramerate: 60 } },
+    { width: 854, height: 480, encoding: { maxBitrate: 1_800_000, maxFramerate: 30 } },
   ],
 };
 
-/**
- * Terceira opção, para upload apertado ou vários espectadores em P2P.
- *
- * Continua 60fps: a regra do produto é perder resolução antes de perder
- * framerate, e gameplay a 30fps é um produto diferente. O que cai é bitrate.
- */
-export const PRESET_720P60_ECO: EncodingPreset = {
-  id: 'p720p60eco',
-  label: '720p60 econômico',
-  hint: 'Upload apertado ou muita gente assistindo. ~2,5 Mbps.',
-  upstreamBps: 3_300_000,
+export const PRESET_600P60: EncodingPreset = {
+  id: 'p600p60',
+  label: '576p60',
+  hint: 'Upload modesto ou vários assistindo. ~3,6 Mbps.',
+  upstreamBps: 4_800_000,
+  main: { maxBitrate: 3_600_000, maxFramerate: 60, priority: 'high' },
+  layers: [
+    { width: 1024, height: 576, encoding: { maxBitrate: 3_600_000, maxFramerate: 60 } },
+    { width: 640, height: 360, encoding: { maxBitrate: 1_200_000, maxFramerate: 30 } },
+  ],
+};
+
+export const PRESET_480P60: EncodingPreset = {
+  id: 'p480p60',
+  label: '480p60',
+  hint: 'Upload apertado. ~2,5 Mbps por espectador.',
+  upstreamBps: 3_400_000,
   main: { maxBitrate: 2_500_000, maxFramerate: 60, priority: 'high' },
   layers: [
-    { width: 1280, height: 720, encoding: { maxBitrate: 2_500_000, maxFramerate: 60 } },
-    { width: 854, height: 480, encoding: { maxBitrate: 800_000, maxFramerate: 30 } },
+    { width: 854, height: 480, encoding: { maxBitrate: 2_500_000, maxFramerate: 60 } },
+    { width: 640, height: 360, encoding: { maxBitrate: 900_000, maxFramerate: 30 } },
   ],
 };
 
-/**
- * Último recurso, e o ÚNICO preset que abre mão dos 60fps.
- *
- * A regra do produto é perder resolução antes de framerate, e gameplay a 30fps
- * é uma experiência diferente — por isso este degrau só existe abaixo de
- * ~3,5 Mbps de upload disponível, onde a alternativa não é "60fps pior", é
- * "não transmitir". Changeset 001 §7.3 o exige; ADR 0004 registra a ressalva.
- *
- * `degradationPreference: 'maintain-framerate'` continua valendo DENTRO dele:
- * uma vez em 30fps, a adaptação em tempo real ainda prefere borrar a travar.
- */
-export const PRESET_720P30: EncodingPreset = {
-  id: 'p720p30',
-  label: '720p30',
-  hint: 'Upload muito limitado. ~1,8 Mbps. Único preset abaixo de 60fps.',
-  upstreamBps: 2_500_000,
-  main: { maxBitrate: 1_800_000, maxFramerate: 30, priority: 'high' },
+export const PRESET_360P60: EncodingPreset = {
+  id: 'p360p60',
+  label: '360p60',
+  hint: 'Último degrau. ~1,4 Mbps — abaixo disso a alternativa não é pior qualidade, é não transmitir.',
+  upstreamBps: 1_900_000,
+  main: { maxBitrate: 1_400_000, maxFramerate: 60, priority: 'high' },
   layers: [
-    { width: 1280, height: 720, encoding: { maxBitrate: 1_800_000, maxFramerate: 30 } },
-    { width: 854, height: 480, encoding: { maxBitrate: 700_000, maxFramerate: 30 } },
+    { width: 640, height: 360, encoding: { maxBitrate: 1_400_000, maxFramerate: 60 } },
+    { width: 426, height: 240, encoding: { maxBitrate: 500_000, maxFramerate: 30 } },
   ],
 };
 
 export const PRESETS = {
   p1080p60: PRESET_1080P60,
+  p900p60: PRESET_900P60,
   p720p60: PRESET_720P60,
-  p720p60eco: PRESET_720P60_ECO,
-  p720p30: PRESET_720P30,
+  p600p60: PRESET_600P60,
+  p480p60: PRESET_480P60,
+  p360p60: PRESET_360P60,
 } as const;
 
 /**
@@ -110,22 +149,26 @@ export const PRESETS = {
  */
 export const PRESET_ORDER: readonly PresetId[] = [
   'p1080p60',
+  'p900p60',
   'p720p60',
-  'p720p60eco',
-  'p720p30',
+  'p600p60',
+  'p480p60',
+  'p360p60',
 ];
 
 /**
- * Presets que preservam 60fps. `p720p30` é a única exceção deliberada, e fica
- * de fora porque a escada de degradação por CPU só pode andar por aqui.
+ * Presets que preservam 60fps — agora TODOS eles.
  *
- * O motivo é aritmético: `p720p30` tem EXATAMENTE a mesma resolução do
- * `p720p60eco` (1280×720 e 854×480). Descer esse degrau por pressão de CPU
- * não codifica um pixel a menos — só corta o framerate pela metade, que é o
- * oposto de `degradationPreference: 'maintain-framerate'` e da R5. Ele existe
- * para upload limitado (`suggestPreset`), não para encoder saturado.
+ * A lista existia para excluir `p720p30`, que tinha a mesma resolução do
+ * degrau acima: descer nele por pressão de CPU cortava o framerate pela metade
+ * sem tirar um pixel do encoder, o oposto de `maintain-framerate` e da R5. Com
+ * a escada recalibrada, cada degrau reduz resolução de verdade, então a
+ * distinção entre "degrau de CPU" e "degrau de upload" deixou de existir.
+ *
+ * A lista continua porque a escada de degradação itera nela, e porque um
+ * degrau futuro de 30fps traria o mesmo problema de volta.
  */
-export const SIXTY_FPS_PRESETS: readonly PresetId[] = ['p1080p60', 'p720p60', 'p720p60eco'];
+export const SIXTY_FPS_PRESETS: readonly PresetId[] = [...PRESET_ORDER];
 
 /** Codec único. VP9/AV1 comprimem melhor mas não têm HW encode universal. */
 export const VIDEO_CODEC = 'h264' as const;
@@ -211,44 +254,40 @@ export function p2pViewerBudget(
 /**
  * Melhor preset que cabe num upstream, para sugerir em vez de deixar o usuário
  * adivinhar.
- *
- * A escada desce por RESOLUÇÃO e BITRATE primeiro, e só toca no framerate no
- * último degrau. É por isso que `p720p60eco` fica entre `p720p60` e `p720p30`:
- * a ~3,5 Mbps por espectador ainda dá para manter 60fps, e manter é a regra.
  */
 export function suggestPreset(uplinkBitsPerSecond: number, viewers: number): PresetId {
   // Sem medição confiável, sugere o degrau mais conservador em vez de chutar
   // alto: errar para baixo custa nitidez, errar para cima custa a transmissão.
-  if (!Number.isFinite(uplinkBitsPerSecond) || uplinkBitsPerSecond <= 0) return 'p720p30';
+  if (!Number.isFinite(uplinkBitsPerSecond) || uplinkBitsPerSecond <= 0) return PISO_DA_ESCADA;
   const budget = uplinkBitsPerSecond * P2P_LIMITS.uplinkHeadroom;
   return presetForBitrate(budget / Math.max(1, viewers));
 }
 
+/** O degrau mais baixo. Derivado da ordem, não escrito à mão. */
+const PISO_DA_ESCADA: PresetId = PRESET_ORDER[PRESET_ORDER.length - 1] ?? 'p360p60';
+
 /**
- * Maior preset que CABE num orçamento já calculado por espectador.
+ * Maior preset que CABE num orçamento já calculado POR ESPECTADOR.
  *
- * # Por que isto precisa existir
+ * # Por que isto existe
  *
- * O teto de upload limitava o bitrate e deixava resolução e framerate no
- * preset. Resultado: 1920×1080 a 60fps com o bitrate de 3 Mbps — 124 milhões
- * de pixels por segundo em 0,024 bit por pixel. H.264 precisa de algo perto
- * de 0,1 bpp para segurar cena de movimento alto, então o controlador de taxa
- * só tinha uma saída, subir o QP, e a imagem virava bloco.
+ * O teto de upload corta bitrate; sozinho, ele deixava resolução e framerate
+ * no preset. 1920×1080 a 60fps com 3 Mbps são 0,024 bit por pixel, quando
+ * movimento alto pede 0,10 a 0,20 — o controlador de taxa só tinha uma saída,
+ * subir o QP, e QP alto É o quadriculado. O mesmo orçamento num degrau menor
+ * dá o dobro ou o quádruplo de bits por pixel, e imagem mais NÍTIDA: menos
+ * pixels, cada um bem codificado.
  *
- * O mesmo orçamento em `p720p60eco` dá 0,045 bpp: metade dos pixels, o dobro
- * dos bits para cada um, imagem mais NÍTIDA. Em jogo rápido — um flick de CS,
- * onde a tela inteira muda de frame para frame e vetor de movimento não ajuda
- * em nada — a diferença é entre jogável e ilegível.
- *
- * `p720p30` entra aqui, e é de propósito: o corolário da R5 exclui esse degrau
- * da escada de CPU porque ele tem a mesma resolução do `p720p60eco` e cortaria
- * framerate sem aliviar o encoder. Mas ele É degrau de UPLOAD, que é
- * exatamente o que se está resolvendo quando o orçamento é o gargalo.
+ * Percorre `PRESET_ORDER` em vez de listar degraus à mão. A versão anterior
+ * tinha três `if` encadeados e ficou desatualizada no primeiro degrau novo.
  */
 export function presetForBitrate(perViewerBitsPerSecond: number): PresetId {
-  if (!Number.isFinite(perViewerBitsPerSecond) || perViewerBitsPerSecond <= 0) return 'p720p30';
-  if (perViewerBitsPerSecond >= PRESET_1080P60.main.maxBitrate) return 'p1080p60';
-  if (perViewerBitsPerSecond >= PRESET_720P60.main.maxBitrate) return 'p720p60';
-  if (perViewerBitsPerSecond >= PRESET_720P60_ECO.main.maxBitrate) return 'p720p60eco';
-  return 'p720p30';
+  if (!Number.isFinite(perViewerBitsPerSecond) || perViewerBitsPerSecond <= 0) {
+    return PISO_DA_ESCADA;
+  }
+  for (const id of PRESET_ORDER) {
+    if (perViewerBitsPerSecond >= PRESETS[id].main.maxBitrate) return id;
+  }
+  return PISO_DA_ESCADA;
 }
+

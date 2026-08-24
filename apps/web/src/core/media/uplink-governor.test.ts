@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRESET_1080P60, PRESET_720P30 } from '@tela/shared';
+import { PRESET_1080P60, PRESET_360P60 } from '@tela/shared';
 import { UPLINK_SHARE, UplinkGovernor } from './uplink-governor.js';
 
 /**
@@ -92,7 +92,7 @@ describe('UplinkGovernor', () => {
     // Link modesto e honesto: o teto tem que caber nele, não no menor preset.
     for (let i = 0; i < 40; i += 1) g2.observe(1_200_000, PRESET_1080P60);
     expect(g2.ceiling!).toBeLessThanOrEqual(1_200_000);
-    expect(g2.ceiling!).toBeLessThan(PRESET_720P30.main.maxBitrate);
+    expect(g2.ceiling!).toBeLessThan(PRESET_360P60.main.maxBitrate);
   });
 
   it('não aplica teto que não restringe nada', () => {

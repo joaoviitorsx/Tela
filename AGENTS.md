@@ -88,10 +88,19 @@ ele aguenta o que está sendo enviado, ou todos descem juntos um degrau. Está
 implementado em `core/mesh/mesh-topology.ts` e testado — alguém vai tentar
 "otimizar" isso depois; não deixe.
 
-Corolário: a escada de degradação por CPU anda só por presets de 60fps.
-`p720p30` tem a mesma resolução do `p720p60eco`, então descer até ele sob
-pressão de CPU cortaria framerate sem aliviar o encoder. Ele é degrau de
-UPLOAD, não de CPU.
+Corolário: **todo degrau da escada precisa tirar PIXEL do encoder.**
+
+Isto já foi violado. A tabela tinha um `p720p30` com a MESMA resolução do
+degrau acima, e descer nele cortava framerate sem aliviar o encoder — havia um
+corolário inteiro aqui explicando por que a escada tinha de pular esse degrau.
+A escada foi recalibrada por bits por pixel (ADR 0010), todos os degraus
+passaram a ser 60fps e cada um reduz resolução de verdade, então a exceção
+deixou de existir.
+
+Corolário do corolário: `scaleResolutionDownBy` é o ÚNICO parâmetro que tira
+pixel. `maxBitrate` sozinho só aperta o QP — e QP alto é o quadriculado. Já
+aconteceu de a linha existir no código e não valer nada, porque um spread de
+objeto vinha depois dela e restaurava o valor antigo.
 
 ### R6 — Escopo é fechado
 

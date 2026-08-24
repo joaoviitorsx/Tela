@@ -27,7 +27,11 @@ export function QualityPicker({
 }: Props) {
   if (compact) {
     return (
-      <div className="flex items-center gap-1" role="group" aria-label="Qualidade da transmissão">
+      <div
+        className="grid grid-cols-2 gap-1 rounded-md border border-edge bg-void p-1 sm:flex sm:items-center"
+        role="group"
+        aria-label="Qualidade da transmissão"
+      >
         {presets.map((preset) => {
           const active = preset.id === value;
           return (
@@ -39,11 +43,11 @@ export function QualityPicker({
               aria-pressed={active}
               title={preset.hint}
               className={[
-                'tabular min-h-8 rounded-sm px-2.5 text-[12px] transition-colors duration-150',
+                'tabular min-h-11 flex-1 rounded-sm px-2 text-[12px] transition-colors duration-150',
                 'disabled:opacity-40',
                 active
                   ? 'bg-text text-void font-medium'
-                  : 'text-muted hover:bg-void hover:text-text',
+                  : 'text-muted hover:bg-surface hover:text-text',
               ].join(' ')}
             >
               {preset.label.replace(' econômico', '·eco')}
@@ -62,23 +66,47 @@ export function QualityPicker({
    * configuração — o oposto do produto. A escolha continua ali, com o mesmo
    * peso de uma escolha secundária, e a explicação aparece só do preset
    * selecionado, que é a única que interessa naquele instante.
+   *
+   * A `legend` saiu: quem rotula esta região agora é a serigrafia da chapa, e
+   * dois títulos empilhados dizendo "Qualidade" seria a mesma palavra duas
+   * vezes. O `fieldset` fica — é ele que agrupa os rádios para o leitor de
+   * tela — e ganha um `aria-label` no lugar.
+   *
+   * Alvo de toque de 44px: eram 36 (`py-2` em 13px), o que reprovava no
+   * celular, onde este é o único controle além do botão.
    */
   const selecionado = presets.find((preset) => preset.id === value);
 
   return (
-    <fieldset className="w-full max-w-md" disabled={disabled}>
-      <legend className="mb-2 text-[13px] text-muted">Qualidade</legend>
-
-      <div className="flex flex-wrap gap-1 rounded-md border border-edge bg-surface p-1">
+    <fieldset className="w-full" aria-label="Qualidade da transmissão" disabled={disabled}>
+      {/*
+        Grade de duas colunas no celular, linha única a partir de `sm`. Com
+        `flex-wrap` os quatro presets quebravam 3+1 e o quarto ficava sozinho
+        ocupando a largura toda — parecia outro controle.
+      */}
+      <div className="grid grid-cols-2 gap-1 rounded-md border border-edge bg-void p-1 sm:flex">
         {presets.map((preset) => {
           const active = preset.id === value;
           return (
             <label
               key={preset.id}
               className={[
-                'tabular flex-1 cursor-pointer rounded-sm px-3 py-2 text-center text-[13px]',
+                'tabular flex min-h-11 flex-1 cursor-pointer items-center justify-center',
+                'rounded-sm px-3 text-center text-[13px]',
                 'whitespace-nowrap transition-colors duration-150',
-                active ? 'bg-text font-medium text-void' : 'text-muted hover:bg-void hover:text-text',
+                /*
+                  O rádio é `sr-only`, então o anel de foco do navegador ia
+                  parar num elemento de 1px invisível: quem navega por teclado
+                  atravessava os quatro presets sem nenhum sinal de onde
+                  estava. `:has()` traz o anel para o rótulo, que é o que a
+                  pessoa enxerga. Mesmas 2px de acento do anel global, para
+                  não inventar um segundo vocabulário de foco.
+                */
+                'has-[:focus-visible]:outline has-[:focus-visible]:outline-2',
+                'has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent',
+                active
+                  ? 'bg-text font-medium text-void'
+                  : 'text-muted hover:bg-surface hover:text-text',
               ].join(' ')}
             >
               <input

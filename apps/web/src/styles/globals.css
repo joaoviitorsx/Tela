@@ -99,6 +99,33 @@
     letter-spacing: -0.01em;
   }
 
+  /**
+   * Serigrafia — o rótulo gravado no painel.
+   *
+   * O que faltava na tabela de tokens NÃO era uma cor, era um NÍVEL. Existia
+   * `text` ("isto é o dado") e `muted` ("isto é um metadado") e nada que
+   * dissesse "isto é o NOME do dado". Sem esse terceiro nível, todo painel
+   * novo empatava título e valor no mesmo peso e a tela virava lista.
+   *
+   * Por isso é tipografia, não cor: reusa `muted` — 5,87:1 sobre `void` e
+   * 5,48:1 sobre `surface`, ambos medidos, ambos AA para corpo pequeno — e
+   * carrega o papel na caixa alta, no peso e na entreletra.
+   *
+   * De onde vem: painel de equipamento de vídeo, que é a referência declarada
+   * do produto (Parsec/Kick). É o oposto do cromo de aplicativo — título em
+   * caixa mista, 16px, semibold — que a anti-referência (Zoom/Teams/Meet)
+   * usa em toda seção.
+   */
+  .serigrafia {
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
   /* Nunca remover o anel de foco: é a única navegação de quem usa teclado. */
   :focus-visible {
     outline: 2px solid var(--color-accent);

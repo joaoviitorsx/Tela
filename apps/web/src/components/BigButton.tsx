@@ -7,12 +7,14 @@ type Props = {
   readonly busy?: boolean;
   readonly tone?: 'accent' | 'danger' | 'ghost';
   readonly icon?: ReactNode;
+  /** Ocupa a largura da coluna. Ver a nota sobre a tela inicial abaixo. */
+  readonly bloco?: boolean;
 };
 
 const TONES = {
   accent: 'bg-accent text-void hover:brightness-110 active:brightness-95',
   danger: 'bg-danger text-void hover:brightness-110 active:brightness-95',
-  ghost: 'border border-edge bg-surface text-text hover:border-text',
+  ghost: 'border border-edge bg-void text-text hover:border-text',
 } as const;
 
 /**
@@ -21,8 +23,26 @@ const TONES = {
  * Altura mínima de 48px porque o alvo de toque precisa de 44px e o texto
  * precisa respirar. Transição em 180ms — dentro da faixa de 150–300ms em que
  * o movimento é percebido como resposta, e não como espera.
+ *
+ * `bloco` existe porque a ADR 0008 §4 exige que o botão DOMINE a tela inicial,
+ * e a régua disso mudou junto com o layout: num painel de duas colunas, um
+ * botão de 190px encolhido ao lado de um campo de largura inteira já não
+ * domina nada. Ocupando a coluna, ele volta a ser o maior alvo da página sem
+ * precisar crescer de altura nem roubar o acento de mais nada.
+ *
+ * O tom `ghost` fica em `void`, não em `surface`: dentro da chapa (que é
+ * `void`) o contorno `edge` mede 3,13:1, e sobre `surface` cairia para
+ * 2,92:1 — abaixo do mínimo da WCAG 1.4.11 para o contorno de um controle.
  */
-export function BigButton({ children, onClick, disabled, busy, tone = 'accent', icon }: Props) {
+export function BigButton({
+  children,
+  onClick,
+  disabled,
+  busy,
+  tone = 'accent',
+  icon,
+  bloco = false,
+}: Props) {
   return (
     <button
       type="button"
@@ -30,9 +50,10 @@ export function BigButton({ children, onClick, disabled, busy, tone = 'accent', 
       disabled={disabled || busy}
       aria-busy={busy}
       className={[
-        'inline-flex min-h-12 items-center justify-center gap-2.5 rounded-md px-7',
-        'text-[15px] font-semibold tracking-tight transition-all duration-[180ms]',
+        'inline-flex items-center justify-center gap-2.5 rounded-md px-7',
+        'font-semibold tracking-tight transition-all duration-[180ms]',
         'disabled:opacity-40 disabled:hover:brightness-100',
+        bloco ? 'min-h-14 w-full text-[16px]' : 'min-h-12 text-[15px]',
         TONES[tone],
       ].join(' ')}
     >

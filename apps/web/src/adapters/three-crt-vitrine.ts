@@ -385,8 +385,18 @@ export const abrirVitrine = async ({
     sobreOTubo = false;
     canvas.style.cursor = '';
   };
+  /** Raio autoritativo, para responder por conta própria. Ver `aoApertar`. */
+  const acertaOTubo = (): boolean => {
+    raio.setFromCamera(ponteiroNdc, camera);
+    return raio.intersectObject(raiz, true).length > 0;
+  };
+
   const aoApertar = (evento: PointerEvent) => {
-    if (!sobreOTubo) return;
+    // `sobreOTubo` é calculado no laço, então ele está sempre um quadro
+    // atrasado — e a 30 fps isso é até 33 ms. Quem clica logo depois de o
+    // cursor entrar no canvas clicava no vazio: o estado de hover ainda dizia
+    // "fora". O clique dispara o próprio raio e não depende do laço.
+    if (ponteiro === null || !acertaOTubo()) return;
     // Sem isto o clique acaba roubando o foco que `aoClicar` acabou de dar ao
     // campo: o `pointerdown` roda primeiro, o campo ganha o cursor, e em
     // seguida o comportamento padrão do `mousedown` tira o foco de lá.
@@ -425,9 +435,10 @@ export const abrirVitrine = async ({
     // A faixa desce de -0,1 a 1,1 em 4,6 s, em laço. Parada, ela não existe.
     uniforms.uRoll.value = movimentoReduzido ? -1 : -0.1 + 1.2 * ((t / 4.6) % 1);
 
+    // O raio do laço serve só ao cursor, que pode chegar um quadro depois sem
+    // ninguém notar. Quem decide o clique é o raio do próprio clique.
     if (ponteiro !== null) {
-      raio.setFromCamera(ponteiroNdc, camera);
-      const acertou = raio.intersectObject(raiz, true).length > 0;
+      const acertou = acertaOTubo();
       if (acertou !== sobreOTubo) {
         sobreOTubo = acertou;
         canvas.style.cursor = acertou ? 'pointer' : '';

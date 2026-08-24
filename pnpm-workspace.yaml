@@ -7,3 +7,8 @@ packages:
 # ignorou e segue sem executar nada, o que aparecia em TODO comando.
 onlyBuiltDependencies:
   - esbuild
+  # O `wrangler` embute o `workerd`, e o postinstall dele baixa o binário do
+  # runtime. Sem aprovação o pnpm PULA o script e avisa — e um wrangler sem
+  # workerd falha só quando alguém tenta rodar o Worker localmente, com uma
+  # mensagem que não aponta para cá.
+  - workerd

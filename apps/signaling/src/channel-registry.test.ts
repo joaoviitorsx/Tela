@@ -98,12 +98,18 @@ describe('registro de canais', () => {
     it('recebe watching com o id do transmissor', () => {
       host();
       const v = watch();
-      expect(v.socket.last()).toEqual({
-        type: 'watching',
-        peerId: 'v_002',
-        hostId: 'h_001',
-        iceServers: [{ urls: ['stun:test'] }],
-      });
+      // `ofType` e não `last()`: depois do `watching` vem a contagem de
+      // plateia, e prender o teste à ÚLTIMA mensagem o faz quebrar toda vez
+      // que algo novo for anunciado na entrada.
+      expect(v.socket.ofType('watching')).toEqual([
+        {
+          type: 'watching',
+          peerId: 'v_002',
+          hostId: 'h_001',
+          iceServers: [{ urls: ['stun:test'] }],
+          viewers: 1,
+        },
+      ]);
     });
 
     it('avisa o transmissor da entrada', () => {

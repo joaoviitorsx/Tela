@@ -12,5 +12,8 @@ target/
 # Repros de diagnóstico dos agentes de auditoria. São artefato de investigação,
 # não suíte do projeto: quando um deles aponta bug real, a regressão é
 # reescrita no arquivo de teste que já cobre aquele módulo.
-zz-*bughunt*
-**/zz-*bughunt*
+# `zz-` é o prefixo de rascunho de agente neste projeto. A regra era estreita
+# (`zz-*bughunt*`) e já deixou passar arquivo de teste de agente duas vezes.
+# Amplo de propósito: nada com esse prefixo pertence ao repositório.
+zz-*
+**/zz-*

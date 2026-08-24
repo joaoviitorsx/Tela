@@ -174,8 +174,18 @@ export const CONTENT_HINT = 'motion' as const;
  * Ver docs/adr/0002-transporte-p2p-self-host.md.
  */
 export const P2P_LIMITS = {
-  /** Teto duro no browser: acima disso são N encoders 1080p60 concorrendo com o jogo. */
-  maxViewersBrowser: 3,
+  /**
+   * Teto duro de espectadores por transmissão.
+   *
+   * O custo que escala aqui é BANDA, não CPU: pela R5 todos os peers recebem
+   * parâmetros idênticos, então o Chrome reaproveita um encoder só. O que
+   * multiplica é o upload — cada espectador recebe uma cópia inteira do vídeo.
+   *
+   * A 5 espectadores: 12,5 Mbps de subida em `p720p60eco`, 20 em `p720p60`,
+   * 40 em `p1080p60`. Quem não tiver o link cai de degrau automaticamente, em
+   * conjunto — nunca individualmente, senão viram N encoders (R5).
+   */
+  maxViewersBrowser: 5,
   /** Fração do upstream medido que pode ser usada — o resto é folga anti-bufferbloat. */
   uplinkHeadroom: 0.7,
 } as const;

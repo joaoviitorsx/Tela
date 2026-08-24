@@ -118,9 +118,25 @@ const shutdown = () => {
   wss.close();
   http.close(() => process.exit(0));
 
+  /**
+   * `wss.clients` NÃO contém conexão que nunca fez upgrade.
+   *
+   * Um keep-alive HTTP ocioso — o `/health` de um proxy ou balanceador, ou
+   * seja, produção — não aparece ali, e o `http.close()` espera por ele até o
+   * estouro de 3s. Medido: uma única conexão TCP ociosa transformava um
+   * desligamento de 10ms em 3009ms, em TODO deploy.
+   *
+   * Os 150ms de espera existem para o frame de close 1001 dos WebSockets sair
+   * antes: destruir o socket na mesma volta do event loop pode cortar o frame
+   * e entregar RST no lugar do encerramento limpo que acabamos de pedir.
+   */
+  const soltarOciosas = setTimeout(() => http.closeIdleConnections?.(), 150);
+  soltarOciosas.unref?.();
+
   // Cliente que ignora o close educado não pode segurar o desligamento.
   const forcar = setTimeout(() => {
     for (const socket of wss.clients) socket.terminate();
+    http.closeAllConnections?.();
     process.exit(0);
   }, 3_000);
   forcar.unref?.();

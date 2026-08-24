@@ -59,6 +59,24 @@ class FakeDurableContext implements DurableContext {
     return this.sockets.filter((s) => !s.closed);
   }
 
+  /**
+   * Serializa de verdade, em vez de só chamar a função.
+   *
+   * Um fake que apenas executasse o callback aprovaria o `check-then-act` que
+   * esta primitiva existe para impedir — a suíte passaria e o defeito seguiria
+   * vivo no runtime.
+   */
+  private fila: Promise<unknown> = Promise.resolve();
+
+  blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T> {
+    const resultado = this.fila.then(fn, fn);
+    this.fila = resultado.then(
+      () => undefined,
+      () => undefined,
+    );
+    return resultado;
+  }
+
   readonly storage = {
     get: async <T>(key: string): Promise<T | undefined> => this.dados.get(key) as T | undefined,
     put: async <T>(key: string, value: T): Promise<void> => {

@@ -89,7 +89,18 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     peerId: PeerIdSchema,
     hostId: PeerIdSchema,
     iceServers: z.array(IceServerSchema),
+    /** Valor inicial; depois disso, mensagens `viewers` mantêm atualizado. */
+    viewers: z.number().int().min(1),
   }),
+  /**
+   * Quantos estão assistindo AGORA, mandado a quem assiste.
+   *
+   * Contagem e não lista: o espectador quer saber se está sozinho ou se a
+   * galera chegou, e não tem por que receber o identificador dos outros. O
+   * transmissor continua recebendo `peer-joined`/`peer-left`, porque ele
+   * precisa dos ids para negociar mídia com cada um.
+   */
+  z.object({ type: z.literal('viewers'), count: z.number().int().min(0) }),
   z.object({ type: z.literal('peer-joined'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('peer-left'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('signal'), from: PeerIdSchema, payload: z.unknown() }),

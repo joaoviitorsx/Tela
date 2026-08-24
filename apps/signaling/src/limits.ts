@@ -14,7 +14,7 @@ export type Limits = {
 };
 
 export const DEFAULT_LIMITS: Limits = {
-  maxPeers: 3,
+  maxPeers: 5,
 
   /**
    * Teto de mensagens por conexão, por janela.

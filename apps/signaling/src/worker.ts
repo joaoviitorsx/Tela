@@ -105,6 +105,15 @@ export type DurableContext = {
   acceptWebSocket(socket: HibernatableSocket): void;
   getWebSockets(): HibernatableSocket[];
   /**
+   * Exclusão mútua de verdade dentro do objeto.
+   *
+   * Os "input gates" do runtime só protegem durante operações de STORAGE.
+   * Qualquer outro `await` — um `fetch`, um `crypto.subtle.digest` — devolve
+   * o loop e deixa outra requisição entrar no meio. É o bastante para um
+   * `check-then-act` como o do `claim` ser vencido por quem chegou depois.
+   */
+  blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
+  /**
    * Armazenamento do objeto. Guarda UMA coisa: o dono do canal durante a
    * carência depois que o transmissor sai.
    *
@@ -158,6 +167,9 @@ export const OWNERSHIP_GRACE_MS = 5 * 60_000;
 type PosseGuardada = { readonly ownerHash: string; readonly ate: number };
 
 const CHAVE_POSSE = 'posse';
+const CHAVE_CLAIMS = 'claims';
+
+type JanelaClaims = { readonly inicio: number; readonly n: number };
 
 export class ChannelRoom {
   constructor(
@@ -285,6 +297,26 @@ export class ChannelRoom {
     return contagem <= this.deps.limits.messageLimit;
   }
 
+  /**
+   * Janela deslizante simples de reivindicações deste canal.
+   *
+   * Uma linha só no storage, sobrescrita — não acumula. Se o storage não
+   * existir (driver de teste antigo), deixa passar: recusar tudo por falta de
+   * armazenamento seria pior que não limitar.
+   */
+  private async dentroDoTetoDeClaims(): Promise<boolean> {
+    const agora = Date.now();
+    const guardado = await this.ctx.storage?.get<JanelaClaims>(CHAVE_CLAIMS);
+    const janela =
+      guardado === undefined || agora - guardado.inicio >= this.deps.limits.hostWindowMs
+        ? { inicio: agora, n: 0 }
+        : guardado;
+
+    if (janela.n >= this.deps.limits.hostLimit) return false;
+    await this.ctx.storage?.put(CHAVE_CLAIMS, { inicio: janela.inicio, n: janela.n + 1 });
+    return true;
+  }
+
   private async claim(
     socket: HibernatableSocket,
     slug: string,
@@ -299,40 +331,86 @@ export class ChannelRoom {
       return this.fail(socket, 'SLUG_INVALID');
     }
 
-    const hash = await this.deps.hash(ownerToken);
-    const dono = await this.donoAtual();
-
-    // Existe dono e não é você: o canal é de outra pessoa, com ou sem alguém
-    // conectado neste instante.
-    if (dono !== null && !this.deps.equals(dono, hash)) {
-      return this.fail(socket, 'SLUG_TAKEN');
+    /**
+     * Teto de reivindicações, ANTES do hash.
+     *
+     * O Worker não tinha nenhum — 200 tentativas seguidas, 200 aceitas —
+     * enquanto o Node limita a 20/min. Sem isto, `host` + desconectar tranca
+     * qualquer slug pelos cinco minutos da carência de posse, de graça e
+     * repetível.
+     *
+     * A contagem é POR CANAL, não por IP: dentro do Durable Object não existe
+     * o IP do cliente, e o objeto já é por slug. Isso barra a repetição contra
+     * UM slug — que é o que amplificava a corrida do `claim`. Ocupação em massa
+     * de slugs diferentes precisaria de um limitador global, e continua aberta.
+     *
+     * Fica antes do `hash` de propósito: rejeitar tem que ser mais barato que
+     * atacar.
+     */
+    if (!(await this.dentroDoTetoDeClaims())) {
+      return this.fail(socket, 'RATE_LIMITED');
     }
 
-    /**
-     * A ORDEM importa: o socket novo assume ANTES de o antigo ser derrubado.
-     *
-     * Fechar primeiro dispara o `webSocketClose` do antigo enquanto o novo
-     * ainda não tem attachment — e o objeto, sem enxergar host algum,
-     * concluía que o transmissor tinha ido embora e derrubava todos os
-     * espectadores. Quem dava F5 perdia a audiência.
-     */
-    const anterior = this.host();
+    const hash = await this.deps.hash(ownerToken);
     const peerId = this.deps.newPeerId('h');
-    socket.serializeAttachment({
-      peerId,
-      role: 'host',
-      ownerHash: hash,
-      janelaInicio: Date.now(),
-      janelaContagem: 0,
-    } satisfies Attachment);
+
+    /**
+     * As credenciais são buscadas ANTES de assumir o canal, e o motivo é a
+     * ordem das mensagens.
+     *
+     * `iceServersFor` é um `fetch` real para a API de TURN — dezenas a
+     * centenas de milissegundos em que o runtime deixa outra requisição
+     * entrar. Quando esse `await` ficava DEPOIS do attachment, um espectador
+     * que chegasse na janela era roteado para um host que ainda não tinha
+     * recebido `hosting`: ele via `peer-joined` antes de saber que era host,
+     * e depois o mesmo `peer-joined` de novo na reapresentação. Duas
+     * violações de protocolo que só não quebravam porque se cancelavam.
+     */
+    const iceServers = await this.deps.iceServersFor(peerId);
+
+    /**
+     * Seção crítica: ler a posse, decidir e gravar sem ceder o loop no meio.
+     *
+     * Sem ela o `claim` era um `check-then-act` clássico. Duas reivindicações
+     * simultâneas de um canal sem dono se intercalavam no `await` do hash, e o
+     * resultado era pior que "quem chegou primeiro leva": quem mandou PRIMEIRO
+     * recebia `SLUG_TAKEN`, e depois ficava trancado fora do próprio slug pelos
+     * cinco minutos da carência de posse.
+     */
+    const assumido = await this.ctx.blockConcurrencyWhile(async () => {
+      const dono = await this.donoAtual();
+      // Existe dono e não é você: o canal é de outra pessoa, com ou sem
+      // alguém conectado neste instante.
+      if (dono !== null && !this.deps.equals(dono, hash)) return null;
+
+      /**
+       * A ORDEM importa: o socket novo assume ANTES de o antigo ser derrubado.
+       *
+       * Fechar primeiro dispara o `webSocketClose` do antigo enquanto o novo
+       * ainda não tem attachment — e o objeto, sem enxergar host algum,
+       * concluía que o transmissor tinha ido embora e derrubava todos os
+       * espectadores. Quem dava F5 perdia a audiência.
+       */
+      const anterior = this.host();
+      socket.serializeAttachment({
+        peerId,
+        role: 'host',
+        ownerHash: hash,
+        janelaInicio: Date.now(),
+        janelaContagem: 0,
+      } satisfies Attachment);
+      return { anterior };
+    });
+
+    if (assumido === null) return this.fail(socket, 'SLUG_TAKEN');
 
     // Mesmo dono reconectando (refresh, troca de rede): derruba o antigo.
-    anterior?.socket.close(1000, 'substituido');
+    assumido.anterior?.socket.close(1000, 'substituido');
 
     this.send(socket, {
       type: 'hosting',
       peerId,
-      iceServers: await this.deps.iceServersFor(peerId),
+      iceServers,
       maxPeers: this.deps.limits.maxPeers,
     });
 
@@ -350,7 +428,13 @@ export class ChannelRoom {
   }
 
   private async join(socket: HibernatableSocket, slug: string, wanted: string): Promise<void> {
-    if (wanted !== slug || !SLUG_RE.test(slug)) return this.fail(socket, 'SLUG_INVALID');
+    // `isBlockedSlug` também aqui: sem ele o Node responde `SLUG_INVALID` e o
+    // Worker responde `NOT_HOSTING` para o mesmo pedido, e a diferença deixa
+    // quem varre nomes distinguir "bloqueado" de "inexistente" — exatamente o
+    // que o comentário abaixo diz querer evitar.
+    if (wanted !== slug || !SLUG_RE.test(slug) || isBlockedSlug(slug)) {
+      return this.fail(socket, 'SLUG_INVALID');
+    }
 
     const host = this.host();
     // Slug inválido, inexistente e offline devolvem o MESMO erro: quem varre
@@ -373,9 +457,24 @@ export class ChannelRoom {
       peerId,
       hostId: host.at.peerId,
       iceServers: await this.deps.iceServersFor(peerId),
+      viewers: this.viewers().length,
     });
     // O transmissor é quem oferece — ele tem a mídia.
     this.send(host.socket, { type: 'peer-joined', peerId });
+    this.anunciarPlateia();
+  }
+
+  /**
+   * Avisa a plateia do tamanho dela.
+   *
+   * Só para espectadores: o transmissor já acompanha por
+   * `peer-joined`/`peer-left`, que carregam os ids de que ele precisa para
+   * negociar mídia.
+   */
+  private anunciarPlateia(): void {
+    const espectadores = this.viewers();
+    const count = espectadores.length;
+    for (const v of espectadores) this.send(v.socket, { type: 'viewers', count });
   }
 
   private relay(from: Attachment, message: Extract<ClientMessage, { type: 'signal' }>): void {
@@ -432,6 +531,8 @@ export class ChannelRoom {
 
     const host = this.host();
     if (host !== null) this.send(host.socket, { type: 'peer-left', peerId: at.peerId });
+    // O socket que está saindo já não aparece em `getWebSockets()`.
+    this.anunciarPlateia();
   }
 }
 

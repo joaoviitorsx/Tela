@@ -19,9 +19,20 @@ declare const WebSocketPair: {
 };
 declare const crypto: WebCryptoLike;
 
+/**
+ * O que o runtime entrega, declarado à mão para não depender dos tipos do
+ * `workers-types` só por causa de três membros.
+ */
 type DurableState = {
   acceptWebSocket(socket: HibernatableSocket): void;
   getWebSockets(): HibernatableSocket[];
+  /** Exclusão mútua real: os input gates só cobrem `await` de storage. */
+  blockConcurrencyWhile<T>(fn: () => Promise<T>): Promise<T>;
+  storage: {
+    get<T>(key: string): Promise<T | undefined>;
+    put<T>(key: string, value: T): Promise<void>;
+    delete(key: string): Promise<boolean>;
+  };
 };
 
 const SLUG_HEADER = 'x-tela-slug';

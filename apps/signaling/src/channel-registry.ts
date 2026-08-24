@@ -184,6 +184,20 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         }
       }
 
+      /**
+       * Avisa a plateia do tamanho dela.
+       *
+       * Só para espectadores: o transmissor já acompanha por
+       * `peer-joined`/`peer-left`, que carregam os ids de que ele precisa
+       * para negociar mídia.
+       */
+      function anunciarPlateia(channel: Channel): void {
+        const count = channel.viewers.size;
+        for (const viewer of channel.viewers.values()) {
+          viewer.socket.send({ type: 'viewers', count });
+        }
+      }
+
       function joinChannel(slug: string): void {
         if (!deps.isValidSlug(slug)) return fail('SLUG_INVALID');
 
@@ -204,9 +218,11 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           peerId: peer.id,
           hostId: host.id,
           iceServers: deps.iceServersFor(peer.id),
+          viewers: channel.viewers.size,
         });
         // O transmissor é quem oferece — ele tem a mídia.
         host.socket.send({ type: 'peer-joined', peerId: peer.id });
+        anunciarPlateia(channel);
       }
 
       /** Espectador só fala com o transmissor; transmissor endereça por `to`. */
@@ -298,6 +314,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           } else {
             channel.viewers.delete(peer.id);
             channel.host?.socket.send({ type: 'peer-left', peerId: peer.id });
+            anunciarPlateia(channel);
           }
           reap(channelName);
         },

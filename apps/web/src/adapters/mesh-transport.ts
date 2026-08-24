@@ -98,6 +98,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           emitter.emit('signaling-restored', undefined);
         }),
       );
+
+      return { maxPeers: opened.maxPeers };
     },
 
     async watch(slug) {

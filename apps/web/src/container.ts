@@ -1,4 +1,4 @@
-import { OFFENSIVE, RESERVED } from '@tela/shared';
+import { OFFENSIVE, RESERVED, suggestPreset } from '@tela/shared';
 import { makeBrowserAudioCapture } from './adapters/browser-audio-capture.js';
 import { makeBrowserAudioGain } from './adapters/browser-audio-gain.js';
 import { makeBrowserPlatform } from './adapters/browser-platform.js';
@@ -43,8 +43,31 @@ export const identity = makeIdentity(storage, makeCryptoRandom());
 
 export const policy: SlugPolicy = { reserved: RESERVED, offensive: OFFENSIVE };
 
+/**
+ * Banda que o link deste aparelho sustentou, por espectador, medida pelo
+ * próprio WebRTC na última transmissão.
+ *
+ * É a única fonte de medição real que existe: não dá para medir upload antes
+ * de conectar, e pedir o número ao usuário contradiz "aperta um botão".
+ */
+export const uplinkMemory = {
+  read: () => storage.get('tela.uplink'),
+  write: (value: string) => storage.set('tela.uplink', value),
+};
+
 export const preferences = {
-  read: () => storage.get('tela.preset'),
+  /**
+   * Escolha explícita vence sempre. Sem escolha, sugere pela banda lembrada
+   * em vez de abrir em 1080p60 num link que não aguenta — a captura é fixada
+   * no início e nenhum teto de bitrate desfaz resolução alta demais.
+   */
+  read: () => {
+    const escolhido = storage.get('tela.preset');
+    if (escolhido !== null) return escolhido;
+    const lembrado = Number(uplinkMemory.read() ?? '');
+    if (!Number.isFinite(lembrado) || lembrado <= 0) return null;
+    return suggestPreset(lembrado, 1);
+  },
   write: (value: string) => storage.set('tela.preset', value),
 };
 
@@ -64,6 +87,7 @@ export function createBroadcastSession(): BroadcastSession {
     // Um grafo por sessão: `close()` desmonta, e reusar um contexto fechado
     // não tem volta.
     gain: makeBrowserAudioGain(),
+    uplinkMemory,
     scheduler,
     shareUrlFor,
     createStream: (tracks) => new MediaStream([...tracks]),

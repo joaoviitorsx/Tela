@@ -77,8 +77,15 @@ export type TransportEvents = {
 export type Unsubscribe = () => void;
 
 export type MediaTransport = {
-  /** Reivindica o canal e passa a esperar espectadores. */
-  host(slug: string, ownerToken: string): Promise<void>;
+  /**
+   * Reivindica o canal e passa a esperar espectadores.
+   *
+   * Devolve o teto que o SERVIDOR aplica. Antes devolvia `void`, e a sessão
+   * ficava com um palpite local que nada corrigia — o HUD chegava a mostrar
+   * "5/3" com cinco espectadores conectados, porque o palpite era 3 e o
+   * servidor aceitava 5.
+   */
+  host(slug: string, ownerToken: string): Promise<{ readonly maxPeers: number }>;
   /** Entra num canal como espectador. */
   watch(slug: string): Promise<void>;
 

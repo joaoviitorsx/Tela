@@ -205,9 +205,13 @@ export class FakeMediaTransport implements MediaTransport {
   /** Quando true, `watch` nunca settla — o caso da negociação travada. */
   hangOnWatch = false;
 
-  async host(slug: string, ownerToken: string): Promise<void> {
+  /** Teto que este transporte falso reporta como se viesse do servidor. */
+  maxPeersDoServidor = 5;
+
+  async host(slug: string, ownerToken: string): Promise<{ maxPeers: number }> {
     if (this.hostError !== null) throw this.hostError;
     this.hosted = { slug, ownerToken };
+    return { maxPeers: this.maxPeersDoServidor };
   }
 
   async watch(slug: string): Promise<void> {

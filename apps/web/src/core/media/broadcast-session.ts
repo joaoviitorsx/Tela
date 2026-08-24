@@ -130,6 +130,12 @@ export type BroadcastSessionDeps = {
   scheduler: Scheduler;
   /** Monta o link público a partir do slug. Sem servidor, quem sabe é o front. */
   shareUrlFor: (slug: string) => string;
+  /**
+   * O que o link deste aparelho sustentou da última vez, por espectador.
+   *
+   * Opcional: sem ele o governador simplesmente aquece do zero, como antes.
+   */
+  uplinkMemory?: { read(): string | null; write(value: string): void };
   /** `MediaStream` é global de browser; `core/` não constrói um direto. */
   createStream: (tracks: readonly MediaStreamTrack[]) => MediaStream;
   maxPeers?: number;
@@ -151,6 +157,9 @@ const CALMARIA_AMOSTRAS = 60;
  * uma captura leva para engatar em máquina lenta; abaixo disso é falso alarme.
  */
 const SEM_IMAGEM_AMOSTRAS = 5;
+
+/** Intervalo entre gravações da banda medida, em amostras de 1s. */
+const GRAVAR_BANDA_A_CADA = 30;
 
 /**
  * Framerate da captura quando NINGUÉM está assistindo.
@@ -200,6 +209,8 @@ export class BroadcastSession {
   private calmaria = 0;
   /** Amostras seguidas com o encoder entregando zero frame, havendo plateia. */
   private semImagem = 0;
+  /** Grava a estimativa de banda de vez em quando, não a cada segundo. */
+  private desdeGravacao = 0;
   private pressure = 0;
   private pressureKind: QualityLimitation = 'none';
   private capturaOciosa = false;
@@ -264,6 +275,17 @@ export class BroadcastSession {
 
     this.presetId = options.presetId ?? DEFAULT_PRESET_ID;
     this.presetEscolhido = this.presetId;
+
+    /**
+     * Começa já sabendo o que o link deu da última vez.
+     *
+     * Sem isto, o aquecimento do governador deixa os primeiros oito segundos
+     * de TODA transmissão sem teto — e é exatamente quando os espectadores
+     * que estavam esperando entram de uma vez e o controle de congestionamento
+     * sobe procurando o limite do link, N vezes em paralelo.
+     */
+    const lembrado = Number(this.deps.uplinkMemory?.read() ?? '');
+    if (Number.isFinite(lembrado) && lembrado > 0) this.governor.seed(lembrado);
     this.pressure = 0;
     this.pressureKind = 'none';
     this.capturaOciosa = false;
@@ -347,7 +369,11 @@ export class BroadcastSession {
     this.setState({ status: 'connecting' });
 
     try {
-      await this.deps.transport.host(slug, ownerToken);
+      // O servidor é a autoridade sobre o teto; o palpite local só vale até aqui.
+      const aberto = await this.deps.transport.host(slug, ownerToken);
+      if (Number.isFinite(aberto.maxPeers) && aberto.maxPeers > 0) {
+        this.maxPeers = aberto.maxPeers;
+      }
     } catch (error) {
       if (this.stale(epoch)) return this.abandon();
       return this.fail(failureFor(error));
@@ -430,6 +456,7 @@ export class BroadcastSession {
     this.applyUplinkCeiling(stats.availableBps, this.state.peers.length);
     this.trackPressure(stats.limitation);
     this.trackCapturaMorta(stats.fps);
+    this.lembrarBanda();
   }
 
   /**
@@ -519,6 +546,21 @@ export class BroadcastSession {
     // `catch` obrigatório: fire-and-forget aqui já produziu unhandled
     // rejection quando colidiu com uma troca manual de qualidade.
     void this.deps.transport.setPreset(presetById(next)).catch(() => undefined);
+  }
+
+  /**
+   * Guarda o que o link sustentou, para a próxima transmissão não começar cega.
+   *
+   * A cada 30 amostras e não a cada uma: é preferência, não telemetria, e
+   * escrever em disco por segundo durante horas de jogo é custo sem retorno.
+   */
+  private lembrarBanda(): void {
+    this.desdeGravacao += 1;
+    if (this.desdeGravacao < GRAVAR_BANDA_A_CADA) return;
+    this.desdeGravacao = 0;
+    const estimativa = this.governor.estimativa;
+    if (estimativa === null) return;
+    this.deps.uplinkMemory?.write(String(Math.round(estimativa)));
   }
 
   /**

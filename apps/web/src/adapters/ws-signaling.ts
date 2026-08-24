@@ -230,6 +230,15 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
     host(slug, ownerToken) {
       return new Promise<ChannelOpened>((resolve, reject) => {
         const hello: ClientMessage = { type: 'host', slug, ownerToken };
+        /**
+         * Zerar aqui é obrigatório: `close()` marca `closedByUs` e nada mais
+         * desmarcava. Um canal fechado uma vez ficava morto PARA SEMPRE — a
+         * reconexão saía na primeira linha e o `closed` nunca era emitido. O
+         * ciclo do StrictMode em desenvolvimento percorre exatamente esse
+         * caminho (monta, encerra, remonta no mesmo canal), então o defeito
+         * também deixava a reconexão inverificável.
+         */
+        closedByUs = false;
         saudacao = hello;
         slugAtual = slug;
         tentativa = 0;
@@ -245,6 +254,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
     watch(slug) {
       return new Promise<ChannelOpened>((resolve, reject) => {
         const hello: ClientMessage = { type: 'watch', slug };
+        closedByUs = false;
         saudacao = hello;
         slugAtual = slug;
         tentativa = 0;

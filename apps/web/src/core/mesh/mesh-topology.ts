@@ -382,14 +382,26 @@ export class MeshTopology {
           maxBitrate: this.effectiveBitrate(preset),
           maxFramerate: preset.main.maxFramerate,
           /**
-           * O vídeo é o tráfego SACRIFICÁVEL desta máquina.
+           * `medium`, e a mudança de `low` foi deliberada.
            *
-           * `networkPriority` vira marcação DSCP no pacote. Roteador com fila
-           * consciente (fq_codel, CAKE) usa isso para deixar o jogo passar na
-           * frente; onde ninguém honra, é inerte. Custo zero, e é a única
-           * alavanca que temos sobre o roteador do usuário.
+           * `networkPriority` vira marcação DSCP. A intenção original era
+           * ceder passagem ao netcode do jogo — correto em rede CABEADA com
+           * fila consciente (fq_codel, CAKE), onde `low` vira CS1 e o roteador
+           * atende o jogo primeiro.
+           *
+           * Em Wi-Fi ele sai pela culatra. CS1 mapeia para a categoria WMM
+           * AC_BK, "background", que NÃO é apenas menos prioritária: ela tem
+           * parâmetros de contenção PIORES que o tráfego comum, espera mais
+           * para transmitir e perde disputa para qualquer outra coisa no
+           * mesmo ar. Perda em rajada durante um movimento rápido vira bloco
+           * na tela até o próximo keyframe.
+           *
+           * A defesa contra bufferbloat que de fato funciona é o teto de
+           * upload — nunca pedir mais do que o link aguenta. Essa continua de
+           * pé, e é ela que protege o ping do jogo. O DSCP era um bônus que
+           * dependia do roteador, e num dos dois meios ele cobrava caro.
            */
-          networkPriority: 'low',
+          networkPriority: 'medium',
         };
       try {
         await sender.setParameters({

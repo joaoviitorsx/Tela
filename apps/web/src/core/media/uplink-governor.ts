@@ -1,4 +1,4 @@
-import { PRESET_720P30, type EncodingPreset } from '@tela/shared';
+import type { EncodingPreset } from '@tela/shared';
 
 /**
  * Decide o teto de upload do vídeo, com amortecimento.
@@ -60,8 +60,20 @@ const SOLTA_ACIMA_DE = 1.15;
 /** Leituras ignoradas no início, enquanto o estimador ainda sonda. */
 const AQUECIMENTO_AMOSTRAS = 8;
 
-/** Nunca abaixo do menor preset: teto que estrangula é pior que teto nenhum. */
-const PISO_BPS = PRESET_720P30.main.maxBitrate;
+/**
+ * Piso ABSOLUTO, contra estimativa absurda — não contra link ruim de verdade.
+ *
+ * Era o bitrate do menor preset (1,8 Mbps), e a leitura chega POR ESPECTADOR:
+ * com cinco espectadores num link de 6 Mbps o piso entregava 1,8 Mbps a cada
+ * sender, 9 Mbps de demanda num cano de 6 — 150% do link, justamente o
+ * afogamento que este governador existe para impedir. O piso alto protegia
+ * contra uma medição ruim passageira, mas medição sustentadamente baixa não é
+ * ruído: é o link.
+ *
+ * 300 kbps é onde o próprio controle de congestionamento do WebRTC começa.
+ * Abaixo disso não há vídeo útil, e aí o problema não é o teto.
+ */
+const PISO_BPS = 300_000;
 
 /**
  * `null` = não mexa. `{ bps: number }` = aplique. `{ bps: null }` = solte.
@@ -72,6 +84,32 @@ export class UplinkGovernor {
   private media: number | null = null;
   private aplicado: number | null = null;
   private amostras = 0;
+
+  /**
+   * Estimativa suavizada corrente, por espectador. `null` antes da primeira
+   * leitura útil. Serve para guardar entre sessões.
+   */
+  get estimativa(): number | null {
+    return this.amostras > AQUECIMENTO_AMOSTRAS ? this.media : null;
+  }
+
+  /**
+   * Começa já sabendo, em vez de descobrir do zero.
+   *
+   * Sem semente, o aquecimento deixa OITO segundos sem teto nenhum no início
+   * de toda transmissão — e é justamente quando os espectadores que estavam
+   * esperando entram todos de uma vez e o controle de congestionamento sobe
+   * procurando o limite do link. O valor vem da sessão anterior no mesmo
+   * aparelho: é palpite, mas é palpite medido.
+   *
+   * Ignora lixo em silêncio: preferência corrompida não pode impedir
+   * transmitir.
+   */
+  seed(bps: number): void {
+    if (!Number.isFinite(bps) || bps <= 0) return;
+    this.media = bps;
+    this.amostras = AQUECIMENTO_AMOSTRAS + 1;
+  }
 
   reset(): void {
     this.media = null;

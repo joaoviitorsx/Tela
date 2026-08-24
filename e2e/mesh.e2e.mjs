@@ -219,9 +219,11 @@ console.log('\n4. Teto de espectadores é aplicado de verdade');
 /**
  * Um espectador já está assistindo; os outros enchem o canal.
  *
- * O teto vem de `P2P_LIMITS.maxViewersBrowser`, não de um número escrito aqui:
- * este teste já mentiu uma vez quando o limite subiu de 3 para 5 e o "canal
- * cheio" passou a nunca encher.
+ * Este teste já mentiu uma vez: quando o limite subiu de 3 para 5, ele
+ * continuou enchendo o canal com 4 espectadores e o "canal cheio" nunca
+ * enchia. O número abaixo PRECISA acompanhar `P2P_LIMITS.maxViewersBrowser`
+ * em `packages/shared/src/encoding.ts` — o e2e roda contra o bundle, sem
+ * import, então não dá para derivar daqui.
  */
 const TETO = 5;
 const extras = [];

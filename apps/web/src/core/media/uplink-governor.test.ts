@@ -67,11 +67,32 @@ describe('UplinkGovernor', () => {
     expect(mudou!).toBeLessThan(antes!);
   });
 
-  it('nunca estrangula abaixo do menor preset', () => {
+  /**
+   * MUDANÇA DE COMPORTAMENTO deliberada, motivada por medição.
+   *
+   * Este teste exigia piso no bitrate do MENOR PRESET (1,8 Mbps). Uma
+   * auditoria mediu a consequência: a leitura chega POR ESPECTADOR, então com
+   * cinco espectadores num link de 6 Mbps o piso entregava 1,8 Mbps a cada
+   * sender — 9 Mbps de demanda num cano de 6, 150% do link. O governador
+   * existe para impedir exatamente esse afogamento, e o piso o produzia.
+   *
+   * O piso passou a ser absoluto e baixo: protege contra estimativa absurda,
+   * não contra link ruim de verdade. Medição sustentadamente baixa não é
+   * ruído, é o link — e obedecer a ela é o trabalho desta malha.
+   */
+  it('não estrangula até o nada, mas TAMBÉM não excede o medido', () => {
     const g = new UplinkGovernor();
     // Estimativa catastrófica e sustentada.
     for (let i = 0; i < 40; i += 1) g.observe(50_000, PRESET_1080P60);
-    expect(g.ceiling).toBeGreaterThanOrEqual(PRESET_720P30.main.maxBitrate);
+
+    expect(g.ceiling).not.toBeNull();
+    expect(g.ceiling!).toBeGreaterThanOrEqual(300_000);
+
+    const g2 = new UplinkGovernor();
+    // Link modesto e honesto: o teto tem que caber nele, não no menor preset.
+    for (let i = 0; i < 40; i += 1) g2.observe(1_200_000, PRESET_1080P60);
+    expect(g2.ceiling!).toBeLessThanOrEqual(1_200_000);
+    expect(g2.ceiling!).toBeLessThan(PRESET_720P30.main.maxBitrate);
   });
 
   it('não aplica teto que não restringe nada', () => {

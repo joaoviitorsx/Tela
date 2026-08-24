@@ -17,15 +17,28 @@ export type ChannelOpened = {
   readonly iceServers: readonly IceServerConfig[];
   /** Só existe para transmissor. */
   readonly maxPeers: number;
+  /** Quantos já estavam assistindo quando entramos. Zero para o transmissor. */
+  readonly viewers: number;
 };
 
 export type ChannelEvents = {
   /** Um espectador entrou (só o transmissor recebe). */
   'peer-joined': { peerId: string };
   'peer-left': { peerId: string };
+  /** Quantos estão assistindo. Só o espectador recebe. */
+  viewers: { count: number };
   /** Payload opaco vindo de outro peer. Quem interpreta é o PeerLink. */
   signal: { from: string; payload: unknown };
   closed: { reason: string };
+  /**
+   * O canal caiu e voltou sozinho, com a mesma reivindicação.
+   *
+   * Traz um `ChannelOpened` novo porque o servidor emite um `peerId` novo e,
+   * mais importante, credenciais de TURN novas — as antigas expiram, e reusar
+   * credencial vencida faz o próximo espectador falhar exatamente onde este
+   * evento existe para consertar.
+   */
+  reopened: ChannelOpened;
 };
 
 export type SignalingError = { readonly code: SignalingErrorCode };

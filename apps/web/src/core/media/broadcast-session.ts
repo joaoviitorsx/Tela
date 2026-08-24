@@ -1,5 +1,6 @@
 import { Emitter } from '../emitter.js';
 import type { AudioCapture } from '../ports/audio-capture.js';
+import type { AudioGain } from '../ports/audio-gain.js';
 import type {
   MediaStats,
   MediaTransport,
@@ -9,7 +10,7 @@ import type {
 import type { Scheduler } from '../ports/scheduler.js';
 import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
-import type { Prioridade } from '@tela/shared';
+import { P2P_LIMITS, type Prioridade } from '@tela/shared';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
@@ -17,6 +18,7 @@ import {
   type PresetId,
   nextPresetOnCpuPressure,
   presetById,
+  previousPresetOnRecovery,
 } from './presets.js';
 
 /**
@@ -59,6 +61,17 @@ export type BroadcastState =
       readonly stats: MediaStats | null;
       readonly hasAudio: boolean;
       /**
+       * Volume do que os ESPECTADORES ouvem, 0 a 1.
+       *
+       * Não é o volume do alto-falante de quem transmite: aquele não afeta a
+       * transmissão, porque a captura de som do sistema pega o stream antes
+       * do volume de saída do aparelho. Sem este controle o transmissor não
+       * tinha nenhuma influência sobre o que os amigos ouviam.
+       */
+      readonly volumeAudio: number;
+      /** `false` quando o navegador não deu Web Audio e o ganho não entrou. */
+      readonly volumeAjustavel: boolean;
+      /**
        * O canal de sinalização caiu. Quem já está assistindo continua vendo;
        * só espectadores novos não conseguem entrar.
        */
@@ -94,6 +107,8 @@ export type BroadcastSessionDeps = {
   transport: MediaTransport;
   screen: ScreenCapture;
   audio: AudioCapture;
+  /** Volume do que é ENVIADO. Ver `core/ports/audio-gain.ts`. */
+  gain: AudioGain;
   scheduler: Scheduler;
   /** Monta o link público a partir do slug. Sem servidor, quem sabe é o front. */
   shareUrlFor: (slug: string) => string;
@@ -106,6 +121,12 @@ export type BroadcastSessionDeps = {
 const STATS_INTERVAL_MS = 1_000;
 /** Quantas leituras seguidas com o mesmo limitador antes de cair de preset. */
 const PRESSURE_SAMPLES = 5;
+
+/**
+ * Amostras de calmaria antes de devolver um degrau. Doze vezes mais lento que
+ * a descida, de propósito — ver `recuperar()`.
+ */
+const CALMARIA_AMOSTRAS = 60;
 
 /**
  * Framerate da captura quando NINGUÉM está assistindo.
@@ -149,10 +170,17 @@ export class BroadcastSession {
   private timers: Array<() => void> = [];
   private unsubscribes: Array<() => void> = [];
   private presetId: PresetId = DEFAULT_PRESET_ID;
+  /** O que o usuário pediu. A recuperação sobe até aqui e para. */
+  private presetEscolhido: PresetId = DEFAULT_PRESET_ID;
+  /** Amostras seguidas sem aperto nenhum. */
+  private calmaria = 0;
   private pressure = 0;
   private pressureKind: QualityLimitation = 'none';
   private capturaOciosa = false;
-  private maxPeers = 3;
+  /** Palpite até o servidor dizer o dele, no `hosting`. Nunca um número solto. */
+  private maxPeers: number = P2P_LIMITS.maxViewersBrowser;
+  /** Sobrevive ao ciclo da transmissão: quem escolheu 40% quer 40% de novo. */
+  private volumeTransmissao = 1;
 
   /**
    * Toda etapa assíncrona do `start()` carrega o epoch em que começou.
@@ -209,6 +237,7 @@ export class BroadcastSession {
     const epoch = this.epoch;
 
     this.presetId = options.presetId ?? DEFAULT_PRESET_ID;
+    this.presetEscolhido = this.presetId;
     this.pressure = 0;
     this.pressureKind = 'none';
     this.capturaOciosa = false;
@@ -271,6 +300,21 @@ export class BroadcastSession {
       if (this.stale(epoch)) return this.abandon();
     }
 
+    /**
+     * Ganho no caminho de saída, aplicado UMA vez, aqui.
+     *
+     * Este é o ponto onde os dois caminhos de áudio convergem — o do Windows,
+     * que vem junto com a tela, e o do Linux, que vem do sink virtual. Envolver
+     * depois deste ponto significa que o controle de volume vale para os dois
+     * sem que nenhum deles precise saber que ele existe.
+     */
+    if (this.audioTrack !== null) {
+      this.audioTrack = this.deps.gain.attach(this.audioTrack);
+      // Antes de publicar: senão o primeiro segundo sai no volume cheio, que
+      // é justamente o susto que o controle existe para evitar.
+      this.deps.gain.set(this.volumeTransmissao);
+    }
+
     // O usuário pode encerrar pelo controle nativo do browser, fora da nossa UI.
     this.videoTrack.addEventListener('ended', () => void this.stop('CAPTURE_ENDED'));
 
@@ -287,6 +331,7 @@ export class BroadcastSession {
     this.unsubscribes.push(
       this.deps.transport.on('peers', (peers) => this.onPeers(peers)),
       this.deps.transport.on('signaling-lost', () => this.onSignalingLost()),
+      this.deps.transport.on('signaling-restored', () => this.onSignalingRestored()),
       this.deps.transport.on('closed', () => void this.stop('TRANSPORT_FAILED')),
     );
 
@@ -310,6 +355,8 @@ export class BroadcastSession {
       maxPeers: this.maxPeers,
       stats: null,
       hasAudio: this.audioTrack !== null,
+      volumeAudio: this.volumeTransmissao,
+      volumeAjustavel: this.deps.gain.ativo,
       semSinalizacao: false,
       preview: this.preview,
       prioridade: this.prioridade,
@@ -329,13 +376,30 @@ export class BroadcastSession {
 
   private async sampleStats(): Promise<void> {
     if (this.state.status !== 'live') return;
+
+    /**
+     * ANTES do early return, e é o ponto todo.
+     *
+     * A ociosidade só era avaliada dentro de `onPeers`, e a primeira
+     * notificação apenas marca a hora — exige uma SEGUNDA, dez segundos
+     * depois. Sem espectador nenhum não existe fonte para essa segunda:
+     * `admit`/`drop`/`onStateChange` precisam de link, e o caminho periódico
+     * desiste antes de anunciar quando não há relatório de peer.
+     *
+     * Resultado medido pela auditoria: 2 minutos ocioso, `applyConstraints`
+     * chamado zero vez, captura presa em 1080p60 de graça na máquina que está
+     * com o jogo aberto. Este relógio de 1s é a segunda notificação.
+     */
+    this.throttleIdleCapture(this.state.peers.length === 0);
+
     const stats = await this.deps.transport.getAggregateStats();
+    // `null` sem espectador: nada a medir, mas a ociosidade acima já foi tratada.
     if (stats === null) return;
     if (this.state.status !== 'live') return;
 
     this.amostras += 1;
     this.setState({ ...this.state, stats });
-    this.applyUplinkCeiling(stats.availableBps);
+    this.applyUplinkCeiling(stats.availableBps, this.state.peers.length);
     this.trackPressure(stats.limitation);
   }
 
@@ -347,12 +411,30 @@ export class BroadcastSession {
    * controle de congestionamento percebe, o jogador já sentiu. Então o teto é
    * aplicado ANTES: o vídeo nunca pede mais do que uma fração do estimado.
    */
-  private applyUplinkCeiling(availableBps: number | null): void {
-    const teto = this.governor.observe(availableBps, presetById(this.presetId));
-    // `null` na maioria das leituras: o governador só devolve valor quando a
-    // mudança compensa reconfigurar o encoder.
-    if (teto === null) return;
-    void this.deps.transport.setBitrateCeiling(teto).catch(() => undefined);
+  private applyUplinkCeiling(availableBps: number | null, espectadores: number): void {
+    /**
+     * A estimativa chega SOMADA entre os peers; o teto sai POR sender.
+     *
+     * `stats-sampler` soma `availableOutgoingBitrate` de todas as conexões,
+     * porque para o HUD o que interessa é o total que sai do link de casa. Mas
+     * `setBitrateCeiling` grava o número como `maxBitrate` de CADA sender — e
+     * em mesh cada espectador recebe uma cópia inteira do vídeo.
+     *
+     * Sem esta divisão o erro era proporcional ao número de espectadores e
+     * sempre na direção de ENCHER o cano, que é precisamente o que esta malha
+     * existe para impedir: com 3 espectadores num link de 12 Mbps o teto
+     * liberava 8 Mbps por sender, ou seja, 24 Mbps de demanda num cano de 12.
+     *
+     * É a mesma conta que `suggestPreset` e `p2pViewerBudget` já faziam em
+     * `@tela/shared` — a malha de controle é que estava fora de compasso.
+     */
+    const porEspectador =
+      availableBps === null ? null : availableBps / Math.max(1, espectadores);
+    const decisao = this.governor.observe(porEspectador, presetById(this.presetId));
+    // `null` na maioria das leituras: o governador só decide quando a mudança
+    // compensa reconfigurar o encoder. `{ bps: null }` remove o teto.
+    if (decisao === null) return;
+    void this.deps.transport.setBitrateCeiling(decisao.bps).catch(() => undefined);
   }
 
   /**
@@ -377,8 +459,10 @@ export class BroadcastSession {
     if (limitation !== 'cpu' && limitation !== 'bandwidth') {
       this.pressure = 0;
       this.pressureKind = 'none';
+      this.recuperar();
       return;
     }
+    this.calmaria = 0;
     if (limitation !== this.pressureKind) {
       this.pressureKind = limitation;
       this.pressure = 0;
@@ -400,6 +484,47 @@ export class BroadcastSession {
   }
 
   /**
+   * Devolve um degrau quando o aperto passou, devagar.
+   *
+   * A assimetria é o ponto: desce em 5 amostras, sobe em 60. Descer rápido
+   * protege a transmissão; subir rápido faria a escada oscilar em volta do
+   * ponto de aperto, e uma malha que reage mais rápido do que o sistema
+   * assenta oscila, sempre.
+   */
+  private recuperar(): void {
+    if (this.presetId === this.presetEscolhido) {
+      this.calmaria = 0;
+      return;
+    }
+    /**
+     * Teto de upload em vigor significa que a banda NÃO está sobrando — o
+     * WebRTC só não reclama porque já estamos segurando o encoder. Subir aqui
+     * seria pedir mais do que o link dá e cair de novo em segundos.
+     */
+    if (this.governor.ceiling !== null) {
+      this.calmaria = 0;
+      return;
+    }
+
+    this.calmaria += 1;
+    if (this.calmaria < CALMARIA_AMOSTRAS) return;
+    this.calmaria = 0;
+
+    const acima = previousPresetOnRecovery(this.presetId, this.presetEscolhido);
+    if (acima === null) return;
+
+    this.presetId = acima;
+    if (this.state.status === 'live') {
+      this.setState({
+        ...this.state,
+        presetId: acima,
+        presetForced: acima !== this.presetEscolhido,
+      });
+    }
+    void this.deps.transport.setPreset(presetById(acima)).catch(() => undefined);
+  }
+
+  /**
    * Escolhe o que ceder quando os bits não dão para tudo.
    *
    * `fluidez` segura os 60fps e deixa borrar — certo para gameplay, onde o
@@ -409,6 +534,21 @@ export class BroadcastSession {
    *
    * Não renegocia: é `setParameters` nos senders, ninguém pisca.
    */
+  /**
+   * Volume do que sai para os espectadores.
+   *
+   * Síncrono e sem renegociação: mexe num `GainNode` no caminho do áudio, não
+   * nos parâmetros do sender. Arrastar a barra não custa nada à transmissão.
+   */
+  setVolumeTransmissao(volume: number): void {
+    const limitado = Math.min(1, Math.max(0, volume));
+    this.volumeTransmissao = limitado;
+    this.deps.gain.set(limitado);
+    if (this.state.status === 'live') {
+      this.setState({ ...this.state, volumeAudio: limitado });
+    }
+  }
+
   async setPrioridade(prioridade: Prioridade): Promise<void> {
     if (this.prioridade === prioridade) return;
     this.prioridade = prioridade;
@@ -488,8 +628,11 @@ export class BroadcastSession {
     if (next === this.presetId) return;
 
     this.presetId = next;
+    // Escolha manual redefine o teto da recuperação: é a nova intenção.
+    this.presetEscolhido = next;
     this.pressure = 0;
     this.pressureKind = 'none';
+    this.calmaria = 0;
     this.setState({ ...this.state, presetId: next, presetForced: false });
     await this.deps.transport.setPreset(presetById(next));
   }
@@ -505,6 +648,20 @@ export class BroadcastSession {
     if (this.state.status !== 'live') return;
     if (this.state.semSinalizacao) return;
     this.setState({ ...this.state, semSinalizacao: true });
+  }
+
+  /**
+   * O canal voltou. O aviso tem que sumir.
+   *
+   * `semSinalizacao` era porta de mão única: entrava em `true` e não havia
+   * caminho de volta, então um restart de dois segundos do servidor deixava o
+   * transmissor marcado como "fora do ar" pelo resto da sessão — mesmo com o
+   * canal já reaberto e aceitando espectadores.
+   */
+  private onSignalingRestored(): void {
+    if (this.state.status !== 'live') return;
+    if (!this.state.semSinalizacao) return;
+    this.setState({ ...this.state, semSinalizacao: false });
   }
 
   private onPeers(peers: readonly PeerInfo[]): void {
@@ -591,6 +748,9 @@ export class BroadcastSession {
 
     this.videoTrack?.stop();
     this.audioTrack?.stop();
+    // Fecha o grafo E para a trilha CRUA, que ninguém mais tem referência para
+    // parar — quem publicou recebeu a trilha de saída.
+    this.deps.gain.close();
     this.videoTrack = null;
     this.audioTrack = null;
     this.preview = null;

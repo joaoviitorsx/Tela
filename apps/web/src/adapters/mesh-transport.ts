@@ -82,6 +82,21 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
          * contradizia o que o README, a regra R8 e a ADR 0005 afirmam.
          */
         deps.channel.on('closed', () => emitter.emit('signaling-lost', undefined)),
+        /**
+         * O canal voltou sozinho. Duas coisas nesta ordem:
+         *
+         * 1. Trocar as credenciais de ICE. As de TURN expiram, e um espectador
+         *    novo entrando com credencial vencida falharia exatamente no
+         *    cenário que a reconexão existe para consertar.
+         * 2. Avisar a sessão, para o aviso de "servidor fora do ar" sumir.
+         *
+         * Os `peer-joined` que o servidor reapresenta caem no `admit`, que é
+         * idempotente para link saudável — quem sobreviveu à queda continua.
+         */
+        deps.channel.on('reopened', (aberto) => {
+          mesh.setIceServers(aberto.iceServers);
+          emitter.emit('signaling-restored', undefined);
+        }),
       );
     },
 
@@ -89,6 +104,9 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       const opened = await deps.channel.watch(slug);
       const media = mediaStream();
       let delivered = false;
+      // Chega no `watching`, não como evento: quem acabou de entrar precisa do
+      // número agora, e não só quando o próximo espectador mexer na contagem.
+      queueMicrotask(() => emitter.emit('viewers', { count: opened.viewers }));
 
       // O espectador é polite: na colisão de oferta ele recua. O transmissor
       // tem a mídia e não pode recuar — a assimetria é essa, e é o que faz o
@@ -179,6 +197,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         deps.channel.on('peer-left', () => emitter.emit('closed', { reason: 'HOST_LEFT' })),
         // Idem no espectador: perder o canal não é perder o vídeo.
         deps.channel.on('closed', () => emitter.emit('signaling-lost', undefined)),
+        deps.channel.on('reopened', () => emitter.emit('signaling-restored', undefined)),
+        deps.channel.on('viewers', ({ count }) => emitter.emit('viewers', { count })),
       );
     },
 

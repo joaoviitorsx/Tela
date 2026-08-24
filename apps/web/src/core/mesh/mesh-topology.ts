@@ -87,7 +87,20 @@ export class MeshTopology {
   private ceiling: number | null = null;
   private prioridade: Prioridade = 'fluidez';
 
-  constructor(private readonly deps: MeshTopologyDeps) {}
+  /**
+   * Começa com o que veio do canal, mas NÃO é fixo: o canal reabre com
+   * credenciais de TURN novas e quem entrar depois precisa das novas.
+   */
+  private iceServers: readonly IceServerConfig[];
+
+  constructor(private readonly deps: MeshTopologyDeps) {
+    this.iceServers = deps.iceServers;
+  }
+
+  /** Chamado quando o canal de sinalização reabre com credenciais novas. */
+  setIceServers(iceServers: readonly IceServerConfig[]): void {
+    this.iceServers = iceServers;
+  }
 
   on<K extends keyof TopologyEvents>(
     event: K,
@@ -110,7 +123,28 @@ export class MeshTopology {
 
   /** Chamado quando o servidor de sinalização anuncia um espectador. */
   admit(peerId: string): void {
-    if (this.links.has(peerId)) this.drop(peerId); // reconexão do mesmo peer
+    const existente = this.links.get(peerId);
+    if (existente !== undefined) {
+      /**
+       * Link saudável com este peer JÁ existe — não derrube.
+       *
+       * Quando o transmissor reabre o canal depois de uma queda, o servidor
+       * reapresenta todos os espectadores que continuaram conectados. Tratar
+       * essa reapresentação como "peer novo" destruiria exatamente as
+       * conexões que sobreviveram ao servidor, que é a promessa da
+       * arquitetura. Só recria o que já morreu.
+       */
+      if (existente.connectionState !== 'failed' && existente.connectionState !== 'closed') {
+        return;
+      }
+      /**
+       * Rede de segurança, não caminho quente: `onStateChange` já derruba o
+       * link em `failed`/`closed`, então na prática nada que continue neste
+       * mapa está morto. Fica porque o custo é uma comparação e a alternativa
+       * é um peer preso para sempre se aquele callback falhar.
+       */
+      this.drop(peerId);
+    }
     if (this.links.size >= this.deps.maxPeers) return;
 
     if (this.stream === null || this.preset === null) {
@@ -129,7 +163,7 @@ export class MeshTopology {
     const link = new PeerLink({
       peerId,
       polite: false,
-      iceServers: this.deps.iceServers,
+      iceServers: this.iceServers,
       send: (payload) => this.deps.send(payload, peerId),
       createConnection: this.deps.createConnection,
       onStateChange: (state) => {
@@ -288,10 +322,29 @@ export class MeshTopology {
         continue;
       }
       if (sender.track?.kind !== 'video') continue;
-      try {
-        const params = sender.getParameters();
-        const encodings = params.encodings?.length ? params.encodings : [{}];
-        encodings[0] = {
+
+      const params = sender.getParameters();
+      /**
+       * Sender sem `encodings` ainda: NÃO invente um.
+       *
+       * A spec (webrtc-pc §5.2) manda rejeitar `setParameters` quando
+       * `parameters.encodings.length` difere de `[[SendEncodings]].length`.
+       * O código antigo mandava `[{}]` para um sender que tinha zero, o que
+       * pede `InvalidModificationError` — e como a rejeição era engolida, o
+       * peer ficava com os DEFAULTS do browser para sempre: sem `maxBitrate`,
+       * sem `maxFramerate`, sem `networkPriority`, sem `degradationPreference`.
+       *
+       * Isso é violação direta da R5: parâmetros diferentes entre peers fazem
+       * o Chrome parar de reaproveitar o encoder, e viram N encoders 1080p60
+       * disputando a GPU com o jogo.
+       */
+      if (!params.encodings?.length) {
+        this.pendentes.add(sender);
+        continue;
+      }
+
+      const encodings = params.encodings;
+      encodings[0] = {
           ...encodings[0],
           maxBitrate: this.effectiveBitrate(preset),
           maxFramerate: preset.main.maxFramerate,
@@ -305,17 +358,60 @@ export class MeshTopology {
            */
           networkPriority: 'low',
         };
+      try {
         await sender.setParameters({
           ...params,
           encodings,
           // O que ceder sob aperto: por padrão resolução, nunca framerate.
           degradationPreference: DEGRADATION_BY_PRIORITY[this.prioridade],
         } as RTCRtpSendParameters);
+        this.pendentes.delete(sender);
       } catch {
-        // Firefox ainda recusa `degradationPreference` em setParameters. O
-        // encoding continua aplicado; não vale derrubar o peer por isso.
+        /**
+         * `setParameters` é TUDO OU NADA.
+         *
+         * O comentário anterior aqui dizia que "o encoding continua aplicado"
+         * e que só o `degradationPreference` era recusado. É falso pela spec:
+         * se a chamada rejeita, NADA foi aplicado — e quem lesse isso pararia
+         * de investigar exatamente onde o defeito estava.
+         *
+         * Segunda tentativa sem `degradationPreference`, que é o membro que
+         * alguns motores de fato recusam. Bitrate e framerate valem mais que
+         * a preferência de degradação, e é melhor aplicar os dois do que
+         * perder os três.
+         */
+        try {
+          await sender.setParameters({ ...params, encodings } as RTCRtpSendParameters);
+          this.pendentes.delete(sender);
+        } catch {
+          // Falhou duas vezes: fica na fila para a próxima amostra de stats.
+          this.pendentes.add(sender);
+        }
       }
     }
+  }
+
+  /**
+   * Senders que ainda não aceitaram os parâmetros.
+   *
+   * `attach` chama `applyPreset` em fire-and-forget e é a ÚNICA chamada que um
+   * peer recebe em regime estacionário — sem esta fila, um peer que falhasse
+   * na primeira tentativa nunca mais seria configurado.
+   */
+  private readonly pendentes = new Set<RTCRtpSender>();
+
+  /**
+   * Nova tentativa para quem ficou de fora, no ritmo das estatísticas.
+   *
+   * Aproveita o relógio que já existe em vez de criar outro: `collectStats`
+   * roda uma vez por segundo enquanto há peer.
+   */
+  private async reaplicarPendentes(): Promise<void> {
+    if (this.pendentes.size === 0 || this.preset === null) return;
+    const alvo = [...this.pendentes].filter((sender) => sender.track !== null);
+    this.pendentes.clear();
+    if (alvo.length === 0) return;
+    await this.applyPreset(alvo, this.preset);
   }
 
   /**
@@ -365,6 +461,10 @@ export class MeshTopology {
   }
 
   async collectStats(): Promise<RTCStatsReport[]> {
+    // Enfileirado, nunca solto: dois `applyPreset` concorrentes no mesmo
+    // sender foi o `InvalidStateError` da ADR 0006 A3.
+    if (this.pendentes.size > 0) void this.enqueue(() => this.reaplicarPendentes());
+
     const reports: RTCStatsReport[] = [];
     for (const link of this.links.values()) {
       try {

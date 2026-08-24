@@ -57,10 +57,10 @@ describe('UplinkGovernor', () => {
     const antes = g.ceiling;
 
     // A rede piorou de verdade e ficou assim.
-    let mudou = null;
+    let mudou: number | null = null;
     for (let i = 0; i < 20; i += 1) {
       const v = g.observe(2_000_000, PRESET_1080P60);
-      if (v !== null) mudou = v;
+      if (v !== null && v.bps !== null) mudou = v.bps;
     }
 
     expect(mudou).not.toBeNull();
@@ -86,12 +86,20 @@ describe('UplinkGovernor', () => {
     aquecer(g, 3_000_000);
     expect(g.ceiling).not.toBeNull();
 
-    let liberou = null;
+    /**
+     * MUDANÇA DE CONTRATO deliberada. Este teste exigia que soltar o teto
+     * devolvesse `PRESET_1080P60.main.maxBitrate` — e era exatamente o
+     * defeito: esse número era gravado como se fosse um teto de verdade, e o
+     * valor do preset ANTIGO ficava grudado. Subir a qualidade no seletor não
+     * subia o bitrate, porque `min(preset, teto)` continuava escolhendo o teto
+     * velho. Soltar agora devolve `{ bps: null }`: sem teto, o preset manda.
+     */
+    let soltou = false;
     for (let i = 0; i < 40; i += 1) {
       const v = g.observe(100_000_000, PRESET_1080P60);
-      if (v !== null) liberou = v;
+      if (v !== null && v.bps === null) soltou = true;
     }
-    expect(liberou).toBe(PRESET_1080P60.main.maxBitrate);
+    expect(soltou).toBe(true);
     expect(g.ceiling).toBeNull();
   });
 

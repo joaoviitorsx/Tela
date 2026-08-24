@@ -19,6 +19,8 @@ export type ViewerState =
       readonly slug: string;
       readonly stream: MediaStream;
       readonly hasAudio: boolean;
+      /** Quantos estão assistindo, incluindo este. Mínimo 1. */
+      readonly viewers: number;
       readonly stats: MediaStats | null;
     }
   | { readonly status: 'reconnecting'; readonly slug: string }
@@ -76,6 +78,9 @@ export class ViewerSession {
   private retryCancel: Cancel | null = null;
 
   private epoch = 0;
+  /** Última contagem de plateia recebida. Fora do `attempt` porque a
+   *  reconexão remonta o estado `watching` e precisa do mesmo número. */
+  private plateia = 1;
   private pollMs = POLL_MIN_MS;
   private slug = '';
   private disposed = false;
@@ -167,10 +172,28 @@ export class ViewerSession {
     const cancels: Cancel[] = [];
 
     let delivered = false;
+    /**
+     * Relógio da MÍDIA, separado do relógio da negociação.
+     *
+     * O defeito que isto conserta: o teto de 15s corria contra a promessa de
+     * `watch()`, e `watch()` resolve assim que o servidor responde `watching`
+     * — antes de qualquer pacote de vídeo. O relógio era cancelado nesse
+     * instante, `delivered()` nunca chegava a ser consultado, e o estado
+     * `sem-conexao` era INALCANÇÁVEL. Na prática: NAT simétrico dos dois lados
+     * sem TURN deixava a página dizendo "aguardando sinal" para sempre, com um
+     * transmissor no ar do outro lado.
+     */
+    let vigiaMidia: Cancel | null = null;
+    const desarmarVigia = (): void => {
+      vigiaMidia?.();
+      vigiaMidia = null;
+    };
+
     cancels.push(
       transport.on('track', ({ stream }) => {
         if (this.stale(epoch)) return;
         delivered = true;
+        desarmarVigia();
         this.pollMs = POLL_MIN_MS;
         this.stream = stream;
         this.setState({
@@ -180,8 +203,15 @@ export class ViewerSession {
           // Reavaliado a cada `track`: o áudio costuma chegar depois do vídeo,
           // e é este campo que faz aparecer o overlay de ativar o som.
           hasAudio: stream.getAudioTracks().length > 0,
+          viewers: this.plateia,
           stats: this.state.status === 'watching' ? this.state.stats : null,
         });
+      }),
+      transport.on('viewers', ({ count }) => {
+        this.plateia = Math.max(1, count);
+        if (this.stale(epoch)) return;
+        if (this.state.status !== 'watching') return;
+        this.setState({ ...this.state, viewers: this.plateia });
       }),
       transport.on('reconnecting', () => {
         if (this.state.status === 'watching') {
@@ -193,11 +223,13 @@ export class ViewerSession {
       // então a mídia voltava e a tela ficava morta.
       transport.on('reconnected', () => this.onReconnected(epoch)),
       /**
-       * Canal caído com o vídeo chegando: não é problema DESTE espectador.
-       * Ele continua vendo — a conexão é direta com quem transmite, e o
-       * servidor nunca esteve no caminho da mídia.
+       * O espectador não muda de estado por causa do canal: ele está vendo
+       * vídeo que não passa pelo servidor. O adapter reconecta sozinho por
+       * baixo, e a única consequência visível seria perder o `peer-left` do
+       * transmissor — que a carência de mídia já cobre.
        */
       transport.on('signaling-lost', () => undefined),
+      transport.on('signaling-restored', () => undefined),
       transport.on('closed', () => void this.onClosed(epoch)),
     );
 
@@ -212,7 +244,7 @@ export class ViewerSession {
     };
 
     try {
-      await this.withTimeout(transport.watch(this.slug), epoch, () => delivered);
+      await this.withTimeout(transport.watch(this.slug), epoch);
     } catch (error) {
       await abandonar();
       if (this.stale(epoch)) return;
@@ -220,7 +252,16 @@ export class ViewerSession {
         // Sala cheia não é erro permanente: alguém sai, a vaga abre.
         this.setState({ status: 'full', slug: this.slug });
         this.advanceBackoff();
-      } else if (isSignalingError(error) && error.code === 'SIGNAL_UNREACHABLE') {
+      } else if (
+        isSignalingError(error) &&
+        (error.code === 'SIGNAL_UNREACHABLE' || error.code === 'HELLO_TIMEOUT')
+      ) {
+        /**
+         * `HELLO_TIMEOUT` é socket que ABRIU e emudeceu — servidor pendurado,
+         * proxy que aceita a conexão e não repassa. Caía no `else` e virava
+         * "ninguém está transmitindo", que manda a pessoa esperar por algo que
+         * não vai acontecer. É problema de servidor, e a mensagem é essa.
+         */
         this.setState({ status: 'sem-servidor', slug: this.slug });
         this.advanceBackoff();
       } else if (error instanceof Error && error.message === 'CONNECT_TIMEOUT') {
@@ -232,6 +273,27 @@ export class ViewerSession {
         this.goOffline();
       }
       return this.scheduleRetry(epoch);
+    }
+
+    /**
+     * O canal abriu. Daqui em diante o que pode faltar é MÍDIA, e é outro
+     * problema com outra mensagem: "não foi possível conectar ao vídeo" em
+     * vez de "ninguém está transmitindo". Esperar não resolve nenhum dos
+     * dois, mas só um deles se resolve sozinho.
+     */
+    if (!delivered) {
+      vigiaMidia = this.deps.scheduler.after(CONNECT_TIMEOUT_MS, () => {
+        if (this.stale(epoch) || delivered) return;
+        vigiaMidia = null;
+        void (async () => {
+          await abandonar();
+          if (this.stale(epoch)) return;
+          this.setState({ status: 'sem-conexao', slug: this.slug });
+          this.advanceBackoff();
+          this.scheduleRetry(epoch);
+        })();
+      });
+      cancels.push(desarmarVigia);
     }
 
     if (this.stale(epoch)) {
@@ -250,19 +312,19 @@ export class ViewerSession {
   }
 
   /**
-   * Corre a promessa contra o relógio. `stillPending` existe porque em mesh a
-   * negociação pode resolver antes do primeiro frame: o que importa é a mídia
-   * ter chegado, não o `watch` ter retornado.
+   * Teto para a NEGOCIAÇÃO abrir o canal.
+   *
+   * Já teve um parâmetro `delivered` aqui, e ele era a origem do defeito: a
+   * intenção era esperar a mídia, mas este relógio é cancelado no instante em
+   * que a promessa resolve — e a promessa é a do `watch`, que resolve no
+   * `watching` do servidor, antes de qualquer pacote. A espera pela mídia é
+   * outro relógio, armado depois deste, em `attempt`.
    */
-  private withTimeout<T>(
-    promise: Promise<T>,
-    epoch: number,
-    delivered: () => boolean,
-  ): Promise<T> {
+  private withTimeout<T>(promise: Promise<T>, epoch: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       let settled = false;
       const cancel = this.deps.scheduler.after(CONNECT_TIMEOUT_MS, () => {
-        if (settled || this.stale(epoch) || delivered()) return;
+        if (settled || this.stale(epoch)) return;
         settled = true;
         reject(new Error('CONNECT_TIMEOUT'));
       });
@@ -301,6 +363,7 @@ export class ViewerSession {
       slug: this.slug,
       stream,
       hasAudio: stream.getAudioTracks().length > 0,
+      viewers: this.plateia,
       stats: null,
     });
   }

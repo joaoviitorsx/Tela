@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { CONTENT_HINT } from '@tela/shared';
 import {
   FakeAudioCapture,
+  FakeAudioGain,
   FakeMediaTransport,
   FakeScheduler,
   FakeScreenCapture,
@@ -20,12 +21,14 @@ function build() {
   const transport = new FakeMediaTransport();
   const screen = new FakeScreenCapture();
   const audio = new FakeAudioCapture();
+  const gain = new FakeAudioGain();
   const scheduler = new FakeScheduler();
 
   const session = new BroadcastSession({
     transport,
     screen,
     audio,
+    gain,
     scheduler,
     shareUrlFor,
     createStream,

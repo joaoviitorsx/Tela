@@ -21,9 +21,16 @@ import { PRESET_720P30, type EncodingPreset } from '@tela/shared';
  *    com ela.
  * 2. **Suavização.** Média móvel exponencial, para que um vale isolado não
  *    vire uma queda de qualidade.
- * 3. **Histerese.** Só muda o teto quando o alvo se afasta o bastante do que
- *    já está aplicado. Ajuste pequeno não compensa o custo de reconfigurar o
- *    encoder.
+ * 3. **Histerese, em DOIS eixos.** No valor: só muda o teto quando o alvo se
+ *    afasta o bastante do que já está aplicado. E na FRONTEIRA: entrar e sair
+ *    do regime "com teto" usa limiares diferentes.
+ *
+ *    O segundo eixo foi um defeito real. Com um limiar só, qualquer banda
+ *    cuja média caísse perto de `maxBitrate / UPLINK_SHARE` — 10,67 Mbps no
+ *    1080p60 — fazia o governador aplicar e soltar alternadamente, cerca de
+ *    uma vez por segundo, para sempre. Os tetos aplicados diferiam do preset
+ *    em menos de 1%: a histerese de valor existia justamente para impedir
+ *    isso, mas o ramo de soltar zerava o estado dela antes de ser consultada.
  *
  * E um piso: nunca abaixo do menor preset. Uma estimativa ruim não pode
  * estrangular a transmissão até o nada — é melhor deixar o próprio WebRTC
@@ -39,11 +46,27 @@ const SUAVIZACAO = 0.25;
 /** Só reconfigura o encoder se o alvo mudar mais que isto. */
 const HISTERESE = 0.25;
 
+/**
+ * Banda morta em volta do teto do preset — gatilho de Schmitt.
+ *
+ * Só passa a limitar quando o alvo cai claramente ABAIXO do que o preset já
+ * pede, e só larga o teto quando ele sobe claramente ACIMA. Os dois limiares
+ * precisam ser diferentes: iguais, a leitura oscilando em cima do ponto de
+ * troca alterna os dois regimes indefinidamente.
+ */
+const ENTRA_ABAIXO_DE = 0.9;
+const SOLTA_ACIMA_DE = 1.15;
+
 /** Leituras ignoradas no início, enquanto o estimador ainda sonda. */
 const AQUECIMENTO_AMOSTRAS = 8;
 
 /** Nunca abaixo do menor preset: teto que estrangula é pior que teto nenhum. */
 const PISO_BPS = PRESET_720P30.main.maxBitrate;
+
+/**
+ * `null` = não mexa. `{ bps: number }` = aplique. `{ bps: null }` = solte.
+ */
+export type DecisaoTeto = { readonly bps: number | null } | null;
 
 export class UplinkGovernor {
   private media: number | null = null;
@@ -62,10 +85,22 @@ export class UplinkGovernor {
   }
 
   /**
-   * Recebe uma leitura de banda disponível e devolve o teto a aplicar, ou
-   * `null` quando nada deve mudar — que é o caso na maioria das leituras.
+   * Recebe uma leitura de banda disponível e decide o que fazer com o teto.
+   *
+   * `null` significa "não mexa" — o caso da esmagadora maioria das leituras.
+   * `{ bps }` aplica; `{ bps: null }` remove o teto e devolve o comando ao
+   * preset.
+   *
+   * A distinção entre "não mexa" e "remova" importa: antes as duas coisas
+   * eram o mesmo retorno, e soltar o teto gravava `preset.main.maxBitrate`
+   * como se fosse um teto de verdade. O número do preset ANTIGO ficava
+   * grudado, então subir a qualidade no seletor não subia o bitrate — a UI
+   * dizia 1080p60 e o encoder continuava preso em 4 Mbps.
+   *
+   * `availableBps` deve chegar POR ESPECTADOR. Em mesh o teto vira
+   * `maxBitrate` de cada sender, e cada espectador recebe uma cópia inteira.
    */
-  observe(availableBps: number | null, preset: EncodingPreset): number | null {
+  observe(availableBps: number | null, preset: EncodingPreset): DecisaoTeto {
     if (availableBps === null || !Number.isFinite(availableBps) || availableBps <= 0) {
       return null;
     }
@@ -77,21 +112,26 @@ export class UplinkGovernor {
     if (this.amostras <= AQUECIMENTO_AMOSTRAS) return null;
 
     const alvo = Math.max(PISO_BPS, Math.round(this.media * UPLINK_SHARE));
+    const tetoDoPreset = preset.main.maxBitrate;
 
-    // Teto acima do que o preset já pede não restringe nada: aplicar seria
-    // reconfigurar o encoder para não mudar coisa alguma.
-    if (alvo >= preset.main.maxBitrate) {
-      if (this.aplicado === null) return null;
+    if (this.aplicado === null) {
+      // Sem teto. Só assume o controle se houver o que restringir de fato:
+      // um teto igual ao que o preset já pede reconfigura o encoder à toa.
+      if (alvo >= tetoDoPreset * ENTRA_ABAIXO_DE) return null;
+      this.aplicado = alvo;
+      return { bps: alvo };
+    }
+
+    // Com teto. Só devolve o controle quando a banda sobra com folga.
+    if (alvo >= tetoDoPreset * SOLTA_ACIMA_DE) {
       this.aplicado = null;
-      return preset.main.maxBitrate;
+      return { bps: null };
     }
 
-    if (this.aplicado !== null) {
-      const variacao = Math.abs(alvo - this.aplicado) / this.aplicado;
-      if (variacao < HISTERESE) return null;
-    }
+    const variacao = Math.abs(alvo - this.aplicado) / this.aplicado;
+    if (variacao < HISTERESE) return null;
 
     this.aplicado = alvo;
-    return alvo;
+    return { bps: alvo };
   }
 }

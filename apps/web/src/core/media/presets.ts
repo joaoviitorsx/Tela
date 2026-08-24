@@ -47,6 +47,23 @@ export function nextPresetOnCpuPressure(current: PresetId): PresetId | null {
 }
 
 /**
+ * Um degrau PARA CIMA, quando o aperto passou.
+ *
+ * A escada só descia. Dez segundos de vizinho baixando um jogo tiravam o
+ * usuário de 1080p60 e ele ficava em 2,5 Mbps pelo resto da sessão, sem que
+ * nada na tela explicasse por quê — o "embaçou e não voltou".
+ *
+ * `teto` é o preset que o usuário ESCOLHEU: a recuperação devolve o que a
+ * degradação tirou e para ali. Subir além disso seria decidir por ele.
+ */
+export function previousPresetOnRecovery(current: PresetId, teto: PresetId): PresetId | null {
+  const atual = SIXTY_FPS_PRESETS.indexOf(current);
+  const limite = SIXTY_FPS_PRESETS.indexOf(teto);
+  if (atual === -1 || limite === -1 || atual <= limite) return null;
+  return SIXTY_FPS_PRESETS[atual - 1] ?? null;
+}
+
+/**
  * O transporte recebe o preset inteiro, não uma tradução.
  *
  * Antes havia um `toPublishRequest` que achatava o preset em camadas de

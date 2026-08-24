@@ -47,6 +47,8 @@ export type TransportEvents = {
   peers: readonly PeerInfo[];
   /** Só no espectador: a mídia chegou. */
   track: { stream: MediaStream };
+  /** Só no espectador: quantos estão assistindo, incluindo ele. */
+  viewers: { count: number };
   reconnecting: void;
   reconnected: void;
   /**
@@ -59,6 +61,15 @@ export type TransportEvents = {
    * espectadores novos não entram.
    */
   'signaling-lost': void;
+  /**
+   * O canal voltou. Espectadores novos conseguem entrar de novo.
+   *
+   * Sem esta contraparte, `signaling-lost` era uma porta de mão única: um
+   * restart de dois segundos do servidor — um deploy — tirava o transmissor
+   * do ar pelo resto da sessão, e a única saída era parar e recomeçar,
+   * derrubando justamente os espectadores que a arquitetura protegeu.
+   */
+  'signaling-restored': void;
   /** A mídia acabou. Aí sim é fim. */
   closed: { reason: string };
 };

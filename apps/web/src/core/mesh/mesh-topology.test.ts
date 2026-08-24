@@ -76,7 +76,21 @@ describe('MeshTopology — admissão', () => {
     expect(ctx.mesh.size).toBe(2);
   });
 
-  it('reconexão do mesmo peer substitui, não duplica', async () => {
+  /**
+   * MUDANÇA DE COMPORTAMENTO deliberada. Antes, readmitir um peer existente
+   * sempre derrubava e recriava o link.
+   *
+   * O motivo da troca: quando o transmissor reabre o canal de sinalização
+   * depois de uma queda, o servidor REAPRESENTA todos os espectadores que
+   * continuaram conectados. Com o comportamento antigo, a reconexão do
+   * servidor destruía justamente as conexões que tinham sobrevivido a ele —
+   * o oposto da promessa da arquitetura.
+   *
+   * O caso que o teste antigo protegia (mesmo peerId chegando duas vezes de
+   * verdade) não ocorre: o servidor emite um `peerId` novo por socket, então
+   * espectador que cai e volta chega com identidade nova.
+   */
+  it('readmissão NÃO derruba link saudável (canal reaberto reapresenta peers)', async () => {
     const ctx = build();
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
     ctx.mesh.admit('v_1');
@@ -85,7 +99,25 @@ describe('MeshTopology — admissão', () => {
     await settle();
 
     expect(ctx.mesh.size).toBe(1);
-    expect((ctx.factory.created[0] as FakePeerConnection).closed).toBe(true);
+    expect((ctx.factory.created[0] as FakePeerConnection).closed).toBe(false);
+    // E não criou uma segunda conexão para o mesmo peer.
+    expect(ctx.factory.created).toHaveLength(1);
+  });
+
+  it('readmissão RECRIA link que já morreu', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    (ctx.factory.created[0] as FakePeerConnection).emitState('failed');
+    await settle();
+
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    expect(ctx.mesh.size).toBe(1);
+    expect(ctx.factory.created).toHaveLength(2);
   });
 
   it('peer que falha é removido e anunciado', async () => {

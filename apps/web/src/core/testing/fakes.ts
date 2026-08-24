@@ -1,6 +1,7 @@
 import type { EncodingPreset, IceServerConfig } from '@tela/shared';
 import { Emitter } from '../emitter.js';
 import type { AudioCapture } from '../ports/audio-capture.js';
+import type { AudioGain } from '../ports/audio-gain.js';
 import type {
   MediaStats,
   MediaTransport,
@@ -258,6 +259,11 @@ export class FakeMediaTransport implements MediaTransport {
     this.emit('signaling-lost', undefined);
   }
 
+  /** Simula o canal reabrindo sozinho depois da queda. */
+  restoreSignaling(): void {
+    this.emit('signaling-restored', undefined);
+  }
+
   /** Simula a chegada da mídia no espectador. */
   deliver(stream: MediaStream = fakeStream([fakeTrack('video')])): void {
     this.emit('track', { stream });
@@ -327,6 +333,7 @@ export class FakeSignalingChannel implements SignalingChannel {
       hostId: null,
       iceServers: TEST_ICE,
       maxPeers: this.maxPeers,
+      viewers: 0,
     };
   }
 
@@ -336,6 +343,7 @@ export class FakeSignalingChannel implements SignalingChannel {
       role: 'viewer',
       selfId: this.selfId,
       hostId: this.hub?.hostId ?? 'h_1',
+      viewers: 1,
       iceServers: TEST_ICE,
       maxPeers: 0,
     };
@@ -396,3 +404,31 @@ export const TEST_POLICY = {
   reserved: new Set(['api', 'signal', 'admin']),
   offensive: new Set(['puta']),
 };
+
+
+/**
+ * Ganho de áudio falso.
+ *
+ * Devolve a MESMA trilha de propósito: assim um teste que confunda a trilha
+ * crua com a de saída não passa por acidente. Guarda os valores aplicados para
+ * quem quiser afirmar sobre eles.
+ */
+export class FakeAudioGain implements AudioGain {
+  readonly aplicados: number[] = [];
+  readonly anexadas: MediaStreamTrack[] = [];
+  fechado = false;
+  ativo = true;
+
+  attach(track: MediaStreamTrack): MediaStreamTrack {
+    this.anexadas.push(track);
+    return track;
+  }
+
+  set(value: number): void {
+    this.aplicados.push(value);
+  }
+
+  close(): void {
+    this.fechado = true;
+  }
+}

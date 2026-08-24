@@ -236,7 +236,10 @@ export class BroadcastSession {
   private prioridade: Prioridade = 'fluidez';
 
   constructor(private readonly deps: BroadcastSessionDeps) {
-    this.maxPeers = deps.maxPeers ?? 3;
+    // Nunca um número solto: `3` aqui sobrevivia até o `hosting` responder, e
+    // nesse meio-tempo o HUD e as vagas desenhavam três de um canal que aceita
+    // cinco — contradizendo o texto da própria Home, que lê `P2P_LIMITS`.
+    this.maxPeers = deps.maxPeers ?? P2P_LIMITS.maxViewersBrowser;
   }
 
   getState(): BroadcastState {

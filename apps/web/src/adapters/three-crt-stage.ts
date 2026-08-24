@@ -1,6 +1,5 @@
 import {
   AdditiveBlending,
-  BackSide,
   Box3,
   CanvasTexture,
   Color,
@@ -16,8 +15,14 @@ import {
   type Material,
   type Object3D,
 } from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { FOV_FINAL, type QuadroAbertura } from '../core/intro/timeline.js';
+import {
+  BASE_HEX,
+  FUNDO_HEX,
+  carregaModelo,
+  descartaCena,
+  restauraContornos,
+} from './crt-modelo.js';
 import type {
   AberturaPalcoOpcoes,
   PalcoAbertura,
@@ -88,9 +93,6 @@ import type {
  * vinheta é a curvatura dele.
  */
 
-/** L0 — o fundo do tubo apagado (§4). */
-const BASE_HEX = '#0A0F12';
-
 /**
  * O shader inteiro trabalha em sRGB e converte para linear na última linha.
  *
@@ -102,7 +104,7 @@ const BASE_HEX = '#0A0F12';
 const BASE_SRGB = new Vector3(0x0a / 255, 0x0f / 255, 0x12 / 255);
 
 /** Fundo da cena: `void`, a mesma cor do `body`. O canvas é opaco (§7). */
-const FUNDO = new Color('#08080a');
+const FUNDO = new Color(FUNDO_HEX);
 
 const VERTEX = /* glsl */ `
   varying vec2 vUv;
@@ -257,24 +259,6 @@ function pintaInterface(
   return canvas;
 }
 
-function carrega(url: string, sinal: AbortSignal): Promise<Object3D> {
-  return new Promise((resolve, reject) => {
-    if (sinal.aborted) {
-      reject(new Error('abertura cancelada antes do modelo chegar'));
-      return;
-    }
-    new GLTFLoader().load(
-      url,
-      (gltf) => {
-        if (sinal.aborted) reject(new Error('abertura cancelada'));
-        else resolve(gltf.scene);
-      },
-      undefined,
-      (erro) => reject(erro instanceof Error ? erro : new Error(String(erro))),
-    );
-  });
-}
-
 /**
  * Quanto da janela inicial o aparelho pode ocupar. O resto é respiro.
  *
@@ -301,34 +285,6 @@ const OCUPACAO_INICIAL = 0.86;
 /** Distância e FOV do primeiro keyframe da §3. É a janela que precisa caber. */
 const Z_INICIAL = 2.95;
 const FOV_INICIAL = 32;
-
-/**
- * Devolve os contornos de casca invertida ao lado de dentro.
- *
- * Cel shading aqui é cor chapada mais contorno, e o contorno é feito do jeito
- * clássico: uma cópia inflada da malha renderizada só pelas FACES DE TRÁS, de
- * modo que ela só apareça na silhueta.
- *
- * O glTF não sabe expressar isso. O formato só tem `doubleSided` — verdadeiro
- * ou falso — e "só o verso" não é uma das opções. O exportador do Three, que é
- * de onde este modelo saiu, escreveu `side: BackSide` em `extras` e mais nada.
- *
- * O sintoma de não corrigir isto é bem específico e foi exatamente o que
- * aconteceu na primeira montagem: as cascas infladas passam a renderizar as
- * faces da FRENTE, que estão por fora do modelo, e o aparelho inteiro fica
- * preto. Não é "escuro demais" nem problema de espaço de cor — é o contorno
- * cobrindo a peça que ele deveria contornar.
- */
-function restauraContornos(raiz: Object3D): void {
-  const grupo = raiz.getObjectByName('Contorno_InvertedHull');
-  if (grupo === undefined) return;
-  grupo.traverse((no) => {
-    if (!(no instanceof Mesh)) return;
-    for (const material of Array.isArray(no.material) ? no.material : [no.material]) {
-      material.side = BackSide;
-    }
-  });
-}
 
 /**
  * Encaixa o aparelho na janela inicial e põe o vidro na origem.
@@ -393,7 +349,7 @@ export const abrirPalco = async ({
     a rede trabalha durante esse bloqueio em vez de esperar por ele — o prazo de
     700 ms do modelo passa a caber os dois custos em vez de somá-los.
   */
-  const carregando = carrega(modeloUrl, sinal);
+  const carregando = carregaModelo(modeloUrl, sinal);
 
   const renderer = new WebGLRenderer({
     canvas,
@@ -553,15 +509,7 @@ export const abrirPalco = async ({
     },
 
     dispose() {
-      cena.traverse((no) => {
-        if (!(no instanceof Mesh)) return;
-        no.geometry.dispose();
-        const materiais: Material[] = Array.isArray(no.material) ? no.material : [no.material];
-        for (const material of materiais) {
-          if (material instanceof MeshBasicMaterial) material.map?.dispose();
-          material.dispose();
-        }
-      });
+      descartaCena(cena);
       interfaceTex.dispose();
       renderer.dispose();
       // Sem isto o contexto WebGL sobrevive ao canvas removido do DOM, e a

@@ -6,7 +6,11 @@
  */
 import { execSync } from 'node:child_process';
 
-const url = (process.env.PROD_URL ?? 'https://tela-signaling.platinum-diver.workers.dev').replace(/\/+$/, '');
+// URL real do Worker publicado. A anterior apontava para um subdomínio que
+// nunca existiu, então `pnpm prod` respondia "sem carimbo de versão" mesmo com
+// o deploy correto no ar — uma ferramenta de verificação que mente é pior que
+// nenhuma, porque some com a única defesa contra publicar coisa velha.
+const url = (process.env.PROD_URL ?? 'https://tela.tela-signaling.workers.dev').replace(/\/+$/, '');
 
 const head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
 

@@ -6,11 +6,17 @@
  */
 import { execSync } from 'node:child_process';
 
-// URL real do Worker publicado. A anterior apontava para um subdomínio que
-// nunca existiu, então `pnpm prod` respondia "sem carimbo de versão" mesmo com
-// o deploy correto no ar — uma ferramenta de verificação que mente é pior que
-// nenhuma, porque some com a única defesa contra publicar coisa velha.
-const url = (process.env.PROD_URL ?? 'https://tela.tela-signaling.workers.dev').replace(/\/+$/, '');
+// URL real do Worker publicado.
+//
+// O formato é `<worker>.<subdomínio-da-conta>.workers.dev`: `tela` vem do
+// `name` no wrangler.toml, `streaming` é o subdomínio da conta (painel, não
+// código), e `.workers.dev` é da Cloudflare e não se remove.
+//
+// Uma versão anterior apontava para um subdomínio que nunca existiu, e o
+// `pnpm prod` respondia "sem carimbo de versão" mesmo com o deploy certo no
+// ar. Ferramenta de verificação que mente é pior que nenhuma: some com a
+// única defesa automática contra publicar coisa velha.
+const url = (process.env.PROD_URL ?? 'https://tela.streaming.workers.dev').replace(/\/+$/, '');
 
 const head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
 

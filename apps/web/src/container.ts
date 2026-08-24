@@ -7,11 +7,14 @@ import { makeBrowserScreenCapture } from './adapters/browser-screen-capture.js';
 import { makeCryptoRandom } from './adapters/crypto-random.js';
 import { makeLocalStorage } from './adapters/local-storage.js';
 import { makeMeshTransport } from './adapters/mesh-transport.js';
+import { makeWebAudioCue } from './adapters/web-audio-cue.js';
+import { suportaWebGL } from './adapters/webgl-probe.js';
 import { makeWsSignaling } from './adapters/ws-signaling.js';
 import type { SlugPolicy } from './core/domain/slug.js';
 import { makeIdentity } from './core/identity/owner-token.js';
 import { BroadcastSession } from './core/media/broadcast-session.js';
 import { ViewerSession } from './core/media/viewer-session.js';
+import type { AbrePalco } from './core/ports/intro-stage.js';
 import type { MediaTransport } from './core/ports/media-transport.js';
 
 /**
@@ -115,3 +118,33 @@ export const volumeTransmissaoPreference = {
   read: () => storage.get('tela.volume-transmissao'),
   write: (value: string) => storage.set('tela.volume-transmissao', value),
 };
+
+/**
+ * A abertura (`core/intro/`, `adapters/three-crt-stage.ts`).
+ *
+ * O `import()` é dinâmico de propósito: o three.js é ~150 KB comprimidos, e a
+ * página que ele decora é um campo e um botão. Assim ele vira um pedaço à
+ * parte, baixado só quando a sondagem já decidiu que a abertura vai rodar — ou
+ * seja, nunca na segunda visita, que é a maioria das visitas.
+ */
+export const abrirPalcoAbertura: AbrePalco = async (opcoes) => {
+  const { abrirPalco } = await import('./adapters/three-crt-stage.js');
+  return abrirPalco(opcoes);
+};
+
+export const suporteDeAbertura = suportaWebGL;
+
+/**
+ * Uma marca por navegador, sem data e sem versão.
+ *
+ * Se um dia a coreografia mudar a ponto de valer mostrar de novo, a chave muda
+ * de nome — é mais honesto que guardar um número de versão que ninguém lembra
+ * de subir.
+ */
+export const memoriaAbertura = {
+  jaViu: () => storage.get('tela.intro.seen') !== null,
+  marcaVista: () => storage.set('tela.intro.seen', '1'),
+};
+
+/** O chiado do §10. Mudo global persistido; a abertura em si é sempre muda. */
+export const audioCue = makeWebAudioCue(storage);

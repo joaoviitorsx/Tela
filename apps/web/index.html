@@ -36,9 +36,24 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500&family=Geist:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Geist+Mono:wght@400;500&family=Geist:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+
+    <!--
+      O modelo da abertura, baixando em paralelo com o bundle.
+
+      A sondagem tem 150 ms para decidir se a abertura roda e mais 700 ms de
+      prazo para o modelo chegar (`core/intro/probe.ts`). Sem este `preload` o
+      download só começaria depois de o JavaScript executar, e num 4G o prazo
+      estouraria sempre — a abertura simplesmente nunca apareceria em celular.
+
+      208 KB. Na segunda visita o `localStorage` já barra a abertura antes de
+      qualquer pixel, mas o navegador ainda baixa isto: é o preço de o modelo
+      precisar estar pronto ANTES de a decisão poder ser tomada com tempo de
+      mostrar alguma coisa.
+    -->
+    <link rel="preload" href="/tela-crt.glb" as="fetch" type="model/gltf-binary" crossorigin />
   </head>
   <body>
     <div id="root"></div>

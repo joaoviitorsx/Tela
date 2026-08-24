@@ -1,5 +1,7 @@
 import { type PresetId } from '@tela/shared';
 import { useState } from 'react';
+import { Abertura } from './components/Abertura.js';
+import { useAbertura } from './react/use-abertura.js';
 import { Broadcast } from './routes/Broadcast.js';
 import { Home } from './routes/Home.js';
 import { NotFound } from './routes/NotFound.js';
@@ -18,12 +20,22 @@ export function App() {
   switch (route.name) {
     case 'home':
       return (
-        <Home
-          onStart={(slug, presetId, audioDeviceId) => {
-            setPending({ slug, presetId, audioDeviceId });
-            navigate('/transmitir');
-          }}
-        />
+        <>
+          {/*
+            A abertura só existe na tela inicial, e só na primeira visita. Ela
+            fica ANTES da home no DOM porque é `position: fixed` com
+            `pointer-events: none` — a home embaixo está montada, interativa e
+            opaca desde `t = 0` (§7 da coreografia). Se o WebGL falhar, o
+            usuário não perde nada além da cena.
+          */}
+          <AberturaDaHome />
+          <Home
+            onStart={(slug, presetId, audioDeviceId) => {
+              setPending({ slug, presetId, audioDeviceId });
+              navigate('/transmitir');
+            }}
+          />
+        </>
       );
 
     case 'broadcast':
@@ -60,4 +72,17 @@ export function App() {
     case 'not-found':
       return <NotFound onHome={() => navigate('/')} />;
   }
+}
+
+/**
+ * A abertura vive num componente próprio para nascer e morrer com a rota.
+ *
+ * `useAbertura` mede o DOM da home no primeiro efeito, então ele precisa rodar
+ * depois de a home existir e sumir quando ela sair. Um hook chamado direto em
+ * `App` continuaria montado ao navegar para `/transmitir`, e o `dispose()` do
+ * contexto WebGL só aconteceria no fechamento da aba.
+ */
+function AberturaDaHome() {
+  const { montado, canvasRef } = useAbertura();
+  return <Abertura canvasRef={canvasRef} montado={montado} />;
 }

@@ -17,30 +17,46 @@ import { execSync } from 'node:child_process';
 // ar. Ferramenta de verificação que mente é pior que nenhuma: some com a
 // única defesa automática contra publicar coisa velha.
 /**
- * Duas URLs durante a troca de subdomínio da conta.
+ * URL de produção. O subdomínio `transmissao` é da CONTA e se troca no painel
+ * da Cloudflare, não aqui — o formato é `<worker>.<subdomínio>.workers.dev`.
  *
- * Apontar só para a nova deixava esta checagem cega enquanto a troca não
- * acontecia — e ela existe justamente para acusar bundle velho no ar. Tenta a
- * nova, cai para a antiga, e imprime qual respondeu.
- *
- * Quando a antiga parar de existir de vez, apague-a daqui: candidata morta que
- * ninguém remove é como esta checagem ficou cega da primeira vez.
+ * A candidata do subdomínio antigo foi removida assim que ele parou de rotear.
+ * Candidata morta que ninguém apaga é como esta checagem ficou cega antes.
  */
 const CANDIDATAS = process.env.PROD_URL
   ? [process.env.PROD_URL]
-  : ['https://tela.transmissao.workers.dev', 'https://tela.tela-signaling.workers.dev'];
+  : ['https://tela.transmissao.workers.dev'];
 
 const head = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
 
 let url = CANDIDATAS[0];
 let resposta = null;
+let alcancou = false;
 for (const candidata of CANDIDATAS) {
   const r = await fetch(`${candidata}/version.json`, { cache: 'no-store' }).catch(() => null);
-  if (r !== null && r.ok) {
+  if (r === null) continue;
+  alcancou = true;
+  if (r.ok) {
     url = candidata;
     resposta = r;
     break;
   }
+}
+
+/**
+ * "Não respondeu" é diferente de "respondeu sem carimbo".
+ *
+ * Sem esta distinção, um DNS que não resolve — cache negativo, VPN, rede caída
+ * — era reportado como "build anterior a este mecanismo", mandando quem lê
+ * publicar de novo para consertar um problema que não está no build. Errar o
+ * diagnóstico é pior que não diagnosticar.
+ */
+if (!alcancou) {
+  console.error(`local : ${head}`);
+  console.error(`no ar : não foi possível ALCANÇAR ${CANDIDATAS.join(' nem ')}`);
+  console.error('        DNS, VPN ou rede — não é problema de build. Tente de outra rede,');
+  console.error('        ou `PROD_URL=https://... pnpm prod`.');
+  process.exit(2);
 }
 
 /**

@@ -2,25 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { aguentaCoreografia, decideModoAbertura, type Sondagem } from './probe.js';
 
 const CAPAZ: Sondagem = {
-  jaViu: false,
   movimentoReduzido: false,
   temWebGL: true,
   sondagemMs: 4,
 };
 
 describe('decideModoAbertura', () => {
-  it('roda a coreografia numa máquina capaz, na primeira visita', () => {
+  it('roda a coreografia numa máquina capaz', () => {
     expect(decideModoAbertura(CAPAZ)).toBe('playing');
   });
 
-  it('nunca cria o canvas na segunda visita', () => {
-    expect(decideModoAbertura({ ...CAPAZ, jaViu: true })).toBe('bypass');
-  });
-
-  it('a segunda visita vence até quem pediu movimento reduzido', () => {
-    // A ordem da §2 importa: `jaViu` é o passo 1. Quem já viu não paga nem o
-    // crossfade de 300 ms do FADE.
-    expect(decideModoAbertura({ ...CAPAZ, jaViu: true, movimentoReduzido: true })).toBe('bypass');
+  it('roda de novo a cada visita — não existe mais o passo "já viu" (ADR 0013)', () => {
+    // A sondagem não recebe histórico nenhum. Se um dia alguém quiser o bypass
+    // de volta, o lugar é aqui, e este teste é o que vai falhar primeiro.
+    expect(decideModoAbertura(CAPAZ)).toBe('playing');
+    expect(decideModoAbertura(CAPAZ)).toBe('playing');
+    expect(Object.keys(CAPAZ)).not.toContain('jaViu');
   });
 
   it('cai para FADE com prefers-reduced-motion', () => {

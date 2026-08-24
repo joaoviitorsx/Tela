@@ -52,8 +52,12 @@ Tempo em segundos a partir do mount do componente. `t = 0` é o primeiro frame r
                     └──────────────┘
 ```
 
+> **O passo 1 foi revogado pela ADR 0013:** a abertura roda em toda visita a
+> `/`, e `tela.intro.seen` não é mais gravado nem lido. O resto da sondagem
+> continua valendo como está escrito.
+
 **PROBING** — antes de qualquer pixel:
-1. `localStorage.getItem('tela.intro.seen')` → se existe, `BYPASS`
+1. ~~`localStorage.getItem('tela.intro.seen')` → se existe, `BYPASS`~~ (ADR 0013)
 2. `matchMedia('(prefers-reduced-motion: reduce)')` → se true, `FADE`
 3. Contexto WebGL disponível? Se não, `FADE`
 4. Renderiza 1 frame de aquecimento e mede. `> 32ms` → `FADE`
@@ -61,7 +65,7 @@ Tempo em segundos a partir do mount do componente. `t = 0` é o primeiro frame r
 
 O passo 4 é a proteção real contra máquina fraca. Não confie em user-agent nem em contagem de núcleos — meça um frame.
 
-Grave `tela.intro.seen` **ao entrar em HANDOFF**, não no fim. Se o usuário recarregar no meio, ele já viu o suficiente.
+~~Grave `tela.intro.seen` **ao entrar em HANDOFF**, não no fim.~~ Não há mais marca a gravar — ADR 0013.
 
 ---
 
@@ -340,8 +344,8 @@ O `visibilitychange` com pausa não é opcional. Sem ele, o amigo esperando voc�
 - [ ] `k1` ≤0.01 em `t = 1.80`
 - [ ] CLS = 0 no handoff — cole o número medido
 - [ ] Canvas removido e contexto WebGL descartado em `t = 1.92`
-- [ ] `tela.intro.seen` gravado ao entrar em HANDOFF
-- [ ] Segunda visita: canvas nunca é criado
+- [x] ~~`tela.intro.seen` gravado ao entrar em HANDOFF~~ — revogado pela ADR 0013
+- [x] ~~Segunda visita: canvas nunca é criado~~ — revogado pela ADR 0013
 - [ ] `prefers-reduced-motion`: zero movimento de câmera
 - [ ] Nenhum som antes do primeiro gesto
 - [ ] Offline: 12fps, pausa com aba oculta — cole o uso de CPU medido

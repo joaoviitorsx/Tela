@@ -17,3 +17,14 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# O modelo da abertura, que agora carrega em TODA visita à tela inicial
+# (ADR 0013). Sem cabeçalho, são 208 KB por visita.
+#
+# Sete dias e não `immutable`: o nome do arquivo não tem hash de conteúdo — ele
+# é referenciado por caminho fixo no `preload` do index.html e no adaptador —,
+# então `immutable` por um ano deixaria uma versão velha do modelo presa no
+# navegador de quem já visitou. Uma semana some sozinha; `stale-while-revalidate`
+# faz a troca acontecer em segundo plano, sem ninguém esperar por ela.
+/tela-crt.glb
+  Cache-Control: public, max-age=604800, stale-while-revalidate=86400

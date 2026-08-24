@@ -169,10 +169,11 @@ pnpm depcruise                          # ciclos de dependência
 node scripts/build-3d.mjs               # só quando assets/3d/*.origem.glb mudar
 ```
 
-A abertura tem dois atalhos de verificação, e os dois estão na URL:
-`/?abertura=1` roda a coreografia inteira ignorando "já viu"; `/?abertura=t1.35`
-congela o quadro daquele instante, que é como se confere um critério de aceite
-sem cronometrar animação por foto.
+A abertura roda em TODA visita à tela inicial (ADR 0013) e tem três atalhos na
+URL: `/?abertura=0` pula, `/?abertura=1` roda ignorando o corte do quadro de
+aquecimento — o jeito de ver a cena em navegador headless — e
+`/?abertura=t1.35` congela o quadro daquele instante, que é como se confere um
+critério de aceite sem cronometrar animação por foto.
 
 Não há Docker, não há banco, não há servidor de mídia. O signaling é um
 processo Node sem estado durável.

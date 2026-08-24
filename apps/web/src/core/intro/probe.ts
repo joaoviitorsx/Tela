@@ -15,8 +15,6 @@ export type ModoAbertura =
   | 'bypass';
 
 export type Sondagem = {
-  /** `tela.intro.seen` no armazenamento local. Segunda visita não repete a abertura. */
-  readonly jaViu: boolean;
   readonly movimentoReduzido: boolean;
   readonly temWebGL: boolean;
   /** Quanto a sondagem inteira levou. Estourou o orçamento, não vale a pena. */
@@ -29,9 +27,21 @@ export const TETO_AQUECIMENTO_MS = 32;
 /** Orçamento total da sondagem (§2, passo 5). */
 export const TETO_SONDAGEM_MS = 150;
 
-/** Passos 1, 2, 3 e 5 da §2. O passo 4 é `aguentaCoreografia`, abaixo. */
+/**
+ * Passos 2, 3 e 5 da §2. O passo 4 é `aguentaCoreografia`, abaixo.
+ *
+ * # O passo 1 não existe mais
+ *
+ * A §2 abre bypassando quem já viu, e um critério de aceite da §13 diz "segunda
+ * visita: canvas nunca é criado". A abertura passou a rodar em TODA visita à
+ * tela inicial — decisão de produto, registrada na ADR 0013.
+ *
+ * O que segurava esse custo continua de pé e não é pouco: o DOM real está
+ * montado, opaco e interativo desde `t = 0` por baixo do canvas (§7), e
+ * qualquer toque, tecla ou rolagem pula direto para o fim (§8). Quem já
+ * conhece a cena não espera 1,80 s — espera o tempo de encostar na tela.
+ */
 export function decideModoAbertura(sondagem: Sondagem): ModoAbertura {
-  if (sondagem.jaViu) return 'bypass';
   if (sondagem.movimentoReduzido) return 'fade';
   if (!sondagem.temWebGL) return 'fade';
   if (sondagem.sondagemMs > TETO_SONDAGEM_MS) return 'bypass';

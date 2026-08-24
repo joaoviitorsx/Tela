@@ -8,20 +8,20 @@ import {
 } from '../core/intro/timeline.js';
 import { PRAZO_MODELO_MS, aguentaCoreografia, decideModoAbertura } from '../core/intro/probe.js';
 import type { PalcoAbertura, PlacaDaTela } from '../core/ports/intro-stage.js';
-import { abrirPalcoAbertura, memoriaAbertura, suporteDeAbertura } from '../container.js';
+import { abrirPalcoAbertura, suporteDeAbertura } from '../container.js';
 
 /**
  * A abertura, do primeiro quadro ao canvas removido.
  *
- * A máquina de estados é a da §2 da coreografia. O que muda de lugar em relação
- * ao desenho dela é só isto: o passo 1 (já viu?) roda no inicializador do
- * `useState`, ANTES do primeiro render — o critério de aceite diz "segunda
- * visita: canvas nunca é criado", e criar para remover no quadro seguinte não
- * é nunca criar.
+ * A máquina de estados é a da §2 da coreografia, menos o passo 1: a abertura
+ * roda em TODA visita à tela inicial, não uma vez por navegador (ADR 0013).
+ *
+ * O que segura o custo disso já estava no desenho da especificação: o DOM real
+ * fica montado, opaco e interativo por baixo do canvas desde `t = 0` (§7), e
+ * qualquer toque, tecla ou rolagem pula direto para o fim (§8). Quem já viu a
+ * cena não espera 1,80 s — espera o tempo de encostar na tela.
  *
  * ```
- *   nada  ←── já viu (nem o canvas nasce)
- *
  *   canvas de pé ──→ coreografia 1,80s ──→ crossfade ──→ canvas removido
  *          │                  └── skip ────────┘
  *          └── sondagem reprovou · modelo não chegou ──→ canvas removido
@@ -45,16 +45,14 @@ const GATILHOS_DE_SKIP = ['pointerdown', 'keydown', 'touchstart', 'wheel'] as co
  *
  * | valor | efeito |
  * |---|---|
- * | `1` | roda a coreografia inteira, mesmo já tendo visto |
- * | `0` | pula, mesmo na primeira visita |
+ * | `1` | roda ignorando o corte do quadro de aquecimento |
+ * | `0` | pula |
  * | `t1.35` | congela em `t = 1,35 s` e não entrega ao DOM |
- * | ausente | comportamento normal |
+ * | ausente | comportamento normal — a coreografia roda |
  *
- * Os dois primeiros existem porque a abertura roda UMA vez por navegador, e
- * revisar um ajuste de 40 ms de rasgo limpando `localStorage` na mão é um jeito
- * de errar. O `1` também ignora o corte do quadro de aquecimento — é o único
- * jeito de ver a cena num navegador headless, onde o rasterizador é software e
- * o quadro zero custa 58 ms (e reprovaria com razão, se fosse gente).
+ * O `1` ignorar o corte do quadro de aquecimento é o que torna a cena visível
+ * num navegador headless, onde o rasterizador é software e o quadro zero custa
+ * 58 ms — reprovaria com razão, se fosse gente.
  *
  * O `t` existe porque os critérios de aceite da §13 são sobre INSTANTES —
  * "k1 ≤ 0,01 em t = 1,80", "linha horizontal antes da vertical" — e tirar foto
@@ -73,9 +71,7 @@ function forcada(): Forcada | null {
 }
 
 function nascePintando(): boolean {
-  const forcado = forcada();
-  if (forcado !== null) return forcado.roda;
-  return !memoriaAbertura.jaViu();
+  return forcada()?.roda ?? true;
 }
 
 /**
@@ -176,8 +172,6 @@ export function useAbertura(): Abertura {
     const inicioSondagem = performance.now();
     const temWebGL = suporteDeAbertura();
     const modo = decideModoAbertura({
-      // O passo 1 já rodou em `decideSePinta`: chegar aqui é não ter visto.
-      jaViu: false,
       movimentoReduzido: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
       temWebGL,
       sondagemMs: performance.now() - inicioSondagem,
@@ -188,11 +182,7 @@ export function useAbertura(): Abertura {
       return;
     }
 
-    /**
-     * HANDOFF. Grava `tela.intro.seen` AQUI e não no fim: quem recarregou no
-     * meio já viu o suficiente, e repetir a cena para essa pessoa seria cobrar
-     * duas vezes pela mesma coisa.
-     */
+    /** HANDOFF: crossfade do canvas para o DOM, e o canvas sai (§7). */
     const entregaAoDom = (duracaoS: number) => {
       if (!vivo) return;
       // O critério de aceite da §13 é "duração 1,80 s ± 0,05, medida com
@@ -203,7 +193,6 @@ export function useAbertura(): Abertura {
       if (performance.getEntriesByName(MARCA_INICIO).length > 0) {
         performance.measure('tela:abertura', MARCA_INICIO);
       }
-      memoriaAbertura.marcaVista();
       const alvo = canvasRef.current;
       if (alvo !== null) {
         alvo.style.transition = `opacity ${Math.round(duracaoS * 1000)}ms linear`;

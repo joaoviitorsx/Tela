@@ -134,17 +134,5 @@ export const abrirPalcoAbertura: AbrePalco = async (opcoes) => {
 
 export const suporteDeAbertura = suportaWebGL;
 
-/**
- * Uma marca por navegador, sem data e sem versão.
- *
- * Se um dia a coreografia mudar a ponto de valer mostrar de novo, a chave muda
- * de nome — é mais honesto que guardar um número de versão que ninguém lembra
- * de subir.
- */
-export const memoriaAbertura = {
-  jaViu: () => storage.get('tela.intro.seen') !== null,
-  marcaVista: () => storage.set('tela.intro.seen', '1'),
-};
-
 /** O chiado do §10. Mudo global persistido; a abertura em si é sempre muda. */
 export const audioCue = makeWebAudioCue(storage);

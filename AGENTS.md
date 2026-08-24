@@ -22,6 +22,7 @@ Contexto: desde 17/08/2026 o Discord suspendeu compartilhamento de tela no Brasi
 | `docs/TELA-changeset-mesh.md` | **Leia primeiro.** Altera as decisões abaixo; em conflito, ele vence |
 | `docs/adr/` | Decisões já tomadas e seus motivos — comece pela 0005 |
 | `docs/TELA-documentacao-tecnica.md` | Fluxos, pipeline de mídia, UI. As partes de SFU e infra estão obsoletas |
+| `docs/TELA-coreografia-abertura.md` | A abertura 3D, em números. Os desvios estão na ADR 0011 |
 | `docs/DEPLOY.md` | Subir o front estático e o servidor de sinalização |
 
 O documento de padrões de engenharia citado na versão original deste arquivo
@@ -136,6 +137,7 @@ core/ports/     interfaces
 core/mesh/      PeerLink, MeshTopology, ICE  → sem DOM: RTCPeerConnection é injetado
 core/media/     sessões, presets, stats, banda
 core/identity/  ownerToken
+core/intro/     linha do tempo e sondagem da abertura  → puro, sem WebGL
 adapters/       implementam as ports  → WebSocket, WebRTC, browser APIs
 react/          hooks finos           → ponte core ↔ React via useSyncExternalStore
 components/     burros, props → JSX   → zero lógica, zero core/
@@ -163,7 +165,14 @@ pnpm install
 pnpm dev                                # signaling :3333 + web :5173
 pnpm turbo lint typecheck test build    # tem que passar antes de qualquer entrega
 pnpm depcruise                          # ciclos de dependência
+
+node scripts/build-3d.mjs               # só quando assets/3d/*.origem.glb mudar
 ```
+
+A abertura tem dois atalhos de verificação, e os dois estão na URL:
+`/?abertura=1` roda a coreografia inteira ignorando "já viu"; `/?abertura=t1.35`
+congela o quadro daquele instante, que é como se confere um critério de aceite
+sem cronometrar animação por foto.
 
 Não há Docker, não há banco, não há servidor de mídia. O signaling é um
 processo Node sem estado durável.

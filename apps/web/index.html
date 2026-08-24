@@ -4,8 +4,31 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Transmita sua gameplay em 1080p com menos de 200ms de atraso. Sem cadastro." />
+
+    <!--
+      Prévia do link, que é onde este produto é apresentado de verdade: ele
+      nasce para ser colado num Discord. Sem Open Graph a prévia saía só com
+      texto, porque `name="description"` sozinho não carrega imagem.
+
+      `og:image` é raiz-relativo de propósito. Discord, WhatsApp e Telegram
+      resolvem contra a URL da página, então a prévia continua certa se o
+      domínio mudar — e ele vai mudar. URL absoluta aqui seria uma string para
+      alguém esquecer de atualizar.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="tela" />
+    <meta property="og:title" content="tela" />
+    <meta
+      property="og:description"
+      content="Transmita sua gameplay em 1080p com menos de 200ms de atraso. Sem cadastro."
+    />
+    <meta property="og:image" content="/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="tela — televisão retrô com um play verde na tela" />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#08080A" />
-    <meta name="description" content="Transmita seu gameplay em 1080p60 com menos de 200ms de atraso. Sem cadastro." />
     <!-- Sem diretório e sem busca: link só existe para quem recebeu (§15). -->
     <meta name="robots" content="noindex, nofollow" />
     <title>tela</title>

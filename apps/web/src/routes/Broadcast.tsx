@@ -92,7 +92,18 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
    * hoje — reaplicar 100% a cada transmissão devolveria o susto.
    */
   const [volumeAudio, setVolumeAudio] = useState(() => {
-    const bruto = Number(volumeTransmissaoPreference.read());
+    /**
+     * O `null` PRECISA ser tratado antes do `Number`.
+     *
+     * `Number(null)` é 0, não `NaN` — e 0 passa numa guarda de intervalo
+     * `>= 0 && <= 1`. Sem preferência guardada, ou seja, na PRIMEIRA
+     * transmissão de todo mundo, o volume nascia em zero: o produto mandava
+     * silêncio aos amigos e o botão dizia "Ativar o som", como se o usuário
+     * tivesse escolhido isso.
+     */
+    const guardado = volumeTransmissaoPreference.read();
+    if (guardado === null) return 1;
+    const bruto = Number(guardado);
     return Number.isFinite(bruto) && bruto >= 0 && bruto <= 1 ? bruto : 1;
   });
 

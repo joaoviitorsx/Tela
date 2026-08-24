@@ -1,5 +1,6 @@
 import { P2P_LIMITS, PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
 import { useCallback, useMemo, useState } from 'react';
+import { Vitrine } from '../components/Vitrine.js';
 import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
 import { BigButton } from '../components/BigButton.js';
 import { IconPlay } from '../components/Icon.js';
@@ -11,6 +12,7 @@ import { audioCue, identity, platform, preferences } from '../container.js';
 import { isPresetId } from '../core/media/presets.js';
 import { useAudioSources } from '../react/use-audio-sources.js';
 import { useSlugCheck } from '../react/use-slug-check.js';
+import { useVitrine } from '../react/use-vitrine.js';
 
 type Props = {
   readonly onStart: (slug: string, presetId: PresetId, audioDeviceId: string | null) => void;
@@ -80,6 +82,34 @@ export function Home({ onStart }: Props) {
     onStart(wanted, presetId, audioDeviceId);
   }, [slug, check, presetId, audioDeviceId, onStart]);
 
+  /**
+   * O que o tubo da vitrine mostra.
+   *
+   * É o MESMO dado do campo, traduzido para o vocabulário do aparelho: o
+   * endereço na tela e o estado numa lâmpada. Não há segunda fonte de verdade —
+   * se o campo mudar de regra, o tubo muda junto, porque ele lê daqui.
+   */
+  const noTubo = useMemo(
+    () => ({
+      slug: slug.trim().toLowerCase(),
+      status:
+        slug.trim() === ''
+          ? ('vazio' as const)
+          : check.status === 'ok'
+            ? ('livre' as const)
+            : check.status === 'invalid'
+              ? ('invalido' as const)
+              : ('verificando' as const),
+    }),
+    [slug, check.status],
+  );
+
+  const focaOCampo = useCallback(() => {
+    document.getElementById('slug')?.focus();
+  }, []);
+
+  const vitrine = useVitrine(noTubo, focaOCampo);
+
   const preset = PRESETS[presetId];
   const maiorCamada = preset.layers[0];
   const teto = P2P_LIMITS.maxViewersBrowser;
@@ -140,8 +170,21 @@ export function Home({ onStart }: Props) {
           pendurado embaixo do último filete.
         */}
         <section className="flex flex-1 items-center border-b border-line py-10 sm:py-14">
-          <div className="mx-auto w-full max-w-[1180px] px-4 sm:px-6">
-            <div className="flex w-full max-w-[860px] flex-col gap-6">
+          {/*
+            Campo à esquerda, aparelho à direita.
+
+            A metade direita da faixa estava vazia desde que a coluna de texto
+            saiu (ADR 0012), e o que entrou nela não é enfeite: é o monitor do
+            canal que está sendo criado. O que a pessoa digita aparece no tubo,
+            e as lâmpadas da lateral são o estado do nome. Campo vazio, o tubo
+            mostra chiado e SEM SINAL — que é exatamente o que o canal é antes
+            de ter nome.
+
+            `items-center` e não `items-start`: o aparelho tem centro óptico e
+            alinhá-lo pelo topo do rótulo o deixa pendurado.
+          */}
+          <div className="mx-auto flex w-full max-w-[1180px] items-center gap-10 px-4 sm:px-6">
+            <div className="flex w-full min-w-0 max-w-[860px] flex-1 flex-col gap-6">
               <h1 data-vidro="texto" className="serigrafia">
                 seu canal
               </h1>
@@ -194,6 +237,8 @@ export function Home({ onStart }: Props) {
                 </p>
               </div>
             </div>
+
+            <Vitrine canvasRef={vitrine.canvasRef} montado={vitrine.disponivel} />
           </div>
         </section>
 

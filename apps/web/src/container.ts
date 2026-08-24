@@ -14,6 +14,7 @@ import type { SlugPolicy } from './core/domain/slug.js';
 import { makeIdentity } from './core/identity/owner-token.js';
 import { BroadcastSession } from './core/media/broadcast-session.js';
 import { ViewerSession } from './core/media/viewer-session.js';
+import type { AbreVitrine } from './core/ports/crt-vitrine.js';
 import type { AbrePalco } from './core/ports/intro-stage.js';
 import type { MediaTransport } from './core/ports/media-transport.js';
 
@@ -133,6 +134,19 @@ export const abrirPalcoAbertura: AbrePalco = async (opcoes) => {
 };
 
 export const suporteDeAbertura = suportaWebGL;
+
+/**
+ * O aparelho da vitrine, ao lado do campo.
+ *
+ * Mesmo `import()` dinâmico da abertura, e de propósito: as duas cenas caem no
+ * mesmo pedaço do bundle. Quem chega na tela inicial baixa o three.js uma vez e
+ * as duas usam — e quem nunca chega nela (o espectador, que abre `/slug`) não
+ * baixa nada.
+ */
+export const abrirVitrineCrt: AbreVitrine = async (opcoes) => {
+  const { abrirVitrine } = await import('./adapters/three-crt-vitrine.js');
+  return abrirVitrine(opcoes);
+};
 
 /** O chiado do §10. Mudo global persistido; a abertura em si é sempre muda. */
 export const audioCue = makeWebAudioCue(storage);

@@ -1,66 +1,163 @@
-type Motivo = 'offline' | 'cheio' | 'sem-conexao' | 'sem-servidor';
+export type Motivo =
+  | 'conectando'
+  | 'offline'
+  | 'reconectando'
+  | 'cheio'
+  | 'sem-conexao'
+  | 'sem-servidor';
 
 type Props = {
   readonly slug: string;
   readonly motivo?: Motivo;
-  readonly maxPeers?: number;
+  /** Vem da rota: o componente não inventa o limite da transmissão. */
+  readonly maxPeers: number;
+  /** Só chega nos dois motivos que pedem ação humana. */
+  readonly onRecarregar?: () => void;
 };
 
 /**
- * Estado, não erro.
+ * A sala de espera do espectador. Estado, não erro.
  *
- * O amigo abre o link antes do jogo começar e deixa a aba aberta — a página
- * conecta sozinha quando a transmissão subir. Sem botão de "tentar de novo":
- * não há nada para ele fazer, e oferecer um botão inútil é pior que nada.
+ * Esta é a primeira tela — muitas vezes a única por vários minutos — que o
+ * amigo vê depois de clicar no link. Ela precisa responder três perguntas em
+ * ordem, e a hierarquia visual é essa ordem: em que canal eu caí, o que está
+ * acontecendo, e o que eu faço agora.
  *
- * Os três motivos existem separados porque a ação de quem lê é diferente em
- * cada um. Um único "não deu" mandaria a pessoa esperar quando ela precisa
- * agir, ou agir quando ela só precisa esperar.
+ * O slug é o herói porque é a resposta da primeira pergunta. Em monoespaçada
+ * porque é um identificador: quem abriu o link errado precisa comparar
+ * caractere por caractere, e mono é a única escolha que torna isso possível.
+ *
+ * Nada aqui é verde. O acento é do AO VIVO, e reusá-lo apagaria a única
+ * diferença visual entre "esperando" e "no ar" — que é exatamente a
+ * informação que esta tela existe para dar.
  */
-export function OfflineState({ slug, motivo = 'offline', maxPeers = 3 }: Props) {
-  const { titulo, situacao, explicacao } = TEXTO[motivo](slug, maxPeers);
+export function OfflineState({
+  slug,
+  motivo = 'conectando',
+  maxPeers,
+  onRecarregar,
+}: Props) {
+  const { rotulo, corpo, tom, varrendo } = TEXTO[motivo](maxPeers);
+  const cor = tom === 'warn' ? 'text-warn' : 'text-muted';
 
   return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-3 px-6 text-center">
-      <p className="tabular text-[17px] text-text">{titulo}</p>
-      <p className="inline-flex items-center gap-2 text-[13px] text-muted">
-        <span
-          className={`h-1.5 w-1.5 rounded-full animate-live ${
-            motivo === 'sem-conexao' || motivo === 'sem-servidor' ? 'bg-warn' : 'bg-muted'
-          }`}
-          aria-hidden="true"
-        />
-        {situacao}
-      </p>
-      <p className="mt-2 max-w-sm text-[13px] text-muted">{explicacao}</p>
+    <div className="flex min-h-dvh items-center justify-center px-5 py-10">
+      {/*
+        `min-h-dvh` e não `min-h-full`: altura percentual resolve contra a
+        altura do pai, e um pai com `min-height` e altura automática vale
+        zero — o centro colapsa para o topo. Contra a viewport não colapsa.
+      */}
+      <section
+        role="status"
+        aria-live="polite"
+        className="animate-enter w-full max-w-[660px] overflow-hidden rounded-md border border-line bg-surface"
+      >
+        <Varredura ativa={varrendo} />
+
+        <div className="flex min-h-[min(46vh,300px)] flex-col items-center justify-center gap-5 px-6 py-12 text-center">
+          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${cor}`}>
+            {rotulo}
+          </p>
+
+          <h1 className="tabular max-w-full truncate text-[clamp(26px,6.5vw,42px)] font-medium leading-none text-text">
+            {slug}
+          </h1>
+
+          <p className="max-w-[46ch] text-[13.5px] leading-relaxed text-muted">{corpo}</p>
+
+          {onRecarregar && (
+            <button
+              type="button"
+              onClick={onRecarregar}
+              className="mt-1 inline-flex h-11 items-center rounded-sm border border-edge px-5 text-[13px] font-medium text-text transition-colors duration-150 hover:bg-void"
+            >
+              Recarregar a página
+            </button>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
 
-const TEXTO: Record<
-  Motivo,
-  (slug: string, maxPeers: number) => { titulo: string; situacao: string; explicacao: string }
-> = {
-  offline: (slug) => ({
-    titulo: `${slug} não está transmitindo`,
-    situacao: 'aguardando',
-    explicacao: 'Deixe esta aba aberta. O vídeo aparece sozinho quando começar.',
+/**
+ * A faixa é o único movimento desta tela, e ele carrega informação.
+ *
+ * Varrendo: o canal continua escutando sozinho e não há nada a fazer.
+ * Parada e âmbar: a tentativa travou e depende de alguém.
+ *
+ * Um spinner comunicaria "está demorando demais", que é a leitura errada para
+ * quem simplesmente chegou antes do jogo começar.
+ *
+ * Sob `prefers-reduced-motion` a faixa congela. Nenhuma informação se perde:
+ * o rótulo e a cor já dizem o mesmo em texto.
+ */
+function Varredura({ ativa }: { readonly ativa: boolean }) {
+  if (!ativa) return <div className="h-[2px] w-full bg-warn/60" aria-hidden="true" />;
+
+  return (
+    <div className="relative h-[2px] w-full overflow-hidden bg-line" aria-hidden="true">
+      {/*
+        Segmento curto e claro, não largo e apagado: numa faixa de 2px por 660
+        de largura um degradê suave sobre um terço vira borrão de canto — lido
+        como falha de renderização, não como intenção.
+      */}
+      <span className="animate-scan absolute inset-y-0 w-1/5 bg-gradient-to-r from-transparent via-text to-transparent" />
+    </div>
+  );
+}
+
+type Conteudo = {
+  readonly rotulo: string;
+  readonly corpo: string;
+  readonly tom: 'muted' | 'warn';
+  readonly varrendo: boolean;
+};
+
+/**
+ * Um motivo por ação do leitor, não por código de erro.
+ *
+ * Quem lê "aguardando" não faz nada; quem lê "sem servidor" mexe no navegador.
+ * Fundir os dois num "não deu" mandaria a pessoa agir quando ela só precisa
+ * esperar — ou esperar quando nada vai acontecer sozinho.
+ */
+const TEXTO: Record<Motivo, (maxPeers: number) => Conteudo> = {
+  conectando: () => ({
+    rotulo: 'conectando',
+    corpo: 'Procurando a transmissão e negociando a conexão direta.',
+    tom: 'muted',
+    varrendo: true,
   }),
-  cheio: (_slug, maxPeers) => ({
-    titulo: `transmissão lotada (${maxPeers}/${maxPeers})`,
-    situacao: 'aguardando uma vaga',
-    explicacao: 'Assim que alguém sair, você entra sozinho.',
+  offline: () => ({
+    rotulo: 'aguardando sinal',
+    corpo: 'Deixe esta aba aberta. O vídeo começa sozinho, sem precisar atualizar.',
+    tom: 'muted',
+    varrendo: true,
   }),
-  'sem-servidor': () => ({
-    titulo: 'não foi possível falar com o servidor',
-    situacao: 'tentando de novo',
-    explicacao:
-      'A conexão com o servidor não abriu. Pode ser bloqueio do navegador (escudos do Brave, extensões de privacidade), proxy da rede, ou o servidor fora do ar. Tente desativar os escudos para este site.',
+  reconectando: () => ({
+    rotulo: 'reconectando',
+    corpo: 'O vídeo parou de chegar. Retomamos sozinhos assim que o sinal voltar.',
+    tom: 'warn',
+    varrendo: true,
+  }),
+  cheio: (maxPeers) => ({
+    rotulo: `sem vaga · ${maxPeers}/${maxPeers}`,
+    corpo: `Esta transmissão comporta ${maxPeers} pessoas ao mesmo tempo. Você entra sozinho quando alguém sair.`,
+    tom: 'muted',
+    varrendo: true,
   }),
   'sem-conexao': () => ({
-    titulo: 'não foi possível conectar ao vídeo',
-    situacao: 'tentando outro caminho',
-    explicacao:
-      'A transmissão existe, mas a conexão direta entre vocês não fechou — costuma ser NAT restritivo dos dois lados. Continuamos tentando; se persistir, quem transmite precisa configurar um servidor TURN.',
+    rotulo: 'sem rota',
+    corpo:
+      'A transmissão está no ar, mas a conexão direta com ela não fechou — quase sempre é o NAT das duas operadoras. Seguimos tentando por outros caminhos.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  'sem-servidor': () => ({
+    rotulo: 'sem servidor',
+    corpo:
+      'Não foi possível abrir a conexão. No Brave, desligue os escudos para este site: eles bloqueiam o endereço da transmissão. Extensão de privacidade e proxy de rede também derrubam.',
+    tom: 'warn',
+    varrendo: false,
   }),
 };

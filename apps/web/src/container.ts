@@ -1,5 +1,6 @@
 import { OFFENSIVE, RESERVED } from '@tela/shared';
 import { makeBrowserAudioCapture } from './adapters/browser-audio-capture.js';
+import { makeBrowserAudioGain } from './adapters/browser-audio-gain.js';
 import { makeBrowserPlatform } from './adapters/browser-platform.js';
 import { makeBrowserScheduler } from './adapters/browser-scheduler.js';
 import { makeBrowserScreenCapture } from './adapters/browser-screen-capture.js';
@@ -60,6 +61,9 @@ export function createBroadcastSession(): BroadcastSession {
     transport: createTransport(),
     screen: makeBrowserScreenCapture(),
     audio: audioCapture,
+    // Um grafo por sessão: `close()` desmonta, e reusar um contexto fechado
+    // não tem volta.
+    gain: makeBrowserAudioGain(),
     scheduler,
     shareUrlFor,
     createStream: (tracks) => new MediaStream([...tracks]),
@@ -69,3 +73,21 @@ export function createBroadcastSession(): BroadcastSession {
 export function createViewerSession(): ViewerSession {
   return new ViewerSession({ transport: createTransport, scheduler });
 }
+
+/**
+ * Volume do espectador.
+ *
+ * Preferência de aparelho, não de conta: quem assiste não tem token nenhum e
+ * mesmo assim espera que o volume de ontem continue valendo hoje. O estado
+ * "mudo" NÃO é persistido — ver `use-volume.ts`.
+ */
+export const volumePreference = {
+  read: () => storage.get('tela.volume'),
+  write: (value: string) => storage.set('tela.volume', value),
+};
+
+/** Volume DA TRANSMISSÃO, do lado de quem transmite. Outro controle, outra chave. */
+export const volumeTransmissaoPreference = {
+  read: () => storage.get('tela.volume-transmissao'),
+  write: (value: string) => storage.set('tela.volume-transmissao', value),
+};

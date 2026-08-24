@@ -70,7 +70,7 @@ await viewer.goto(`${WEB}/${SLUG}`, { waitUntil: 'networkidle' });
 await viewer.waitForTimeout(2500);
 const texto = await viewer.textContent('body');
 ok(
-  texto.includes('não está transmitindo') || texto.includes('aguardando'),
+  texto.includes('aguardando sinal') || texto.includes('conectando'),
   `espectador vê estado offline, não erro (${JSON.stringify(texto.slice(0, 60))})`,
 );
 
@@ -216,24 +216,31 @@ if (conectou) {
 }
 
 console.log('\n4. Teto de espectadores é aplicado de verdade');
-// Um espectador já está assistindo. Mais dois enchem o canal (maxPeers=3).
+/**
+ * Um espectador já está assistindo; os outros enchem o canal.
+ *
+ * O teto vem de `P2P_LIMITS.maxViewersBrowser`, não de um número escrito aqui:
+ * este teste já mentiu uma vez quando o limite subiu de 3 para 5 e o "canal
+ * cheio" passou a nunca encher.
+ */
+const TETO = 5;
 const extras = [];
-for (let i = 0; i < 2; i += 1) {
+for (let i = 0; i < TETO - 1; i += 1) {
   const p = await newPage(`extra${i}`);
   await p.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
   extras.push(p);
   await p.waitForTimeout(3000);
 }
 const naMalha = await host.evaluate(() => window.__transport.peers().length);
-ok(naMalha === 3, `malha cheia com ${naMalha} espectadores`);
+ok(naMalha === TETO, `malha cheia com ${naMalha} espectadores (teto ${TETO})`);
 
 const excedente = await newPage('excedente');
 await excedente.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
 await excedente.waitForTimeout(4000);
 const textoCheio = await excedente.textContent('body');
 ok(
-  textoCheio.includes('lotada'),
-  `4º espectador vê "lotada", estado próprio e não erro cru (${JSON.stringify(textoCheio.slice(0, 70))})`,
+  textoCheio.includes('sem vaga'),
+  `espectador excedente vê "sem vaga", estado próprio e não erro cru (${JSON.stringify(textoCheio.slice(0, 70))})`,
 );
 
 console.log('\n5. Transmissor sai: espectadores voltam para offline e seguem tentando');
@@ -243,7 +250,7 @@ await host.evaluate(async () => {
 await viewer.waitForTimeout(4000);
 const depoisDaQueda = await viewer.textContent('body');
 ok(
-  depoisDaQueda.includes('não está transmitindo') || depoisDaQueda.includes('aguardando'),
+  depoisDaQueda.includes('aguardando sinal') || depoisDaQueda.includes('conectando'),
   'espectador voltou ao estado offline em vez de travar',
 );
 

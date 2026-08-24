@@ -172,3 +172,159 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+@layer utilities {
+  /**
+   * Varredura do estado de espera.
+   *
+   * O movimento carrega informação, não decoração: varrendo = o canal ainda
+   * está escutando o sinal; parada = a conexão travou. Por isso um segmento
+   * que atravessa devagar, e não um spinner — spinner comunica "está demorando
+   * demais", que é a mensagem errada para quem só chegou antes do jogo começar.
+   *
+   * Cinza de propósito. O verde é do AO VIVO; ele aparecer aqui apagaria a
+   * única diferença visual entre "esperando" e "no ar".
+   */
+  @keyframes tela-scan {
+    0% {
+      transform: translateX(-110%);
+    }
+    100% {
+      transform: translateX(330%);
+    }
+  }
+
+  .animate-scan {
+    animation: tela-scan 3.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /**
+   * Controle de volume do espectador.
+   *
+   * `input[type=range]` não tem estilo compartilhado entre navegadores: cada
+   * motor exige seu pseudo-elemento e nenhum herda do outro. As três regras
+   * abaixo são a mesma barra escrita três vezes — WebKit separa trilho e
+   * preenchimento, Firefox tem `::-moz-range-progress` nativo.
+   *
+   * `--preenchido` vem do React em `style`, porque é o único jeito de pintar
+   * a parte já percorrida sem um segundo elemento sobreposto.
+   *
+   * Trilho em `text`, nunca em `accent`: volume não é AO VIVO.
+   */
+  .faixa-volume {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    /* 44px é alvo de toque, não estética: o trilho visível continua com 3px. */
+    height: 44px;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  /**
+   * Em repouso o controle senta junto com o resto do HUD, em `muted`; branco
+   * puro fazia dele o elemento mais claro da tela depois do AO VIVO, e volume
+   * não merece essa hierarquia. Clareia para `text` só quando alguém engata.
+   */
+  .faixa-volume::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      var(--color-muted) var(--preenchido, 100%),
+      var(--color-line) var(--preenchido, 100%)
+    );
+  }
+
+  .faixa-volume:hover::-webkit-slider-runnable-track,
+  .faixa-volume:focus-visible::-webkit-slider-runnable-track {
+    background: linear-gradient(
+      to right,
+      var(--color-text) var(--preenchido, 100%),
+      var(--color-edge) var(--preenchido, 100%)
+    );
+  }
+
+  .faixa-volume::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 11px;
+    height: 11px;
+    margin-top: -4px;
+    border-radius: 999px;
+    background: var(--color-muted);
+    transition:
+      transform 150ms var(--ease-out-soft),
+      background-color 150ms var(--ease-out-soft);
+  }
+
+  .faixa-volume::-moz-range-track {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--color-line);
+  }
+
+  .faixa-volume::-moz-range-progress {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--color-muted);
+  }
+
+  .faixa-volume::-moz-range-thumb {
+    width: 11px;
+    height: 11px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--color-muted);
+    transition:
+      transform 150ms var(--ease-out-soft),
+      background-color 150ms var(--ease-out-soft);
+  }
+
+  .faixa-volume:hover::-moz-range-track,
+  .faixa-volume:focus-visible::-moz-range-track {
+    background: var(--color-edge);
+  }
+
+  .faixa-volume:hover::-moz-range-progress,
+  .faixa-volume:focus-visible::-moz-range-progress {
+    background: var(--color-text);
+  }
+
+  .faixa-volume:hover::-moz-range-thumb,
+  .faixa-volume:focus-visible::-moz-range-thumb {
+    background: var(--color-text);
+  }
+
+  .faixa-volume:hover::-webkit-slider-thumb,
+  .faixa-volume:focus-visible::-webkit-slider-thumb {
+    background: var(--color-text);
+    transform: scale(1.3);
+  }
+
+  .faixa-volume:hover::-moz-range-thumb,
+  .faixa-volume:focus-visible::-moz-range-thumb {
+    transform: scale(1.3);
+  }
+
+  /* Mudo: a barra continua legível, mas deixa de parecer ativa. */
+  .faixa-volume[data-mudo="true"]::-webkit-slider-runnable-track {
+    background: linear-gradient(
+      to right,
+      var(--color-faint) var(--preenchido, 100%),
+      var(--color-line) var(--preenchido, 100%)
+    );
+  }
+
+  .faixa-volume[data-mudo="true"]::-webkit-slider-thumb {
+    background: var(--color-muted);
+  }
+
+  .faixa-volume[data-mudo="true"]::-moz-range-progress {
+    background: var(--color-faint);
+  }
+
+  .faixa-volume[data-mudo="true"]::-moz-range-thumb {
+    background: var(--color-muted);
+  }
+}

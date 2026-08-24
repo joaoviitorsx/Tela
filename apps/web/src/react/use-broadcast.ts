@@ -16,6 +16,8 @@ export type BroadcastControls = {
   /** Abre o seletor de novo e troca a fonte sem derrubar espectadores. */
   switchSource: () => Promise<void>;
   setPrioridade: (prioridade: Prioridade) => Promise<void>;
+  /** Volume do que os espectadores ouvem. Síncrono: mexe num GainNode. */
+  setVolumeTransmissao: (volume: number) => void;
 };
 
 /**
@@ -62,5 +64,10 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
     [session],
   );
 
-  return { state, start, stop, setPreset, switchSource, setPrioridade };
+  const setVolumeTransmissao = useCallback(
+    (volume: number) => session.setVolumeTransmissao(volume),
+    [session],
+  );
+
+  return { state, start, stop, setPreset, switchSource, setPrioridade, setVolumeTransmissao };
 }

@@ -75,3 +75,36 @@ export function IconWarning({ className = base }: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Volume em dois níveis. A quantidade de ondas reflete o volume real — num
+ * HUD pequeno é o que dá para ler de relance, sem parar o jogo para conferir.
+ * O corpo do alto-falante é o mesmo de `IconMuted`, de propósito: o ícone
+ * troca de estado, não de identidade.
+ */
+export function IconVolumeLow({ className = base }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
+      <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
+      <path d="M15.5 9.8a3.4 3.4 0 0 1 0 4.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconVolumeHigh({ className = base }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
+      <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
+      <path d="M15.5 9.8a3.4 3.4 0 0 1 0 4.4" strokeLinecap="round" />
+      <path d="M18.4 7.2a7 7 0 0 1 0 9.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IconExitFullscreen({ className = base }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
+      <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

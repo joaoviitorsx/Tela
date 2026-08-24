@@ -2,7 +2,11 @@ import { PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BigButton } from '../components/BigButton.js';
 import { LiveHud } from '../components/LiveHud.js';
-import { createBroadcastSession, identity } from '../container.js';
+import {
+  createBroadcastSession,
+  identity,
+  volumeTransmissaoPreference,
+} from '../container.js';
 import type { BroadcastFailure } from '../core/media/broadcast-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useBroadcast } from '../react/use-broadcast.js';
@@ -37,14 +41,54 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
 
 export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
-  const { state, start, stop, setPreset, switchSource, setPrioridade } = useBroadcast(session);
+  const { state, start, stop, setPreset, switchSource, setPrioridade, setVolumeTransmissao } =
+    useBroadcast(session);
+
+  /**
+   * Volume da transmissão, lembrado entre sessões.
+   *
+   * Quem abaixou para conversar na call ontem espera que continue abaixado
+   * hoje — reaplicar 100% a cada transmissão devolveria o susto.
+   */
+  /** Captura viva mas sem imagem. Sobe do preview porque precisa ser visível
+   *  mesmo com ele fechado. */
+  const [semSinal, setSemSinal] = useState(false);
+
+  const [volumeAudio, setVolumeAudio] = useState(() => {
+    const bruto = Number(volumeTransmissaoPreference.read());
+    return Number.isFinite(bruto) && bruto >= 0 && bruto <= 1 ? bruto : 1;
+  });
+
+  const aplicarVolume = useCallback(
+    (valor: number) => {
+      setVolumeAudio(valor);
+      volumeTransmissaoPreference.write(valor.toFixed(2));
+      setVolumeTransmissao(valor);
+    },
+    [setVolumeTransmissao],
+  );
+
+  // A preferência guardada precisa alcançar o grafo assim que ele existe.
+  useEffect(() => {
+    if (state.status === 'live') setVolumeTransmissao(volumeAudio);
+  }, [state.status, volumeAudio, setVolumeTransmissao]);
   const [copied, setCopied] = useState(false);
   // Aberto por padrão: transmitir às cegas é o que produz "achei que estava
   // funcionando". O usuário fecha se atrapalhar.
   const [previewAberto, setPreviewAberto] = useState(true);
 
   const live = state.status === 'live';
-  const hud = useAutoHide(5_000, live);
+  /**
+   * O HUD volta a sumir sozinho, como a docstring sempre prometeu.
+   *
+   * Antes ele ficava preso em `visible` enquanto o preview estivesse aberto —
+   * e o preview abre POR PADRÃO, então na prática a regra estava revogada em
+   * silêncio e o painel nunca sumia. O que substitui o remendo é a condição
+   * certa: não esconder o que está sendo USADO. `useAutoHide` com `enabled:
+   * false` já mantém tudo visível, então não é preciso um segundo mecanismo.
+   */
+  const [mexendoNoHud, setMexendoNoHud] = useState(false);
+  const hud = useAutoHide(5_000, live && !mexendoNoHud);
   const presets = useMemo(() => PRESET_ORDER.map((id) => PRESETS[id]), []);
   const stats = useMediaStats(live ? state.stats : null);
 
@@ -140,17 +184,24 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         maxPeers={state.maxPeers}
         relayed={state.peers.filter((peer) => peer.usingRelay).length}
         audioPerdidoPelaEscolha={state.audioPerdidoPelaEscolha}
+        hasAudio={state.hasAudio}
+        volumeAudio={volumeAudio}
+        volumeAjustavel={state.volumeAjustavel}
+        onVolumeAudio={aplicarVolume}
         semSinalizacao={state.semSinalizacao}
         preview={state.preview}
         previewAberto={previewAberto}
         onTogglePreview={() => setPreviewAberto((v) => !v)}
+        semSinal={semSinal}
+        onSemSinal={setSemSinal}
         onSwitchSource={() => void switchSource()}
         prioridade={state.prioridade}
         onPrioridade={(p) => void setPrioridade(p)}
         copied={copied}
         onCopy={() => copy(shareUrl)}
         onStop={handleStop}
-        visible={hud.visible || previewAberto}
+        visible={hud.visible}
+        onInteracao={setMexendoNoHud}
         reconnecting={state.peers.some((p) => p.connectionState === 'disconnected')}
         presets={presets}
         presetId={state.presetId}
@@ -159,7 +210,14 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         stats={stats}
       />
 
-      <div className="flex min-h-screen flex-col items-center justify-center gap-2 px-6 text-center">
+      {/*
+        Ancorado embaixo, não no centro da viewport.
+        O painel é `fixed top-0` e chega a 387px de altura com o preview
+        aberto; centralizado, este texto ficava ATRÁS dele em qualquer laptop
+        1366×768. Empurrar para baixo resolve em toda altura de tela, sem
+        depender de medir o painel.
+      */}
+      <div className="flex min-h-dvh flex-col items-center justify-end gap-2 px-6 pb-[14vh] text-center">
         <p className="tabular text-[15px] text-muted">
           transmitindo — seu jogo está indo para {shareUrl.replace(/^https?:\/\//, '')}
         </p>

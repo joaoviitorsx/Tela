@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { BroadcastSession } from '../core/media/broadcast-session.js';
 import {
   FakeAudioCapture,
+  FakeAudioGain,
   FakeMediaTransport,
   FakeScheduler,
   FakeScreenCapture,
@@ -36,6 +37,7 @@ function build() {
     transport,
     screen,
     audio: new FakeAudioCapture(),
+    gain: new FakeAudioGain(),
     scheduler: new FakeScheduler(),
     shareUrlFor,
     createStream,

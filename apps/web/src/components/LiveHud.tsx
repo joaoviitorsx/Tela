@@ -1,9 +1,14 @@
 import type { EncodingPreset, PresetId, Prioridade } from '@tela/shared';
+import { useEffect, useState } from 'react';
 import { CapturePreview } from './CapturePreview.js';
 import { IconCheck, IconCopy, IconStop, IconViewers, IconWarning } from './Icon.js';
 import { LiveDot } from './LiveDot.js';
 import { QualityPicker } from './QualityPicker.js';
 import { StatsBadge } from './StatsBadge.js';
+import { VolumeControl } from './VolumeControl.js';
+
+/** O painel do transmissor não se auto-oculta por causa do volume. */
+const SEM_AUTO_OCULTAR = (): void => undefined;
 
 type Props = {
   readonly shareUrl: string;
@@ -14,12 +19,21 @@ type Props = {
   readonly relayed: number;
   /** Escolheu janela em vez de tela inteira, e o áudio do sistema ficou de fora. */
   readonly audioPerdidoPelaEscolha: boolean;
+  /** Existe trilha de áudio sendo transmitida. */
+  readonly hasAudio: boolean;
+  /** Volume do que os ESPECTADORES ouvem — não o alto-falante de quem transmite. */
+  readonly volumeAudio: number;
+  readonly volumeAjustavel: boolean;
+  readonly onVolumeAudio: (valor: number) => void;
   /** Canal de sinalização caiu: quem assiste continua, ninguém novo entra. */
   readonly semSinalizacao: boolean;
   /** A mídia capturada, para quem transmite conferir o que está mandando. */
   readonly preview: MediaStream | null;
   readonly previewAberto: boolean;
   readonly onTogglePreview: () => void;
+  /** A captura parou de produzir imagem. Vale com o preview aberto ou fechado. */
+  readonly semSinal: boolean;
+  readonly onSemSinal: (semSinal: boolean) => void;
   readonly onSwitchSource: () => void;
   readonly prioridade: Prioridade;
   readonly onPrioridade: (p: Prioridade) => void;
@@ -27,6 +41,8 @@ type Props = {
   readonly onCopy: () => void;
   readonly onStop: () => void;
   readonly visible: boolean;
+  /** Ponteiro em cima ou foco dentro: o HUD não pode sumir enquanto se usa. */
+  readonly onInteracao: (ativo: boolean) => void;
   readonly reconnecting: boolean;
   readonly presets: readonly EncodingPreset[];
   readonly presetId: PresetId;
@@ -53,10 +69,16 @@ export function LiveHud({
   maxPeers,
   relayed,
   audioPerdidoPelaEscolha,
+  hasAudio,
+  volumeAudio,
+  volumeAjustavel,
+  onVolumeAudio,
   semSinalizacao,
   preview,
   previewAberto,
   onTogglePreview,
+  semSinal,
+  onSemSinal,
   onSwitchSource,
   prioridade,
   onPrioridade,
@@ -64,6 +86,7 @@ export function LiveHud({
   onCopy,
   onStop,
   visible,
+  onInteracao,
   reconnecting,
   presets,
   presetId,
@@ -71,8 +94,24 @@ export function LiveHud({
   onPreset,
   stats,
 }: Props) {
+  /**
+   * Ponteiro e foco são condições INDEPENDENTES — um booleano só faria o
+   * último evento apagar o outro, e o painel sumiria debaixo do cursor. Mesmo
+   * defeito que já apareceu no controle de volume; não repetir.
+   */
+  const [comPonteiro, setComPonteiro] = useState(false);
+  const [comFoco, setComFoco] = useState(false);
+
+  useEffect(() => {
+    onInteracao(comPonteiro || comFoco);
+  }, [comPonteiro, comFoco, onInteracao]);
+
   return (
     <div
+      onPointerEnter={() => setComPonteiro(true)}
+      onPointerLeave={() => setComPonteiro(false)}
+      onFocusCapture={() => setComFoco(true)}
+      onBlurCapture={() => setComFoco(false)}
       className={[
         'pointer-events-none fixed inset-x-0 top-0 z-20 p-3 sm:p-4',
         'transition-opacity duration-300',
@@ -140,7 +179,22 @@ export function LiveHud({
             stream={preview}
             aberto={previewAberto}
             onToggle={onTogglePreview}
+            onSemSinal={onSemSinal}
           />
+
+          {/*
+            Com o preview ABERTO o aviso já cobre a imagem; repetir aqui seria
+            dizer duas vezes. Fechado, esta é a única evidência de que a
+            transmissão está preta — e sem ela a tela inteira dizia
+            "transmitindo" enquanto ninguém via nada.
+          */}
+          {semSinal && !previewAberto && (
+            <p role="status" className="mt-1.5 flex items-center gap-1.5 text-[12px] text-warn">
+              <IconWarning className="h-3.5 w-3.5 shrink-0" />
+              A captura não está produzindo imagem — os amigos estão vendo preto.
+              Pare e escolha a tela de novo.
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-2">
@@ -194,6 +248,39 @@ export function LiveHud({
             <IconWarning className="h-3.5 w-3.5 shrink-0" />
             Servidor fora do ar. Quem já está assistindo continua vendo — mas
             ninguém novo consegue entrar pelo link.
+          </p>
+        )}
+
+        {/*
+          O rótulo é a correção, não o controle.
+
+          Quem transmite abaixava o alto-falante e o som continuava alto para
+          os amigos — e concluía, com razão, que o produto estava inconsistente.
+          A captura do sistema pega o stream ANTES do volume de saída do
+          aparelho, então aquele controle nunca teve efeito sobre a
+          transmissão. Dizer "que os amigos ouvem" resolve a confusão; a barra
+          só dá o poder que faltava.
+        */}
+        {hasAudio && (
+          <div className="flex items-center gap-3">
+            <span className="shrink-0 text-[12px] text-muted">volume que os amigos ouvem</span>
+            <VolumeControl
+              volume={volumeAudio}
+              mudo={volumeAudio === 0}
+              ajustavel={volumeAjustavel}
+              ativo
+              onVolume={onVolumeAudio}
+              onAlternar={() => onVolumeAudio(volumeAudio === 0 ? 1 : 0)}
+              passo={0.05}
+              onAtivo={SEM_AUTO_OCULTAR}
+            />
+          </div>
+        )}
+
+        {hasAudio && !volumeAjustavel && (
+          <p className="text-[12px] text-muted">
+            Este navegador não deixa ajustar o volume da transmissão. O som sai
+            como o sistema entregou.
           </p>
         )}
 

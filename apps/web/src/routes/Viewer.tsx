@@ -1,15 +1,43 @@
+import { P2P_LIMITS } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AudioUnlock } from '../components/AudioUnlock.js';
-import { IconFullscreen } from '../components/Icon.js';
+import { IconExitFullscreen, IconFullscreen, IconViewers } from '../components/Icon.js';
 import { LiveDot } from '../components/LiveDot.js';
+import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
-import { createViewerSession } from '../container.js';
+import { VolumeControl } from '../components/VolumeControl.js';
+import { createViewerSession, volumePreference } from '../container.js';
+import type { ViewerState } from '../core/media/viewer-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useMediaStats } from '../react/use-media-stats.js';
 import { useHotkeys, useTabTitle } from '../react/use-page-effects.js';
 import { useViewer } from '../react/use-viewer.js';
+import { PASSO_VOLUME, useVolume } from '../react/use-volume.js';
 
 type Props = { readonly slug: string };
+
+/**
+ * Cada status da sessão vira o estado que o espectador precisa ler.
+ *
+ * `Record` sobre a união exaustiva de propósito: se alguém acrescentar um
+ * status em `ViewerState`, isto para de compilar até que alguém decida o que
+ * mostrar. Um `default` silencioso aqui foi exatamente o bug que apareceu em
+ * produção — `connecting` e `reconnecting` caíam em "não está transmitindo",
+ * então a página anunciava que o amigo estava offline enquanto negociava com
+ * ele, e continuava anunciando para sempre se a negociação travasse.
+ */
+const MOTIVO: Record<Exclude<ViewerState['status'], 'watching'>, Motivo> = {
+  checking: 'conectando',
+  connecting: 'conectando',
+  offline: 'offline',
+  reconnecting: 'reconectando',
+  full: 'cheio',
+  'sem-conexao': 'sem-conexao',
+  'sem-servidor': 'sem-servidor',
+};
+
+/** Só estes dois dependem de alguém mexer no navegador; os outros se resolvem. */
+const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>(['sem-conexao', 'sem-servidor']);
 
 /**
  * A tela que decide o produto.
@@ -21,10 +49,18 @@ export function Viewer({ slug }: Props) {
   const session = useMemo(() => createViewerSession(), []);
   const state = useViewer(session);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [muted, setMuted] = useState(true);
+  const som = useVolume(volumePreference);
+
+  /**
+   * Enquanto o dedo está na barra de volume o HUD não pode sumir. Passar
+   * `enabled: false` já mantém tudo visível — o `useAutoHide` trata disso —
+   * então não é preciso um segundo mecanismo de trava.
+   */
+  const [somAtivo, setSomAtivo] = useState(false);
+  const [emTelaCheia, setEmTelaCheia] = useState(false);
 
   const watching = state.status === 'watching';
-  const controls = useAutoHide(2_000, watching);
+  const controls = useAutoHide(2_000, watching && !somAtivo);
   const stats = useMediaStats(watching ? state.stats : null);
 
   useTabTitle(watching ? `● tela.gg/${slug}` : `${slug} · tela`);
@@ -44,52 +80,82 @@ export function Viewer({ slug }: Props) {
     void element.play().catch(() => undefined);
   }, [watching, state]);
 
-  const unlock = useCallback(() => {
-    setMuted(false);
+  /** O elemento é a fonte da verdade do áudio; o hook é a fonte da intenção. */
+  useEffect(() => {
     const element = videoRef.current;
-    if (element) {
-      element.muted = false;
-      void element.play().catch(() => undefined);
+    if (!element || !watching) return;
+    element.muted = som.mudo;
+    element.volume = som.volume;
+  }, [watching, som.mudo, som.volume]);
+
+  const liberarSom = useCallback(() => {
+    som.reativar();
+    const element = videoRef.current;
+    if (!element) return;
+    // Direto no elemento, dentro do gesto: é o clique que autoriza o áudio.
+    element.muted = false;
+    void element.play().catch(() => undefined);
+  }, [som]);
+
+  /**
+   * Tela cheia, incluindo onde a API padrão não existe.
+   *
+   * O Safari do iPhone não implementa `requestFullscreen` em elemento comum —
+   * só o `<video>` entra em tela cheia, e por um método próprio. Como a
+   * rejeição era engolida por um `catch` vazio, o botão simplesmente não fazia
+   * nada no celular e não havia como saber por quê.
+   */
+  const toggleFullscreen = useCallback(() => {
+    const video = videoRef.current;
+    const palco = video?.parentElement;
+
+    if (document.fullscreenElement !== null) {
+      void document.exitFullscreen().catch(() => undefined);
+      return;
     }
+
+    const nativoDoVideo = (): void => {
+      const legado = video as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
+      legado?.webkitEnterFullscreen?.();
+    };
+
+    if (palco?.requestFullscreen === undefined) {
+      nativoDoVideo();
+      return;
+    }
+    void palco.requestFullscreen().catch(nativoDoVideo);
   }, []);
 
-  const toggleFullscreen = useCallback(() => {
-    const element = videoRef.current?.parentElement;
-    if (!element) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void element.requestFullscreen().catch(() => undefined);
+  // O ícone tem que dizer o que o clique FAZ, não onde você está.
+  useEffect(() => {
+    const sincronizar = () => setEmTelaCheia(document.fullscreenElement !== null);
+    document.addEventListener('fullscreenchange', sincronizar);
+    return () => document.removeEventListener('fullscreenchange', sincronizar);
   }, []);
 
   useHotkeys(
     useMemo(
       () => ({
         f: toggleFullscreen,
-        ' ': () => setMuted((current) => !current),
+        m: som.alternarMudo,
+        ' ': som.alternarMudo,
+        arrowup: () => som.empurrar(PASSO_VOLUME),
+        arrowdown: () => som.empurrar(-PASSO_VOLUME),
       }),
-      [toggleFullscreen],
+      [toggleFullscreen, som],
     ),
     watching,
   );
 
-  useEffect(() => {
-    const element = videoRef.current;
-    if (element) element.muted = muted;
-  }, [muted]);
-
-  if (!watching) {
+  if (state.status !== 'watching') {
+    const motivo = MOTIVO[state.status];
     return (
-      <main className="min-h-full">
+      <main>
         <OfflineState
           slug={slug}
-          motivo={
-            state.status === 'full'
-              ? 'cheio'
-              : state.status === 'sem-conexao'
-                ? 'sem-conexao'
-                : state.status === 'sem-servidor'
-                  ? 'sem-servidor'
-                  : 'offline'
-          }
+          motivo={motivo}
+          maxPeers={P2P_LIMITS.maxViewersBrowser}
+          {...(PEDE_ACAO.has(motivo) ? { onRecarregar: () => window.location.reload() } : {})}
         />
       </main>
     );
@@ -111,11 +177,16 @@ export function Viewer({ slug }: Props) {
         ref={videoRef}
         autoPlay
         playsInline
-        muted={muted}
+        muted={som.mudo}
         className="h-full w-full bg-void object-contain"
       />
 
-      {hasAudio && muted && <AudioUnlock onUnlock={unlock} />}
+      {/*
+        `!som.liberado` é o que separa "o browser bloqueou" de "eu silenciei".
+        Sem essa condição, silenciar de propósito — pelo botão ou pela barra de
+        espaço — cobriria o jogo inteiro com o overlay pedindo um clique.
+      */}
+      {hasAudio && som.mudo && !som.liberado && <AudioUnlock onUnlock={liberarSom} />}
 
       <div
         className={[
@@ -125,15 +196,43 @@ export function Viewer({ slug }: Props) {
         ].join(' ')}
       >
         <LiveDot />
+
+        {/*
+          Quantos estão vendo junto. Contagem, não lista: dá o senso de
+          companhia sem entregar o identificador de ninguém, e responde a
+          pergunta que quem chega cedo faz — "sou só eu?".
+        */}
+        <span
+          className="tabular ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted"
+          aria-label={`${state.viewers} ${state.viewers === 1 ? 'pessoa assistindo' : 'pessoas assistindo'}`}
+        >
+          <IconViewers className="h-3.5 w-3.5 shrink-0" />
+          {state.viewers}
+        </span>
+
         {/* Latência visível: é prova da qualidade, e este público repara. */}
-        <span className="tabular ml-auto text-[12px] text-muted">{stats.rtt}</span>
+        <span className="tabular text-[12px] text-muted">{stats.rtt}</span>
+
+        {hasAudio && (
+          <VolumeControl
+            volume={som.volume}
+            mudo={som.mudo}
+            ajustavel={som.ajustavel}
+            ativo={somAtivo}
+            onVolume={som.ajustar}
+            onAlternar={som.alternarMudo}
+            passo={PASSO_VOLUME}
+            onAtivo={setSomAtivo}
+          />
+        )}
+
         <button
           type="button"
           onClick={toggleFullscreen}
-          aria-label="Tela cheia"
-          className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
+          aria-label={emTelaCheia ? 'Sair da tela cheia' : 'Tela cheia'}
+          className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
         >
-          <IconFullscreen />
+          {emTelaCheia ? <IconExitFullscreen /> : <IconFullscreen />}
         </button>
       </div>
     </main>

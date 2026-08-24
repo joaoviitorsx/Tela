@@ -1,3 +1,9 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+
+# `esbuild` precisa rodar o script de instalação para baixar o binário nativo.
+# O pnpm 10 exige a lista aqui, e não em `package.json` — lá ele avisa que
+# ignorou e segue sem executar nada, o que aparecia em TODO comando.
+onlyBuiltDependencies:
+  - esbuild

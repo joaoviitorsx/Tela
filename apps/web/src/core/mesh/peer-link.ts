@@ -137,6 +137,16 @@ export class PeerLink {
    */
   minimizePlayoutDelay(): void {
     for (const receiver of this.pc.getReceivers()) {
+      /**
+       * Só no VÍDEO.
+       *
+       * Buffer de jitter zerado no áudio produz corte a cada oscilação de
+       * rede — e áudio picotado é mais destrutivo que 100ms a mais de atraso,
+       * que ninguém percebe numa call onde já se está conversando por outro
+       * canal. A latência que este produto persegue é a da imagem.
+       */
+      if (receiver.track?.kind !== 'video') continue;
+
       const target = receiver as RTCRtpReceiver & {
         playoutDelayHint?: number;
         jitterBufferTarget?: number;

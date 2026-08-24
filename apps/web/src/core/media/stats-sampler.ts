@@ -79,7 +79,24 @@ export class StatsSampler {
           if (reason !== 'none') limitation = reason;
         }
 
-        if (stat['type'] === 'candidate-pair' && stat['state'] === 'succeeded') {
+        /**
+         * Só o par NOMINADO.
+         *
+         * `state === 'succeeded'` casa com todo par que já funcionou, e o ICE
+         * costuma manter vários. Somar a estimativa de todos inflava a banda
+         * disponível, afrouxava o teto de upload e minava justamente a defesa
+         * contra bufferbloat que ele existe para dar.
+         *
+         * `!== false` e não `=== true`: descarta o que o navegador diz não ser
+         * nominado, e tolera o navegador que não reporta o campo. Exigir
+         * `true` deixaria a estimativa em zero onde ele falta, e sem
+         * estimativa o teto de upload nunca age.
+         */
+        if (
+          stat['type'] === 'candidate-pair' &&
+          stat['state'] === 'succeeded' &&
+          stat['nominated'] !== false
+        ) {
           // O PIOR RTT, não o melhor: o melhor esconderia o amigo com problema.
           rttMs = Math.max(rttMs, Math.round(Number(stat['currentRoundTripTime'] ?? 0) * 1000));
 

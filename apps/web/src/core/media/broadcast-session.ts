@@ -16,10 +16,8 @@ import {
   CONTENT_HINT,
   DEFAULT_PRESET_ID,
   type PresetId,
-  PRESET_IDS,
   nextPresetOnCpuPressure,
   presetById,
-  presetForBitrate,
   previousPresetOnRecovery,
 } from './presets.js';
 
@@ -462,20 +460,18 @@ export class BroadcastSession {
     const porEspectador =
       availableBps === null ? null : availableBps / Math.max(1, espectadores);
     /**
-     * A referência é o preset ESCOLHIDO, não o que está valendo agora.
+     * A referência é o preset CORRENTE.
      *
-     * Se o governador medisse contra o preset degradado, cada queda de preset
-     * moveria a própria fronteira de decisão dele: derrubar o preset baixaria
-     * o alvo de comparação, o teto seria solto, a recuperação subiria o preset
-     * de novo e o ciclo recomeçaria. Medindo sempre contra a intenção do
-     * usuário, a decisão de teto não depende do que a degradação já fez.
+     * Medir contra o escolhido foi tentado e empurra o limiar de soltura para
+     * `maxBitrate × 1,15 / 0,75` — 12,3 Mbps POR ESPECTADOR no 1080p60, ou
+     * 61 Mbps de link com cinco. Na prática o teto nunca soltava, e como a
+     * recuperação exige teto nulo, ela ficava desligada junto.
      */
-    const decisao = this.governor.observe(porEspectador, presetById(this.presetEscolhido));
+    const decisao = this.governor.observe(porEspectador, presetById(this.presetId));
     // `null` na maioria das leituras: o governador só decide quando a mudança
     // compensa reconfigurar o encoder. `{ bps: null }` remove o teto.
     if (decisao === null) return;
     void this.deps.transport.setBitrateCeiling(decisao.bps).catch(() => undefined);
-    this.casarPresetComTeto(decisao.bps);
   }
 
   /**
@@ -551,45 +547,6 @@ export class BroadcastSession {
     const morta = this.semImagem >= SEM_IMAGEM_AMOSTRAS;
     if (morta === this.state.capturaSemImagem) return;
     this.setState({ ...this.state, capturaSemImagem: morta });
-  }
-
-  /**
-   * A RESOLUÇÃO tem que seguir o bitrate.
-   *
-   * Sem isto, um teto de upload de 3 Mbps com o preset em 1080p60 mandava o
-   * encoder produzir 1920×1080 a 60fps dentro de 3 Mbps: 0,024 bit por pixel,
-   * quando H.264 precisa de perto de 0,1 bpp para segurar movimento alto. O
-   * controlador de taxa só tinha uma saída — subir o QP — e a imagem virava
-   * bloco. Num flick de CS, onde a tela inteira muda de frame para frame e
-   * vetor de movimento não ajuda em nada, é o pior caso possível.
-   *
-   * O mesmo orçamento em 720p60 econômico dá o dobro de bits por pixel e uma
-   * imagem MAIS nítida. Menos pixels, cada um bem codificado.
-   *
-   * Só DESCE por aqui. Subir é trabalho da recuperação, que exige calmaria
-   * longa — duas malhas que sobem seriam duas malhas para oscilar.
-   */
-  private casarPresetComTeto(teto: number | null): void {
-    // Sem teto, quem manda é o preset; a recuperação cuida da volta.
-    if (teto === null) return;
-
-    const cabe = presetForBitrate(teto);
-    if (cabe === this.presetId) return;
-    // Índice maior = degrau pior. Só aplica se for para BAIXO.
-    if (PRESET_IDS.indexOf(cabe) <= PRESET_IDS.indexOf(this.presetId)) return;
-
-    this.presetId = cabe;
-    this.pressure = 0;
-    this.calmaria = 0;
-    if (this.state.status === 'live') {
-      this.setState({
-        ...this.state,
-        presetId: cabe,
-        presetForced: true,
-        motivoDegradacao: 'bandwidth',
-      });
-    }
-    void this.deps.transport.setPreset(presetById(cabe)).catch(() => undefined);
   }
 
   /**

@@ -72,13 +72,21 @@ export function Viewer({ slug }: Props) {
     };
   }, [session, slug]);
 
-  // `srcObject` não é atributo — precisa ser atribuído na instância.
+  /**
+   * `srcObject` não é atributo — precisa ser atribuído na instância.
+   *
+   * A dependência é o STREAM, não o estado inteiro. `state` troca de
+   * identidade a cada amostra de estatística, então depender dele fazia este
+   * efeito rodar — e chamar `play()` — uma vez por segundo durante a
+   * transmissão inteira, num elemento que já estava tocando.
+   */
+  const streamAtual = state.status === 'watching' ? state.stream : null;
   useEffect(() => {
     const element = videoRef.current;
-    if (!element || !watching) return;
-    if (element.srcObject !== state.stream) element.srcObject = state.stream;
+    if (!element || streamAtual === null) return;
+    if (element.srcObject !== streamAtual) element.srcObject = streamAtual;
     void element.play().catch(() => undefined);
-  }, [watching, state]);
+  }, [streamAtual]);
 
   /** O elemento é a fonte da verdade do áudio; o hook é a fonte da intenção. */
   useEffect(() => {

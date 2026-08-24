@@ -44,6 +44,23 @@ export type MeshTopologyDeps = {
   readonly maxPeers: number;
 };
 
+/**
+ * Quanto a captura precisa encolher para caber no preset.
+ *
+ * A trilha é capturada na resolução do preset ESCOLHIDO e congelada ali. Quando
+ * a degradação desce um degrau, é este fator que faz o encoder trabalhar menos
+ * pixel de verdade — `maxBitrate` sozinho só aperta o QP.
+ *
+ * `1` quando não há o que encolher: `scaleResolutionDownBy` menor que 1 é
+ * inválido, e aumentar resolução acima da captura não existe.
+ */
+function escalaPara(track: MediaStreamTrack | null, preset: EncodingPreset): number {
+  const alvo = preset.layers[0].width;
+  const atual = track?.getSettings?.().width ?? 0;
+  if (!Number.isFinite(atual) || atual <= 0 || alvo <= 0 || atual <= alvo) return 1;
+  return atual / alvo;
+}
+
 /** Áudio de jogo, não de voz: 128 kbps preserva música e efeitos. */
 const AUDIO_BITRATE = 128_000;
 
@@ -345,6 +362,22 @@ export class MeshTopology {
 
       const encodings = params.encodings;
       encodings[0] = {
+        /**
+         * O único parâmetro que de fato tira PIXEL do encoder.
+         *
+         * Sem ele, trocar de preset em execução não mudava nada: a resolução é
+         * fixada uma vez no `getDisplayMedia` e nunca mais. Descer a escada
+         * baixava o bitrate mantendo 1920×1080 a 60fps — 124 milhões de pixels
+         * por segundo com menos bits para cada um, ou seja, exatamente o
+         * quadriculado que a escada existia para evitar. Medido: um teto de
+         * 3 Mbps rendia 0,0241 bit por pixel, e "otimizar" o preset sem isto
+         * levava a 0,0201. Menos bits, zero pixels a menos.
+         *
+         * Todos os peers recebem o mesmo fator, porque ele deriva do preset
+         * (que é coletivo pela R5) e da trilha (que é uma só). A invariante do
+         * encoder reaproveitado continua de pé.
+         */
+        scaleResolutionDownBy: escalaPara(sender.track, preset),
           ...encodings[0],
           maxBitrate: this.effectiveBitrate(preset),
           maxFramerate: preset.main.maxFramerate,

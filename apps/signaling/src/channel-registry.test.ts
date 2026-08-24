@@ -166,12 +166,37 @@ describe('registro de canais', () => {
   });
 
   describe('saídas e limpeza', () => {
-    it('saída do transmissor derruba os espectadores', () => {
+    it('saída ANUNCIADA do transmissor derruba os espectadores', () => {
       const h = host();
       const v = watch();
+      h.conn.receive(JSON.stringify({ type: 'leave' }));
       h.conn.disconnect();
       expect(v.socket.closed).toBe(true);
       expect(registry.isHosting(SLUG)).toBe(false);
+    });
+
+    /**
+     * MUDANÇA DE COMPORTAMENTO deliberada, motivada por medição.
+     *
+     * O teste acima antes derrubava a plateia em QUALQUER fechamento de socket
+     * do transmissor. A mídia é direta entre os dois — o servidor nunca esteve
+     * no caminho dela — então uma piscada de rede do transmissor, ou um deploy
+     * nosso, apagava transmissões que continuavam funcionando. Uma auditoria
+     * mediu 5 segundos de tela morta e conexões duplicadas quando o transmissor
+     * voltava com `peerId` novo e era admitido como se fosse outro peer.
+     *
+     * Quem detecta saída de verdade é o espectador, pela trilha remota que
+     * termina. Este teste protege a promessa central da arquitetura.
+     */
+    it('QUEDA do socket do transmissor NÃO derruba os espectadores', () => {
+      const h = host();
+      const v = watch();
+      h.conn.disconnect();
+
+      expect(v.socket.closed).toBe(false);
+      expect(v.socket.ofType('peer-left')).toEqual([]);
+      // O canal continua existindo para o transmissor reivindicar de volta.
+      expect(registry.viewerCount(SLUG)).toBe(1);
     });
 
     it('saída de espectador avisa o transmissor e libera a vaga', () => {

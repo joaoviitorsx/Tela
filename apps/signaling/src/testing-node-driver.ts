@@ -40,6 +40,9 @@ export function makeNodeDriver(): ConformanceDriver {
         JSON.stringify(to === undefined ? { type: 'signal', payload } : { type: 'signal', to, payload }),
       );
     },
+    async leave(id) {
+      conns.get(id)?.receive(JSON.stringify({ type: 'leave' }));
+    },
     disconnect(id) {
       conns.get(id)?.disconnect();
     },

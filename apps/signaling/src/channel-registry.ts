@@ -191,6 +191,9 @@ export function makeChannelRegistry(deps: RegistryDeps) {
        * `peer-joined`/`peer-left`, que carregam os ids de que ele precisa
        * para negociar mídia.
        */
+      /** `leave` recebido: saída anunciada, não queda de socket. */
+      let saiuDeProposito = false;
+
       function anunciarPlateia(channel: Channel): void {
         const count = channel.viewers.size;
         for (const viewer of channel.viewers.values()) {
@@ -278,6 +281,9 @@ export function makeChannelRegistry(deps: RegistryDeps) {
               if (peer === null) return fail('BAD_MESSAGE');
               return relay(message);
             case 'leave':
+              // Marca ANTES de fechar: é o que separa "eu parei" de "meu
+              // socket caiu", e as duas coisas pedem reações opostas.
+              saiuDeProposito = true;
               return socket.close();
           }
         },
@@ -297,20 +303,34 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           if (peer.role === 'host') {
             channel.host = null;
             channel.emptySince = deps.now();
-            for (const viewer of channel.viewers.values()) {
-              /**
-               * AVISA antes de fechar.
-               *
-               * Fechar o socket calado deixa o espectador sem saber se o
-               * transmissor saiu ou se o servidor caiu — e as duas coisas
-               * pedem reações opostas: no primeiro caso a mídia acabou, no
-               * segundo ela continua. Sem o aviso, ele ficava "assistindo"
-               * um vídeo congelado.
-               */
-              viewer.socket.send({ type: 'peer-left', peerId: peer.id });
-              viewer.socket.close();
+
+            /**
+             * Socket do transmissor que CAIU não derruba a plateia.
+             *
+             * A mídia é direta entre os dois: o servidor nunca esteve no
+             * caminho dela, então não deveria estar no caminho da falha. Ao
+             * derrubar os espectadores aqui, uma piscada de rede do
+             * transmissor — ou um deploy nosso — apagava transmissões que
+             * continuavam funcionando perfeitamente. Medido: 5 segundos de
+             * tela morta e conexões duplicadas quando o transmissor voltava
+             * com um `peerId` novo e era admitido como se fosse outro peer.
+             *
+             * Quem detecta saída de verdade é o próprio espectador, pela
+             * MÍDIA: a trilha remota termina e ele reage na hora. É o sinal
+             * certo, porque é o que ele está de fato consumindo.
+             *
+             * A reapresentação em `claimChannel` só existe por causa disto —
+             * enquanto a plateia era limpa aqui, ela iterava mapa vazio.
+             */
+            if (saiuDeProposito) {
+              for (const viewer of channel.viewers.values()) {
+                // Saída anunciada: aí sim avisa e fecha, sem esperar a mídia
+                // morrer sozinha.
+                viewer.socket.send({ type: 'peer-left', peerId: peer.id });
+                viewer.socket.close();
+              }
+              channel.viewers.clear();
             }
-            channel.viewers.clear();
           } else {
             channel.viewers.delete(peer.id);
             channel.host?.socket.send({ type: 'peer-left', peerId: peer.id });

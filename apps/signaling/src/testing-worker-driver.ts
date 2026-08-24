@@ -162,6 +162,12 @@ export function makeWorkerDriver(): ConformanceDriver {
         JSON.stringify(to === undefined ? { type: 'signal', payload } : { type: 'signal', to, payload }),
       );
     },
+    async leave(id) {
+      const socket = sockets.get(id);
+      const slug = slugOf.get(id);
+      if (socket === undefined || slug === undefined) return;
+      await roomFor(slug).room.handleMessage(socket, slug, JSON.stringify({ type: 'leave' }));
+    },
     disconnect(id) {
       const socket = sockets.get(id);
       if (socket === undefined) return;

@@ -63,6 +63,13 @@ type Attachment = {
   /** Só no socket do host: sha256 do ownerToken de quem reivindicou. */
   readonly ownerHash?: string;
   /** Janela de rate limit desta conexão, também à prova de hibernação. */
+  /**
+   * `leave` recebido antes do fechamento: saída ANUNCIADA.
+   *
+   * Vive no attachment porque o objeto hiberna: variável de instância não
+   * sobrevive entre a mensagem e o `webSocketClose`.
+   */
+  readonly saiuDeProposito?: boolean;
   readonly janelaInicio: number;
   readonly janelaContagem: number;
 };
@@ -265,6 +272,8 @@ export class ChannelRoom {
         if (at === null) return this.fail(socket, 'BAD_MESSAGE');
         return this.relay(at, message);
       case 'leave':
+        // Marca ANTES de fechar: separa "eu parei" de "meu socket caiu".
+        if (at !== null) socket.serializeAttachment({ ...at, saiuDeProposito: true });
         socket.close(1000, 'leave');
         return;
     }
@@ -519,9 +528,26 @@ export class ChannelRoom {
        */
       if (this.host() !== null) return;
 
-      // Transmissor saiu de verdade: avisa ANTES de fechar. Socket fechado em
-      // silêncio não distingue "o transmissor saiu" de "o servidor caiu", e as
-      // duas coisas pedem reações opostas.
+      /**
+       * Socket do transmissor que CAIU não derruba a plateia.
+       *
+       * A mídia é direta entre os dois: o servidor nunca esteve no caminho
+       * dela, então não deveria estar no caminho da falha. Derrubar aqui fazia
+       * uma piscada de rede do transmissor — ou um deploy nosso — apagar
+       * transmissões que continuavam funcionando. Medido: 5 segundos de tela
+       * morta, e conexões duplicadas quando o transmissor voltava com um
+       * `peerId` novo e era admitido como se fosse outro peer.
+       *
+       * Quem detecta saída de verdade é o espectador, pela MÍDIA: a trilha
+       * remota termina e ele reage na hora. É o sinal certo, porque é o que
+       * ele está consumindo.
+       *
+       * A reapresentação em `claim` só existe por causa disto — enquanto a
+       * plateia era derrubada aqui, ela iterava lista vazia.
+       */
+      if (at.saiuDeProposito !== true) return;
+
+      // Saída anunciada: avisa ANTES de fechar, sem esperar a mídia morrer.
       for (const viewer of this.viewers()) {
         this.send(viewer.socket, { type: 'peer-left', peerId: at.peerId });
         viewer.socket.close(1000, 'host saiu');

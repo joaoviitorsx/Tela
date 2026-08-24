@@ -164,10 +164,11 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(errorOf(await d.watch('novo', SLUG))).toBeUndefined();
   });
 
-  it('saída do transmissor AVISA os espectadores antes de derrubar', async () => {
+  it('saída ANUNCIADA do transmissor AVISA os espectadores antes de derrubar', async () => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER);
     const viewer = await d.watch('v', SLUG);
+    await d.leave('h');
     d.disconnect('h');
 
     // Socket fechado em silêncio não distingue "o transmissor saiu" de "o
@@ -176,6 +177,22 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
       { type: 'peer-left', peerId: peerIdOf(host) },
     ]);
     expect(viewer.closed()).toBe(true);
+  });
+
+  /**
+   * As duas implementações precisam concordar nisto, e é a promessa central da
+   * arquitetura: o servidor não está no caminho da mídia, logo não deveria
+   * estar no caminho da falha. Socket do transmissor que cai — piscada de rede,
+   * deploy nosso — não pode apagar uma transmissão que continua fluindo P2P.
+   */
+  it('QUEDA do socket do transmissor NÃO derruba os espectadores', async () => {
+    const d = criar();
+    await d.host('h', SLUG, OWNER);
+    const viewer = await d.watch('v', SLUG);
+    d.disconnect('h');
+
+    expect(ofType(viewer, 'peer-left')).toEqual([]);
+    expect(viewer.closed()).toBe(false);
   });
 
   it('destino inexistente é ignorado, não derruba a conexão', async () => {

@@ -27,6 +27,14 @@ export type ConformanceDriver = {
   watch(id: string, slug: string): Promise<ConformanceClient>;
   /** Envia `signal` por uma conexão já aberta. */
   signal(id: string, payload: unknown, to?: string): Promise<void>;
+  /**
+   * Envia `leave` — saída ANUNCIADA, diferente de queda de socket.
+   *
+   * A distinção é comportamento observável: saída anunciada derruba a plateia
+   * na hora; socket que cai deixa a plateia em paz, porque a mídia é direta e
+   * pode continuar.
+   */
+  leave(id: string): Promise<void>;
   /** Fecha a conexão como o transporte faria. */
   disconnect(id: string): void;
   /**

@@ -16,8 +16,10 @@ import {
   CONTENT_HINT,
   DEFAULT_PRESET_ID,
   type PresetId,
+  PRESET_IDS,
   nextPresetOnCpuPressure,
   presetById,
+  presetForBitrate,
   previousPresetOnRecovery,
 } from './presets.js';
 
@@ -68,6 +70,24 @@ export type BroadcastState =
        * do volume de saída do aparelho. Sem este controle o transmissor não
        * tinha nenhuma influência sobre o que os amigos ouviam.
        */
+      /**
+       * A captura parou de entregar imagem AO ENCODER.
+       *
+       * Medido em `framesPerSecond` do `outbound-rtp`, que é literalmente o
+       * que sai para os espectadores — não o que um elemento de vídeo local
+       * acha. Mede a coisa certa e não custa nada: a amostragem já existia.
+       */
+      readonly capturaSemImagem: boolean;
+      /**
+       * POR QUE a qualidade caiu sozinha. `null` quando não caiu.
+       *
+       * `cpu` quase sempre significa encode em SOFTWARE — o caso que de fato
+       * rouba quadros do jogo, e o único em que o usuário tem o que fazer
+       * (ligar o encode por hardware). `bandwidth` é o link. Dizer "o encoder
+       * não estava dando conta" nos dois casos manda metade das pessoas
+       * caçar o problema no lugar errado.
+       */
+      readonly motivoDegradacao: QualityLimitation | null;
       readonly volumeAudio: number;
       /** `false` quando o navegador não deu Web Audio e o ganho não entrou. */
       readonly volumeAjustavel: boolean;
@@ -129,6 +149,12 @@ const PRESSURE_SAMPLES = 5;
 const CALMARIA_AMOSTRAS = 60;
 
 /**
+ * Amostras a zero frame antes de acusar captura morta. Cinco segundos é o que
+ * uma captura leva para engatar em máquina lenta; abaixo disso é falso alarme.
+ */
+const SEM_IMAGEM_AMOSTRAS = 5;
+
+/**
  * Framerate da captura quando NINGUÉM está assistindo.
  *
  * Sem espectador não há encoder rodando — mas a captura de tela continua, e
@@ -174,6 +200,8 @@ export class BroadcastSession {
   private presetEscolhido: PresetId = DEFAULT_PRESET_ID;
   /** Amostras seguidas sem aperto nenhum. */
   private calmaria = 0;
+  /** Amostras seguidas com o encoder entregando zero frame, havendo plateia. */
+  private semImagem = 0;
   private pressure = 0;
   private pressureKind: QualityLimitation = 'none';
   private capturaOciosa = false;
@@ -355,6 +383,8 @@ export class BroadcastSession {
       maxPeers: this.maxPeers,
       stats: null,
       hasAudio: this.audioTrack !== null,
+      capturaSemImagem: false,
+      motivoDegradacao: null,
       volumeAudio: this.volumeTransmissao,
       volumeAjustavel: this.deps.gain.ativo,
       semSinalizacao: false,
@@ -401,6 +431,7 @@ export class BroadcastSession {
     this.setState({ ...this.state, stats });
     this.applyUplinkCeiling(stats.availableBps, this.state.peers.length);
     this.trackPressure(stats.limitation);
+    this.trackCapturaMorta(stats.fps);
   }
 
   /**
@@ -430,11 +461,21 @@ export class BroadcastSession {
      */
     const porEspectador =
       availableBps === null ? null : availableBps / Math.max(1, espectadores);
-    const decisao = this.governor.observe(porEspectador, presetById(this.presetId));
+    /**
+     * A referência é o preset ESCOLHIDO, não o que está valendo agora.
+     *
+     * Se o governador medisse contra o preset degradado, cada queda de preset
+     * moveria a própria fronteira de decisão dele: derrubar o preset baixaria
+     * o alvo de comparação, o teto seria solto, a recuperação subiria o preset
+     * de novo e o ciclo recomeçaria. Medindo sempre contra a intenção do
+     * usuário, a decisão de teto não depende do que a degradação já fez.
+     */
+    const decisao = this.governor.observe(porEspectador, presetById(this.presetEscolhido));
     // `null` na maioria das leituras: o governador só decide quando a mudança
     // compensa reconfigurar o encoder. `{ bps: null }` remove o teto.
     if (decisao === null) return;
     void this.deps.transport.setBitrateCeiling(decisao.bps).catch(() => undefined);
+    this.casarPresetComTeto(decisao.bps);
   }
 
   /**
@@ -474,13 +515,81 @@ export class BroadcastSession {
     this.pressure = 0;
     if (next === null) return;
 
+    const causa = this.pressureKind;
     this.presetId = next;
     if (this.state.status === 'live') {
-      this.setState({ ...this.state, presetId: next, presetForced: true });
+      this.setState({ ...this.state, presetId: next, presetForced: true, motivoDegradacao: causa });
     }
     // `catch` obrigatório: fire-and-forget aqui já produziu unhandled
     // rejection quando colidiu com uma troca manual de qualidade.
     void this.deps.transport.setPreset(presetById(next)).catch(() => undefined);
+  }
+
+  /**
+   * Captura viva que não entrega imagem.
+   *
+   * Acontece de verdade: em alguns caminhos de captura de tela inteira —
+   * Wayland via portal — a trilha é criada e nunca produz frame. O navegador
+   * não avisa, a transmissão sai preta e ninguém sabe por quê.
+   *
+   * A detecção mora AQUI, e não num elemento de vídeo escondido, por dois
+   * motivos. O primeiro é custo: manter um `<video>` puxando frames na máquina
+   * que está rodando o jogo é exatamente o tipo de trabalho que este produto
+   * existe para não cobrar. O segundo é precisão: `framesPerSecond` do
+   * `outbound-rtp` é o que de fato sai para os espectadores, então também pega
+   * encoder travado, não só captura morta.
+   *
+   * Só vale com plateia: sem espectador não há `outbound-rtp`, e sem ninguém
+   * do outro lado não há tela preta para ninguém ver.
+   */
+  private trackCapturaMorta(fps: number): void {
+    if (this.state.status !== 'live') return;
+
+    const relevante = this.state.peers.length > 0 && this.amostras > AQUECIMENTO_AMOSTRAS;
+    this.semImagem = relevante && fps === 0 ? this.semImagem + 1 : 0;
+
+    const morta = this.semImagem >= SEM_IMAGEM_AMOSTRAS;
+    if (morta === this.state.capturaSemImagem) return;
+    this.setState({ ...this.state, capturaSemImagem: morta });
+  }
+
+  /**
+   * A RESOLUÇÃO tem que seguir o bitrate.
+   *
+   * Sem isto, um teto de upload de 3 Mbps com o preset em 1080p60 mandava o
+   * encoder produzir 1920×1080 a 60fps dentro de 3 Mbps: 0,024 bit por pixel,
+   * quando H.264 precisa de perto de 0,1 bpp para segurar movimento alto. O
+   * controlador de taxa só tinha uma saída — subir o QP — e a imagem virava
+   * bloco. Num flick de CS, onde a tela inteira muda de frame para frame e
+   * vetor de movimento não ajuda em nada, é o pior caso possível.
+   *
+   * O mesmo orçamento em 720p60 econômico dá o dobro de bits por pixel e uma
+   * imagem MAIS nítida. Menos pixels, cada um bem codificado.
+   *
+   * Só DESCE por aqui. Subir é trabalho da recuperação, que exige calmaria
+   * longa — duas malhas que sobem seriam duas malhas para oscilar.
+   */
+  private casarPresetComTeto(teto: number | null): void {
+    // Sem teto, quem manda é o preset; a recuperação cuida da volta.
+    if (teto === null) return;
+
+    const cabe = presetForBitrate(teto);
+    if (cabe === this.presetId) return;
+    // Índice maior = degrau pior. Só aplica se for para BAIXO.
+    if (PRESET_IDS.indexOf(cabe) <= PRESET_IDS.indexOf(this.presetId)) return;
+
+    this.presetId = cabe;
+    this.pressure = 0;
+    this.calmaria = 0;
+    if (this.state.status === 'live') {
+      this.setState({
+        ...this.state,
+        presetId: cabe,
+        presetForced: true,
+        motivoDegradacao: 'bandwidth',
+      });
+    }
+    void this.deps.transport.setPreset(presetById(cabe)).catch(() => undefined);
   }
 
   /**
@@ -519,6 +628,7 @@ export class BroadcastSession {
         ...this.state,
         presetId: acima,
         presetForced: acima !== this.presetEscolhido,
+        motivoDegradacao: acima === this.presetEscolhido ? null : this.state.motivoDegradacao,
       });
     }
     void this.deps.transport.setPreset(presetById(acima)).catch(() => undefined);
@@ -633,7 +743,7 @@ export class BroadcastSession {
     this.pressure = 0;
     this.pressureKind = 'none';
     this.calmaria = 0;
-    this.setState({ ...this.state, presetId: next, presetForced: false });
+    this.setState({ ...this.state, presetId: next, presetForced: false, motivoDegradacao: null });
     await this.deps.transport.setPreset(presetById(next));
   }
 

@@ -17,3 +17,7 @@ target/
 # Amplo de propósito: nada com esse prefixo pertence ao repositório.
 zz-*
 **/zz-*
+
+# Worktrees de agente. `git add -A` já os arrastou para dentro de um commit
+# como repositório embutido — o mesmo tipo de acidente do prefixo acima.
+.claude/worktrees/

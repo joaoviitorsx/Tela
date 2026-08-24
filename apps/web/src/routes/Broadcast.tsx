@@ -50,10 +50,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
    * Quem abaixou para conversar na call ontem espera que continue abaixado
    * hoje — reaplicar 100% a cada transmissão devolveria o susto.
    */
-  /** Captura viva mas sem imagem. Sobe do preview porque precisa ser visível
-   *  mesmo com ele fechado. */
-  const [semSinal, setSemSinal] = useState(false);
-
   const [volumeAudio, setVolumeAudio] = useState(() => {
     const bruto = Number(volumeTransmissaoPreference.read());
     return Number.isFinite(bruto) && bruto >= 0 && bruto <= 1 ? bruto : 1;
@@ -192,8 +188,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         preview={state.preview}
         previewAberto={previewAberto}
         onTogglePreview={() => setPreviewAberto((v) => !v)}
-        semSinal={semSinal}
-        onSemSinal={setSemSinal}
+        semSinal={state.capturaSemImagem}
         onSwitchSource={() => void switchSource()}
         prioridade={state.prioridade}
         onPrioridade={(p) => void setPrioridade(p)}
@@ -206,6 +201,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         presets={presets}
         presetId={state.presetId}
         presetForced={state.presetForced}
+        motivoDegradacao={state.motivoDegradacao}
         onPreset={(id) => void setPreset(id)}
         stats={stats}
       />

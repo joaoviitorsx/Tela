@@ -8,10 +8,18 @@ import {
   SIXTY_FPS_PRESETS,
   VIDEO_CODEC,
   p2pViewerBudget,
+  presetForBitrate,
   suggestPreset,
 } from '@tela/shared';
 
-export { CONTENT_HINT, DEGRADATION_PREFERENCE, VIDEO_CODEC, p2pViewerBudget, suggestPreset };
+export {
+  CONTENT_HINT,
+  DEGRADATION_PREFERENCE,
+  VIDEO_CODEC,
+  p2pViewerBudget,
+  presetForBitrate,
+  suggestPreset,
+};
 export type { EncodingPreset, PresetId };
 
 export const PRESETS: Readonly<Record<PresetId, EncodingPreset>> = SHARED_PRESETS;

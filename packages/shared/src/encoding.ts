@@ -221,9 +221,34 @@ export function suggestPreset(uplinkBitsPerSecond: number, viewers: number): Pre
   // alto: errar para baixo custa nitidez, errar para cima custa a transmissão.
   if (!Number.isFinite(uplinkBitsPerSecond) || uplinkBitsPerSecond <= 0) return 'p720p30';
   const budget = uplinkBitsPerSecond * P2P_LIMITS.uplinkHeadroom;
-  const perViewer = budget / Math.max(1, viewers);
-  if (perViewer >= PRESET_1080P60.main.maxBitrate) return 'p1080p60';
-  if (perViewer >= PRESET_720P60.main.maxBitrate) return 'p720p60';
-  if (perViewer >= PRESET_720P60_ECO.main.maxBitrate) return 'p720p60eco';
+  return presetForBitrate(budget / Math.max(1, viewers));
+}
+
+/**
+ * Maior preset que CABE num orçamento já calculado por espectador.
+ *
+ * # Por que isto precisa existir
+ *
+ * O teto de upload limitava o bitrate e deixava resolução e framerate no
+ * preset. Resultado: 1920×1080 a 60fps com o bitrate de 3 Mbps — 124 milhões
+ * de pixels por segundo em 0,024 bit por pixel. H.264 precisa de algo perto
+ * de 0,1 bpp para segurar cena de movimento alto, então o controlador de taxa
+ * só tinha uma saída, subir o QP, e a imagem virava bloco.
+ *
+ * O mesmo orçamento em `p720p60eco` dá 0,045 bpp: metade dos pixels, o dobro
+ * dos bits para cada um, imagem mais NÍTIDA. Em jogo rápido — um flick de CS,
+ * onde a tela inteira muda de frame para frame e vetor de movimento não ajuda
+ * em nada — a diferença é entre jogável e ilegível.
+ *
+ * `p720p30` entra aqui, e é de propósito: o corolário da R5 exclui esse degrau
+ * da escada de CPU porque ele tem a mesma resolução do `p720p60eco` e cortaria
+ * framerate sem aliviar o encoder. Mas ele É degrau de UPLOAD, que é
+ * exatamente o que se está resolvendo quando o orçamento é o gargalo.
+ */
+export function presetForBitrate(perViewerBitsPerSecond: number): PresetId {
+  if (!Number.isFinite(perViewerBitsPerSecond) || perViewerBitsPerSecond <= 0) return 'p720p30';
+  if (perViewerBitsPerSecond >= PRESET_1080P60.main.maxBitrate) return 'p1080p60';
+  if (perViewerBitsPerSecond >= PRESET_720P60.main.maxBitrate) return 'p720p60';
+  if (perViewerBitsPerSecond >= PRESET_720P60_ECO.main.maxBitrate) return 'p720p60eco';
   return 'p720p30';
 }

@@ -31,9 +31,8 @@ type Props = {
   readonly preview: MediaStream | null;
   readonly previewAberto: boolean;
   readonly onTogglePreview: () => void;
-  /** A captura parou de produzir imagem. Vale com o preview aberto ou fechado. */
+  /** A captura parou de entregar imagem ao encoder. Medido pela sessão. */
   readonly semSinal: boolean;
-  readonly onSemSinal: (semSinal: boolean) => void;
   readonly onSwitchSource: () => void;
   readonly prioridade: Prioridade;
   readonly onPrioridade: (p: Prioridade) => void;
@@ -47,6 +46,8 @@ type Props = {
   readonly presets: readonly EncodingPreset[];
   readonly presetId: PresetId;
   readonly presetForced: boolean;
+  /** Por que caiu: `cpu` (encode pesado) ou `bandwidth` (link). */
+  readonly motivoDegradacao: 'cpu' | 'bandwidth' | 'none' | 'other' | null;
   readonly onPreset: (id: PresetId) => void;
   readonly stats: {
     readonly resolution: string;
@@ -78,7 +79,6 @@ export function LiveHud({
   previewAberto,
   onTogglePreview,
   semSinal,
-  onSemSinal,
   onSwitchSource,
   prioridade,
   onPrioridade,
@@ -91,6 +91,7 @@ export function LiveHud({
   presets,
   presetId,
   presetForced,
+  motivoDegradacao,
   onPreset,
   stats,
 }: Props) {
@@ -179,7 +180,7 @@ export function LiveHud({
             stream={preview}
             aberto={previewAberto}
             onToggle={onTogglePreview}
-            onSemSinal={onSemSinal}
+            semSinal={semSinal}
           />
 
           {/*
@@ -237,9 +238,20 @@ export function LiveHud({
           </span>
         </div>
 
+        {/*
+          O motivo muda o que a pessoa faz. `cpu` quase sempre é encode em
+          SOFTWARE — o caso que rouba quadros do jogo e que tem conserto do
+          lado de quem transmite. `bandwidth` é o link, e não adianta mexer na
+          máquina. Dizer "o encoder não estava dando conta" nos dois casos
+          mandava metade das pessoas caçar o problema no lugar errado.
+        */}
         {presetForced && (
           <p role="status" className="text-[12px] text-warn">
-            Qualidade reduzida automaticamente — o encoder não estava dando conta.
+            {motivoDegradacao === 'cpu'
+              ? 'Qualidade reduzida — o encode está pesando na máquina. Confira se a aceleração por hardware está ligada em chrome://gpu; em software, o jogo perde quadros.'
+              : motivoDegradacao === 'bandwidth'
+                ? 'Qualidade reduzida — sua subida não comporta o que estava configurado. Volta sozinho quando a rede sobrar.'
+                : 'Qualidade reduzida automaticamente.'}
           </p>
         )}
 

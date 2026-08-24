@@ -71,7 +71,13 @@ export function SlugPicker({
         alvo de toque. `padding` dentro do próprio `input` faz a caixa inteira
         virar alvo, que é o que a pessoa vê e onde ela toca.
       */}
+      {/*
+        `data-vidro`: a abertura mede esta caixa no DOM vivo para desenhar o
+        contorno do campo dentro do tubo. Atributo inerte em toda página que não
+        seja a inicial — ver `react/use-abertura.ts`.
+      */}
       <div
+        data-vidro="contorno"
         className={[
           'flex items-baseline rounded-md border bg-void transition-colors duration-150',
           heroi ? 'px-4 sm:px-5' : '',

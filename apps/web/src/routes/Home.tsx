@@ -4,11 +4,10 @@ import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
 import { BigButton } from '../components/BigButton.js';
 import { IconPlay } from '../components/Icon.js';
 import { Masthead } from '../components/Masthead.js';
-import { Panel, PanelSection } from '../components/Panel.js';
 import { QualityPicker } from '../components/QualityPicker.js';
 import { SignalChain } from '../components/SignalChain.js';
 import { SlugPicker } from '../components/SlugPicker.js';
-import { identity, platform, preferences } from '../container.js';
+import { audioCue, identity, platform, preferences } from '../container.js';
 import { isPresetId } from '../core/media/presets.js';
 import { useAudioSources } from '../react/use-audio-sources.js';
 import { useSlugCheck } from '../react/use-slug-check.js';
@@ -20,38 +19,32 @@ type Props = {
 /**
  * A chapa frontal do produto.
  *
- * # O que era, e por que mudou
+ * # O que mudou, e por quê
  *
- * Era literalmente um botão e um campo empilhados no meio de 1440×900 de
- * preto, com uns 500px vazios de cada lado. A regra que produziu isso — ADR
- * 0008 §4, "a tela inicial volta a ser um botão e um campo" — resolvia um
- * problema real: a escolha de qualidade tinha virado quatro cartões e
- * empurrado o botão para 10% da página.
+ * A versão anterior punha a página inteira dentro de UM cartão arredondado com
+ * a palavra "tela" em minúsculas no canto. Três problemas, e nenhum é gosto:
  *
- * O que essa regra nunca disse é que a página precisa ser VAZIA. Ela disse que
- * o botão tem que dominar. Aqui ele continua dominando — é o único elemento
- * verde, ocupa a largura da coluna principal e tem 56px de altura — e o resto
- * do espaço passa a fazer trabalho:
+ * 1. **O cartão.** Uma chapa flutuando sobre o vazio faz o produto parecer um
+ *    formulário hospedado numa página. Agora as faixas atravessam a janela de
+ *    ponta a ponta e o que as separa são filetes de 1px; quem respeita a coluna
+ *    de 1180px é o conteúdo, não a moldura. A referência declarada é painel de
+ *    aparelho de vídeo — painel não tem canto arredondado flutuando no ar.
  *
- * - o campo do link virou o maior texto da tela, porque o link É o produto;
- * - a coluna da direita explica por que este produto existe, o que é a única
- *   coisa que ninguém consegue deduzir sozinho olhando um campo de texto;
- * - o rodapé desenha o caminho do vídeo, com os números do preset ESCOLHIDO.
+ * 2. **A coluna da direita.** "Por que isto existe" ocupava 380px permanentes
+ *    para explicar o produto a quem já clicou no link dele. Os dois fatos que
+ *    valiam foram para onde são úteis: "a aba precisa ficar aberta" ficou
+ *    embaixo do botão, que é onde a decisão acontece, e "até 5 ao mesmo tempo"
+ *    virou DESENHO no caminho do vídeo, em vez de frase.
  *
- * Nada disso é funcionalidade nova (R6): é o dado que já estava em
- * `@tela/shared` e o contexto que já estava no AGENTS.md, colocados onde a
- * pessoa lê antes de decidir em vez de depois.
+ * 3. **O eixo.** Campo, botão, qualidade, áudio e caminho começam todos no
+ *    mesmo x. Um eixo esquerdo único é o que faz cinco regiões diferentes
+ *    lerem como um aparelho só — e é o que a versão centralizada não tinha.
  *
- * # Duas decisões antigas que eu contrariei, e por quê
+ * # A ordem no DOM
  *
- * A docstring anterior dizia "sem header, sem logo, sem rodapé". Ganhou uma
- * faixa de 52px porque `/recuperar` — a página que torna o "sem cadastro"
- * honesto — não tinha NENHUM caminho de chegada: só digitando o endereço na
- * mão. Um recurso inalcançável é um recurso que não existe.
- *
- * E a ordem no DOM mudou: campo, depois botão. Antes o botão vinha primeiro,
- * então quem navega por teclado tabulava para um botão desabilitado antes de
- * chegar no campo que o habilita.
+ * Campo, depois botão. Antes o botão vinha primeiro, então quem navega por
+ * teclado tabulava para um botão desabilitado antes de chegar no campo que o
+ * habilita.
  *
  * Continua sem reserva de slug: sem API HTTP, quem decide se o nome está livre
  * é o servidor de sinalização, no `host`. O usuário descobre ao apertar
@@ -80,6 +73,9 @@ export function Home({ onStart }: Props) {
   const handleStart = useCallback(() => {
     const wanted = slug.trim().toLowerCase();
     if (check.status !== 'ok') return;
+    // §10 da coreografia: a abertura é muda, e o chiado entra como recompensa
+    // do primeiro gesto. Este é o gesto.
+    audioCue.estouro();
     identity.rememberSlug(wanted);
     onStart(wanted, presetId, audioDeviceId);
   }, [slug, check, presetId, audioDeviceId, onStart]);
@@ -96,6 +92,8 @@ export function Home({ onStart }: Props) {
    * `main.maxBitrate`, o teto vem de `P2P_LIMITS`. Trocar de 1080p60 para
    * 720p60 muda estes números na hora — é a única forma honesta de responder
    * "o que muda se eu mexer aqui" antes de a transmissão existir.
+   *
+   * O último nó não tem valor escrito: tem o leque. Ver `SignalChain`.
    */
   const caminho = useMemo(
     () => [
@@ -107,7 +105,7 @@ export function Home({ onStart }: Props) {
       {
         rotulo: 'seu PC codifica',
         valor: `h264 · ${preset.main.maxFramerate}fps`,
-        nota: 'na sua placa de vídeo, com a qualidade escolhida ao lado',
+        nota: 'na sua placa de vídeo, com a qualidade escolhida ali em cima',
       },
       {
         rotulo: 'sobe direto',
@@ -117,40 +115,37 @@ export function Home({ onStart }: Props) {
       {
         rotulo: 'chega nos amigos',
         valor: `até ${teto}`,
-        nota: 'eles abrem o link e veem, sem instalar e sem se cadastrar',
+        nota: `uma cópia inteira do vídeo para cada um, saindo da sua máquina. O que limita é a sua subida, não um servidor.`,
       },
     ],
     [maiorCamada, preset, teto],
   );
 
   return (
-    <div className="flex min-h-dvh flex-col px-4 py-4 sm:px-6 sm:py-8">
-      <Panel className="mx-auto flex w-full max-w-[1180px] flex-1 flex-col">
-        <Masthead>
-          <a
-            href="/recuperar"
-            className="inline-flex min-h-11 items-center rounded-sm px-2 text-[13px] text-muted underline decoration-line underline-offset-4 transition-colors duration-150 hover:text-text hover:decoration-text"
-          >
-            código de recuperação
-          </a>
-        </Masthead>
+    <div className="flex min-h-dvh flex-col">
+      <Masthead tamanho="grande">
+        <a
+          href="/recuperar"
+          className="inline-flex min-h-11 items-center rounded-sm px-2 text-[13px] text-muted underline decoration-line underline-offset-4 transition-colors duration-150 hover:text-text hover:decoration-text"
+        >
+          código de recuperação
+        </a>
+      </Masthead>
 
+      <main className="flex flex-1 flex-col">
         {/*
-          `items-stretch` com o filete vertical em `lg:border-l` na segunda
-          coluna: é o mesmo filete que separa as regiões na horizontal, e é o
-          que faz as duas colunas lerem como uma chapa gravada em vez de dois
-          cartões encostados.
+          O canal. A folga vertical toda vive aqui — `flex-1` com o conteúdo
+          centrado verticalmente. Em 1440×900 a sobra vira respiro em volta do
+          TRANSMITIR, que é onde ela vale alguma coisa, em vez de virar um vazio
+          pendurado embaixo do último filete.
         */}
-        <div className="flex flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)] lg:items-stretch">
-          {/*
-            A folga vertical vai toda para a região do botão, não para o fim da
-            coluna. Quando a coluna de texto é mais alta que a console — e ela
-            é, em 1440×900 — o `flex-1` aqui faz a sobra virar respiro em volta
-            do TRANSMITIR, que é onde ela vale alguma coisa, em vez de virar um
-            vazio pendurado embaixo do último filete.
-          */}
-          <div className="flex flex-col">
-            <PanelSection className="flex flex-1 flex-col justify-center gap-5 py-6 sm:py-8">
+        <section className="flex flex-1 items-center border-b border-line py-10 sm:py-14">
+          <div className="mx-auto w-full max-w-[1180px] px-4 sm:px-6">
+            <div className="flex w-full max-w-[860px] flex-col gap-6">
+              <h1 data-vidro="texto" className="serigrafia">
+                seu canal
+              </h1>
+
               <SlugPicker
                 value={slug}
                 onChange={setSlug}
@@ -161,21 +156,61 @@ export function Home({ onStart }: Props) {
                 error={check.status === 'invalid' ? check.message : null}
               />
 
-              <BigButton
-                onClick={handleStart}
-                disabled={check.status !== 'ok'}
-                bloco
-                icon={<IconPlay className="h-4 w-4" />}
-              >
-                TRANSMITIR
-              </BigButton>
-            </PanelSection>
+              {/*
+                Botão e aviso na mesma linha, e não empilhados.
 
-            <PanelSection rotulo="qualidade" className="border-t border-line">
+                Empilhado e ocupando a coluna inteira, o TRANSMITIR virava uma
+                barra de 860×56 de verde puro — o acento é o recurso mais escasso
+                da paleta (ADR 0008) e ali ele era a maior área de cor da tela,
+                com a metade direita da faixa vazia do lado. Em 300px ele continua
+                sendo o único elemento verde, o maior alvo e o mais alto contraste
+                da página, e o espaço que sobrava passa a explicar o que acontece
+                depois de apertá-lo.
+
+                No celular volta a empilhar: 300px de botão ao lado de um texto
+                de 13px não cabem em 360px de largura.
+              */}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+                <div data-vidro="acento" className="w-full sm:w-[300px] sm:shrink-0">
+                  <BigButton
+                    onClick={handleStart}
+                    disabled={check.status !== 'ok'}
+                    bloco
+                    icon={<IconPlay className="h-4 w-4" />}
+                  >
+                    TRANSMITIR
+                  </BigButton>
+                </div>
+
+                {/*
+                  Um dos dois fatos que a coluna da direita carregava. Ele mora
+                  aqui porque é o único que muda o comportamento de quem está
+                  prestes a apertar o botão — fechar a aba encerra a transmissão,
+                  e ninguém deduz isso sozinho.
+                */}
+                <p data-vidro="texto" className="text-[13px] leading-snug text-muted">
+                  A aba precisa ficar aberta enquanto você joga. Ela não precisa estar
+                  visível — pode ficar atrás do jogo.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* O console: os dois ajustes, lado a lado. Nenhum deles decide nada sozinho. */}
+        <section className="border-b border-line">
+          <div className="mx-auto grid w-full max-w-[1180px] px-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="py-5 lg:pr-6">
+              <h2 data-vidro="texto" className="serigrafia mb-3">
+                qualidade
+              </h2>
               <QualityPicker presets={presets} value={presetId} onChange={choosePreset} />
-            </PanelSection>
+            </div>
 
-            <PanelSection rotulo="áudio do jogo" className="border-t border-line">
+            <div className="border-t border-line py-5 lg:border-l lg:border-t-0 lg:pl-6">
+              <h2 data-vidro="texto" className="serigrafia mb-3">
+                áudio do jogo
+              </h2>
               <AudioSourcePicker
                 os={os}
                 mode={modoAudio}
@@ -185,58 +220,42 @@ export function Home({ onStart }: Props) {
                 onRequestDevices={fontes.procurar}
                 buscando={fontes.buscando}
               />
-            </PanelSection>
-          </div>
-
-          {/*
-            Região `surface`: só texto, zero controle. É a regra de contraste da
-            chapa — `edge` mede 2,92:1 sobre `surface` e 3,13:1 sobre `void`,
-            então nada que se aperte senta aqui. Ver `Panel.tsx`.
-          */}
-          <aside className="flex flex-col gap-5 border-t border-line bg-surface px-4 py-6 sm:px-6 lg:border-l lg:border-t-0">
-            <div className="flex flex-col gap-3">
-              <h2 className="serigrafia">por que isto existe</h2>
-              <p className="text-[13.5px] leading-relaxed text-text">
-                Desde 17 de agosto de 2026 o Discord não compartilha tela no Brasil, por ordem
-                da ANPD. Texto e voz continuam funcionando — vocês já estão na call.
-              </p>
-              <p className="text-[13.5px] leading-relaxed text-muted">
-                Tela entrega só o que faltou: o vídeo. Não tem chat, não tem sala, não tem
-                perfil. Você escolhe um nome, aperta um botão e manda o link no Discord que
-                já está aberto.
-              </p>
             </div>
+          </div>
+        </section>
 
-            <dl className="flex flex-col gap-3 border-t border-line pt-5">
-              <Fato rotulo={`até ${teto} ao mesmo tempo`}>
-                Cada espectador recebe uma cópia inteira do vídeo direto da sua máquina. O
-                que limita é a sua subida, não um servidor.
-              </Fato>
-              <Fato rotulo="a aba precisa ficar aberta">
-                Ela não precisa estar visível — pode ficar atrás do jogo. Só não pode ser
-                fechada, porque é dela que o vídeo sai.
-              </Fato>
-              <Fato rotulo="o link é seu enquanto o navegador for">
-                Não há e-mail nem senha: quem prova que o link é seu é um código guardado
-                neste navegador.
-              </Fato>
-            </dl>
-          </aside>
-        </div>
+        {/*
+          Região `surface`: só leitura, zero controle. É a regra de contraste da
+          ADR 0008 — `edge` mede 2,92:1 sobre `surface` e 3,13:1 sobre `void`,
+          então nada que se aperte senta aqui.
+        */}
+        <section data-vidro="preenchido" className="bg-surface">
+          <div className="mx-auto w-full max-w-[1180px] px-4 py-7 sm:px-6">
+            <SignalChain rotulo="caminho do vídeo" nodes={caminho} saidas={{ total: teto }} />
+          </div>
+        </section>
+      </main>
 
-        <div className="border-t border-line bg-surface px-4 py-6 sm:px-6">
-          <SignalChain rotulo="caminho do vídeo" nodes={caminho} />
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-function Fato({ rotulo, children }: { readonly rotulo: string; readonly children: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <dt className="text-[13px] font-medium text-text">{rotulo}</dt>
-      <dd className="text-[12.5px] leading-relaxed text-muted">{children}</dd>
+      {/*
+        A última linha da página, e a única que fala de contexto.
+        
+        Era uma coluna de 380px com dois parágrafos. O que sobrou é o que
+        ninguém consegue deduzir olhando a tela: por que este produto apareceu
+        agora, e o que substitui a senha que ele não pede.
+      */}
+      <footer className="border-t border-line py-4">
+        <p
+          data-vidro="texto"
+          className="mx-auto w-full max-w-[1180px] px-4 text-[12.5px] leading-relaxed text-muted sm:px-6"
+        >
+          <span className="block max-w-[78ch]">
+            Desde 17 de agosto de 2026 o Discord não compartilha tela no Brasil, por ordem
+            da ANPD — texto e voz continuam funcionando. Tela entrega só o que faltou: o
+            vídeo. Sem cadastro e sem senha: quem prova que o link é seu é um código
+            guardado neste navegador.
+          </span>
+        </p>
+      </footer>
     </div>
   );
 }

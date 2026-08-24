@@ -45,7 +45,10 @@ export function AudioSourcePicker({
    */
   return (
     <details className="group w-full">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-[13px] text-muted transition-colors duration-150 hover:text-text">
+      <summary
+        data-vidro="texto"
+        className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-[13px] text-muted transition-colors duration-150 hover:text-text"
+      >
         <span className="inline-block transition-transform duration-150 group-open:rotate-90">›</span>
         {RESUMO[mode]}
       </summary>

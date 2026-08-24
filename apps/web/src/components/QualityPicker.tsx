@@ -28,7 +28,7 @@ export function QualityPicker({
   if (compact) {
     return (
       <div
-        className="grid grid-cols-2 gap-1 rounded-md border border-edge bg-void p-1 sm:flex sm:items-center"
+        className="grid grid-cols-3 gap-1 rounded-md border border-edge bg-void p-1 sm:flex sm:items-center"
         role="group"
         aria-label="Qualidade da transmissão"
       >
@@ -80,11 +80,16 @@ export function QualityPicker({
   return (
     <fieldset className="w-full" aria-label="Qualidade da transmissão" disabled={disabled}>
       {/*
-        Grade de duas colunas no celular, linha única a partir de `sm`. Com
-        `flex-wrap` os quatro presets quebravam 3+1 e o quarto ficava sozinho
-        ocupando a largura toda — parecia outro controle.
+        Grade de três colunas no celular, linha única a partir de `sm`. Eram
+        duas colunas, de quando a escada tinha quatro degraus; com seis, duas
+        colunas viram três linhas e o controle fica mais alto que o botão
+        primário. Com `flex-wrap` a quebra seria 4+2 e a segunda linha pareceria
+        outro controle.
       */}
-      <div className="grid grid-cols-2 gap-1 rounded-md border border-edge bg-void p-1 sm:flex">
+      <div
+        data-vidro="contorno"
+        className="grid grid-cols-3 gap-1 rounded-md border border-edge bg-void p-1 sm:flex"
+      >
         {presets.map((preset) => {
           const active = preset.id === value;
           return (

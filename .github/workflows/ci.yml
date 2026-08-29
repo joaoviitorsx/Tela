@@ -108,25 +108,39 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
 
-      # Sem credencial, o job termina VERDE sem publicar em vez de falhar.
-      # Um X vermelho permanente em todo push ensina a ignorar o vermelho, e
-      # aí ele para de servir para o que existe.
-      - id: credencial
+      # Credencial ausente FALHA, e a inversão custou dois commits em produção.
+      #
+      # Antes este passo terminava VERDE sem publicar, com o argumento de que
+      # um X vermelho permanente ensina a ignorar o vermelho. O argumento é
+      # bom e a consequência foi pior: sem os secrets configurados, TODO push
+      # passava verde sem publicar, e a produção ficou dois commits atrás sem
+      # que nada em lugar nenhum reclamasse. Descobriu-se por acaso.
+      #
+      # Verde tem que significar "está no ar". Se não dá para publicar, o
+      # estado é quebrado e merece vermelho — uma vez só, até alguém
+      # configurar os secrets.
+      - name: credencial de deploy
         env:
           TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CONTA: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          if [ -z "$TOKEN" ]; then
-            echo "tem=nao" >> "$GITHUB_OUTPUT"
-            echo "::notice::CLOUDFLARE_API_TOKEN ausente — deploy automático desligado."
-          else
-            echo "tem=sim" >> "$GITHUB_OUTPUT"
+          faltando=""
+          if [ -z "$TOKEN" ]; then faltando="$faltando CLOUDFLARE_API_TOKEN"; fi
+          if [ -z "$CONTA" ]; then faltando="$faltando CLOUDFLARE_ACCOUNT_ID"; fi
+          if [ -n "$faltando" ]; then
+            echo "::error::secret ausente:$faltando — a main NÃO está sendo publicada."
+            echo "Configure com:"
+            echo "  gh secret set CLOUDFLARE_API_TOKEN"
+            echo "  gh secret set CLOUDFLARE_ACCOUNT_ID"
+            echo "O token sai de Cloudflare → My Profile → API Tokens,"
+            echo "template \"Edit Cloudflare Workers\". Ver docs/DEPLOY.md."
+            exit 1
           fi
 
       # `pnpm release` reconstrói, confere que `dist/` bate com o HEAD e só
       # então chama o wrangler. Rodar `wrangler deploy` direto publicaria o que
       # estivesse em disco, sem perguntar de quando é.
       - name: publicar
-        if: steps.credencial.outputs.tem == 'sim'
         run: pnpm release
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -135,8 +149,9 @@ jobs:
       # Publicar sem conferir é publicar no escuro. O carimbo de versão existe
       # para isto: se o que responde não for o commit que acabou de subir, o
       # deploy falhou de um jeito que o wrangler não reportou.
+      #
+      # Sem condição nenhuma: este passo é a definição de "deu certo".
       - name: confirmar que o que está no ar é este commit
-        if: steps.credencial.outputs.tem == 'sim'
         run: |
           set -e
           sleep 8

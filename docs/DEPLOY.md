@@ -46,48 +46,60 @@ o produto inteiro: o front sai dela, e o link que você manda para os amigos é
 Para um link curto de verdade, aponte um domínio próprio para o Worker em
 Workers → Custom Domains. É o único custo do projeto (~R$ 40/ano).
 
-### 1b. Deploy automático a cada push (Workers Builds)
+### 1b. Deploy automático a cada push (GitHub Actions)
 
-Se o repositório estiver conectado ao Cloudflare, o painel roda um build a cada
-push na `main`. Ele precisa de **dois** comandos, e o padrão sugerido pelo
-painel — `npx wrangler deploy` — falha por duas razões encadeadas.
+O caminho oficial. `.github/workflows/ci.yml` publica a `main` sozinho, mas só
+depois que **tudo** passou: lint, typecheck, os 349 testes, build, ciclos de
+dependência, as checagens de fronteira R1/R2/R8, e o servidor de sinalização
+subindo de verdade e respondendo. Depois de publicar, ele confere o carimbo de
+versão no ar — publicar sem conferir é publicar no escuro.
 
-Em **Workers & Pages → tela → Settings → Build**:
+Precisa de dois secrets, uma vez:
 
-| Campo | Valor |
-|---|---|
-| Root directory | `/` |
-| Build command | `pnpm run cf:build` |
-| Deploy command | `pnpm run cf:deploy` |
+```bash
+# Cloudflare → My Profile → API Tokens → Create Token
+#   template "Edit Cloudflare Workers"
+gh secret set CLOUDFLARE_API_TOKEN
+gh secret set CLOUDFLARE_ACCOUNT_ID   # 26fa849be82d2a2c4752a6d5241f26c6
+```
 
-**Por que o padrão não funciona.**
+**Sem eles o CI FALHA, de propósito.** Antes ele terminava verde sem publicar,
+com o argumento de que um X vermelho permanente ensina a ignorar o vermelho. O
+argumento é bom e a consequência foi pior: os secrets nunca foram configurados,
+todo push passava verde sem publicar, e a produção ficou **dois commits atrás**
+sem que nada em lugar nenhum reclamasse. Descobriu-se por acaso.
 
-O primeiro erro é de localização:
+Verde tem que significar "está no ar".
+
+### 1c. Desconecte o Workers Builds
+
+Se o repositório estiver conectado ao build automático da Cloudflare
+(**Workers & Pages → tela → Settings → Build**), **desconecte**. Dois caminhos
+publicando no mesmo Worker se atropelam, e o do painel publica sem rodar teste
+nenhum — o oposto da regra do projeto.
+
+Ele também falha de saída, e vale saber por quê, porque a mesma armadilha pega
+qualquer CI que rode `wrangler deploy` na raiz:
 
 ```
 ✘ [ERROR] The Cloudflare application detection logic has been run in the root
   of a workspace instead of targeting a specific project.
 ```
 
-`npx wrangler deploy` roda na raiz, vê `pnpm-workspace.yaml`, e se recusa a
-adivinhar qual das aplicações publicar — corretamente, porque há duas.
-`pnpm --filter @tela/signaling exec` resolve isso executando o wrangler já
-dentro de `apps/signaling/`, que é o que `cf:deploy` faz.
+`npx wrangler deploy` na raiz vê `pnpm-workspace.yaml` e duas aplicações, e se
+recusa a adivinhar qual publicar. Correto da parte dele. E logo depois viria o
+erro pior: `wrangler.toml` aponta `main` para `dist/worker-entry.js` e os
+assets para `../web/dist`, e **nenhum dos dois existe num clone limpo** — deploy
+sem build publica o vazio.
 
-O segundo erro apareceria logo depois, e é o pior dos dois: `wrangler.toml`
-aponta `main` para `dist/worker-entry.js` e os assets para `../web/dist`, e
-**nenhum dos dois existe num clone limpo**. Deploy sem build publica o vazio.
-Por isso o campo de *build command* não pode ficar em branco — e por isso o
-`[build]` do `wrangler.toml` roda `scripts/check-artifacts.mjs`, que falha com
-uma mensagem dizendo qual comando falta em vez de um erro sobre arquivo
-ausente.
+Por isso o `[build]` do `wrangler.toml` roda `scripts/check-artifacts.mjs`:
+qualquer `wrangler deploy` sem build agora falha dizendo qual comando falta, em
+vez de um erro sobre arquivo de entrada ausente.
 
-`npx` também baixa a versão mais recente do wrangler a cada execução, ignorando
-a que está no `pnpm-lock.yaml`. `pnpm exec` usa a do lockfile.
-
-**Atenção:** com o deploy automático ligado, `pnpm release` na sua máquina e o
-push para a `main` publicam no MESMO Worker. Não é erro, mas os dois correndo
-juntos publicam versões diferentes — deixe um dos dois como o caminho oficial.
+Se um dia você quiser o Workers Builds de volta, os campos são
+`Build command: pnpm run cf:build` e `Deploy command: pnpm run cf:deploy` —
+`cf:deploy` usa `pnpm --filter … exec`, que roda o wrangler já dentro de
+`apps/signaling/` e com a versão do lockfile em vez da que o `npx` baixa.
 
 ### 2. Front (Pages)
 

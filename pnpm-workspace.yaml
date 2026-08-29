@@ -2,6 +2,14 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+# Estas duas viviam em `.npmrc`, e o `.npmrc` sumiu.
+#
+# O pnpm 10 lê configuração daqui, e o npm NÃO conhece nenhuma das duas — então
+# todo `npx` no repositório imprimia dois `npm warn Unknown project config`,
+# inclusive no log do Workers Builds, onde ruído parece defeito.
+autoInstallPeers: true
+strictPeerDependencies: false
+
 # `esbuild` precisa rodar o script de instalação para baixar o binário nativo.
 # O pnpm 10 exige a lista aqui, e não em `package.json` — lá ele avisa que
 # ignorou e segue sem executar nada, o que aparecia em TODO comando.

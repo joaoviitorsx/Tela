@@ -46,6 +46,49 @@ o produto inteiro: o front sai dela, e o link que você manda para os amigos é
 Para um link curto de verdade, aponte um domínio próprio para o Worker em
 Workers → Custom Domains. É o único custo do projeto (~R$ 40/ano).
 
+### 1b. Deploy automático a cada push (Workers Builds)
+
+Se o repositório estiver conectado ao Cloudflare, o painel roda um build a cada
+push na `main`. Ele precisa de **dois** comandos, e o padrão sugerido pelo
+painel — `npx wrangler deploy` — falha por duas razões encadeadas.
+
+Em **Workers & Pages → tela → Settings → Build**:
+
+| Campo | Valor |
+|---|---|
+| Root directory | `/` |
+| Build command | `pnpm run cf:build` |
+| Deploy command | `pnpm run cf:deploy` |
+
+**Por que o padrão não funciona.**
+
+O primeiro erro é de localização:
+
+```
+✘ [ERROR] The Cloudflare application detection logic has been run in the root
+  of a workspace instead of targeting a specific project.
+```
+
+`npx wrangler deploy` roda na raiz, vê `pnpm-workspace.yaml`, e se recusa a
+adivinhar qual das aplicações publicar — corretamente, porque há duas.
+`pnpm --filter @tela/signaling exec` resolve isso executando o wrangler já
+dentro de `apps/signaling/`, que é o que `cf:deploy` faz.
+
+O segundo erro apareceria logo depois, e é o pior dos dois: `wrangler.toml`
+aponta `main` para `dist/worker-entry.js` e os assets para `../web/dist`, e
+**nenhum dos dois existe num clone limpo**. Deploy sem build publica o vazio.
+Por isso o campo de *build command* não pode ficar em branco — e por isso o
+`[build]` do `wrangler.toml` roda `scripts/check-artifacts.mjs`, que falha com
+uma mensagem dizendo qual comando falta em vez de um erro sobre arquivo
+ausente.
+
+`npx` também baixa a versão mais recente do wrangler a cada execução, ignorando
+a que está no `pnpm-lock.yaml`. `pnpm exec` usa a do lockfile.
+
+**Atenção:** com o deploy automático ligado, `pnpm release` na sua máquina e o
+push para a `main` publicam no MESMO Worker. Não é erro, mas os dois correndo
+juntos publicam versões diferentes — deixe um dos dois como o caminho oficial.
+
 ### 2. Front (Pages)
 
 ```bash

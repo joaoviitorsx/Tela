@@ -16,7 +16,9 @@
     "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
     "e2e": "node e2e/mesh.e2e.mjs",
     "prod": "node scripts/check-prod.mjs",
-    "release": "pnpm --filter @tela/shared build && pnpm --filter @tela/web build && pnpm --filter @tela/signaling build && node scripts/check-deploy.mjs && pnpm --filter @tela/signaling exec wrangler deploy"
+    "cf:build": "pnpm --filter @tela/shared build && pnpm --filter @tela/web build && pnpm --filter @tela/signaling build",
+    "cf:deploy": "pnpm --filter @tela/signaling exec wrangler deploy",
+    "release": "pnpm run cf:build && node scripts/check-deploy.mjs && pnpm run cf:deploy"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

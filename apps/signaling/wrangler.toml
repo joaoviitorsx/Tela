@@ -13,6 +13,19 @@ compatibility_flags = ["nodejs_compat"]
 # O front estático sai do mesmo Worker. `single-page-application` é o SPA
 # fallback: sem ele, o link que a pessoa mandou para os amigos — /joao — dá
 # 404, porque não existe arquivo com esse nome.
+# Guarda, não build.
+#
+# `main` e `[assets]` apontam para diretórios que um clone limpo NÃO tem —
+# quem os gera é `pnpm cf:build`. Sem esta linha, `wrangler deploy` sem build
+# falha com um erro sobre arquivo de entrada ausente que não menciona build
+# nem diz qual comando resolve. Foi assim que o Workers Builds ficou com o
+# comando de deploy configurado e o de build vazio.
+#
+# É guarda e não build de propósito: construir aqui duplicaria o trabalho que
+# `cf:build` já fez, em toda release e em toda execução da CI.
+[build]
+command = "node ../../scripts/check-artifacts.mjs"
+
 [assets]
 directory = "../web/dist"
 binding = "ASSETS"

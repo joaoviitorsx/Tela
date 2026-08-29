@@ -1,5 +1,6 @@
 import type { IceServerConfig } from '@tela/shared';
 import { rtcConfiguration } from './ice-config.js';
+import { afinarSdp } from './sdp-tuning.js';
 
 /**
  * Uma conexão direta com um peer, negociada pelo padrão canônico do W3C
@@ -28,6 +29,13 @@ export type PeerLinkDeps = {
   readonly createConnection: (config: RTCConfiguration) => RTCPeerConnection;
   readonly onTrack?: (track: MediaStreamTrack, streams: readonly MediaStream[]) => void;
   readonly onStateChange?: (state: RTCPeerConnectionState) => void;
+  /**
+   * Por onde o encoder deve começar, em bits/s. Consultado a cada descrição
+   * recebida porque o alvo muda com o degrau e com o teto de upload.
+   *
+   * Ausente no espectador, que não manda vídeo.
+   */
+  readonly startBitrateBps?: () => number | null;
 };
 
 /** O que trafega no `payload` opaco. O servidor nunca olha para isto (R8). */
@@ -41,6 +49,7 @@ export class PeerLink {
   private readonly pc: RTCPeerConnection;
   private readonly polite: boolean;
   private readonly send: (payload: unknown) => void;
+  private readonly startBitrateBps: (() => number | null) | null;
 
   private makingOffer = false;
   private ignoreOffer = false;
@@ -50,6 +59,7 @@ export class PeerLink {
     this.peerId = deps.peerId;
     this.polite = deps.polite;
     this.send = deps.send;
+    this.startBitrateBps = deps.startBitrateBps ?? null;
     this.pc = deps.createConnection(rtcConfiguration(deps.iceServers));
 
     this.pc.onnegotiationneeded = () => {
@@ -124,15 +134,29 @@ export class PeerLink {
     if (preferred.length === 0) return;
     const rest = capabilities.codecs.filter((c) => c.mimeType.toLowerCase() !== wanted);
     try {
-      transceiver.setCodecPreferences([...preferred, ...rest]);
+      transceiver.setCodecPreferences([...ordenarH264(preferred), ...rest]);
     } catch {
       // Navegador sem suporte a preferência de codec: o SDP negocia sozinho.
     }
   }
 
   /**
-   * Mata o jitter buffer adaptativo dos receptores. Vale 50–100ms do orçamento
-   * de latência — a diferença entre "dá pra jogar junto" e "dá pra assistir".
+   * Encurta o jitter buffer dos receptores — sem zerá-lo, e a diferença
+   * importa.
+   *
+   * Estava em ZERO nos dois campos, o que não é "buffer pequeno": é buffer
+   * NENHUM. Todo pacote que chega fora de ordem ou atrasado — o que acontece
+   * em qualquer Wi-Fi, a qualquer momento — é descartado, o quadro fica
+   * incompleto, o decoder pede keyframe, e o keyframe de um quadro de gameplay
+   * custa muitos bits de uma vez. O resultado é o ciclo que a foto do relato
+   * mostra: pulsos de nitidez e mancha, e uma cadência de quadros irregular
+   * que se lê como travamento mesmo com 58ms de RTT.
+   *
+   * 80ms é o menor buffer que absorve o jitter típico de Wi-Fi doméstico. O
+   * orçamento total continua bem abaixo de 200ms glass-to-glass — o Discord
+   * opera entre 150 e 300ms —, e o que se compra com esses 80ms é cadência
+   * constante, que é metade da sensação de qualidade.
+   *
    * Só existe em Chromium; nos outros a atribuição é inócua.
    */
   minimizePlayoutDelay(): void {
@@ -151,8 +175,8 @@ export class PeerLink {
         playoutDelayHint?: number;
         jitterBufferTarget?: number;
       };
-      if ('playoutDelayHint' in target) target.playoutDelayHint = 0;
-      if ('jitterBufferTarget' in target) target.jitterBufferTarget = 0;
+      if ('playoutDelayHint' in target) target.playoutDelayHint = ALVO_JITTER_MS / 1000;
+      if ('jitterBufferTarget' in target) target.jitterBufferTarget = ALVO_JITTER_MS;
     }
   }
 
@@ -175,7 +199,7 @@ export class PeerLink {
       this.ignoreOffer = !this.polite && offerCollision;
       if (this.ignoreOffer) return;
 
-      await this.pc.setRemoteDescription(description);
+      await this.pc.setRemoteDescription(this.afinar(description));
       if (description.type === 'offer') {
         await this.pc.setLocalDescription();
         if (this.closed) return;
@@ -195,6 +219,25 @@ export class PeerLink {
     }
   }
 
+  /**
+   * Ajusta o SDP recebido antes de aplicá-lo. Ver `sdp-tuning.ts`.
+   *
+   * Falhar aqui não pode derrubar a negociação: um SDP que não casa com
+   * nenhum dos padrões simplesmente passa intacto, e a conexão fica como
+   * estava antes desta afinação existir.
+   */
+  private afinar(description: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
+    if (typeof description.sdp !== 'string') return description;
+    try {
+      const sdp = afinarSdp(description.sdp, {
+        startBitrateBps: this.startBitrateBps?.() ?? null,
+      });
+      return sdp === description.sdp ? description : { type: description.type, sdp };
+    } catch {
+      return description;
+    }
+  }
+
   async stats(): Promise<RTCStatsReport> {
     return await this.pc.getStats();
   }
@@ -208,4 +251,49 @@ export class PeerLink {
     this.pc.onconnectionstatechange = null;
     this.pc.close();
   }
+}
+
+/**
+ * Alvo do jitter buffer do espectador, em milissegundos.
+ *
+ * Era zero. Ver `minimizePlayoutDelay` para por que zero era pior que 80.
+ */
+const ALVO_JITTER_MS = 80;
+
+/**
+ * Ordena as variantes de H.264 da melhor para a pior. Grátis em banda.
+ *
+ * `setCodecPreferences` respeita a ordem que recebe, e a versão anterior
+ * filtrava só por `mimeType` — herdando a ordem do navegador, que põe
+ * **Constrained Baseline** (`42…`) primeiro. Baseline não tem CABAC nem
+ * transformada 8×8: são 10 a 15% de bitrate a mais para a MESMA imagem. Num
+ * orçamento de 3 Mbps por espectador, 15% é um degrau inteiro da escada.
+ *
+ * Dois critérios, nesta ordem:
+ *
+ * 1. **`packetization-mode=1`** antes de `0`. O modo 0 aceita um NAL por
+ *    pacote e proíbe fragmentação, o que em 1080p força o encoder a picotar o
+ *    quadro em fatias pequenas — mais overhead, pior compressão, e uma perda
+ *    de pacote custando mais imagem.
+ * 2. **Perfil**: High (`64`) > Main (`4d`) > Baseline (`42`). Todos os
+ *    encoders de hardware dos últimos doze anos fazem High; é a mesma
+ *    aceleração, com um codificador de entropia melhor.
+ *
+ * O nível anunciado NÃO entra aqui: o Chromium oferece `1f` (3.1) em todas as
+ * variantes, então não há o que preferir. Ele é corrigido na entrada, em
+ * `sdp-tuning.ts`.
+ */
+export function ordenarH264(
+  codecs: readonly RTCRtpCodec[],
+): RTCRtpCodec[] {
+  return [...codecs].sort((a, b) => nota(b) - nota(a));
+}
+
+function nota(codec: RTCRtpCodec): number {
+  const fmtp = (codec.sdpFmtpLine ?? '').toLowerCase();
+  const modo = fmtp.includes('packetization-mode=1') ? 100 : 0;
+
+  const perfil = /profile-level-id=([0-9a-f]{2})/.exec(fmtp)?.[1];
+  const porPerfil: Record<string, number> = { '64': 10, '4d': 5, '42': 1 };
+  return modo + (perfil === undefined ? 0 : (porPerfil[perfil] ?? 0));
 }

@@ -288,17 +288,43 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
    * Nada é calculado aqui: os quatro já vinham de `useMediaStats`.
    */
   const caminho = [
-    { rotulo: 'sua tela', valor: stats.resolution, nota: 'resolução que a captura entrega' },
+    {
+      // Era rotulado como "resolução que a captura entrega", e não é: o número
+      // vem do `outbound-rtp`, ou seja, do que o ENCODER produz depois de toda
+      // adaptação. A diferença entre os dois é justamente onde a imagem se
+      // perdia sem ninguém ver.
+      rotulo: 'sai do encoder',
+      valor: stats.resolution,
+      nota: 'resolução real chegando nos espectadores',
+    },
     {
       rotulo: 'seu PC codifica',
       valor: stats.fps,
-      nota: 'quadros por segundo saindo do encoder',
-      alerta: state.presetForced,
+      nota:
+        stats.encoder === '—'
+          ? 'quadros por segundo saindo do encoder'
+          : `quadros por segundo · encode em ${stats.encoder}`,
+      alerta: state.presetForced || stats.encoder === 'software',
     },
     {
       rotulo: 'sobe direto',
       valor: stats.bitrate,
       nota: 'total somado sobre todos os espectadores',
+    },
+    {
+      /*
+        O número que prevê a imagem borrada ANTES de ela aparecer.
+
+        Abaixo de 0,10 bit por pixel em movimento alto o encoder não tem saída
+        além de subir o QP, e logo depois o navegador começa a derrubar
+        resolução por conta própria. Era a única grandeza do pipeline que
+        ninguém media — e a que estava em 0,024 quando o produto anunciava
+        1080p60 (ADR 0015).
+      */
+      rotulo: 'densidade',
+      valor: stats.bpp,
+      nota: 'bits por pixel por espectador — abaixo de 0,10 a imagem borra',
+      alerta: stats.bppBaixo,
     },
     {
       rotulo: 'chega nos amigos',

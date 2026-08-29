@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { P2P_LIMITS, SIXTY_FPS_PRESETS, p2pViewerBudget, suggestPreset } from '@tela/shared';
-import { PRESETS, PRESET_IDS as PRESET_ORDER, isPresetId, nextPresetOnCpuPressure } from './presets.js';
+import { BPP_PISO, P2P_LIMITS, SIXTY_FPS_PRESETS, p2pViewerBudget, suggestPreset } from '@tela/shared';
+import {
+  PRESETS,
+  PRESET_IDS,
+  PRESET_IDS as PRESET_ORDER,
+  isPresetId,
+  menorPreset,
+  nextPresetOnCpuPressure,
+  presetParaOrcamento,
+} from './presets.js';
 
 describe('presets', () => {
   it('todo preset tem exatamente duas camadas (R5)', () => {
@@ -156,5 +164,65 @@ describe('orçamento P2P', () => {
     // 4 Mbps × 0,7 = 2,8 Mbps → 480p60 a 2,5 Mbps.
     expect(suggestPreset(4_000_000, 1)).toBe('p480p60');
     for (const id of PRESET_ORDER) expect(PRESETS[id].main.maxFramerate).toBe(60);
+  });
+});
+
+describe('menorPreset e presetParaOrcamento', () => {
+  it('o pior degrau vence — é a pressão que aperta mais que vale', () => {
+    expect(menorPreset('p1080p60', 'p480p60')).toBe('p480p60');
+    expect(menorPreset('p480p60', 'p1080p60')).toBe('p480p60');
+    expect(menorPreset('p720p60', 'p720p60')).toBe('p720p60');
+  });
+
+  it('traduz orçamento em degrau com bits por pixel honestos', () => {
+    // A conta do relato: 3 Mbps por espectador. Não é 1080p60, e fingir que
+    // era é o que produzia a imagem borrada (ADR 0015).
+    const id = presetParaOrcamento(3_000_000, 'fluidez');
+    const { width, height } = PRESETS[id].layers[0];
+    expect(3_000_000 / (width * height * 60)).toBeGreaterThanOrEqual(BPP_PISO);
+  });
+
+  it('todo orçamento da escada rende ao menos o bpp NOMINAL do degrau', () => {
+    /*
+      O degrau escolhido é sempre o maior que cabe, então o orçamento nunca é
+      menor que o nominal dele — e o nominal é o que a ADR 0010 calibrou.
+
+      A comparação não é contra `BPP_PISO` cru porque a própria tabela tem dois
+      degraus logo abaixo de 0,10 por arredondamento de resolução: `p900p60`
+      fica em 0,0926 e `p1080p60` em 0,0965. Exigir 0,10 aqui reprovaria a
+      tabela que a ADR 0010 aceitou, não o código.
+    */
+    for (const mbps of [1.5, 2, 3, 4, 6, 8, 12, 20]) {
+      const bps = mbps * 1_000_000;
+      const preset = PRESETS[presetParaOrcamento(bps, 'fluidez')];
+      const { width, height } = preset.layers[0];
+      const nominal = preset.main.maxBitrate / (width * height * 60);
+      expect(bps / (width * height * 60)).toBeGreaterThanOrEqual(nominal);
+    }
+  });
+
+  it('nenhum degrau da escada fica longe do piso de 0,10 bpp', () => {
+    for (const id of PRESET_IDS) {
+      const preset = PRESETS[id];
+      const { width, height } = preset.layers[0];
+      const bpp = preset.main.maxBitrate / (width * height * 60);
+      // 0,09 é a folga de arredondamento da tabela da ADR 0010, não licença
+      // para acrescentar um degrau faminto: 0,064 era o valor que produzia o
+      // quadriculado, e continua reprovando aqui.
+      expect(bpp).toBeGreaterThanOrEqual(0.09);
+      expect(bpp).toBeLessThanOrEqual(BPP_PISO * 1.2);
+    }
+  });
+
+  it('nitidez cabe um degrau MAIOR pelo mesmo orçamento — 30fps paga', () => {
+    const fluido = presetParaOrcamento(3_000_000, 'fluidez');
+    const nitido = presetParaOrcamento(3_000_000, 'nitidez');
+    expect(PRESET_IDS.indexOf(nitido)).toBeLessThan(PRESET_IDS.indexOf(fluido));
+  });
+
+  it('orçamento absurdo ou ausente cai no piso da escada, não no topo', () => {
+    for (const ruim of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(presetParaOrcamento(ruim, 'fluidez')).toBe('p360p60');
+    }
   });
 });

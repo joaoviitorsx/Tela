@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRESET_720P60, PRESET_1080P60 } from '@tela/shared';
+import { BPP_PISO, PRESET_480P60, PRESET_720P60, PRESET_1080P60 } from '@tela/shared';
 import { MeshTopology } from './mesh-topology.js';
 import { type FakePeerConnection, fakeConnectionFactory, statsReport } from './testing.js';
 import { fakeStream, fakeTrack } from '../testing/fakes.js';
@@ -323,5 +323,94 @@ describe('MeshTopology — roteamento e limpeza', () => {
     ctx.mesh.close();
     expect(ctx.mesh.size).toBe(0);
     expect(ctx.factory.created.every((pc) => pc.closed)).toBe(true);
+  });
+});
+
+/**
+ * O defeito da ADR 0015, visto de dentro do transporte.
+ *
+ * O teto de upload sempre foi aplicado como `maxBitrate`, e `maxBitrate`
+ * sozinho não tira um pixel do encoder. Estes testes fixam as duas metades do
+ * conserto: os bits acompanham o teto, e os PIXELS acompanham o degrau que a
+ * sessão manda — de forma que os bits por pixel nunca desabam.
+ */
+describe('MeshTopology — bits por pixel honestos (ADR 0015)', () => {
+  const encodingDe = (pc: FakePeerConnection) =>
+    pc.senders[0]?.applied.at(-1)?.encodings?.[0];
+
+  it('o TETO vence quando é maior que o nominal do degrau', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    // O link paga 3 Mbps; o nominal do 480p60 é 2,5. Aplicar `min` jogaria
+    // fora 500 kbps que o link comprovadamente entrega — e num quadro de
+    // 854×480 esses 500 kbps são 0,10 → 0,12 bit por pixel.
+    await ctx.mesh.setCeiling(3_000_000);
+    await settle();
+
+    expect(encodingDe(ctx.factory.created[0]!)?.maxBitrate).toBe(3_000_000);
+  });
+
+  it('o teto NÃO passa do útil: acima de 0,20 bpp o bit não vira imagem', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    await ctx.mesh.setCeiling(90_000_000);
+    await settle();
+
+    const aplicado = encodingDe(ctx.factory.created[0]!)?.maxBitrate ?? 0;
+    const { width, height } = PRESET_480P60.layers[0];
+    expect(aplicado).toBeLessThanOrEqual(0.2 * width * height * 60);
+  });
+
+  it('bppAtual nunca cai abaixo do piso enquanto o degrau acompanhar o teto', async () => {
+    const ctx = build();
+    // É o pareamento que a sessão passou a garantir: orçamento de 3 Mbps
+    // chega junto com o degrau de 480p60, não com o de 1080p60.
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
+    await ctx.mesh.setCeiling(3_000_000);
+
+    expect(ctx.mesh.bppAtual()).toBeGreaterThanOrEqual(BPP_PISO);
+  });
+
+  it('o pareamento ERRADO é o que produzia a imagem borrada', () => {
+    // Documenta a aritmética do defeito, sem reintroduzi-lo: 1920×1080@60 com
+    // 3 Mbps são 0,024 bpp, um quarto do piso. Nenhum encoder salva isso.
+    const { width, height } = PRESET_1080P60.layers[0];
+    expect(3_000_000 / (width * height * 60)).toBeLessThan(BPP_PISO / 3);
+  });
+
+  it('nitidez corta o framerate para 30 — é o que paga a resolução maior', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_720P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    await ctx.mesh.setPrioridade('nitidez');
+    await settle();
+
+    const encoding = encodingDe(ctx.factory.created[0]!);
+    expect(encoding?.maxFramerate).toBe(30);
+    // E o `degradationPreference` acompanha, como já acompanhava.
+    expect(ctx.factory.created[0]!.senders[0]?.applied.at(-1)?.degradationPreference).toBe(
+      'maintain-resolution',
+    );
+  });
+
+  it('fluidez mantém os 60fps do preset', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_720P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    await ctx.mesh.setPrioridade('nitidez');
+    await ctx.mesh.setPrioridade('fluidez');
+    await settle();
+
+    expect(encodingDe(ctx.factory.created[0]!)?.maxFramerate).toBe(60);
   });
 });

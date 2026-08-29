@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PeerLink, type SignalPayload } from './peer-link.js';
+import { PeerLink, ordenarH264, type SignalPayload } from './peer-link.js';
 import { type FakePeerConnection, fakeConnectionFactory } from './testing.js';
 import { fakeStream, fakeTrack } from '../testing/fakes.js';
 
@@ -115,5 +115,49 @@ describe('PeerLink — perfect negotiation', () => {
     ctx.link.close();
     await ctx.link.handleSignal({ description: { type: 'offer', sdp: 'v=0' } });
     expect(ctx.sent).toHaveLength(0);
+  });
+});
+
+/**
+ * A ordem que `setCodecPreferences` recebe é a ordem que vale, e a versão
+ * anterior filtrava só por `mimeType` — herdando a do navegador, que põe
+ * Constrained Baseline primeiro. Baseline não tem CABAC nem transformada 8×8:
+ * são 10 a 15% de bitrate a mais pela MESMA imagem, e num orçamento de 3 Mbps
+ * por espectador 15% é um degrau inteiro da escada.
+ */
+describe('ordenarH264', () => {
+  const c = (fmtp: string): RTCRtpCodec => ({ mimeType: 'video/H264', clockRate: 90_000, sdpFmtpLine: fmtp });
+
+  const BASELINE_M1 = c('level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f');
+  const BASELINE_M0 = c('level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f');
+  const MAIN_M1 = c('level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f');
+  const HIGH_M1 = c('level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c1f');
+
+  it('põe High profile na frente de Main e de Baseline', () => {
+    const ordem = ordenarH264([BASELINE_M1, MAIN_M1, HIGH_M1]);
+    expect(ordem.map((x: RTCRtpCodec) => x.sdpFmtpLine)).toEqual([
+      HIGH_M1.sdpFmtpLine,
+      MAIN_M1.sdpFmtpLine,
+      BASELINE_M1.sdpFmtpLine,
+    ]);
+  });
+
+  it('packetization-mode=1 vence QUALQUER perfil em modo 0', () => {
+    // O modo 0 aceita um NAL por pacote e proíbe fragmentação: em 1080p obriga
+    // o encoder a picotar o quadro, com mais overhead e pior compressão.
+    const ordem = ordenarH264([BASELINE_M0, BASELINE_M1]);
+    expect(ordem[0]?.sdpFmtpLine).toContain('packetization-mode=1');
+  });
+
+  it('modo tem precedência sobre perfil', () => {
+    const HIGH_M0 = c('level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=640c1f');
+    expect(ordenarH264([HIGH_M0, BASELINE_M1])[0]?.sdpFmtpLine).toBe(BASELINE_M1.sdpFmtpLine);
+  });
+
+  it('não descarta nada nem quebra sem fmtp', () => {
+    const sem = { mimeType: 'video/H264', clockRate: 90_000 };
+    const ordem = ordenarH264([sem, HIGH_M1, BASELINE_M1]);
+    expect(ordem).toHaveLength(3);
+    expect(ordem[0]?.sdpFmtpLine).toBe(HIGH_M1.sdpFmtpLine);
   });
 });

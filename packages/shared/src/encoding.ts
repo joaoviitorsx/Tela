@@ -207,6 +207,29 @@ export const DEGRADATION_BY_PRIORITY: Record<
 export const CONTENT_HINT = 'motion' as const;
 
 /**
+ * `contentHint` por prioridade — a metade que faltava do modo `nitidez`.
+ *
+ * O hint não é cosmético: ele troca o CAMINHO de codificação no Chromium.
+ *
+ * `motion` liga o rate controller de vídeo comum e, com ele, o *quality
+ * scaler* — o mecanismo que derruba RESOLUÇÃO sozinho quando o QP passa do
+ * limiar. É o certo para gameplay: movimento é a informação, e a queda de
+ * resolução é o preço aceito.
+ *
+ * `detail` liga o modo de conteúdo de tela: o encoder passa a preservar
+ * resolução e a cortar QUADROS. É o que faz texto de mapa e de inventário
+ * continuar legível.
+ *
+ * Antes `nitidez` só trocava `degradationPreference`, e pedia ao encoder para
+ * segurar uma resolução que o orçamento não pagava — sem tocar no caminho que
+ * de fato decide isso. Metade do controle não fazia nada. ADR 0015.
+ */
+export const CONTENT_HINT_POR_PRIORIDADE: Record<Prioridade, 'motion' | 'detail'> = {
+  fluidez: 'motion',
+  nitidez: 'detail',
+};
+
+/**
  * Orçamento de upstream no modo P2P (self-host caseiro).
  *
  * No modo SFU o transmissor sobe UMA vez (main + camada baixa) e o servidor
@@ -267,6 +290,54 @@ export function suggestPreset(uplinkBitsPerSecond: number, viewers: number): Pre
 const PISO_DA_ESCADA: PresetId = PRESET_ORDER[PRESET_ORDER.length - 1] ?? 'p360p60';
 
 /**
+ * Piso de bits por pixel para conteúdo de movimento alto em H.264 realtime.
+ *
+ * É o número que a ADR 0010 fixou e que a escada inteira respeita. Abaixo
+ * disto o controlador de taxa só tem uma saída — subir o QP — e QP alto é o
+ * quadriculado; pior, o *quality scaler* do Chrome começa a derrubar
+ * resolução por conta própria, e essa queda COMPÕE com a nossa. O resultado
+ * é a imagem borrada que nenhuma das duas malhas pediu.
+ */
+export const BPP_PISO = 0.10;
+
+/**
+ * Teto útil de bits por pixel. Acima disto o retorno é desprezível em
+ * movimento alto, e os bits são melhor gastos em resolução (ou não gastos).
+ */
+export const BPP_TETO = 0.20;
+
+/** Bits por pixel de um alvo. A conta que decide se a imagem se sustenta. */
+export function bitsPorPixel(
+  bitsPerSecond: number,
+  width: number,
+  height: number,
+  fps: number,
+): number {
+  const pixelsPorSegundo = width * height * fps;
+  if (pixelsPorSegundo <= 0) return 0;
+  return bitsPerSecond / pixelsPorSegundo;
+}
+
+/**
+ * Framerate alvo por prioridade.
+ *
+ * `fluidez` mantém 60fps — em gameplay o movimento É a informação.
+ *
+ * `nitidez` corta para 30fps, e o corte é o ponto: metade dos quadros libera
+ * o DOBRO de bits para cada um. Pelo MESMO orçamento sai 1280×720@30 em vez
+ * de 854×480@60. Quem está mostrando um mapa, um inventário ou texto quer o
+ * primeiro; quem está jogando quer o segundo.
+ *
+ * Antes `nitidez` só trocava `degradationPreference` e não mexia em pixel
+ * nenhum — pedia ao encoder para segurar uma resolução que o orçamento não
+ * pagava, que é a definição do problema, não a solução dele.
+ */
+export const FRAMERATE_POR_PRIORIDADE: Record<Prioridade, number> = {
+  fluidez: 60,
+  nitidez: 30,
+};
+
+/**
  * Maior preset que CABE num orçamento já calculado POR ESPECTADOR.
  *
  * # Por que isto existe
@@ -281,12 +352,22 @@ const PISO_DA_ESCADA: PresetId = PRESET_ORDER[PRESET_ORDER.length - 1] ?? 'p360p
  * Percorre `PRESET_ORDER` em vez de listar degraus à mão. A versão anterior
  * tinha três `if` encadeados e ficou desatualizada no primeiro degrau novo.
  */
-export function presetForBitrate(perViewerBitsPerSecond: number): PresetId {
+export function presetForBitrate(
+  perViewerBitsPerSecond: number,
+  fps: number = 60,
+): PresetId {
   if (!Number.isFinite(perViewerBitsPerSecond) || perViewerBitsPerSecond <= 0) {
     return PISO_DA_ESCADA;
   }
+  /**
+   * A escada é tabelada a 60fps. A 30fps o mesmo orçamento paga o DOBRO de
+   * bits por pixel, então cabe uma resolução maior — e é assim que `nitidez`
+   * entrega 720p30 onde `fluidez` entrega 480p60, sem pedir um bit a mais.
+   */
+  const alvo = Number.isFinite(fps) && fps > 0 ? fps : 60;
+  const equivalente = perViewerBitsPerSecond * (60 / alvo);
   for (const id of PRESET_ORDER) {
-    if (perViewerBitsPerSecond >= PRESETS[id].main.maxBitrate) return id;
+    if (equivalente >= PRESETS[id].main.maxBitrate) return id;
   }
   return PISO_DA_ESCADA;
 }

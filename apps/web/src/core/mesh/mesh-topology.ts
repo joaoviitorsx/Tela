@@ -1,8 +1,11 @@
 import {
+  BPP_TETO,
   DEGRADATION_BY_PRIORITY,
   type EncodingPreset,
+  FRAMERATE_POR_PRIORIDADE,
   type IceServerConfig,
   type Prioridade,
+  bitsPorPixel,
 } from '@tela/shared';
 import { Emitter } from '../emitter.js';
 import { PeerLink } from './peer-link.js';
@@ -192,6 +195,15 @@ export class MeshTopology {
       iceServers: this.iceServers,
       send: (payload) => this.deps.send(payload, peerId),
       createConnection: this.deps.createConnection,
+      /**
+       * Lido a cada descrição recebida, não fixado na criação: o alvo muda com
+       * o degrau e com o teto de upload, e um peer que entra no meio de uma
+       * transmissão já degradada precisa começar onde os outros estão — não em
+       * 300 kbps, subindo sozinho por trinta segundos enquanto o quality
+       * scaler derruba a resolução dele.
+       */
+      startBitrateBps: () =>
+        this.preset === null ? null : this.effectiveBitrate(this.preset),
       onStateChange: (state) => {
         if (state === 'failed' || state === 'closed') this.drop(peerId);
         else this.announce();
@@ -407,7 +419,7 @@ export class MeshTopology {
            */
           scaleResolutionDownBy: escalaPara(sender.track, preset),
           maxBitrate: this.effectiveBitrate(preset),
-          maxFramerate: preset.main.maxFramerate,
+          maxFramerate: this.framerate(preset),
           /**
            * `medium`, e a mudança de `low` foi deliberada.
            *
@@ -531,10 +543,53 @@ export class MeshTopology {
     }
   }
 
-  /** O menor entre o que o usuário pediu e o que o link aguenta. */
+  /**
+   * Quantos bits o encoder recebe, dado o degrau e o teto do link.
+   *
+   * Era `min(preset, teto)`, e o `min` desperdiçava banda depois da ADR 0015.
+   * Agora quem escolhe o DEGRAU já é o orçamento: quando o teto vale 3 Mbps, a
+   * sessão manda `p480p60`, cujo nominal é 2,5 Mbps. Aplicar o `min` jogaria
+   * fora 500 kbps que o link comprovadamente entrega — e esses 500 kbps, num
+   * quadro de 854×480, são a diferença entre 0,10 e 0,12 bit por pixel.
+   *
+   * Então o teto VENCE quando é maior: menos pixels, cada um melhor
+   * codificado. O clamp em `BPP_TETO` é a rede de segurança — acima de
+   * 0,20 bpp o retorno em movimento alto é desprezível, e mandar bits que não
+   * viram qualidade é o mesmo que encher o cano do usuário de graça.
+   */
   private effectiveBitrate(preset: EncodingPreset): number {
-    if (this.ceiling === null) return preset.main.maxBitrate;
-    return Math.min(preset.main.maxBitrate, this.ceiling);
+    const nominal = preset.main.maxBitrate;
+    if (this.ceiling === null) return nominal;
+
+    const { width, height } = preset.layers[0];
+    const fps = this.framerate(preset);
+    const tetoUtil = Math.round(BPP_TETO * width * height * fps);
+    return Math.min(Math.max(nominal, this.ceiling), tetoUtil);
+  }
+
+  /**
+   * Framerate alvo: 60 em `fluidez`, 30 em `nitidez`.
+   *
+   * Cortar quadro é o que paga a resolução maior no modo nitidez. Antes o
+   * `maxFramerate` vinha sempre do preset e a prioridade só trocava o
+   * `degradationPreference` — pedia-se ao encoder para preservar detalhe sem
+   * lhe dar bit nenhum a mais por quadro para fazer isso.
+   */
+  private framerate(preset: EncodingPreset): number {
+    return Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]);
+  }
+
+  /**
+   * Bits por pixel do que está sendo pedido ao encoder. Diagnóstico puro.
+   *
+   * É o número que, quando cai abaixo de 0,10, prevê a imagem borrada — e o
+   * único que dizia a verdade enquanto o rótulo dizia 1080p60.
+   */
+  bppAtual(): number | null {
+    const preset = this.preset;
+    if (preset === null) return null;
+    const { width, height } = preset.layers[0];
+    return bitsPorPixel(this.effectiveBitrate(preset), width, height, this.framerate(preset));
   }
 
   private enqueue(task: () => Promise<void>): Promise<void> {

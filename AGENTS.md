@@ -23,6 +23,7 @@ Contexto: desde 17/08/2026 o Discord suspendeu compartilhamento de tela no Brasi
 | `docs/adr/` | Decisões já tomadas e seus motivos — comece pela 0005 |
 | `docs/TELA-documentacao-tecnica.md` | Fluxos, pipeline de mídia, UI. As partes de SFU e infra estão obsoletas |
 | `docs/TELA-coreografia-abertura.md` | A abertura 3D, em números. Os desvios estão na ADR 0011 |
+| `docs/adr/0015` e `0016` | **Leia antes de tocar em qualquer parâmetro de encoding.** Por que a imagem borrava, e o que passou a decidir a qualidade |
 | `docs/DEPLOY.md` | Subir o front estático e o servidor de sinalização |
 
 O documento de padrões de engenharia citado na versão original deste arquivo
@@ -79,6 +80,11 @@ videoCodec: 'h264';                            // único com HW encode universal
 // parâmetros de encoding IDÊNTICOS para todos os peers
 ```
 
+As duas primeiras são o PADRÃO, e continuam sendo. O modo `nitidez` troca as
+duas juntas — `detail` mais `maintain-resolution` mais 30fps — porque trocar
+uma sem a outra não faz nada (ADR 0015). É escolha explícita do usuário, ao
+vivo, e volta sozinha ao padrão. Ninguém decide isso pelo código.
+
 A quarta é a mais importante em mesh e a que mais parece errada à primeira
 vista. O Chrome reaproveita o mesmo encoder entre `RTCRtpSender`s cujos
 parâmetros batem: um encode, três envios. Varie o bitrate por peer e viram três
@@ -102,6 +108,14 @@ Corolário do corolário: `scaleResolutionDownBy` é o ÚNICO parâmetro que tir
 pixel. `maxBitrate` sozinho só aperta o QP — e QP alto é o quadriculado. Já
 aconteceu de a linha existir no código e não valer nada, porque um spread de
 objeto vinha depois dela e restaurava o valor antigo.
+
+E aconteceu de novo, pior, na malha automática: o teto de upload cortava
+`maxBitrate` e NÃO mexia na resolução, então um orçamento de 3 Mbps ia parar
+num quadro de 1920×1080@60 — 0,024 bit por pixel, um quarto do piso que a ADR
+0010 fixou. A imagem que saía não era quadriculada, era borrada. **Todo
+orçamento tem de virar degrau antes de virar bitrate** (ADR 0015), e o console
+da transmissão mostra os bits por pixel para que ninguém precise descobrir isso
+duas vezes.
 
 ### R6 — Escopo é fechado
 

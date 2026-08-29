@@ -10,6 +10,7 @@ import {
   shareUrlFor,
 } from '../testing/fakes.js';
 import { BroadcastSession } from './broadcast-session.js';
+import { PRESETS, PRESET_IDS } from './presets.js';
 
 const SLUG = 'joao';
 const TOKEN = 'o'.repeat(43);
@@ -192,6 +193,8 @@ describe('BroadcastSession — qualidade', () => {
       width: 1920,
       height: 1080,
       availableBps: null,
+      bpp: 0.1,
+      encoderImplementation: null,
     };
 
     // Aquecimento (8) mais a sequência de pressão (5).
@@ -210,7 +213,7 @@ describe('BroadcastSession — qualidade', () => {
   it('uma leitura isolada com cpu NÃO derruba o preset', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null };
+    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null };
 
     ctx.transport.stats = { ...base, limitation: 'cpu' };
     for (let i = 0; i < 10; i += 1) {
@@ -239,6 +242,8 @@ describe('BroadcastSession — qualidade', () => {
       width: 1280,
       height: 720,
       availableBps: null,
+      bpp: 0.1,
+      encoderImplementation: null,
     };
 
     for (let i = 0; i < 30; i += 1) {
@@ -275,6 +280,8 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     height: 1080,
     limitation: 'none' as const,
     availableBps: null,
+    bpp: 0.1,
+    encoderImplementation: null,
     ...extra,
   });
 
@@ -418,6 +425,215 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     // Nenhum dos dois chegou a cinco leituras seguidas.
     const state = ctx.session.getState();
     expect(state.status === 'live' && state.presetId).toBe('p1080p60');
+  });
+});
+
+/**
+ * O defeito central da ADR 0015, exercitado ponta a ponta.
+ *
+ * O relato que o motivou: transmissão a 58ms de RTT, dois espectadores, e a
+ * imagem BORRADA — não quadriculada. Borrada é resolução baixa esticada, e a
+ * causa era o teto de upload apertar bits sem tirar um pixel sequer.
+ */
+describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
+  const amostra = (extra: Record<string, unknown>) => ({
+    fps: 60,
+    bitrateBps: 7_000_000,
+    rttMs: 58,
+    width: 1920,
+    height: 1080,
+    limitation: 'none' as const,
+    availableBps: null,
+    bpp: 0.1,
+    encoderImplementation: null,
+    ...extra,
+  });
+
+  async function tique(ctx: ReturnType<typeof build>, vezes: number) {
+    for (let i = 0; i < vezes; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+  }
+
+  it('orçamento apertado DERRUBA a resolução, não só o bitrate', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // 4 Mbps por espectador → teto de 3 Mbps. Antes, o degrau ficava em
+    // 1080p60 e o encoder recebia 1920×1080@60 para caber em 0,024 bpp.
+    ctx.transport.stats = amostra({ availableBps: 4_000_000 });
+    await tique(ctx, 20);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).not.toBe('p1080p60');
+    expect(state.status === 'live' && state.presetForced).toBe(true);
+    expect(state.status === 'live' && state.motivoDegradacao).toBe('bandwidth');
+  });
+
+  it('o degrau escolhido mantém os bits por pixel acima do piso', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({ availableBps: 4_000_000 });
+    await tique(ctx, 20);
+
+    const state = ctx.session.getState();
+    const id = state.status === 'live' ? state.presetId : 'p1080p60';
+    const { width, height } = PRESETS[id].layers[0];
+    const teto = ctx.transport.ceilings.at(-1) ?? 0;
+
+    // A conta que a foto do relato reprovava: 3 Mbps em 1080p60 dão 0,024.
+    expect(teto / (width * height * 60)).toBeGreaterThanOrEqual(0.1);
+  });
+
+  it('banda de sobra não mexe em degrau nenhum', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    // 20 Mbps por espectador: o 1080p60 cabe inteiro, com folga.
+    ctx.transport.stats = amostra({ availableBps: 20_000_000 });
+    await tique(ctx, 20);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).toBe('p1080p60');
+    expect(ctx.transport.ceilings).toEqual([]);
+  });
+
+  it('a banda voltando devolve o degrau — o "embaçou e não voltou"', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    ctx.transport.stats = amostra({ availableBps: 4_000_000 });
+    await tique(ctx, 20);
+    const fundo = ctx.session.getState();
+    expect(fundo.status === 'live' && fundo.presetId).not.toBe('p1080p60');
+
+    // O vizinho parou de baixar o jogo dele.
+    ctx.transport.stats = amostra({ availableBps: 30_000_000 });
+    await tique(ctx, 40);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).toBe('p1080p60');
+    expect(state.status === 'live' && state.presetForced).toBe(false);
+    expect(state.status === 'live' && state.motivoDegradacao).toBeNull();
+  });
+
+  it('a recuperação por CPU NÃO fica travada por um teto em vigor', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // Um transiente de CPU derruba a escada de pressão…
+    ctx.transport.stats = amostra({ limitation: 'cpu' });
+    await tique(ctx, 14);
+    expect(ctx.session.getState().status === 'live').toBe(true);
+
+    // …e a banda fica APERTADA mas estável. Antes, `governor.ceiling !== null`
+    // zerava a calmaria a cada leitura e a escada nunca subia de volta: uma
+    // degradação por CPU virava permanente pelo resto da sessão.
+    ctx.transport.stats = amostra({ availableBps: 8_000_000, limitation: 'none' });
+    await tique(ctx, 130);
+
+    // O degrau volta para o que o orçamento paga — e não para o fundo do poço.
+    const state = ctx.session.getState();
+    const id = state.status === 'live' ? state.presetId : 'p360p60';
+    expect(PRESET_IDS.indexOf(id)).toBeLessThanOrEqual(PRESET_IDS.indexOf('p720p60'));
+  });
+
+  it('o orçamento não some quando o usuário troca a qualidade na mão', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({ availableBps: 4_000_000 });
+    await tique(ctx, 20);
+
+    // Insistir em 1080p60 não faz o link crescer. O produto obedece o rótulo,
+    // mas não pode voltar a mandar 0,024 bpp — seria a foto do relato de novo.
+    await ctx.session.setPreset('p1080p60');
+    await tique(ctx, 2);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).not.toBe('p1080p60');
+    expect(state.status === 'live' && state.presetForced).toBe(true);
+  });
+
+  it('banda NÃO é contada duas vezes: governador e escada não se somam', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    /*
+      O Chromium reporta `bandwidth` justamente porque o teto está segurando o
+      encoder — é a malha funcionando, não um segundo problema. Deixar a escada
+      de pressão reagir a isso derrubava o degrau de novo a cada cinco
+      leituras, até o fundo da escada, com o link inalterado.
+    */
+    ctx.transport.stats = amostra({ availableBps: 8_000_000, limitation: 'bandwidth' });
+    await tique(ctx, 60);
+
+    // 8 Mbps por espectador pagam 720p60 com folga. Sem a guarda, sessenta
+    // leituras de `bandwidth` teriam levado o degrau até 360p60.
+    const state = ctx.session.getState();
+    const id = state.status === 'live' ? state.presetId : 'p360p60';
+    expect(PRESET_IDS.indexOf(id)).toBeLessThanOrEqual(PRESET_IDS.indexOf('p720p60'));
+  });
+
+  it('sem estimativa de banda, a escada continua sendo a única defesa', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // Navegador que não reporta `availableOutgoingBitrate`: o governador não
+    // tem o que medir, não aplica teto, e a guarda acima não pode desligar a
+    // única malha que sobrou.
+    ctx.transport.stats = amostra({ availableBps: null, limitation: 'bandwidth' });
+    await tique(ctx, 14);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).toBe('p900p60');
+  });
+
+  it('a causa da queda por CPU sobrevive ao fim do aperto', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    ctx.transport.stats = amostra({ limitation: 'cpu' });
+    await tique(ctx, 14);
+    expect(ctx.session.getState()).toMatchObject({ motivoDegradacao: 'cpu' });
+
+    // O aperto passou, mas o degrau só volta depois de 60 amostras de calmaria.
+    // Nesse intervalo o motivo lido de `pressureKind` já era `none`, e o
+    // fallback dizia "banda" — mandando a pessoa procurar no roteador um
+    // problema que estava no encoder.
+    ctx.transport.stats = amostra({ limitation: 'none' });
+    await tique(ctx, 5);
+    expect(ctx.session.getState()).toMatchObject({ motivoDegradacao: 'cpu' });
+  });
+
+  it('nitidez sobe a resolução pelos MESMOS bits, cortando quadros', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({ availableBps: 4_000_000 });
+    await tique(ctx, 20);
+
+    const fluido = ctx.session.getState();
+    const antes = fluido.status === 'live' ? fluido.presetId : 'p360p60';
+
+    await ctx.session.setPrioridade('nitidez');
+    await tique(ctx, 2);
+
+    // A 30fps o mesmo orçamento paga o dobro de bits por pixel, então cabe um
+    // degrau maior. Nenhum bit a mais sai do link.
+    const nitido = ctx.session.getState();
+    const depois = nitido.status === 'live' ? nitido.presetId : 'p360p60';
+    expect(PRESET_IDS.indexOf(depois)).toBeLessThan(PRESET_IDS.indexOf(antes));
+  });
+
+  it('o contentHint acompanha a prioridade — a metade que faltava', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.screen.video.contentHint).toBe('motion');
+
+    await ctx.session.setPrioridade('nitidez');
+    expect(ctx.screen.video.contentHint).toBe('detail');
+
+    await ctx.session.setPrioridade('fluidez');
+    expect(ctx.screen.video.contentHint).toBe('motion');
   });
 });
 

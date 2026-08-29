@@ -10,14 +10,16 @@ import type {
 import type { Scheduler } from '../ports/scheduler.js';
 import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
-import { P2P_LIMITS, type Prioridade } from '@tela/shared';
+import { CONTENT_HINT_POR_PRIORIDADE, P2P_LIMITS, type Prioridade } from '@tela/shared';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
   DEFAULT_PRESET_ID,
   type PresetId,
+  menorPreset,
   nextPresetOnCpuPressure,
   presetById,
+  presetParaOrcamento,
   previousPresetOnRecovery,
 } from './presets.js';
 
@@ -202,9 +204,28 @@ export class BroadcastSession {
   private audioTrack: MediaStreamTrack | null = null;
   private timers: Array<() => void> = [];
   private unsubscribes: Array<() => void> = [];
+  /**
+   * O degrau EFETIVO, o que de fato está no ar. Derivado, nunca escrito à mão.
+   *
+   * Três pressões independentes decidem a qualidade ao mesmo tempo, e a que
+   * aperta mais é a que vale. Antes existia só este campo, mutável, e a última
+   * fonte a escrever nele apagava as outras — era assim que o produto acabava
+   * mandando 1920×1080@60 num orçamento de 3 Mbps (ADR 0015).
+   */
   private presetId: PresetId = DEFAULT_PRESET_ID;
-  /** O que o usuário pediu. A recuperação sobe até aqui e para. */
+  /** O que o usuário pediu. Teto de tudo: nenhuma malha sobe acima daqui. */
   private presetEscolhido: PresetId = DEFAULT_PRESET_ID;
+  /** Onde a escada de pressão sustentada (CPU ou rede) parou. */
+  private presetPorPressao: PresetId = DEFAULT_PRESET_ID;
+  /**
+   * O degrau que o orçamento de upload PAGA, com bits por pixel honestos.
+   * `null` quando a banda não é restrição.
+   *
+   * Esta é a fonte que faltava. O governador sempre soube o quanto o link
+   * aguenta e sempre aplicou isso como `maxBitrate` — mas nada traduzia o
+   * número em PIXEL, e apertar bits sem tirar pixel é a definição de QP alto.
+   */
+  private presetPorBanda: PresetId | null = null;
   /** Amostras seguidas sem aperto nenhum. */
   private calmaria = 0;
   /** Amostras seguidas com o encoder entregando zero frame, havendo plateia. */
@@ -278,6 +299,9 @@ export class BroadcastSession {
 
     this.presetId = options.presetId ?? DEFAULT_PRESET_ID;
     this.presetEscolhido = this.presetId;
+    this.presetPorPressao = this.presetId;
+    this.presetPorBanda = null;
+    this.causaPressao = null;
 
     /**
      * Começa já sabendo o que o link deu da última vez.
@@ -311,7 +335,15 @@ export class BroadcastSession {
     if (Number.isFinite(lembrado) && lembrado > 0) this.governor.seed(lembrado);
     this.setState({ status: 'requesting-capture' });
 
-    const preset = presetById(this.presetId);
+    /**
+     * A captura pede a resolução ESCOLHIDA, não a efetiva.
+     *
+     * `scaleResolutionDownBy` reduz pixel dentro do encoder e é reversível;
+     * a resolução da trilha é fixada uma vez pelo `getDisplayMedia` e não
+     * volta. Capturar já degradado seria um teto permanente — a transmissão
+     * nunca recuperaria a nitidez depois que a banda melhorasse.
+     */
+    const preset = presetById(this.presetEscolhido);
 
     if (!this.deps.screen.isSupported()) return this.fail('CAPTURE_UNSUPPORTED');
 
@@ -503,18 +535,107 @@ export class BroadcastSession {
     const porEspectador =
       availableBps === null ? null : availableBps / Math.max(1, espectadores);
     /**
-     * A referência é o preset CORRENTE.
+     * A referência é o preset ESCOLHIDO, e a inversão em relação à versão
+     * anterior é deliberada.
      *
-     * Medir contra o escolhido foi tentado e empurra o limiar de soltura para
-     * `maxBitrate × 1,15 / 0,75` — 12,3 Mbps POR ESPECTADOR no 1080p60, ou
-     * 61 Mbps de link com cinco. Na prática o teto nunca soltava, e como a
-     * recuperação exige teto nulo, ela ficava desligada junto.
+     * Antes media-se contra o CORRENTE, porque a recuperação exigia teto nulo
+     * e medir contra o escolhido empurrava o limiar de soltura para longe
+     * demais — o teto nunca largava e a recuperação ficava desligada junto.
+     *
+     * Agora o teto não bloqueia mais a recuperação: ele DEFINE o degrau. Com
+     * isso a referência precisa ser estável, senão o sistema oscila de vez —
+     * degrada para 480p60, o limiar de soltura cai junto para 2,9 Mbps, o teto
+     * solta, o degrau volta a 1080p60, o limiar sobe para 13,8 Mbps, o teto
+     * reaplica, e assim por diante uma vez por segundo. Um alvo móvel numa
+     * malha de controle é um oscilador.
+     *
+     * O escolhido não se move sem o usuário mandar. É a única referência que
+     * serve.
      */
-    const decisao = this.governor.observe(porEspectador, presetById(this.presetId));
+    const decisao = this.governor.observe(porEspectador, presetById(this.presetEscolhido));
     // `null` na maioria das leituras: o governador só decide quando a mudança
     // compensa reconfigurar o encoder. `{ bps: null }` remove o teto.
     if (decisao === null) return;
     void this.deps.transport.setBitrateCeiling(decisao.bps).catch(() => undefined);
+
+    /**
+     * E AQUI está a correção que a ADR 0015 existe para registrar.
+     *
+     * O teto sempre foi aplicado como `maxBitrate`, e `maxBitrate` sozinho não
+     * tira um único pixel do encoder — só aperta o QP. Com um orçamento de
+     * 3 Mbps e o degrau parado em 1080p60, o encoder recebia 1920×1080@60 para
+     * caber em 0,024 bit por pixel, quando movimento alto pede 0,10. A saída
+     * dele era subir o QP até o talo e, logo depois, deixar o *quality scaler*
+     * do Chromium derrubar a resolução por conta própria — uma queda que
+     * COMPÕE com a nossa e que ninguém mede.
+     *
+     * A imagem resultante não era quadriculada, era BORRADA: 360p esticado
+     * para a tela do espectador, com o produto anunciando 1080p60.
+     *
+     * Traduzir o orçamento em degrau é o que mantém os bits por pixel
+     * honestos. Os mesmos 3 Mbps em 854×480@60 são 0,10 bpp — nítido de
+     * verdade, num rótulo menor.
+     */
+    this.presetPorBanda =
+      decisao.bps === null ? null : presetParaOrcamento(decisao.bps, this.prioridade);
+    this.aplicarDegrau();
+  }
+
+  /**
+   * Recalcula o degrau efetivo a partir das três pressões e aplica se mudou.
+   *
+   * Nenhuma delas manda sozinha: o usuário põe o teto, a escada de pressão diz
+   * o que a máquina sustenta e o orçamento diz o que o link paga. Vale a que
+   * aperta mais. Antes as três escreviam no mesmo campo e a última apagava as
+   * outras — a origem do defeito da ADR 0015.
+   */
+  private aplicarDegrau(): void {
+    let alvo = menorPreset(this.presetEscolhido, this.presetPorPressao);
+    if (this.presetPorBanda !== null) alvo = menorPreset(alvo, this.presetPorBanda);
+
+    if (alvo === this.presetId) {
+      this.sincronizarMotivo(alvo);
+      return;
+    }
+    this.presetId = alvo;
+
+    if (this.state.status === 'live') {
+      this.setState({
+        ...this.state,
+        presetId: alvo,
+        presetForced: alvo !== this.presetEscolhido,
+        motivoDegradacao: this.motivoAtual(alvo),
+      });
+    }
+    // `catch` obrigatório: fire-and-forget aqui já produziu unhandled
+    // rejection quando colidiu com uma troca manual de qualidade.
+    void this.deps.transport.setPreset(presetById(alvo)).catch(() => undefined);
+  }
+
+  /**
+   * POR QUE o degrau está abaixo do escolhido, para a tela não mandar a pessoa
+   * procurar no lugar errado.
+   *
+   * A banda vem primeiro quando é ela que amarra: mexer na máquina não
+   * conserta link, e `cpu` é o único caso em que o usuário tem o que fazer.
+   */
+  private motivoAtual(efetivo: PresetId): QualityLimitation | null {
+    if (efetivo === this.presetEscolhido) return null;
+    // A banda vem primeiro quando é ela que amarra: mexer na máquina não
+    // conserta link, e `cpu` é o único caso em que o usuário tem o que fazer.
+    if (this.presetPorBanda === efetivo) return 'bandwidth';
+    return this.causaPressao ?? 'bandwidth';
+  }
+
+  /** Por que a escada de pressão desceu. Sobrevive ao fim do aperto. */
+  private causaPressao: QualityLimitation | null = null;
+
+  /** O degrau não mudou, mas a CAUSA pode ter mudado — e a tela precisa saber. */
+  private sincronizarMotivo(efetivo: PresetId): void {
+    if (this.state.status !== 'live') return;
+    const motivo = this.motivoAtual(efetivo);
+    if (motivo === this.state.motivoDegradacao) return;
+    this.setState({ ...this.state, motivoDegradacao: motivo });
   }
 
   /**
@@ -542,6 +663,30 @@ export class BroadcastSession {
       this.recuperar();
       return;
     }
+    /**
+     * Banda é trabalho do GOVERNADOR, quando ele tem o que medir.
+     *
+     * Esta escada e o teto de upload passaram a olhar para a mesma coisa, e
+     * duas malhas reagindo à mesma pressão contam em dobro: o orçamento já
+     * derrubou o degrau para 480p60, o Chromium continua reportando
+     * `bandwidth` — porque É banda —, e cinco leituras depois esta escada
+     * derrubava de novo para 360p60. É a mesma composição de adaptações que a
+     * ADR 0015 existe para desfazer, só que entre malhas nossas.
+     *
+     * Pior no retorno: `presetPorPressao` ficava marcado lá embaixo, e quando
+     * a banda voltava a escada levava sessenta amostras POR DEGRAU para
+     * desfazer uma queda que nunca foi dela.
+     *
+     * O ramo continua vivo para o navegador que não reporta
+     * `availableOutgoingBitrate`: ali o governador não tem estimativa, não
+     * aplica teto nenhum, e esta escada é a única defesa que sobra.
+     */
+    if (limitation === 'bandwidth' && this.governor.estimativa !== null) {
+      this.pressure = 0;
+      this.pressureKind = 'none';
+      return;
+    }
+
     this.calmaria = 0;
     if (limitation !== this.pressureKind) {
       this.pressureKind = limitation;
@@ -550,6 +695,13 @@ export class BroadcastSession {
     this.pressure += 1;
     if (this.pressure < PRESSURE_SAMPLES) return;
 
+    /**
+     * Desce a partir do EFETIVO, não do valor próprio desta escada.
+     *
+     * Se a banda já puxou o degrau para 480p60 e a CPU continua apertando, o
+     * próximo passo tem de ser 360p60 — não o degrau abaixo de onde a escada
+     * de pressão estava parada, que poderia ser 900p60 e não aliviaria nada.
+     */
     const next = nextPresetOnCpuPressure(this.presetId);
     this.pressure = 0;
 
@@ -566,14 +718,17 @@ export class BroadcastSession {
       return;
     }
 
-    const causa = this.pressureKind;
-    this.presetId = next;
-    if (this.state.status === 'live') {
-      this.setState({ ...this.state, presetId: next, presetForced: true, motivoDegradacao: causa });
-    }
-    // `catch` obrigatório: fire-and-forget aqui já produziu unhandled
-    // rejection quando colidiu com uma troca manual de qualidade.
-    void this.deps.transport.setPreset(presetById(next)).catch(() => undefined);
+    this.presetPorPressao = next;
+    /**
+     * A causa é gravada AQUI e sobrevive ao fim da pressão.
+     *
+     * `pressureKind` volta a `none` assim que o aperto passa, mas o degrau
+     * continua baixo até a recuperação subir de volta. Ler `pressureKind`
+     * nesse intervalo dizia "banda" para uma queda que foi de CPU — e mandava
+     * a pessoa procurar no roteador um problema que estava no encoder.
+     */
+    this.causaPressao = this.pressureKind;
+    this.aplicarDegrau();
   }
 
   /**
@@ -628,37 +783,36 @@ export class BroadcastSession {
    * assenta oscila, sempre.
    */
   private recuperar(): void {
-    if (this.presetId === this.presetEscolhido) {
-      this.calmaria = 0;
-      return;
-    }
-    /**
-     * Teto de upload em vigor significa que a banda NÃO está sobrando — o
-     * WebRTC só não reclama porque já estamos segurando o encoder. Subir aqui
-     * seria pedir mais do que o link dá e cair de novo em segundos.
-     */
-    if (this.governor.ceiling !== null) {
+    if (this.presetPorPressao === this.presetEscolhido) {
       this.calmaria = 0;
       return;
     }
 
+    /**
+     * A trava do teto de upload SAIU daqui, e a remoção é metade do conserto.
+     *
+     * Ela dizia: teto em vigor significa que a banda não sobra, então subir
+     * seria cair de novo em segundos. O raciocínio estava certo para o modelo
+     * antigo, onde subir de degrau significava pedir mais bits. Só que a trava
+     * era permanente na prática — o teto quase nunca largava, e uma vez
+     * degradado por um transiente de CPU o usuário ficava no degrau baixo pelo
+     * resto da sessão. É o "embaçou e não voltou" dos relatos.
+     *
+     * Com o orçamento virando `presetPorBanda`, o piso de banda continua
+     * valendo por construção: esta escada sobe, e `aplicarDegrau()` corta no
+     * que o link paga. Nunca se pede mais do que o teto dá, e nunca se fica
+     * preso embaixo quando a CPU já se resolveu.
+     */
     this.calmaria += 1;
     if (this.calmaria < CALMARIA_AMOSTRAS) return;
     this.calmaria = 0;
 
-    const acima = previousPresetOnRecovery(this.presetId, this.presetEscolhido);
+    const acima = previousPresetOnRecovery(this.presetPorPressao, this.presetEscolhido);
     if (acima === null) return;
 
-    this.presetId = acima;
-    if (this.state.status === 'live') {
-      this.setState({
-        ...this.state,
-        presetId: acima,
-        presetForced: acima !== this.presetEscolhido,
-        motivoDegradacao: acima === this.presetEscolhido ? null : this.state.motivoDegradacao,
-      });
-    }
-    void this.deps.transport.setPreset(presetById(acima)).catch(() => undefined);
+    this.presetPorPressao = acima;
+    if (acima === this.presetEscolhido) this.causaPressao = null;
+    this.aplicarDegrau();
   }
 
   /**
@@ -689,8 +843,34 @@ export class BroadcastSession {
   async setPrioridade(prioridade: Prioridade): Promise<void> {
     if (this.prioridade === prioridade) return;
     this.prioridade = prioridade;
+
+    /**
+     * O `contentHint` acompanha, e é a metade do controle que faltava.
+     *
+     * Ele troca o CAMINHO de codificação no Chromium: `motion` liga o quality
+     * scaler, que derruba resolução para segurar quadro; `detail` liga o modo
+     * de conteúdo de tela, que segura resolução e derruba quadro. Sem mexer
+     * nisto, `nitidez` pedia ao encoder para preservar uma resolução pelo
+     * `degradationPreference` enquanto o caminho que de fato decide isso
+     * continuava configurado para o oposto.
+     *
+     * A R5 trava `motion` como PADRÃO, e ele continua sendo o padrão. Isto é
+     * uma escolha explícita do usuário — a mesma que a ADR 0009 abriu.
+     */
+    const track = this.videoTrack;
+    if (track !== null) track.contentHint = CONTENT_HINT_POR_PRIORIDADE[prioridade];
+
     if (this.state.status === 'live') this.setState({ ...this.state, prioridade });
     await this.deps.transport.setPrioridade(prioridade);
+
+    /**
+     * A 30fps o mesmo orçamento paga o DOBRO de bits por pixel, então cabe uma
+     * resolução maior. É assim que `nitidez` entrega 1280×720@30 onde
+     * `fluidez` entrega 854×480@60 — pelos mesmos bits, sem pedir um a mais.
+     */
+    const teto = this.governor.ceiling;
+    this.presetPorBanda = teto === null ? null : presetParaOrcamento(teto, prioridade);
+    this.aplicarDegrau();
   }
 
   /**
@@ -705,7 +885,9 @@ export class BroadcastSession {
   async switchSource(): Promise<void> {
     if (this.state.status !== 'live') return;
     const epoch = this.epoch;
-    const preset = presetById(this.presetId);
+    // Na resolução ESCOLHIDA, como no `start()`: capturar já degradado seria
+    // um teto permanente, porque a resolução da trilha não volta a subir.
+    const preset = presetById(this.presetEscolhido);
 
     let capture;
     try {
@@ -726,7 +908,9 @@ export class BroadcastSession {
     }
 
     const anterior = this.videoTrack;
-    capture.video.contentHint = CONTENT_HINT;
+    // Da prioridade CORRENTE, não a constante: trocar de tela em modo
+    // `nitidez` reinstalava `motion` e desfazia a escolha em silêncio.
+    capture.video.contentHint = CONTENT_HINT_POR_PRIORIDADE[this.prioridade];
     capture.video.addEventListener('ended', () => void this.stop('CAPTURE_ENDED'));
 
     this.videoTrack = capture.video;
@@ -764,14 +948,30 @@ export class BroadcastSession {
     }
     if (next === this.presetId) return;
 
-    this.presetId = next;
-    // Escolha manual redefine o teto da recuperação: é a nova intenção.
+    // Escolha manual redefine o teto de tudo: é a nova intenção do usuário.
     this.presetEscolhido = next;
+    this.presetPorPressao = next;
+    this.causaPressao = null;
     this.pressure = 0;
     this.pressureKind = 'none';
     this.calmaria = 0;
+
+    /**
+     * O orçamento de banda NÃO é zerado junto.
+     *
+     * Se o link paga 3 Mbps, ele continua pagando 3 Mbps depois do clique.
+     * Fingir o contrário devolveria exatamente a imagem borrada que a ADR 0015
+     * corrige — o produto obedeceria o rótulo e mentiria sobre a imagem. O que
+     * a escolha manual faz é recalcular o degrau que aquele orçamento paga sob
+     * a nova intenção, e a UI mostra `presetForced` quando os dois divergem.
+     */
+    const teto = this.governor.ceiling;
+    this.presetPorBanda = teto === null ? null : presetParaOrcamento(teto, this.prioridade);
+
+    this.presetId = next;
     this.setState({ ...this.state, presetId: next, presetForced: false, motivoDegradacao: null });
     await this.deps.transport.setPreset(presetById(next));
+    this.aplicarDegrau();
   }
 
   /**

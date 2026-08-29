@@ -265,6 +265,8 @@ describe('ViewerSession', () => {
       width: 1920,
       height: 1080,
       availableBps: null,
+      bpp: 0.1,
+      encoderImplementation: null,
     };
 
     ctx.scheduler.advance(1_000);

@@ -1,3 +1,4 @@
+import { bitsPorPixel } from '@tela/shared';
 import type { MediaStats, QualityLimitation } from '../ports/media-transport.js';
 
 /**
@@ -54,6 +55,7 @@ export class StatsSampler {
     let rttMs = 0;
     let limitation: QualityLimitation = 'none';
     let available: number | null = null;
+    let encoderImplementation: string | null = null;
     let found = false;
 
     reports.forEach((report, index) => {
@@ -77,6 +79,12 @@ export class StatsSampler {
           height = Math.max(height, Number(stat['frameHeight'] ?? 0));
           const reason = asLimitation(stat['qualityLimitationReason']);
           if (reason !== 'none') limitation = reason;
+
+          // Só no transmissor: `inbound-rtp` traz `decoderImplementation`, que
+          // é outra pergunta. Um valor basta — pela R5 todos os senders
+          // compartilham o mesmo encoder.
+          const impl = stat['encoderImplementation'];
+          if (typeof impl === 'string' && impl.length > 0) encoderImplementation = impl;
         }
 
         /**
@@ -125,6 +133,29 @@ export class StatsSampler {
     this.previous.clear();
     for (const [id, reading] of current) this.previous.set(id, reading);
 
-    return { fps: Math.round(fps), bitrateBps, rttMs, limitation, width, height, availableBps: available };
+    /**
+     * Bits por pixel POR ESPECTADOR, não do total.
+     *
+     * `bitrateBps` é a soma sobre os peers, porque é isso que o link de casa
+     * precisa aguentar. Mas o encoder é UM só (R5), e cada espectador recebe
+     * uma cópia inteira — dividir pelo número de fluxos é o que devolve o
+     * número que o encoder de fato viu. Sem a divisão, cinco espectadores
+     * fariam 0,02 bpp parecer 0,10 e o diagnóstico mentiria na direção
+     * confortável.
+     */
+    const fluxos = Math.max(1, current.size);
+    const bpp = bitsPorPixel(bitrateBps / fluxos, width, height, Math.round(fps));
+
+    return {
+      fps: Math.round(fps),
+      bitrateBps,
+      rttMs,
+      limitation,
+      width,
+      height,
+      availableBps: available,
+      bpp,
+      encoderImplementation,
+    };
   }
 }

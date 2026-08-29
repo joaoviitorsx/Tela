@@ -94,6 +94,12 @@ nitidez e derruba o framerate — porque assume que você está mostrando um
 documento. Gameplay a 15fps nítido é inútil. Essa linha decide se o produto
 presta.
 
+O botão de **nitidez** troca essa linha por `detail` de propósito, junto com
+30fps e `maintain-resolution` — os três, ou nenhum. Serve para quando o
+detalhe É a informação: um mapa, um inventário, texto. A 30fps o mesmo
+orçamento paga o dobro de bits por pixel, então cabe uma resolução maior sem
+um bit a mais de upload.
+
 **3. H.264, não VP9 nem AV1.**
 
 Comprimem melhor. Também consomem, em software, exatamente a CPU que o jogo
@@ -137,6 +143,12 @@ Estas são consequências da arquitetura, não bugs a corrigir depois:
 **Teto de banda com folga.** O WebRTC estima quanto cabe no link e sobe até
 lá — e "até lá" é exatamente onde a fila do roteador enche e o ping do jogo
 dispara. O encoder é limitado a 75% do estimado, antes disso acontecer.
+
+E o teto escolhe a RESOLUÇÃO, não só o bitrate. É a diferença entre 480p60
+nítido e 1080p60 borrado com os mesmos 3 Mbps — apertar bits sem tirar pixel só
+sobe o QP, e o navegador acaba derrubando a resolução sozinho, sem avisar
+ninguém. O console mostra os bits por pixel: abaixo de 0,10 a imagem borra, e
+agora dá para ver isso acontecer.
 
 **Prioridade de rede.** O vídeo é marcado como tráfego sacrificável (DSCP
 baixo) e o áudio como prioritário. Roteador com fila consciente (fq_codel,
@@ -225,6 +237,8 @@ trade-off consciente, com página de exportação em `/recuperar`.
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Subir o front e o signaling |
 | [`docs/adr/0007`](docs/adr/0007-onde-hospedar.md) | Por que Cloudflare, e o que foi descartado |
 | [`docs/TELA-changeset-mesh.md`](docs/TELA-changeset-mesh.md) | A mudança de SFU para mesh |
+| [`docs/adr/0015`](docs/adr/0015-o-teto-de-upload-escolhe-o-degrau.md) | Por que a imagem borrava, e o que decide a qualidade agora |
+| [`docs/adr/0016`](docs/adr/0016-perfil-h264-nivel-e-jitter-buffer.md) | Perfil H.264, nível anunciado e jitter buffer |
 
 Comece pela [ADR 0005](docs/adr/0005-mesh-p2p.md) se quiser entender a
 arquitetura atual, e pela [0002](docs/adr/0002-transporte-p2p-self-host.md) se

@@ -40,6 +40,30 @@ export type MediaStats = {
    * usuário, que é o que faz o ping do jogo subir.
    */
   readonly availableBps: number | null;
+  /**
+   * Bits por pixel do fluxo que está saindo POR ESPECTADOR. `0` sem leitura.
+   *
+   * É o número que prevê a imagem borrada antes de ela aparecer, e o único que
+   * dizia a verdade enquanto o rótulo dizia 1080p60: abaixo de 0,10 em
+   * movimento alto o encoder não tem saída além de subir o QP, e logo depois o
+   * navegador começa a derrubar resolução por conta própria.
+   *
+   * Deriva de `bitrateBps`, `width`, `height` e `fps` — todos já medidos, sem
+   * nenhuma leitura nova.
+   */
+  readonly bpp: number;
+  /**
+   * Qual encoder o navegador escolheu, cru: `ExternalEncoder`, `OpenH264`,
+   * `libvpx`…
+   *
+   * É a resposta para a única pergunta de desempenho que o produto não sabia
+   * responder sozinho — se o encode está em HARDWARE. Antes só dava para
+   * conferir em `chrome://gpu`, o que ninguém faz no meio de uma partida, e
+   * `qualityLimitationReason: 'cpu'` só diz que está pesado, não por quê.
+   *
+   * `null` quando o navegador não reporta o campo.
+   */
+  readonly encoderImplementation: string | null;
 };
 
 export type TransportEvents = {

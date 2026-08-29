@@ -144,11 +144,15 @@ Estas são consequências da arquitetura, não bugs a corrigir depois:
 lá — e "até lá" é exatamente onde a fila do roteador enche e o ping do jogo
 dispara. O encoder é limitado a 75% do estimado, antes disso acontecer.
 
-E o teto escolhe a RESOLUÇÃO, não só o bitrate. É a diferença entre 480p60
-nítido e 1080p60 borrado com os mesmos 3 Mbps — apertar bits sem tirar pixel só
-sobe o QP, e o navegador acaba derrubando a resolução sozinho, sem avisar
-ninguém. O console mostra os bits por pixel: abaixo de 0,10 a imagem borra, e
-agora dá para ver isso acontecer.
+E o orçamento escolhe a RESOLUÇÃO, não só o bitrate. É a diferença entre
+480p60 nítido e 1080p60 borrado com os mesmos 3 Mbps — apertar bits sem tirar
+pixel só sobe o QP, e o navegador acaba derrubando a resolução sozinho, sem
+avisar ninguém.
+
+Na outra ponta, banda de sobra vira imagem em vez de sobrar: quem tem link
+para 25 Mbps por espectador recebe 25, e não os 12 do rótulo. O console mostra
+os bits por pixel — abaixo de 0,10 a imagem borra, e 0,20 é onde o bit deixa
+de virar nitidez.
 
 **Prioridade de rede.** O vídeo é marcado como tráfego sacrificável (DSCP
 baixo) e o áudio como prioritário. Roteador com fila consciente (fq_codel,
@@ -239,6 +243,7 @@ trade-off consciente, com página de exportação em `/recuperar`.
 | [`docs/TELA-changeset-mesh.md`](docs/TELA-changeset-mesh.md) | A mudança de SFU para mesh |
 | [`docs/adr/0015`](docs/adr/0015-o-teto-de-upload-escolhe-o-degrau.md) | Por que a imagem borrava, e o que decide a qualidade agora |
 | [`docs/adr/0016`](docs/adr/0016-perfil-h264-nivel-e-jitter-buffer.md) | Perfil H.264, nível anunciado e jitter buffer |
+| [`docs/adr/0017`](docs/adr/0017-o-governador-mede-orcamento-nao-teto.md) | Por que 800 Mbps de subida entregavam 12, e o que mudou |
 
 Comece pela [ADR 0005](docs/adr/0005-mesh-p2p.md) se quiser entender a
 arquitetura atual, e pela [0002](docs/adr/0002-transporte-p2p-self-host.md) se

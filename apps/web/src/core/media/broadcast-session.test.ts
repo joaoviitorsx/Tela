@@ -307,7 +307,7 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     ctx.scheduler.advance(11_000);
     ctx.transport.setPeers([]);
     await settle();
-    expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 5 });
+    expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ frameRate: 5 });
   });
 
   it('peer que pisca NÃO derruba a captura', async () => {
@@ -335,26 +335,63 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     ctx.scheduler.advance(11_000);
     ctx.transport.setPeers([]);
     await settle();
-    expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 5 });
+    expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ frameRate: 5 });
 
     ctx.transport.setPeers([{ id: 'v_1', connectionState: 'connected', usingRelay: false }]);
     await settle();
-    expect(ctx.screen.video.constraints.at(-1)).toEqual({ frameRate: 60 });
+    expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ frameRate: 60 });
+  });
+
+  it('o throttle de ociosidade NÃO descarta as constraints de resolução', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    /*
+      `applyConstraints` SUBSTITUI o conjunto inteiro; não faz merge. Mandar só
+      `{ frameRate }` apagava `width`, `height` e `resizeMode`, e a captura
+      voltava para a resolução NATIVA do monitor.
+
+      Não é canto raro: toda transmissão começa sem espectador, cai para 5fps
+      em dez segundos e volta quando o primeiro amigo entra. A partir daí um
+      monitor 1440p ou 4K entregava quadros nativos 60 vezes por segundo, na
+      mesma máquina que roda o jogo — que é exatamente o custo que o
+      `crop-and-scale` existe para evitar.
+    */
+    ctx.scheduler.advance(11_000);
+    await settle(4);
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+
+    const aplicadas = ctx.screen.video.constraints.at(-1) as Record<string, unknown>;
+    expect(aplicadas['resizeMode']).toBe('crop-and-scale');
+    expect(aplicadas['width']).toMatchObject({ max: 1920 });
+    expect(aplicadas['height']).toMatchObject({ max: 1080 });
   });
 
   it('RUÍDO na estimativa de banda não reconfigura o encoder', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
 
-    // Banda de sobra, mas oscilando. Nenhum teto se justifica: aplicar um
-    // acima do que o preset já pede só reconfiguraria o encoder à toa.
+    /*
+      Banda de sobra, oscilando ±20%.
+
+      MUDANÇA DE CONTRATO (ADR 0017): a expectativa era ZERO reconfigurações,
+      porque o governador calava quando não havia o que restringir. Esse
+      silêncio era o defeito — quem o consumia caía no nominal do preset, e um
+      link de 800 Mbps entregava 12 Mbps.
+
+      Agora ele reporta o orçamento UMA vez, quando o aquecimento termina, e a
+      histerese absorve todo o resto. Uma reconfiguração no início da
+      transmissão é o preço de gastar a banda que existe; catorze, uma por
+      segundo, era o travamento que os usuários relataram.
+    */
     const ruido = [16, 14, 17, 13, 18, 12, 16, 15, 17, 14, 16, 15, 17, 13];
     for (const mbps of ruido) {
       ctx.transport.stats = amostra({ availableBps: mbps * 1_000_000 });
       await tique(ctx, 1);
     }
 
-    expect(ctx.transport.ceilings).toEqual([]);
+    expect(ctx.transport.ceilings).toHaveLength(1);
   });
 
   it('banda APERTADA e oscilando reconfigura UMA vez, não a cada segundo', async () => {
@@ -486,7 +523,7 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     expect(teto / (width * height * 60)).toBeGreaterThanOrEqual(0.1);
   });
 
-  it('banda de sobra não mexe em degrau nenhum', async () => {
+  it('banda de sobra não derruba degrau nenhum', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
     // 20 Mbps por espectador: o 1080p60 cabe inteiro, com folga.
@@ -495,7 +532,26 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
 
     const state = ctx.session.getState();
     expect(state.status === 'live' && state.presetId).toBe('p1080p60');
-    expect(ctx.transport.ceilings).toEqual([]);
+    expect(state.status === 'live' && state.presetForced).toBe(false);
+  });
+
+  it('800 Mbps de subida chegam ao encoder em vez de parar em 12 (ADR 0017)', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // O relato: link de 800 Mbps, dois espectadores, imagem ruim. O orçamento
+    // por espectador é 300 Mbps e o encoder recebia os 12 Mbps do rótulo,
+    // porque nenhum teto era aplicado e ninguém media a banda que sobrava.
+    ctx.transport.stats = amostra({ availableBps: 800_000_000 });
+    await tique(ctx, 20);
+
+    const orcamento = ctx.transport.ceilings.at(-1);
+    expect(orcamento).not.toBeNull();
+    expect(orcamento!).toBeGreaterThan(100_000_000);
+
+    // E o degrau continua no topo: banda de sobra não é motivo para descer.
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).toBe('p1080p60');
   });
 
   it('a banda voltando devolve o degrau — o "embaçou e não voltou"', async () => {
@@ -622,6 +678,35 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     const nitido = ctx.session.getState();
     const depois = nitido.status === 'live' ? nitido.presetId : 'p360p60';
     expect(PRESET_IDS.indexOf(depois)).toBeLessThan(PRESET_IDS.indexOf(antes));
+  });
+
+  it('a recuperação de CPU anda mesmo sob pressão de banda contínua', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // Cai por CPU.
+    ctx.transport.stats = amostra({ limitation: 'cpu', availableBps: 8_000_000 });
+    await tique(ctx, 14);
+    const fundo = ctx.session.getState();
+    const antes = fundo.status === 'live' ? fundo.presetId : 'p360p60';
+    expect(antes).not.toBe('p1080p60');
+
+    /*
+      A CPU se resolveu, mas o Chromium reporta `bandwidth` de forma contínua
+      — porque o orçamento ESTÁ segurando o encoder, ou seja, a malha está
+      funcionando. A primeira versão da guarda retornava antes de chamar
+      `recuperar()`, então a calmaria congelava e a queda por CPU virava
+      permanente, com o degrau abaixo do que o link pagava.
+
+      Subir aqui é seguro: `aplicarDegrau()` corta no orçamento, então nem um
+      bit a mais sai do link.
+    */
+    ctx.transport.stats = amostra({ limitation: 'bandwidth', availableBps: 8_000_000 });
+    await tique(ctx, 130);
+
+    const depois = ctx.session.getState();
+    const id = depois.status === 'live' ? depois.presetId : 'p360p60';
+    expect(PRESET_IDS.indexOf(id)).toBeLessThan(PRESET_IDS.indexOf(antes));
   });
 
   it('o contentHint acompanha a prioridade — a metade que faltava', async () => {

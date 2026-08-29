@@ -552,11 +552,11 @@ export class BroadcastSession {
      * O escolhido não se move sem o usuário mandar. É a única referência que
      * serve.
      */
-    const decisao = this.governor.observe(porEspectador, presetById(this.presetEscolhido));
-    // `null` na maioria das leituras: o governador só decide quando a mudança
-    // compensa reconfigurar o encoder. `{ bps: null }` remove o teto.
+    const decisao = this.governor.observe(porEspectador);
+    // `null` na maioria das leituras: o governador só fala quando a mudança
+    // compensa reconfigurar o encoder.
     if (decisao === null) return;
-    void this.deps.transport.setBitrateCeiling(decisao.bps).catch(() => undefined);
+    void this.deps.transport.setUplinkBudget(decisao.bps).catch(() => undefined);
 
     /**
      * E AQUI está a correção que a ADR 0015 existe para registrar.
@@ -576,8 +576,7 @@ export class BroadcastSession {
      * honestos. Os mesmos 3 Mbps em 854×480@60 são 0,10 bpp — nítido de
      * verdade, num rótulo menor.
      */
-    this.presetPorBanda =
-      decisao.bps === null ? null : presetParaOrcamento(decisao.bps, this.prioridade);
+    this.presetPorBanda = presetParaOrcamento(decisao.bps, this.prioridade);
     this.aplicarDegrau();
   }
 
@@ -684,6 +683,21 @@ export class BroadcastSession {
     if (limitation === 'bandwidth' && this.governor.estimativa !== null) {
       this.pressure = 0;
       this.pressureKind = 'none';
+      /**
+       * E a recuperação SEGUE andando, o que a primeira versão desta guarda
+       * esquecia.
+       *
+       * Retornar aqui congelava a calmaria: com o orçamento apertado e o
+       * Chromium reportando `bandwidth` de forma contínua, `recuperar()` nunca
+       * era chamado, e uma queda causada por um transiente de CPU ficava
+       * marcada em `presetPorPressao` para sempre. O degrau efetivo continuava
+       * abaixo do que o link pagava, sem que nada na tela explicasse por quê.
+       *
+       * Subir aqui é seguro por construção: `aplicarDegrau()` corta no
+       * `presetPorBanda`, então a escada de pressão pode voltar ao topo sem
+       * que um único bit a mais saia do link.
+       */
+      this.recuperar();
       return;
     }
 
@@ -868,8 +882,9 @@ export class BroadcastSession {
      * resolução maior. É assim que `nitidez` entrega 1280×720@30 onde
      * `fluidez` entrega 854×480@60 — pelos mesmos bits, sem pedir um a mais.
      */
-    const teto = this.governor.ceiling;
-    this.presetPorBanda = teto === null ? null : presetParaOrcamento(teto, prioridade);
+    const orcamento = this.governor.orcamento;
+    this.presetPorBanda =
+      orcamento === null ? null : presetParaOrcamento(orcamento, prioridade);
     this.aplicarDegrau();
   }
 
@@ -965,8 +980,9 @@ export class BroadcastSession {
      * a escolha manual faz é recalcular o degrau que aquele orçamento paga sob
      * a nova intenção, e a UI mostra `presetForced` quando os dois divergem.
      */
-    const teto = this.governor.ceiling;
-    this.presetPorBanda = teto === null ? null : presetParaOrcamento(teto, this.prioridade);
+    const orcamento = this.governor.orcamento;
+    this.presetPorBanda =
+      orcamento === null ? null : presetParaOrcamento(orcamento, this.prioridade);
 
     this.presetId = next;
     this.setState({ ...this.state, presetId: next, presetForced: false, motivoDegradacao: null });
@@ -1040,10 +1056,39 @@ export class BroadcastSession {
     const track = this.videoTrack;
     if (track === null || typeof track.applyConstraints !== 'function') return;
     this.capturaOciosa = ocioso;
-    void track.applyConstraints({ frameRate }).catch(() => {
-      // Navegador que recusa restringir a captura segue no framerate cheio.
-      this.capturaOciosa = false;
-    });
+
+    /**
+     * O conjunto INTEIRO, não só o framerate.
+     *
+     * `applyConstraints` SUBSTITUI as constraints da trilha; ele não faz
+     * merge. Mandar `{ frameRate }` sozinho apagava `width`, `height` e
+     * `resizeMode` — e a captura voltava para a resolução NATIVA do monitor.
+     *
+     * O caminho é o comum, não um canto: toda transmissão começa sem
+     * espectador, cai para 5fps depois de dez segundos, e volta quando o
+     * primeiro amigo entra. A partir dessa volta, um monitor 1440p ou 4K
+     * passava a entregar quadros nativos 60 vezes por segundo, e o
+     * redimensionamento virava trabalho extra na mesma máquina que roda o
+     * jogo. O `crop-and-scale` existe exatamente para isso não acontecer, e
+     * ele era descartado no primeiro ciclo de ociosidade.
+     *
+     * O sintoma final não é resolução errada — `scaleResolutionDownBy`
+     * corrige a saída — é CPU: mais custo por quadro, `qualityLimitationReason
+     * = 'cpu'`, e a escada derrubando qualidade por um problema que a
+     * otimização de ociosidade criou.
+     */
+    const preset = presetById(this.presetEscolhido);
+    void track
+      .applyConstraints({
+        frameRate,
+        width: { ideal: preset.layers[0].width, max: preset.layers[0].width },
+        height: { ideal: preset.layers[0].height, max: preset.layers[0].height },
+        resizeMode: 'crop-and-scale',
+      } as MediaTrackConstraints)
+      .catch(() => {
+        // Navegador que recusa restringir a captura segue no framerate cheio.
+        this.capturaOciosa = false;
+      });
   }
 
   /**

@@ -248,8 +248,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       await topology?.setPrioridade(prioridade);
     },
 
-    async setBitrateCeiling(bps) {
-      await topology?.setCeiling(bps);
+    async setUplinkBudget(bps) {
+      await topology?.setOrcamento(bps);
     },
 
     async getAggregateStats(): Promise<MediaStats | null> {

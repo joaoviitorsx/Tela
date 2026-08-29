@@ -1,7 +1,5 @@
-import type { EncodingPreset } from '@tela/shared';
-
 /**
- * Decide o teto de upload do vídeo, com amortecimento.
+ * Mede quanto o link de upload comporta POR ESPECTADOR, com amortecimento.
  *
  * # O erro que este arquivo existe para não repetir
  *
@@ -21,20 +19,41 @@ import type { EncodingPreset } from '@tela/shared';
  *    com ela.
  * 2. **Suavização.** Média móvel exponencial, para que um vale isolado não
  *    vire uma queda de qualidade.
- * 3. **Histerese, em DOIS eixos.** No valor: só muda o teto quando o alvo se
- *    afasta o bastante do que já está aplicado. E na FRONTEIRA: entrar e sair
- *    do regime "com teto" usa limiares diferentes.
+ * 3. **Histerese.** Só reporta quando o alvo se afasta o bastante do que já
+ *    está valendo. Ajuste pequeno não paga o custo de reconfigurar o encoder.
  *
- *    O segundo eixo foi um defeito real. Com um limiar só, qualquer banda
- *    cuja média caísse perto de `maxBitrate / UPLINK_SHARE` — 10,67 Mbps no
- *    1080p60 — fazia o governador aplicar e soltar alternadamente, cerca de
- *    uma vez por segundo, para sempre. Os tetos aplicados diferiam do preset
- *    em menos de 1%: a histerese de valor existia justamente para impedir
- *    isso, mas o ramo de soltar zerava o estado dela antes de ser consultada.
+ *    Havia um segundo eixo de histerese, na FRONTEIRA entre "com teto" e "sem
+ *    teto", porque um limiar só fazia o governador aplicar e soltar
+ *    alternadamente uma vez por segundo quando a média passava perto de
+ *    `maxBitrate / UPLINK_SHARE`. Esse eixo saiu junto com a fronteira: não
+ *    existem mais dois regimes, existe um número.
  *
  * E um piso: nunca abaixo do menor preset. Uma estimativa ruim não pode
  * estrangular a transmissão até o nada — é melhor deixar o próprio WebRTC
  * descartar pacotes do que desligar a imagem por precaução.
+ *
+ * # De TETO para ORÇAMENTO (ADR 0017)
+ *
+ * Este arquivo se chamava governador de teto e só falava quando havia o que
+ * RESTRINGIR: se a banda sobrava, ele calava, e quem consumia o silêncio
+ * caía no nominal do preset.
+ *
+ * Consequência medida: um link de 800 Mbps com dois espectadores dá 300 Mbps
+ * de orçamento por espectador. O limiar de entrada era 12 Mbps × 0,9, então
+ * nenhum teto era aplicado — e o encoder ficava nos 12 Mbps do preset, que
+ * são 0,096 bit por pixel. Esse número é o PISO da ADR 0010, o ponto onde a
+ * imagem para de quebrar. Não é o ponto onde ela fica boa: movimento alto pede
+ * 0,15 a 0,20, e 0,20 em 1080p60 são 24,9 Mbps.
+ *
+ * O caminho que gastava a banda medida existia, e estava trancado atrás da
+ * escassez. Quem tinha banda de sobra nunca chegava nele.
+ *
+ * Agora o governador reporta o orçamento SEMPRE que ele muda de forma
+ * relevante — para cima ou para baixo. Quem decide como gastar é quem sabe a
+ * resolução: a sessão escolhe o degrau, e a topologia gasta até o teto útil de
+ * bits por pixel. Some com isso a assimetria entre "apertar" e "sobrar", e com
+ * ela some o gatilho de Schmitt: não há mais dois regimes para entrar e sair,
+ * há um número só, amortecido.
  */
 
 /** Fração da banda estimada que o vídeo pode ocupar. O resto é folga. */
@@ -45,17 +64,6 @@ const SUAVIZACAO = 0.25;
 
 /** Só reconfigura o encoder se o alvo mudar mais que isto. */
 const HISTERESE = 0.25;
-
-/**
- * Banda morta em volta do teto do preset — gatilho de Schmitt.
- *
- * Só passa a limitar quando o alvo cai claramente ABAIXO do que o preset já
- * pede, e só larga o teto quando ele sobe claramente ACIMA. Os dois limiares
- * precisam ser diferentes: iguais, a leitura oscilando em cima do ponto de
- * troca alterna os dois regimes indefinidamente.
- */
-const ENTRA_ABAIXO_DE = 0.9;
-const SOLTA_ACIMA_DE = 1.15;
 
 /** Leituras ignoradas no início, enquanto o estimador ainda sonda. */
 const AQUECIMENTO_AMOSTRAS = 8;
@@ -76,9 +84,14 @@ const AQUECIMENTO_AMOSTRAS = 8;
 const PISO_BPS = 300_000;
 
 /**
- * `null` = não mexa. `{ bps: number }` = aplique. `{ bps: null }` = solte.
+ * `null` = não mexa (a esmagadora maioria das leituras). `{ bps }` = o
+ * orçamento mudou o bastante para valer reconfigurar o encoder.
+ *
+ * Não existe mais "solte o teto". O orçamento é sempre um número depois do
+ * aquecimento; o que mudava era só se ele estava acima ou abaixo do preset, e
+ * essa distinção pertence a quem gasta, não a quem mede.
  */
-export type DecisaoTeto = { readonly bps: number | null } | null;
+export type DecisaoOrcamento = { readonly bps: number } | null;
 
 export class UplinkGovernor {
   private media: number | null = null;
@@ -117,53 +130,44 @@ export class UplinkGovernor {
     this.amostras = 0;
   }
 
-  /** Teto atualmente aplicado, ou `null` se nenhum. */
-  get ceiling(): number | null {
+  /** Orçamento por espectador atualmente em vigor. `null` antes do aquecimento. */
+  get orcamento(): number | null {
     return this.aplicado;
   }
 
   /**
-   * Recebe uma leitura de banda disponível e decide o que fazer com o teto.
+   * Recebe uma leitura de banda disponível e devolve o orçamento por
+   * espectador quando ele mudou o bastante para valer reconfigurar o encoder.
    *
    * `null` significa "não mexa" — o caso da esmagadora maioria das leituras.
-   * `{ bps }` aplica; `{ bps: null }` remove o teto e devolve o comando ao
-   * preset.
    *
-   * A distinção entre "não mexa" e "remova" importa: antes as duas coisas
-   * eram o mesmo retorno, e soltar o teto gravava `preset.main.maxBitrate`
-   * como se fosse um teto de verdade. O número do preset ANTIGO ficava
-   * grudado, então subir a qualidade no seletor não subia o bitrate — a UI
-   * dizia 1080p60 e o encoder continuava preso em 4 Mbps.
+   * Antes existia um terceiro retorno, `{ bps: null }`, que mandava SOLTAR o
+   * teto e devolver o comando ao nominal do preset. Ele sumiu junto com a
+   * ideia de teto: o nominal do preset é um rótulo de calibração, não um alvo,
+   * e voltar para ele quando a banda sobra é exatamente o que prendia um link
+   * de 800 Mbps em 12 Mbps (ADR 0017).
    *
-   * `availableBps` deve chegar POR ESPECTADOR. Em mesh o teto vira
-   * `maxBitrate` de cada sender, e cada espectador recebe uma cópia inteira.
+   * `availableBps` deve chegar POR ESPECTADOR. Em mesh cada espectador recebe
+   * uma cópia inteira do vídeo, e o orçamento vira `maxBitrate` de cada sender.
    */
-  observe(availableBps: number | null, preset: EncodingPreset): DecisaoTeto {
+  observe(availableBps: number | null): DecisaoOrcamento {
     if (availableBps === null || !Number.isFinite(availableBps) || availableBps <= 0) {
       return null;
     }
 
     this.amostras += 1;
-    this.media = this.media === null ? availableBps : this.media + SUAVIZACAO * (availableBps - this.media);
+    this.media =
+      this.media === null ? availableBps : this.media + SUAVIZACAO * (availableBps - this.media);
 
     // Durante o aquecimento acumula a média, mas não decide nada com ela.
     if (this.amostras <= AQUECIMENTO_AMOSTRAS) return null;
 
     const alvo = Math.max(PISO_BPS, Math.round(this.media * UPLINK_SHARE));
-    const tetoDoPreset = preset.main.maxBitrate;
 
+    // Primeira leitura útil: não há com o que comparar, então vale.
     if (this.aplicado === null) {
-      // Sem teto. Só assume o controle se houver o que restringir de fato:
-      // um teto igual ao que o preset já pede reconfigura o encoder à toa.
-      if (alvo >= tetoDoPreset * ENTRA_ABAIXO_DE) return null;
       this.aplicado = alvo;
       return { bps: alvo };
-    }
-
-    // Com teto. Só devolve o controle quando a banda sobra com folga.
-    if (alvo >= tetoDoPreset * SOLTA_ACIMA_DE) {
-      this.aplicado = null;
-      return { bps: null };
     }
 
     const variacao = Math.abs(alvo - this.aplicado) / this.aplicado;

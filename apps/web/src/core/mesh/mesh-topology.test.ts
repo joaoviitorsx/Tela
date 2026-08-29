@@ -334,11 +334,11 @@ describe('MeshTopology — roteamento e limpeza', () => {
  * conserto: os bits acompanham o teto, e os PIXELS acompanham o degrau que a
  * sessão manda — de forma que os bits por pixel nunca desabam.
  */
-describe('MeshTopology — bits por pixel honestos (ADR 0015)', () => {
+describe('MeshTopology — bits por pixel honestos (ADR 0015 e 0017)', () => {
   const encodingDe = (pc: FakePeerConnection) =>
     pc.senders[0]?.applied.at(-1)?.encodings?.[0];
 
-  it('o TETO vence quando é maior que o nominal do degrau', async () => {
+  it('o ORÇAMENTO manda, mesmo acima do nominal do degrau', async () => {
     const ctx = build();
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
     ctx.mesh.admit('v_1');
@@ -347,19 +347,19 @@ describe('MeshTopology — bits por pixel honestos (ADR 0015)', () => {
     // O link paga 3 Mbps; o nominal do 480p60 é 2,5. Aplicar `min` jogaria
     // fora 500 kbps que o link comprovadamente entrega — e num quadro de
     // 854×480 esses 500 kbps são 0,10 → 0,12 bit por pixel.
-    await ctx.mesh.setCeiling(3_000_000);
+    await ctx.mesh.setOrcamento(3_000_000);
     await settle();
 
     expect(encodingDe(ctx.factory.created[0]!)?.maxBitrate).toBe(3_000_000);
   });
 
-  it('o teto NÃO passa do útil: acima de 0,20 bpp o bit não vira imagem', async () => {
+  it('o orçamento NÃO passa do útil: acima de 0,20 bpp o bit não vira imagem', async () => {
     const ctx = build();
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
     ctx.mesh.admit('v_1');
     await settle();
 
-    await ctx.mesh.setCeiling(90_000_000);
+    await ctx.mesh.setOrcamento(90_000_000);
     await settle();
 
     const aplicado = encodingDe(ctx.factory.created[0]!)?.maxBitrate ?? 0;
@@ -367,12 +367,12 @@ describe('MeshTopology — bits por pixel honestos (ADR 0015)', () => {
     expect(aplicado).toBeLessThanOrEqual(0.2 * width * height * 60);
   });
 
-  it('bppAtual nunca cai abaixo do piso enquanto o degrau acompanhar o teto', async () => {
+  it('bppAtual nunca cai abaixo do piso enquanto o degrau acompanhar o orçamento', async () => {
     const ctx = build();
     // É o pareamento que a sessão passou a garantir: orçamento de 3 Mbps
     // chega junto com o degrau de 480p60, não com o de 1080p60.
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
-    await ctx.mesh.setCeiling(3_000_000);
+    await ctx.mesh.setOrcamento(3_000_000);
 
     expect(ctx.mesh.bppAtual()).toBeGreaterThanOrEqual(BPP_PISO);
   });
@@ -412,5 +412,124 @@ describe('MeshTopology — bits por pixel honestos (ADR 0015)', () => {
     await settle();
 
     expect(encodingDe(ctx.factory.created[0]!)?.maxFramerate).toBe(60);
+  });
+});
+
+/**
+ * O defeito da ADR 0017: o caminho que gasta a banda medida existia e estava
+ * trancado atrás da ESCASSEZ. Quem tinha link sobrando nunca chegava nele.
+ */
+describe('MeshTopology — banda de sobra vira imagem (ADR 0017)', () => {
+  const encodingDe = (pc: FakePeerConnection) =>
+    pc.senders[0]?.applied.at(-1)?.encodings?.[0];
+
+  it('orçamento fartíssimo leva o bitrate ao teto ÚTIL, não ao nominal', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    // 800 Mbps de subida com dois espectadores: 300 Mbps por espectador.
+    await ctx.mesh.setOrcamento(300_000_000);
+    await settle();
+
+    const aplicado = encodingDe(ctx.factory.created[0]!)?.maxBitrate ?? 0;
+    // Antes: 12 Mbps, o nominal — 0,096 bpp, o piso onde a imagem só não
+    // quebra. Agora: 0,20 bpp, que em 1080p60 são 24,9 Mbps.
+    expect(aplicado).toBeGreaterThan(PRESET_1080P60.main.maxBitrate * 1.9);
+    expect(ctx.mesh.bppAtual()).toBeCloseTo(0.2, 2);
+  });
+
+  it('sem medição nenhuma, continua no nominal do preset', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    // O palpite calibrado é o melhor que existe antes de medir.
+    expect(encodingDe(ctx.factory.created[0]!)?.maxBitrate).toBe(
+      PRESET_1080P60.main.maxBitrate,
+    );
+  });
+
+  it('NUNCA fura o orçamento, nem em nitidez', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_720P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    /*
+      O bug: `max(nominal, orçamento)`. Em nitidez o degrau escolhido roda a
+      30fps e pode ter nominal de até o DOBRO do que o link paga — 3 Mbps de
+      orçamento viravam 5,5 Mbps de demanda. O governador produzindo o
+      afogamento que ele existe para impedir.
+    */
+    await ctx.mesh.setPrioridade('nitidez');
+    await ctx.mesh.setOrcamento(3_000_000);
+    await settle();
+
+    const aplicado = encodingDe(ctx.factory.created[0]!)?.maxBitrate ?? 0;
+    expect(aplicado).toBeLessThanOrEqual(3_000_000);
+  });
+});
+
+describe('MeshTopology — a escala tira PIXEL de verdade', () => {
+  const encodingDe = (pc: FakePeerConnection) =>
+    pc.senders[0]?.applied.at(-1)?.encodings?.[0];
+
+  it('descer de degrau reduz a resolução, não só o bitrate', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    // Captura em 1920: no topo da escada não há o que encolher.
+    expect(encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy).toBe(1);
+
+    await ctx.mesh.setPreset(PRESET_480P60);
+    await settle();
+
+    // 1920 / 854 = 2,248 — o encoder passa a codificar 854×480 de verdade.
+    const escala = encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy ?? 0;
+    expect(escala).toBeCloseTo(1920 / PRESET_480P60.layers[0].width, 3);
+  });
+
+  it('escala medida cedo demais é corrigida no relógio das estatísticas', async () => {
+    const ctx = build();
+    /*
+      `getSettings().width` pode ser 0 numa trilha recém-criada, e `escalaPara`
+      devolve 1 por segurança. Um `1` errado manda 1920×1080 com o bitrate de
+      um degrau menor — a definição de quadriculado.
+
+      O agravante: nada corrigia. `applyPreset` só roda de novo em troca de
+      preset, orçamento, prioridade ou trilha, e um sender que ACEITOU os
+      parâmetros errados não entra na fila de pendentes.
+    */
+    ctx.video.settings = { width: 0, height: 0 } as MediaTrackSettings;
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+    expect(encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy).toBe(1);
+
+    // A captura engatou e passou a reportar a resolução real.
+    ctx.video.settings = { width: 1920, height: 1080 } as MediaTrackSettings;
+    await ctx.mesh.collectStats();
+    await settle();
+
+    const escala = encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy ?? 0;
+    expect(escala).toBeCloseTo(1920 / PRESET_480P60.layers[0].width, 3);
+  });
+
+  it('escala estável não reconfigura o encoder a cada segundo', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_480P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    const antes = ctx.factory.created[0]!.senders[0]!.applied.length;
+    for (let i = 0; i < 10; i += 1) await ctx.mesh.collectStats();
+    await settle();
+
+    expect(ctx.factory.created[0]!.senders[0]!.applied.length).toBe(antes);
   });
 });

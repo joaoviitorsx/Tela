@@ -98,6 +98,8 @@ export type FakeTrack = MediaStreamTrack & {
   stopped: boolean;
   fireEnded(): void;
   constraints: MediaTrackConstraints[];
+  /** O que a captura reporta. Mutável no teste: `0` simula trilha recém-criada. */
+  settings: MediaTrackSettings;
 };
 
 export function fakeTrack(kind: 'video' | 'audio'): FakeTrack {
@@ -109,6 +111,18 @@ export function fakeTrack(kind: 'video' | 'audio'): FakeTrack {
     readyState: 'live' as MediaStreamTrackState,
     stopped: false,
     constraints: [] as MediaTrackConstraints[],
+    /**
+     * O que a captura está entregando. Existe porque `escalaPara` lê daqui, e
+     * sem isto ela devolvia `1` em TODOS os testes.
+     *
+     * Isso já escondeu um defeito: o `scaleResolutionDownBy` calculado era
+     * sobrescrito por um spread de objeto e nenhum teste percebeu, porque a
+     * escala era sempre 1. O fake que não modela a coisa certa não testa nada.
+     */
+    settings: { width: 1920, height: 1080 } as MediaTrackSettings,
+    getSettings(): MediaTrackSettings {
+      return track.settings;
+    },
     async applyConstraints(c: MediaTrackConstraints) {
       track.constraints.push(c);
     },
@@ -238,7 +252,7 @@ export class FakeMediaTransport implements MediaTransport {
     this.prioridades.push(prioridade);
   }
   ceilings: (number | null)[] = [];
-  async setBitrateCeiling(bps: number | null): Promise<void> {
+  async setUplinkBudget(bps: number | null): Promise<void> {
     this.ceilings.push(bps);
   }
   async getAggregateStats(): Promise<MediaStats | null> {

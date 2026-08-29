@@ -107,13 +107,12 @@ export class MeshTopology {
   private queue: Promise<void> = Promise.resolve();
 
   /**
-   * Teto de upload, abaixo do preset. `null` = sem teto.
+   * O que o link comporta POR ESPECTADOR, medido. `null` antes da medição.
    *
-   * O preset diz o que o usuário quer; o teto diz o que o link dele aguenta
-   * sem estrangular o jogo. Vence o menor dos dois — encher o cano é
-   * exatamente o que faz o ping do jogo subir.
+   * Não é um teto: é o orçamento. O preset diz qual RESOLUÇÃO cabe; este
+   * número diz quantos bits há para gastar nela.
    */
-  private ceiling: number | null = null;
+  private orcamento: number | null = null;
   private prioridade: Prioridade = 'fluidez';
 
   /**
@@ -337,8 +336,8 @@ export class MeshTopology {
     return this.enqueue(() => this.adaptAll(preset));
   }
 
-  setCeiling(bps: number | null): Promise<void> {
-    this.ceiling = bps;
+  setOrcamento(bps: number | null): Promise<void> {
+    this.orcamento = bps;
     const preset = this.preset;
     if (preset === null) return Promise.resolve();
     return this.enqueue(() => this.adaptAll(preset));
@@ -417,7 +416,7 @@ export class MeshTopology {
            * O fake de sender do projeto não tem `getSettings`, então
            * `escalaPara` devolvia 1 em todos os testes e ninguém viu.
            */
-          scaleResolutionDownBy: escalaPara(sender.track, preset),
+          scaleResolutionDownBy: this.gravarEscala(escalaPara(sender.track, preset)),
           maxBitrate: this.effectiveBitrate(preset),
           maxFramerate: this.framerate(preset),
           /**
@@ -557,14 +556,38 @@ export class MeshTopology {
    * 0,20 bpp o retorno em movimento alto é desprezível, e mandar bits que não
    * viram qualidade é o mesmo que encher o cano do usuário de graça.
    */
-  private effectiveBitrate(preset: EncodingPreset): number {
-    const nominal = preset.main.maxBitrate;
-    if (this.ceiling === null) return nominal;
+  /** Registra o que foi de fato aplicado, para `escalaMudou` ter referência. */
+  private gravarEscala(escala: number): number {
+    this.escalaAplicada = escala;
+    return escala;
+  }
 
+  private effectiveBitrate(preset: EncodingPreset): number {
+    // Sem medição, o nominal do preset é o melhor palpite que existe.
+    if (this.orcamento === null) return preset.main.maxBitrate;
+
+    /**
+     * Gasta o orçamento na resolução escolhida, até o teto ÚTIL de bits por
+     * pixel — e é o `min` que faltava nos dois sentidos.
+     *
+     * Para BAIXO, a versão anterior fazia `max(nominal, orçamento)`, que
+     * furava o orçamento em modo `nitidez`: a 30fps o degrau escolhido pode
+     * ter nominal de até o DOBRO do que o link paga, e `max` mandava o
+     * nominal. Um orçamento de 3 Mbps virava 5,5 Mbps de demanda — o
+     * afogamento que o governador existe para impedir, produzido por ele.
+     *
+     * Para CIMA, o caminho inteiro estava trancado atrás de `ceiling !== null`,
+     * ou seja, atrás da ESCASSEZ. Quem tinha banda de sobra nunca era medido e
+     * caía no nominal: 800 Mbps de link entregavam os 12 Mbps do rótulo, que
+     * são 0,096 bit por pixel — o piso da ADR 0010, onde a imagem para de
+     * quebrar, não onde ela fica boa (ADR 0017).
+     *
+     * `BPP_TETO` (0,20) é onde o bit deixa de virar imagem em movimento alto.
+     * Em 1080p60 são 24,9 Mbps.
+     */
     const { width, height } = preset.layers[0];
-    const fps = this.framerate(preset);
-    const tetoUtil = Math.round(BPP_TETO * width * height * fps);
-    return Math.min(Math.max(nominal, this.ceiling), tetoUtil);
+    const util = BPP_TETO * width * height * this.framerate(preset);
+    return Math.round(Math.min(this.orcamento, util));
   }
 
   /**
@@ -610,10 +633,46 @@ export class MeshTopology {
     this.announce();
   }
 
+  /**
+   * A escala que os senders receberam da última vez.
+   *
+   * `escalaPara` lê `track.getSettings().width`, e esse valor pode não estar
+   * pronto no instante em que o peer entra — trilha recém-criada reporta `0`
+   * em alguns caminhos, e `escalaPara` devolve `1` por segurança. Um `1`
+   * errado significa mandar 1920×1080 com o bitrate de um degrau menor, que é
+   * literalmente a definição de quadriculado.
+   *
+   * O agravante é que nada corrigia: `applyPreset` só roda de novo em troca de
+   * preset, de orçamento, de prioridade ou de trilha. Um sender que acertou o
+   * `setParameters` com a escala errada não entra na fila de pendentes, e
+   * ficava assim pelo resto da transmissão.
+   */
+  private escalaAplicada: number | null = null;
+
+  /**
+   * Reconfere a escala no relógio que já existe.
+   *
+   * Custa uma leitura de `getSettings` por segundo, e fecha a janela em que
+   * uma medição prematura vira qualidade errada permanente.
+   */
+  private escalaMudou(): boolean {
+    if (this.preset === null || this.tracks.length === 0) return false;
+    const video = this.tracks.find((t) => t.kind === 'video') ?? null;
+    const agora = escalaPara(video, this.preset);
+    if (this.escalaAplicada === null) return false;
+    // 1% de banda morta: `getSettings` pode oscilar no último dígito, e
+    // reconfigurar o encoder por isso seria trocar um defeito por outro.
+    return Math.abs(agora - this.escalaAplicada) / this.escalaAplicada > 0.01;
+  }
+
   async collectStats(): Promise<RTCStatsReport[]> {
     // Enfileirado, nunca solto: dois `applyPreset` concorrentes no mesmo
     // sender foi o `InvalidStateError` da ADR 0006 A3.
     if (this.pendentes.size > 0) void this.enqueue(() => this.reaplicarPendentes());
+    if (this.escalaMudou()) {
+      const preset = this.preset;
+      if (preset !== null) void this.enqueue(() => this.adaptAll(preset));
+    }
 
     const reports: RTCStatsReport[] = [];
     for (const link of this.links.values()) {
@@ -634,6 +693,7 @@ export class MeshTopology {
     this.waiting.clear();
     this.stream = null;
     this.tracks = [];
+    this.escalaAplicada = null;
     this.emitter.clear();
   }
 

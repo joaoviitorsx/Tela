@@ -128,12 +128,17 @@ export type MediaTransport = {
   /** O que ceder quando os bits não dão para tudo: fluidez ou nitidez. */
   setPrioridade(prioridade: Prioridade): Promise<void>;
   /**
-   * Teto duro de upload, abaixo do preset. `null` remove.
+   * Quantos bits o link comporta POR ESPECTADOR, medidos. `null` = sem medição.
    *
-   * O preset diz o que o usuário quer; o teto diz o que o link aguenta sem
-   * estrangular o jogo. Vence o menor dos dois.
+   * Chamava-se `setBitrateCeiling` e o nome descrevia meia função: era um teto,
+   * só falava para APERTAR, e quem tinha banda de sobra nunca era informado —
+   * ficava no nominal do preset, que é calibração e não alvo. Um link de
+   * 800 Mbps entregava 12 Mbps por isso (ADR 0017).
+   *
+   * O preset diz qual RESOLUÇÃO cabe; este número diz quantos bits há para
+   * gastar nela. Quem gasta é a topologia, até o teto útil de bits por pixel.
    */
-  setBitrateCeiling(bps: number | null): Promise<void>;
+  setUplinkBudget(bps: number | null): Promise<void>;
 
   /**
    * Em mesh há N senders, então não existe "o sender". O total de upload e o

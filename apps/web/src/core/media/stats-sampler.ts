@@ -55,6 +55,8 @@ export class StatsSampler {
     let rttMs = 0;
     let limitation: QualityLimitation = 'none';
     let available: number | null = null;
+    let pior: number | null = null;
+    let paresMedidos = 0;
     let encoderImplementation: string | null = null;
     let found = false;
 
@@ -80,10 +82,19 @@ export class StatsSampler {
           const reason = asLimitation(stat['qualityLimitationReason']);
           if (reason !== 'none') limitation = reason;
 
-          // Só no transmissor: `inbound-rtp` traz `decoderImplementation`, que
-          // é outra pergunta. Um valor basta — pela R5 todos os senders
-          // compartilham o mesmo encoder.
-          const impl = stat['encoderImplementation'];
+          /**
+           * O campo depende do SENTIDO, e ler o errado dava `null` para sempre.
+           *
+           * `outbound-rtp` traz `encoderImplementation`; `inbound-rtp` traz
+           * `decoderImplementation`. Lendo só o primeiro nos dois caminhos, o
+           * espectador nunca sabia se estava decodificando em hardware — e
+           * decode em software é uma das causas de travadinha do lado de quem
+           * assiste, exatamente o lado que reclama.
+           */
+          const impl =
+            this.direction === 'outbound'
+              ? stat['encoderImplementation']
+              : stat['decoderImplementation'];
           if (typeof impl === 'string' && impl.length > 0) encoderImplementation = impl;
         }
 
@@ -111,7 +122,13 @@ export class StatsSampler {
           // Somado entre peers: em mesh cada conexão estima a própria fatia, e
           // o que interessa é o total que sai do link de casa.
           const banda = Number(stat['availableOutgoingBitrate'] ?? 0);
-          if (banda > 0) available = (available ?? 0) + banda;
+          if (banda > 0) {
+            available = (available ?? 0) + banda;
+            // O pior caminho é quem manda: pela R5 todos recebem o mesmo
+            // `maxBitrate`, então a média deixaria o peer fraco afogado.
+            pior = pior === null ? banda : Math.min(pior, banda);
+            paresMedidos += 1;
+          }
         }
       });
     });
@@ -119,9 +136,11 @@ export class StatsSampler {
     if (!found) return null;
 
     let bitrateBps = 0;
+    let fluxosContados = 0;
     for (const [id, reading] of current) {
       const before = this.previous.get(id);
       if (before === undefined) continue; // fonte nova: sem delta, sem pico
+      fluxosContados += 1;
       const deltaBytes = reading.bytes - before.bytes;
       const deltaSeconds = (reading.timestamp - before.timestamp) / 1000;
       if (deltaBytes > 0 && deltaSeconds > 0) {
@@ -143,8 +162,21 @@ export class StatsSampler {
      * fariam 0,02 bpp parecer 0,10 e o diagnóstico mentiria na direção
      * confortável.
      */
-    const fluxos = Math.max(1, current.size);
-    const bpp = bitsPorPixel(bitrateBps / fluxos, width, height, Math.round(fps));
+    /*
+      Divide pelos fluxos que ENTRARAM na soma, não por `current.size`.
+
+      Fonte nova não tem leitura anterior e contribui zero — contá-la no
+      divisor fazia o bpp cair pela metade por um segundo quando um espectador
+      entrava, acendendo o alerta vermelho por uma ENTRADA, não por queda de
+      qualidade.
+
+      E o fps entra sem arredondar: com `Math.round`, uma saída abaixo de meio
+      quadro por segundo virava `0`, `bitsPorPixel` devolvia `0`, e a UI lia
+      isso como "sem medida" e DESLIGAVA o alarme — no exato momento em que o
+      encoder estava saturado e o alarme era mais necessário.
+    */
+    const fluxos = Math.max(1, fluxosContados);
+    const bpp = bitsPorPixel(bitrateBps / fluxos, width, height, fps);
 
     return {
       fps: Math.round(fps),
@@ -154,6 +186,8 @@ export class StatsSampler {
       width,
       height,
       availableBps: available,
+      piorAvailableBps: pior,
+      paresMedidos,
       bpp,
       encoderImplementation,
     };

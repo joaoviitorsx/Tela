@@ -365,9 +365,33 @@ export function presetForBitrate(
    * entrega 720p30 onde `fluidez` entrega 480p60, sem pedir um bit a mais.
    */
   const alvo = Number.isFinite(fps) && fps > 0 ? fps : 60;
-  const equivalente = perViewerBitsPerSecond * (60 / alvo);
+
+  /**
+   * O critério é BITS POR PIXEL, não o rótulo de bitrate do degrau.
+   *
+   * Era `equivalente >= PRESETS[id].main.maxBitrate`, e três degraus da tabela
+   * têm nominal ABAIXO do piso: 1080p60 a 0,0965, 900p60 a 0,0926, 720p60 a
+   * 0,0995. O resultado era uma escada não-monótona, em que mais banda
+   * produzia imagem PIOR:
+   *
+   *     7,75 Mbps → p720p60 → 0,140 bpp
+   *     8,00 Mbps → p900p60 → 0,093 bpp   ← 3% mais banda, 34% menos densidade
+   *    11,75 Mbps → p900p60 → 0,136 bpp
+   *    12,00 Mbps → p1080p60 → 0,097 bpp
+   *
+   * As faixas venenosas eram 8,00–8,64 e 12,00–12,44 Mbps por espectador — um
+   * link de 23 Mbps com dois espectadores cai exatamente na primeira. E abaixo
+   * de 0,10 o quality scaler do Chromium começa a derrubar resolução por conta
+   * própria, compondo com a nossa: o mecanismo da ADR 0015, reintroduzido pela
+   * fronteira.
+   *
+   * `BPP_PISO` existia como constante e nunca era executado em lugar nenhum do
+   * runtime — só em comentário, e num teste que foi afrouxado para `>= 0,09`
+   * em vez de consertar o código. Agora é regra.
+   */
   for (const id of PRESET_ORDER) {
-    if (equivalente >= PRESETS[id].main.maxBitrate) return id;
+    const { width, height } = PRESETS[id].layers[0];
+    if (perViewerBitsPerSecond >= BPP_PISO * width * height * alvo) return id;
   }
   return PISO_DA_ESCADA;
 }

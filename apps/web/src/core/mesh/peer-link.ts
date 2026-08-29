@@ -211,10 +211,21 @@ export class PeerLink {
     if (candidate !== undefined) {
       try {
         await this.pc.addIceCandidate(candidate);
-      } catch (error) {
-        // Candidato que chega para uma oferta que decidimos ignorar é lixo
-        // esperado. Qualquer outra falha é real e deve subir.
-        if (!this.ignoreOffer) throw error;
+      } catch {
+        /**
+         * Candidato que falha é ENGOLIDO, sempre. Antes ele subia.
+         *
+         * A regra era "candidato de uma oferta ignorada é lixo esperado;
+         * qualquer outra falha é real e deve subir". Mas "subir" aqui não é um
+         * log — a topologia faz `catch { this.drop(from) }` e o espectador faz
+         * `closed: NEGOTIATION_FAILED`. Ou seja: um candidato que o Chrome
+         * recusa parsear, um `sdpMid` de seção que o `max-bundle` derrubou, ou
+         * um candidato que chega fora de ordem MATA a conexão inteira.
+         *
+         * A assimetria de custo decide: perder um candidato degrada o ICE — há
+         * outros, e o par vencedor raramente é o primeiro. Derrubar o peer
+         * termina a sessão daquele espectador.
+         */
       }
     }
   }

@@ -267,6 +267,8 @@ describe('ViewerSession', () => {
       availableBps: null,
       bpp: 0.1,
       encoderImplementation: null,
+      piorAvailableBps: null,
+      paresMedidos: 1,
     };
 
     ctx.scheduler.advance(1_000);
@@ -371,5 +373,42 @@ describe('ViewerSession', () => {
     await ctx.session.open('outro');
     await settle();
     expect(ctx.criados[0]?.disconnected).toBe(true);
+  });
+});
+
+describe('ViewerSession — a imagem sobrevive ao soluço (ADR 0018)', () => {
+  it('reconnecting CARREGA o stream, para o <video> não ser desmontado', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().deliver();
+    await settle();
+
+    const antes = ctx.session.getState();
+    const stream = antes.status === 'watching' ? antes.stream : null;
+    expect(stream).not.toBeNull();
+
+    /*
+      `reconnecting` é emitido por `track.onmute` e por
+      `connectionState === 'disconnected'`. Numa troca de AP de Wi-Fi o ICE
+      falha os consent checks por alguns segundos COM o mesmo par de
+      candidatos entregando pacotes — a mídia não parou.
+
+      Sem o stream no estado, a rota caía na tela de espera e arrancava um
+      <video> que nunca parou de receber quadros.
+    */
+    ctx.ultimo().emit('reconnecting', undefined);
+
+    const durante = ctx.session.getState();
+    expect(durante.status).toBe('reconnecting');
+    expect(durante.status === 'reconnecting' && durante.stream).toBe(stream);
+  });
+
+  it('sem mídia nunca entregue, reconnecting não inventa stream', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().emit('reconnecting', undefined);
+
+    const estado = ctx.session.getState();
+    if (estado.status === 'reconnecting') expect(estado.stream).toBeNull();
   });
 });

@@ -41,6 +41,29 @@ export type MediaStats = {
    */
   readonly availableBps: number | null;
   /**
+   * A PIOR estimativa entre os peers, e o número que de fato manda.
+   *
+   * Pela R5 todos os senders recebem o MESMO `maxBitrate`, então o que cabe é
+   * o que o pior caminho aguenta — não a média. Somar e dividir por N deixava
+   * um amigo em ADSL de 5 Mbps recebendo 24 Mbps porque o outro estava em
+   * fibra: ~80% de perda contínua para ele, quadriculado permanente, e o
+   * transmissor não via nada porque o HUD mostra a soma.
+   *
+   * A ADR 0017 já declarava a intenção certa — "um espectador com 20 Mbps de
+   * descida puxa todo mundo para baixo, e isso é por projeto". O código fazia
+   * o oposto.
+   */
+  readonly piorAvailableBps: number | null;
+  /**
+   * Quantos peers de fato reportaram estimativa.
+   *
+   * O divisor era `peers.length`, que conta quem ainda está em `connecting` —
+   * e quem está conectando não tem par ICE nominado, logo não contribui para a
+   * soma. Numerador e denominador ficavam fora de fase, e cinco amigos
+   * entrando de uma vez subestimavam o orçamento em 5× no pior instante.
+   */
+  readonly paresMedidos: number;
+  /**
    * Bits por pixel do fluxo que está saindo POR ESPECTADOR. `0` sem leitura.
    *
    * É o número que prevê a imagem borrada antes de ela aparecer, e o único que

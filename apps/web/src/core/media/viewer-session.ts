@@ -23,7 +23,29 @@ export type ViewerState =
       readonly viewers: number;
       readonly stats: MediaStats | null;
     }
-  | { readonly status: 'reconnecting'; readonly slug: string }
+  /**
+   * A mídia hesitou, mas ela AINDA ESTÁ AQUI — e é por isso que o stream vem
+   * junto.
+   *
+   * Sem este campo a rota não tinha o que renderizar e caía na tela de espera,
+   * desmontando o `<video>`. Só que `reconnecting` é emitido em dois gatilhos
+   * baratíssimos — `track.onmute` e `connectionState === 'disconnected'` — e
+   * nenhum dos dois significa que a mídia parou: uma troca de AP no Wi-Fi
+   * falha os consent checks do ICE por alguns segundos com o mesmo par de
+   * candidatos entregando pacotes o tempo todo.
+   *
+   * O resultado era o oposto do que os 80ms de jitter buffer compram: o
+   * transporte absorvia o soluço e a UI jogava fora, arrancando um vídeo que
+   * nunca parou e montando um `<video>` novo, preto até o próximo quadro. É a
+   * "travadinha" dos relatos.
+   *
+   * `null` só quando a mídia nunca chegou.
+   */
+  | {
+      readonly status: 'reconnecting';
+      readonly slug: string;
+      readonly stream: MediaStream | null;
+    }
   | { readonly status: 'full'; readonly slug: string }
   /**
    * Negociou e a mídia nunca chegou.
@@ -215,12 +237,13 @@ export class ViewerSession {
       }),
       transport.on('reconnecting', () => {
         if (this.state.status === 'watching') {
-          this.setState({ status: 'reconnecting', slug: this.slug });
+          this.setState({ status: 'reconnecting', slug: this.slug, stream: this.stream });
         }
       }),
-      // Sem este par, `reconnecting` era beco sem saída: a rota renderiza o
-      // estado offline para qualquer status ≠ watching e desmonta o <video>,
-      // então a mídia voltava e a tela ficava morta.
+      // Sem este par, `reconnecting` era beco sem saída. Ele resolveu o beco,
+      // mas não a desmontagem: a rota continuava trocando o <video> por uma
+      // tela de espera a cada soluço. Isso saiu junto com o `stream` no
+      // estado, acima.
       transport.on('reconnected', () => this.onReconnected(epoch)),
       /**
        * O espectador não muda de estado por causa do canal: ele está vendo

@@ -153,7 +153,17 @@ describe('MeshTopology — R5: encoding IDÊNTICO em todos os peers', () => {
     expect(aplicados).toHaveLength(3);
     for (const params of aplicados) {
       // Variar por peer multiplicaria encoders e roubaria CPU do jogo.
-      expect(params?.encodings?.[0]?.maxBitrate).toBe(PRESET_1080P60.main.maxBitrate);
+      /*
+        O número mudou (ADR 0018) e o invariante não: antes da primeira
+        medição o teto passou a ser o ÚTIL — 0,20 bpp — e não o nominal do
+        preset. Teto não empurra: o alocador entrega ao encoder
+        `min(BWE, maxBitrate)`, então limitar em 12 Mbps só cegava o
+        estimador, que o libwebrtc tampa em `1,5 × acked`.
+
+        O que a R5 exige continua exigido, e é o `for` em volta deste
+        `expect`: TODOS os peers com o MESMO valor.
+      */
+      expect(params?.encodings?.[0]?.maxBitrate).toBe(0.2 * 1920 * 1080 * 60);
       expect(params?.encodings?.[0]?.maxFramerate).toBe(60);
       expect(params?.degradationPreference).toBe('maintain-framerate');
     }
@@ -169,9 +179,11 @@ describe('MeshTopology — R5: encoding IDÊNTICO em todos os peers', () => {
     await ctx.mesh.setPreset(PRESET_720P60);
     await settle(20);
 
+    // Sem medição o teto é o útil do degrau NOVO (0,20 bpp em 1280×720@60).
+    // O que a R5 exige é o `for`: todos com o MESMO valor, sempre.
     for (const pc of ctx.factory.created) {
       expect(pc.getSenders()[0]?.applied.at(-1)?.encodings?.[0]?.maxBitrate).toBe(
-        PRESET_720P60.main.maxBitrate,
+        0.2 * 1280 * 720 * 60,
       );
     }
   });
@@ -278,15 +290,17 @@ describe('MeshTopology — roteamento e limpeza', () => {
     await expect(ctx.mesh.handleSignal('fantasma', {})).resolves.toBeUndefined();
   });
 
-  it('sinal que falha derruba só aquele peer', async () => {
+  it('candidato ruim NÃO derruba o peer — só degrada o ICE', async () => {
     const ctx = build();
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
     ctx.mesh.admit('v_1');
     ctx.mesh.admit('v_2');
     await settle();
 
+    // Antes isto derrubava `v_1`. Perder um candidato tem outros; derrubar o
+    // peer termina a sessão daquele espectador.
     await ctx.mesh.handleSignal('v_1', { candidate: { candidate: 'c1' } });
-    expect(ctx.mesh.size).toBe(1);
+    expect(ctx.mesh.size).toBe(2);
   });
 
   it('marca quem está passando por relay', async () => {
@@ -295,10 +309,13 @@ describe('MeshTopology — roteamento e limpeza', () => {
     ctx.mesh.admit('v_1');
     await settle();
 
-    await ctx.mesh.refreshRelayStatus(() => true);
+    // O status de relay saiu de `refreshRelayStatus` — que fazia uma SEGUNDA
+    // coleta de `getStats()` por peer, por segundo — e passou a sair do mesmo
+    // relatório que `collectStats` já colhia.
+    await ctx.mesh.collectStats(() => true);
     expect(ctx.mesh.peers[0]?.usingRelay).toBe(true);
 
-    await ctx.mesh.refreshRelayStatus(() => false);
+    await ctx.mesh.collectStats(() => false);
     expect(ctx.mesh.peers[0]?.usingRelay).toBe(false);
   });
 
@@ -440,16 +457,24 @@ describe('MeshTopology — banda de sobra vira imagem (ADR 0017)', () => {
     expect(ctx.mesh.bppAtual()).toBeCloseTo(0.2, 2);
   });
 
-  it('sem medição nenhuma, continua no nominal do preset', async () => {
+  it('sem medição, o TETO é o útil — teto não empurra, só limita', async () => {
     const ctx = build();
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
     ctx.mesh.admit('v_1');
     await settle();
 
-    // O palpite calibrado é o melhor que existe antes de medir.
-    expect(encodingDe(ctx.factory.created[0]!)?.maxBitrate).toBe(
-      PRESET_1080P60.main.maxBitrate,
-    );
+    /*
+      MUDANÇA DE CONTRATO (ADR 0018). Antes devolvia o nominal do preset,
+      "o palpite calibrado". Parecia prudente e era o contrário: o
+      `AimdRateControl` tampa a estimativa em `1,5 × acked`, e `acked` não
+      passa do nosso teto — então 12 Mbps de teto inicial limitavam a primeira
+      leitura a 18 Mbps e o orçamento a 13,5, num link de 800 Mbps.
+
+      Teto não empurra: o alocador entrega `min(BWE, maxBitrate)` ao encoder.
+      Quem empurra é o bitrate INICIAL, e esse continua conservador.
+    */
+    expect(encodingDe(ctx.factory.created[0]!)?.maxBitrate).toBe(0.2 * 1920 * 1080 * 60);
+    expect(ctx.mesh.bitrateInicial()).toBe(PRESET_1080P60.main.maxBitrate);
   });
 
   it('NUNCA fura o orçamento, nem em nitidez', async () => {
@@ -489,9 +514,15 @@ describe('MeshTopology — a escala tira PIXEL de verdade', () => {
     await ctx.mesh.setPreset(PRESET_480P60);
     await settle();
 
-    // 1920 / 854 = 2,248 — o encoder passa a codificar 854×480 de verdade.
+    /*
+      2,25 e não 2,248: a escala passou a ser o MAIOR dos dois fatores
+      (1920/854 = 2,2482 e 1080/480 = 2,25). Olhar só a largura custava até
+      11% de bits por pixel numa captura 16:10 — 1920×1200 devolvia escala 1
+      contra um alvo de 1920×1080, e o encoder recebia 11% mais pixel do que
+      o orçamento pagou.
+    */
     const escala = encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy ?? 0;
-    expect(escala).toBeCloseTo(1920 / PRESET_480P60.layers[0].width, 3);
+    expect(escala).toBeCloseTo(1080 / PRESET_480P60.layers[0].height, 3);
   });
 
   it('escala medida cedo demais é corrigida no relógio das estatísticas', async () => {
@@ -517,7 +548,20 @@ describe('MeshTopology — a escala tira PIXEL de verdade', () => {
     await settle();
 
     const escala = encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy ?? 0;
-    expect(escala).toBeCloseTo(1920 / PRESET_480P60.layers[0].width, 3);
+    expect(escala).toBeCloseTo(1080 / PRESET_480P60.layers[0].height, 3);
+  });
+
+  it('a escala olha as DUAS dimensões — 16:10 não escapa', async () => {
+    const ctx = build();
+    // Notebook 1920×1200. Pela largura, `1920 <= 1920` daria escala 1 e o
+    // encoder receberia 11% mais pixel do que o orçamento pagou.
+    ctx.video.settings = { width: 1920, height: 1200 } as MediaTrackSettings;
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+
+    const escala = encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy ?? 0;
+    expect(escala).toBeCloseTo(1200 / 1080, 3);
   });
 
   it('escala estável não reconfigura o encoder a cada segundo', async () => {

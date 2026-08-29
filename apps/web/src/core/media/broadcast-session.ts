@@ -155,6 +155,20 @@ const PRESSURE_SAMPLES = 5;
 const CALMARIA_AMOSTRAS = 60;
 
 /**
+ * O que um blip de aperto CUSTA da calmaria acumulada.
+ *
+ * Era tudo: `calmaria = 0`. Com uma taxa `p` de leituras de aperto isoladas —
+ * keyframe, troca de cena, alt-tab —, exigir 60 amostras CONSECUTIVAS faz o
+ * tempo de recuperação explodir: 83s com 1% de blips, 7 minutos com 5%,
+ * 92 minutos com 10%, e nunca com 20%.
+ *
+ * Cobrando 5, o saldo por amostra é `(1−p) − 5p`, que continua positivo até
+ * p ≈ 17%. Acima disso não é mais blip, é pressão de verdade — e aí não
+ * recuperar é a resposta certa.
+ */
+const CALMARIA_PENALIDADE = 5;
+
+/**
  * Amostras a zero frame antes de acusar captura morta. Cinco segundos é o que
  * uma captura leva para engatar em máquina lenta; abaixo disso é falso alarme.
  */
@@ -501,7 +515,7 @@ export class BroadcastSession {
 
     this.amostras += 1;
     this.setState({ ...this.state, stats });
-    this.applyUplinkCeiling(stats.availableBps, this.state.peers.length);
+    this.applyUplinkCeiling(stats);
     this.trackPressure(stats.limitation);
     this.trackCapturaMorta(stats.fps);
     this.lembrarBanda();
@@ -515,7 +529,7 @@ export class BroadcastSession {
    * controle de congestionamento percebe, o jogador já sentiu. Então o teto é
    * aplicado ANTES: o vídeo nunca pede mais do que uma fração do estimado.
    */
-  private applyUplinkCeiling(availableBps: number | null, espectadores: number): void {
+  private applyUplinkCeiling(stats: MediaStats): void {
     /**
      * A estimativa chega SOMADA entre os peers; o teto sai POR sender.
      *
@@ -532,8 +546,32 @@ export class BroadcastSession {
      * É a mesma conta que `suggestPreset` e `p2pViewerBudget` já faziam em
      * `@tela/shared` — a malha de controle é que estava fora de compasso.
      */
+    /**
+     * O MÍNIMO, não a média — e o divisor conta quem de fato mediu.
+     *
+     * Pela R5 todos os senders recebem o mesmo `maxBitrate`, então o que cabe é
+     * o que o PIOR caminho aguenta. Somar e dividir por N deixava um amigo em
+     * ADSL de 5 Mbps recebendo 24 Mbps porque o outro estava em fibra: ~80% de
+     * perda contínua para ele, quadriculado permanente, e o transmissor sem
+     * ver nada, porque o HUD mostra a soma. A ADR 0017 declarava a intenção
+     * certa e o código fazia o oposto.
+     *
+     * E o divisor era `peers.length`, que conta quem ainda está em
+     * `connecting` — quem conecta não tem par ICE nominado e não contribui
+     * para a soma. Numerador e denominador fora de fase: cinco amigos entrando
+     * de uma vez subestimavam o orçamento em até 5× no pior instante, e pela
+     * catraca da ADR 0018 a transmissão morava lá o resto da sessão.
+     */
+    const media =
+      stats.availableBps === null
+        ? null
+        : stats.availableBps / Math.max(1, stats.paresMedidos);
     const porEspectador =
-      availableBps === null ? null : availableBps / Math.max(1, espectadores);
+      media === null
+        ? null
+        : stats.piorAvailableBps === null
+          ? media
+          : Math.min(media, stats.piorAvailableBps);
     /**
      * A referência é o preset ESCOLHIDO, e a inversão em relação à versão
      * anterior é deliberada.
@@ -701,7 +739,21 @@ export class BroadcastSession {
       return;
     }
 
-    this.calmaria = 0;
+    /**
+     * A calmaria DECAI, não zera — e a diferença é de ordens de grandeza.
+     *
+     * Descer exige 5 amostras consecutivas; subir exigia 60 CONSECUTIVAS,
+     * porque qualquer leitura de aperto zerava o contador. Um
+     * `qualityLimitationReason: 'cpu'` isolado é rotina: keyframe, troca de
+     * cena, alt-tab. Com 10% de leituras assim, o tempo médio para recuperar
+     * UM degrau passa de 60 segundos para 92 minutos — e com 20%, nunca.
+     *
+     * O comentário do `recuperar()` diz "doze vezes mais lento que a descida".
+     * Com ruído real a razão era de duas a três ordens de grandeza, porque
+     * "5 seguidas" e "60 seguidas" sobre o mesmo processo ruidoso não são
+     * comparáveis. Decaindo, um blip custa dez amostras em vez de todas.
+     */
+    this.calmaria = Math.max(0, this.calmaria - CALMARIA_PENALIDADE);
     if (limitation !== this.pressureKind) {
       this.pressureKind = limitation;
       this.pressure = 0;
@@ -875,9 +927,17 @@ export class BroadcastSession {
     if (track !== null) track.contentHint = CONTENT_HINT_POR_PRIORIDADE[prioridade];
 
     if (this.state.status === 'live') this.setState({ ...this.state, prioridade });
-    await this.deps.transport.setPrioridade(prioridade);
 
     /**
+     * O degrau é recalculado ANTES de a topologia trocar o framerate, e a
+     * ordem custou uma janela de 0,054 bpp.
+     *
+     * `setPrioridade` no transporte muda o `maxFramerate` de 30 para 60 na
+     * hora. Se o degrau ainda for o que foi escolhido PARA 30fps, o encoder
+     * passa um round-trip inteiro de `setParameters` — com keyframe — rodando
+     * o dobro de quadros no mesmo orçamento. Medido: 3 Mbps em 1280×720, de
+     * 0,109 bpp para 0,054, metade do piso.
+     *
      * A 30fps o mesmo orçamento paga o DOBRO de bits por pixel, então cabe uma
      * resolução maior. É assim que `nitidez` entrega 1280×720@30 onde
      * `fluidez` entrega 854×480@60 — pelos mesmos bits, sem pedir um a mais.
@@ -886,6 +946,8 @@ export class BroadcastSession {
     this.presetPorBanda =
       orcamento === null ? null : presetParaOrcamento(orcamento, prioridade);
     this.aplicarDegrau();
+
+    await this.deps.transport.setPrioridade(prioridade);
   }
 
   /**
@@ -934,8 +996,39 @@ export class BroadcastSession {
 
     await this.deps.transport.replaceVideo(capture.video);
 
+    /**
+     * A trilha de ÁUDIO da nova captura é parada aqui, e o vazamento era real.
+     *
+     * A requisição pede `systemAudio: true`, e no Windows o `getDisplayMedia`
+     * devolve áudio junto. Ela só era parada no ramo de corrida perdida; no
+     * caminho feliz ninguém parava nem usava, e a sessão seguia com o áudio da
+     * captura ANTIGA. Alternar jogo → navegador → jogo três vezes numa partida
+     * deixava três capturas de som de sistema vivas, cada uma com seu pipeline
+     * do Chrome rodando na máquina do jogo, sem entregar som para ninguém.
+     *
+     * Trocar a fonte de vídeo não troca a de áudio de propósito: o som vem do
+     * sink do sistema ou do Windows, e reanexá-lo custaria uma renegociação
+     * que este método existe para evitar.
+     */
+    capture.audio?.stop();
+
     // Só depois de a nova estar no ar: parar antes deixaria um buraco visível.
     anterior?.stop();
+
+    /**
+     * A trilha nova nasce a 60fps, então o throttle de ociosidade precisa
+     * saber que ele não está mais em vigor.
+     *
+     * `capturaOciosa` continuava `true` depois da troca, e
+     * `throttleIdleCapture` tem um `if (this.capturaOciosa) return` que
+     * bloqueava a reaplicação. Quem abria a transmissão, esperava dez segundos
+     * sozinho (captura cai para 5fps) e então trocava a fonte para o jogo
+     * ficava com 1920×1080@60 permanente sem ninguém assistindo — exatamente o
+     * custo que o modo ocioso existe para devolver.
+     */
+    this.capturaOciosa = false;
+    this.ociosoDesde = null;
+    this.throttleIdleCapture(this.state.peers.length === 0);
 
     if (this.state.status !== 'live') return;
     this.setState({
@@ -984,9 +1077,19 @@ export class BroadcastSession {
     this.presetPorBanda =
       orcamento === null ? null : presetParaOrcamento(orcamento, this.prioridade);
 
-    this.presetId = next;
-    this.setState({ ...this.state, presetId: next, presetForced: false, motivoDegradacao: null });
-    await this.deps.transport.setPreset(presetById(next));
+    /**
+     * NADA de `transport.setPreset(next)` cru aqui.
+     *
+     * A ordem antiga mandava o preset do usuário ao transporte e só depois
+     * recortava no orçamento. Com 3 Mbps medidos e um clique em 1080p60, os
+     * senders recebiam de verdade `scaleResolutionDownBy: 1` a 3 Mbps — 0,024
+     * bit por pixel, o número exato da foto que motivou a ADR 0015,
+     * reintroduzido por ordem de operações. Um round-trip depois vinha a
+     * correção: duas reconfigurações de encoder e dois keyframes por clique,
+     * uma delas na densidade que produz o quadriculado.
+     *
+     * `aplicarDegrau()` já manda ao transporte o degrau efetivo, uma vez só.
+     */
     this.aplicarDegrau();
   }
 

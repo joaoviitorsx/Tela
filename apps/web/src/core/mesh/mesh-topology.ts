@@ -58,10 +58,26 @@ export type MeshTopologyDeps = {
  * inválido, e aumentar resolução acima da captura não existe.
  */
 function escalaPara(track: MediaStreamTrack | null, preset: EncodingPreset): number {
-  const alvo = preset.layers[0].width;
-  const atual = track?.getSettings?.().width ?? 0;
-  if (!Number.isFinite(atual) || atual <= 0 || alvo <= 0 || atual <= alvo) return 1;
-  return atual / alvo;
+  const { width: alvoW, height: alvoH } = preset.layers[0];
+  const settings = track?.getSettings?.();
+  const w = settings?.width ?? 0;
+  const h = settings?.height ?? 0;
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return 1;
+  if (alvoW <= 0 || alvoH <= 0) return 1;
+
+  /**
+   * O MAIOR dos dois fatores, e a altura entrou depois de custar 11% de bpp.
+   *
+   * Olhava só a largura. Numa tela 16:10 — 1920×1200, comuníssima em notebook
+   * — `atual (1920) <= alvo (1920)` devolvia escala 1, e o encoder recebia
+   * 2.304.000 pixels por quadro enquanto `effectiveBitrate` orçou para
+   * 2.073.600. Onze por cento a menos de bits por pixel do que a conta
+   * prometeu, em silêncio.
+   *
+   * Pelo maior fator, o lado que estoura é quem manda, e o quadro codificado
+   * nunca passa do orçamento em nenhuma das duas dimensões.
+   */
+  return Math.max(1, Math.max(w / alvoW, h / alvoH));
 }
 
 /**
@@ -201,8 +217,7 @@ export class MeshTopology {
        * 300 kbps, subindo sozinho por trinta segundos enquanto o quality
        * scaler derruba a resolução dele.
        */
-      startBitrateBps: () =>
-        this.preset === null ? null : this.effectiveBitrate(this.preset),
+      startBitrateBps: () => this.bitrateInicial(),
       onStateChange: (state) => {
         if (state === 'failed' || state === 'closed') this.drop(peerId);
         else this.announce();
@@ -214,7 +229,16 @@ export class MeshTopology {
     try {
       const senders = this.tracks.map((track) => link.addTrack(track, stream));
       this.senders.set(peerId, senders);
-      void this.applyPreset(senders, preset);
+      /**
+       * Enfileirado, não solto.
+       *
+       * `attach` vem do handler de `peer-joined`, fora da fila, e também de
+       * dentro de `publish`, onde corria em paralelo com o `adaptAll` da linha
+       * seguinte. Convergiam para o mesmo número por acidente — não há `await`
+       * entre `getParameters` e `setParameters` —, e a primeira edição que
+       * pusesse um transformaria isso no `InvalidStateError` da ADR 0006 A3.
+       */
+      void this.enqueue(() => this.applyPreset(senders, preset));
     } catch {
       // Falhar ao anexar deixaria uma conexão viva contando como espectador,
       // sem oferta nenhuma no ar (ADR 0006, A2).
@@ -231,6 +255,23 @@ export class MeshTopology {
     if (link === undefined) return;
     link.close();
     this.links.delete(peerId);
+    /**
+     * Os senders deste peer saem TAMBÉM das duas filas de reaplicação.
+     *
+     * Ficavam para trás: referências fortes a `RTCRtpSender` de uma
+     * `RTCPeerConnection` fechada, que seguram a PC inteira viva. E com
+     * `pendentes.size > 0` todo segundo, `collectStats` enfileirava
+     * `reaplicarPendentes` para chamar `getParameters`/`setParameters` em
+     * senders mortos — trabalho por segundo na máquina que está com o jogo
+     * aberto, e o gatilho do throw que abortava o lote.
+     *
+     * `pc.close()` NÃO anula `sender.track`, então o filtro por trilha viva de
+     * `reaplicarPendentes` não pegava esses.
+     */
+    for (const sender of this.senders.get(peerId) ?? []) {
+      this.pendentes.delete(sender);
+      this.tentativasAnteriores.delete(sender);
+    }
     this.senders.delete(peerId);
     this.relayed.delete(peerId);
     this.emitter.emit('dropped', { peerId });
@@ -360,7 +401,28 @@ export class MeshTopology {
       }
       if (sender.track?.kind !== 'video') continue;
 
-      const params = sender.getParameters();
+      /**
+       * `getParameters()` dentro do `try`, e a falta disso abortava o LOTE.
+       *
+       * A chamada pode lançar num sender de conexão fechando — o caminho de
+       * áudio logo acima já a envolvia, o que mostra que se sabia disso. Aqui
+       * ela estava nua, dentro de um `for`: um throw no primeiro sender
+       * descartava os seguintes em silêncio. E como `reaplicarPendentes`
+       * esvazia a fila ANTES de chamar este método, os descartados nunca mais
+       * voltavam — ficavam nos defaults do navegador, divergentes dos outros
+       * peers, que é a violação da R5 que este arquivo existe para impedir.
+       *
+       * Pior: a rejeição subia pela fila e, no caminho `publish` →
+       * `publishVideo`, virava `fail('TRANSPORT_FAILED')` — a transmissão
+       * inteira morria porque um peer que já estava saindo lançou.
+       */
+      let params: RTCRtpSendParameters;
+      try {
+        params = sender.getParameters();
+      } catch {
+        this.marcarPendente(sender);
+        continue;
+      }
       /**
        * Sender sem `encodings` ainda: NÃO invente um.
        *
@@ -380,6 +442,7 @@ export class MeshTopology {
         continue;
       }
 
+      const escala = escalaPara(sender.track, preset);
       const encodings = params.encodings;
       encodings[0] = {
         /**
@@ -416,7 +479,7 @@ export class MeshTopology {
            * O fake de sender do projeto não tem `getSettings`, então
            * `escalaPara` devolvia 1 em todos os testes e ninguém viu.
            */
-          scaleResolutionDownBy: this.gravarEscala(escalaPara(sender.track, preset)),
+          scaleResolutionDownBy: escala,
           maxBitrate: this.effectiveBitrate(preset),
           maxFramerate: this.framerate(preset),
           /**
@@ -448,32 +511,35 @@ export class MeshTopology {
           // O que ceder sob aperto: por padrão resolução, nunca framerate.
           degradationPreference: DEGRADATION_BY_PRIORITY[this.prioridade],
         } as RTCRtpSendParameters);
-        this.pendentes.delete(sender);
+        this.aceitou(sender, escala);
       } catch {
         /**
-         * `setParameters` é TUDO OU NADA.
+         * `setParameters` É TUDO OU NADA: se a chamada rejeita, NADA foi
+         * aplicado.
          *
-         * O comentário anterior aqui dizia que "o encoding continua aplicado"
-         * e que só o `degradationPreference` era recusado. É falso pela spec:
-         * se a chamada rejeita, NADA foi aplicado — e quem lesse isso pararia
-         * de investigar exatamente onde o defeito estava.
+         * A segunda tentativa refaz `getParameters()`, e sem isso ela era
+         * garantidamente inútil: o Blink limpa `last_returned_parameters_` ao
+         * ENTRAR em `setParameters`, então reusar o mesmo `params` fazia a
+         * segunda chamada rejeitar com `InvalidStateError` antes de olhar o
+         * conteúdo. O caminho de fallback escrito para "salvar o essencial"
+         * não salvava nada.
          *
-         * Segunda tentativa sem `degradationPreference`, que é o membro que
-         * alguns motores de fato recusam. Bitrate e framerate valem mais que
-         * a preferência de degradação, e é melhor aplicar os dois do que
-         * perder os três.
+         * E ela MANTÉM o `degradationPreference`. A versão anterior o omitia
+         * de propósito e tratava a perda como sucesso parcial — mas um sender
+         * em `balanced` enquanto os outros estão em `maintain-framerate` é
+         * divergência de parâmetro, e divergência faz o Chrome parar de
+         * reaproveitar o encoder. Dois encoders 1080p60 disputando a GPU com o
+         * jogo é pior que qualquer degrau a menos.
          */
         try {
-          await sender.setParameters({ ...params, encodings } as RTCRtpSendParameters);
-          /**
-           * Aplicou o essencial, mas ficou SEM `degradationPreference`.
-           *
-           * Não é sucesso: dois peers com políticas de degradação diferentes
-           * quebram a R5, o Chrome deixa de reaproveitar o encoder e viram N
-           * encoders disputando a GPU com o jogo. Continua na fila para tentar
-           * os parâmetros completos de novo, com teto de tentativas.
-           */
-          this.marcarPendente(sender);
+          const frescos = sender.getParameters();
+          if (!frescos.encodings?.length) throw new Error('sem encodings');
+          frescos.encodings[0] = { ...frescos.encodings[0], ...encodings[0] };
+          await sender.setParameters({
+            ...frescos,
+            degradationPreference: DEGRADATION_BY_PRIORITY[this.prioridade],
+          } as RTCRtpSendParameters);
+          this.aceitou(sender, escala);
         } catch {
           // Falhou duas vezes: fica na fila para a próxima amostra de stats.
           this.marcarPendente(sender);
@@ -556,15 +622,49 @@ export class MeshTopology {
    * 0,20 bpp o retorno em movimento alto é desprezível, e mandar bits que não
    * viram qualidade é o mesmo que encher o cano do usuário de graça.
    */
-  /** Registra o que foi de fato aplicado, para `escalaMudou` ter referência. */
-  private gravarEscala(escala: number): number {
+  /**
+   * Um sender aceitou os parâmetros. Três coisas, e duas faltavam.
+   *
+   * `tentativasAnteriores` era um contador VITALÍCIO: incrementado em
+   * `marcarPendente` e nunca apagado no sucesso. Três rejeições transitórias
+   * espalhadas por uma sessão de duas horas — troca de encoder HW→SW, uma
+   * borda de renegociação — e aquele sender saía da fila para SEMPRE, sem
+   * `maxBitrate`, sem escala, sem `degradationPreference`. Divergência
+   * permanente, encoder duplicado, FPS do jogo.
+   *
+   * E a escala só é registrada AQUI. Estava sendo gravada na construção do
+   * objeto de encoding, antes de saber se o `setParameters` aceitou: se todos
+   * falhassem, `escalaAplicada` afirmava que a escala estava no ar e
+   * `escalaMudou()` passava a devolver `false` — desligando justamente a rede
+   * de segurança que ela é.
+   */
+  private aceitou(sender: RTCRtpSender, escala: number): void {
+    this.pendentes.delete(sender);
+    this.tentativasAnteriores.delete(sender);
     this.escalaAplicada = escala;
-    return escala;
   }
 
   private effectiveBitrate(preset: EncodingPreset): number {
-    // Sem medição, o nominal do preset é o melhor palpite que existe.
-    if (this.orcamento === null) return preset.main.maxBitrate;
+    /**
+     * SEM medição, o teto é o útil — não o nominal do preset.
+     *
+     * Parecia prudente limitar em 12 Mbps até medir. Era o contrário: um
+     * `maxBitrate` NUNCA causa afogamento sozinho, porque o alocador do WebRTC
+     * entrega ao encoder `min(BWE, maxBitrate)` e o BWE é delay-based. O teto
+     * protege contra o BWE superestimar; ele não empurra nada.
+     *
+     * O que ele faz, quando é baixo demais, é CEGAR o estimador: o
+     * `AimdRateControl` tampa a estimativa em `1,5 × acked`, e `acked` não
+     * passa do nosso teto. Com 12 Mbps de teto inicial, a primeira leitura
+     * nunca podia passar de 18 Mbps, e o orçamento nunca de 13,5 — num link de
+     * 800 Mbps. Os 24,9 Mbps do `BPP_TETO` eram inalcançáveis por construção
+     * (ADR 0018).
+     *
+     * O bitrate INICIAL continua conservador: `x-google-start-bitrate` usa o
+     * nominal enquanto não há medição, então o encoder não parte com um
+     * estouro — ele sobe, e agora tem para onde.
+     */
+    if (this.orcamento === null) return this.tetoUtil(preset);
 
     /**
      * Gasta o orçamento na resolução escolhida, até o teto ÚTIL de bits por
@@ -585,9 +685,30 @@ export class MeshTopology {
      * `BPP_TETO` (0,20) é onde o bit deixa de virar imagem em movimento alto.
      * Em 1080p60 são 24,9 Mbps.
      */
+    return Math.round(Math.min(this.orcamento, this.tetoUtil(preset)));
+  }
+
+  /** Onde o bit deixa de virar imagem em movimento alto: 0,20 bpp. */
+  private tetoUtil(preset: EncodingPreset): number {
     const { width, height } = preset.layers[0];
-    const util = BPP_TETO * width * height * this.framerate(preset);
-    return Math.round(Math.min(this.orcamento, util));
+    return Math.round(BPP_TETO * width * height * this.framerate(preset));
+  }
+
+  /**
+   * Por onde o encoder deve COMEÇAR. Diferente do teto, e de propósito.
+   *
+   * O teto pode ser o útil (24,9 Mbps em 1080p60) antes de qualquer medição,
+   * porque teto não empurra. O bitrate inicial empurra: ele diz ao controle de
+   * congestionamento para partir daquele valor em vez de sondar desde
+   * 300 kbps. Mandar 24,9 Mbps num link desconhecido é um estouro de verdade.
+   *
+   * Então: o nominal calibrado enquanto não medimos, o orçamento depois.
+   */
+  bitrateInicial(): number | null {
+    const preset = this.preset;
+    if (preset === null) return null;
+    if (this.orcamento === null) return preset.main.maxBitrate;
+    return this.effectiveBitrate(preset);
   }
 
   /**
@@ -620,18 +741,7 @@ export class MeshTopology {
     return this.queue;
   }
 
-  /** Marca quais peers estão passando por TURN, para a UI poder avisar. */
-  async refreshRelayStatus(isRelayed: (report: RTCStatsReport) => boolean): Promise<void> {
-    for (const link of this.links.values()) {
-      try {
-        if (isRelayed(await link.stats())) this.relayed.add(link.peerId);
-        else this.relayed.delete(link.peerId);
-      } catch {
-        /* peer saindo */
-      }
-    }
-    this.announce();
-  }
+
 
   /**
    * A escala que os senders receberam da última vez.
@@ -665,7 +775,24 @@ export class MeshTopology {
     return Math.abs(agora - this.escalaAplicada) / this.escalaAplicada > 0.01;
   }
 
-  async collectStats(): Promise<RTCStatsReport[]> {
+  /**
+   * UMA coleta de `getStats()` por peer, em paralelo — e o status de relay sai
+   * do mesmo relatório.
+   *
+   * Eram DUAS por peer por segundo, em série: `collectStats` fazia uma e
+   * `refreshRelayStatus`, chamado logo depois, fazia outra. Com cinco
+   * espectadores eram dez `getStats()` sequenciais por segundo. `getStats()`
+   * no Chrome não é barato — salta para a thread de rede e serializa centenas
+   * de objetos — e isso rodava na máquina que está com o jogo aberto, que é o
+   * recurso que o produto inteiro existe para proteger.
+   *
+   * O `announce()` também era incondicional, então a sessão fazia `setState`
+   * com um array novo toda vez, forçando re-render do React uma vez por
+   * segundo sem nada ter mudado.
+   */
+  async collectStats(
+    isRelayed?: (report: RTCStatsReport) => boolean,
+  ): Promise<RTCStatsReport[]> {
     // Enfileirado, nunca solto: dois `applyPreset` concorrentes no mesmo
     // sender foi o `InvalidStateError` da ADR 0006 A3.
     if (this.pendentes.size > 0) void this.enqueue(() => this.reaplicarPendentes());
@@ -674,14 +801,31 @@ export class MeshTopology {
       if (preset !== null) void this.enqueue(() => this.adaptAll(preset));
     }
 
+    const colhidos = await Promise.all(
+      [...this.links.values()].map(async (link) => {
+        try {
+          return { peerId: link.peerId, report: await link.stats() };
+        } catch {
+          return null; // peer saindo
+        }
+      }),
+    );
+
     const reports: RTCStatsReport[] = [];
-    for (const link of this.links.values()) {
-      try {
-        reports.push(await link.stats());
-      } catch {
-        /* peer saindo */
-      }
+    let mudou = false;
+    for (const colhido of colhidos) {
+      if (colhido === null) continue;
+      reports.push(colhido.report);
+      if (isRelayed === undefined) continue;
+
+      const agora = isRelayed(colhido.report);
+      if (agora === this.relayed.has(colhido.peerId)) continue;
+      if (agora) this.relayed.add(colhido.peerId);
+      else this.relayed.delete(colhido.peerId);
+      mudou = true;
     }
+    // Só quando muda de verdade: ver o bloco acima.
+    if (mudou) this.announce();
     return reports;
   }
 
@@ -691,8 +835,12 @@ export class MeshTopology {
     this.senders.clear();
     this.relayed.clear();
     this.waiting.clear();
+    this.pendentes.clear();
+    this.tentativasAnteriores.clear();
     this.stream = null;
     this.tracks = [];
+    this.preset = null;
+    this.orcamento = null;
     this.escalaAplicada = null;
     this.emitter.clear();
   }

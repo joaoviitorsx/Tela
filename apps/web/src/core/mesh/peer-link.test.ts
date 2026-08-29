@@ -91,9 +91,24 @@ describe('PeerLink — perfect negotiation', () => {
     await expect(ctx.link.handleSignal({ candidate: { candidate: 'c1' } })).resolves.toBeUndefined();
   });
 
-  it('candidato inválido fora de colisão sobe como erro', async () => {
+  it('candidato inválido NÃO sobe como erro — subir matava a conexão', async () => {
     const ctx = build(true);
-    await expect(ctx.link.handleSignal({ candidate: { candidate: 'c1' } })).rejects.toThrow();
+    /*
+      MUDANÇA DE COMPORTAMENTO deliberada. Este teste codificava que candidato
+      sem descrição remota rejeita. A regra era "candidato de oferta ignorada é
+      lixo esperado; qualquer outra falha é real e deve subir".
+
+      Só que "subir" não é um log: a topologia faz `catch { drop(from) }` e o
+      espectador emite `closed: NEGOTIATION_FAILED`. Um candidato que o Chrome
+      recusa parsear, um `sdpMid` de seção que o `max-bundle` derrubou, ou um
+      candidato fora de ordem derrubavam a sessão inteira daquele espectador.
+
+      A assimetria de custo decide: perder um candidato degrada o ICE — há
+      outros, e o par vencedor raramente é o primeiro.
+    */
+    await expect(
+      ctx.link.handleSignal({ candidate: { candidate: 'c1' } }),
+    ).resolves.toBeUndefined();
   });
 
   it('payload vazio ou lixo não quebra', async () => {

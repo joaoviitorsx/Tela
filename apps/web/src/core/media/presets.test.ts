@@ -226,3 +226,42 @@ describe('menorPreset e presetParaOrcamento', () => {
     }
   });
 });
+
+describe('a escada é MONÓTONA — mais banda nunca piora a imagem (ADR 0018)', () => {
+  const bppDe = (bps: number, fps: number) => {
+    const { width, height } = PRESETS[presetParaOrcamento(bps, fps === 60 ? 'fluidez' : 'nitidez')].layers[0];
+    return bps / (width * height * fps);
+  };
+
+  it('nenhum orçamento rende MENOS bpp que um orçamento menor', () => {
+    /*
+      O critério era `orçamento >= maxBitrate nominal do degrau`, e três
+      degraus da tabela têm nominal abaixo do piso. Resultado medido:
+
+        7,75 Mbps -> p720p60  -> 0,140 bpp
+        8,00 Mbps -> p900p60  -> 0,093 bpp   <- 3% mais banda, 34% menos
+       11,75 Mbps -> p900p60  -> 0,136 bpp
+       12,00 Mbps -> p1080p60 -> 0,097 bpp
+
+      As faixas venenosas eram 8,00–8,64 e 12,00–12,44 Mbps por espectador.
+    */
+    let pior = Number.POSITIVE_INFINITY;
+    for (let mbps = 1.5; mbps <= 30; mbps += 0.05) {
+      const bpp = bppDe(mbps * 1_000_000, 60);
+      pior = Math.min(pior, bpp);
+      expect(bpp).toBeGreaterThanOrEqual(BPP_PISO);
+    }
+    expect(pior).toBeGreaterThanOrEqual(BPP_PISO);
+  });
+
+  it('as duas fronteiras que produziam a inversão agora sobem', () => {
+    expect(bppDe(8_000_000, 60)).toBeGreaterThan(bppDe(7_750_000, 60));
+    expect(bppDe(12_000_000, 60)).toBeGreaterThan(bppDe(11_750_000, 60));
+  });
+
+  it('vale para nitidez também', () => {
+    for (let mbps = 1; mbps <= 20; mbps += 0.1) {
+      expect(bppDe(mbps * 1_000_000, 30)).toBeGreaterThanOrEqual(BPP_PISO);
+    }
+  });
+});

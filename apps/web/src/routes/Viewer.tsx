@@ -60,6 +60,18 @@ export function Viewer({ slug }: Props) {
   const [emTelaCheia, setEmTelaCheia] = useState(false);
 
   const watching = state.status === 'watching';
+  /**
+   * A imagem sobrevive ao soluço de rede.
+   *
+   * `reconnecting` é emitido por `track.onmute` e por
+   * `connectionState === 'disconnected'` — dois eventos que acontecem numa
+   * troca de AP de Wi-Fi COM a mídia continuando a chegar, porque o par de
+   * candidatos é o mesmo. Enquanto houver stream, o `<video>` fica montado e
+   * o aviso vem por cima; trocá-lo por uma tela de espera arrancava um vídeo
+   * que nunca parou e montava um elemento novo, preto até o próximo quadro.
+   */
+  const reconectando = state.status === 'reconnecting' && state.stream !== null;
+  const comImagem = watching || reconectando;
   const controls = useAutoHide(2_000, watching && !somAtivo);
   const stats = useMediaStats(watching ? state.stats : null);
 
@@ -80,7 +92,8 @@ export function Viewer({ slug }: Props) {
    * efeito rodar — e chamar `play()` — uma vez por segundo durante a
    * transmissão inteira, num elemento que já estava tocando.
    */
-  const streamAtual = state.status === 'watching' ? state.stream : null;
+  const streamAtual =
+    state.status === 'watching' || state.status === 'reconnecting' ? state.stream : null;
   useEffect(() => {
     const element = videoRef.current;
     if (!element || streamAtual === null) return;
@@ -91,7 +104,7 @@ export function Viewer({ slug }: Props) {
   /** O elemento é a fonte da verdade do áudio; o hook é a fonte da intenção. */
   useEffect(() => {
     const element = videoRef.current;
-    if (!element || !watching) return;
+    if (!element || !comImagem) return;
     element.muted = som.mudo;
     element.volume = som.volume;
   }, [watching, som.mudo, som.volume]);
@@ -117,8 +130,24 @@ export function Viewer({ slug }: Props) {
     const video = videoRef.current;
     const palco = video?.parentElement;
 
-    if (document.fullscreenElement !== null) {
-      void document.exitFullscreen().catch(() => undefined);
+    /**
+     * `!= null` e um `typeof`, e a versão estrita quebrava o celular inteiro.
+     *
+     * No iPhone a Fullscreen API não existe: `document.fullscreenElement` é
+     * `undefined`, e `undefined !== null` é **true**. O código entrava no ramo
+     * de SAÍDA e chamava `document.exitFullscreen()`, que também não existe —
+     * `TypeError` síncrono dentro do `onClick`, que o `.catch()` não pega
+     * porque nada chegou a ser retornado. O fallback `webkitEnterFullscreen`
+     * logo abaixo, que existe justamente para o iPhone, nunca era alcançado.
+     *
+     * Consequência: o espectador no celular ficava com 1080p espremido em
+     * ~390px de largura. Redução de 4,9× — "imagem borrada" que não tem nada a
+     * ver com encoder.
+     */
+    if (document.fullscreenElement != null) {
+      if (typeof document.exitFullscreen === 'function') {
+        void document.exitFullscreen().catch(() => undefined);
+      }
       return;
     }
 
@@ -127,7 +156,7 @@ export function Viewer({ slug }: Props) {
       legado?.webkitEnterFullscreen?.();
     };
 
-    if (palco?.requestFullscreen === undefined) {
+    if (typeof palco?.requestFullscreen !== 'function') {
       nativoDoVideo();
       return;
     }
@@ -136,9 +165,21 @@ export function Viewer({ slug }: Props) {
 
   // O ícone tem que dizer o que o clique FAZ, não onde você está.
   useEffect(() => {
-    const sincronizar = () => setEmTelaCheia(document.fullscreenElement !== null);
+    // `webkitbeginfullscreen`/`webkitendfullscreen` são os eventos do caminho
+    // nativo do `<video>` no iPhone. Sem eles o ícone mentia justamente onde o
+    // fallback funciona.
+    const sincronizar = () => setEmTelaCheia(document.fullscreenElement != null);
+    const entrou = () => setEmTelaCheia(true);
+    const saiu = () => setEmTelaCheia(false);
+    const video = videoRef.current;
     document.addEventListener('fullscreenchange', sincronizar);
-    return () => document.removeEventListener('fullscreenchange', sincronizar);
+    video?.addEventListener('webkitbeginfullscreen', entrou);
+    video?.addEventListener('webkitendfullscreen', saiu);
+    return () => {
+      document.removeEventListener('fullscreenchange', sincronizar);
+      video?.removeEventListener('webkitbeginfullscreen', entrou);
+      video?.removeEventListener('webkitendfullscreen', saiu);
+    };
   }, []);
 
   useHotkeys(
@@ -152,10 +193,10 @@ export function Viewer({ slug }: Props) {
       }),
       [toggleFullscreen, som],
     ),
-    watching,
+    comImagem,
   );
 
-  if (state.status !== 'watching') {
+  if (!comImagem) {
     const motivo = MOTIVO[state.status];
     return (
       <main>
@@ -169,11 +210,22 @@ export function Viewer({ slug }: Props) {
     );
   }
 
-  const hasAudio = state.hasAudio;
+  // Do STREAM e não do estado: `reconnecting` não carrega `hasAudio`, e sumir
+  // com o controle de volume no meio de um soluço seria a mesma desmontagem
+  // que este bloco existe para evitar, em miniatura.
+  const hasAudio = streamAtual !== null && streamAtual.getAudioTracks().length > 0;
 
   return (
     <main
-      className="relative h-screen w-screen overflow-hidden bg-void"
+      /*
+        `h-dvh` e não `h-screen`: `100vh` é a viewport GRANDE no celular, com
+        a barra de URL recolhida — maior que a área visível. O `<main>` ficava
+        mais alto que a tela e a barra do HUD, ancorada em `bottom-0`, caía
+        inteira fora da dobra: sem contagem, sem latência, sem volume, sem
+        botão de tela cheia. `OfflineState` já usava `min-h-dvh` com um
+        comentário explicando exatamente isto; o Viewer tinha ficado de fora.
+      */
+      className="relative h-dvh w-full overflow-hidden bg-void"
       onMouseMove={controls.show}
       onDoubleClick={toggleFullscreen}
     >
@@ -212,10 +264,14 @@ export function Viewer({ slug }: Props) {
         */}
         <span
           className="tabular ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted"
-          aria-label={`${state.viewers} ${state.viewers === 1 ? 'pessoa assistindo' : 'pessoas assistindo'}`}
+          aria-label={
+            watching
+              ? `${state.viewers} ${state.viewers === 1 ? 'pessoa assistindo' : 'pessoas assistindo'}`
+              : 'reconectando'
+          }
         >
           <IconViewers className="h-3.5 w-3.5 shrink-0" />
-          {state.viewers}
+          {watching ? state.viewers : '—'}
         </span>
 
         {/* Latência visível: é prova da qualidade, e este público repara. */}

@@ -244,6 +244,7 @@ trade-off consciente, com página de exportação em `/recuperar`.
 | [`docs/adr/0015`](docs/adr/0015-o-teto-de-upload-escolhe-o-degrau.md) | Por que a imagem borrava, e o que decide a qualidade agora |
 | [`docs/adr/0016`](docs/adr/0016-perfil-h264-nivel-e-jitter-buffer.md) | Perfil H.264, nível anunciado e jitter buffer |
 | [`docs/adr/0017`](docs/adr/0017-o-governador-mede-orcamento-nao-teto.md) | Por que 800 Mbps de subida entregavam 12, e o que mudou |
+| [`docs/adr/0018`](docs/adr/0018-as-malhas-mediam-a-propria-atuacao.md) | Os 30 achados da revisão adversarial do pipeline |
 
 Comece pela [ADR 0005](docs/adr/0005-mesh-p2p.md) se quiser entender a
 arquitetura atual, e pela [0002](docs/adr/0002-transporte-p2p-self-host.md) se

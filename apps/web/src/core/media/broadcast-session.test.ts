@@ -195,6 +195,8 @@ describe('BroadcastSession — qualidade', () => {
       availableBps: null,
       bpp: 0.1,
       encoderImplementation: null,
+      piorAvailableBps: null,
+      paresMedidos: 1,
     };
 
     // Aquecimento (8) mais a sequência de pressão (5).
@@ -213,7 +215,7 @@ describe('BroadcastSession — qualidade', () => {
   it('uma leitura isolada com cpu NÃO derruba o preset', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null };
+    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null, piorAvailableBps: null, paresMedidos: 1 };
 
     ctx.transport.stats = { ...base, limitation: 'cpu' };
     for (let i = 0; i < 10; i += 1) {
@@ -244,6 +246,8 @@ describe('BroadcastSession — qualidade', () => {
       availableBps: null,
       bpp: 0.1,
       encoderImplementation: null,
+      piorAvailableBps: null,
+      paresMedidos: 1,
     };
 
     for (let i = 0; i < 30; i += 1) {
@@ -282,7 +286,14 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     availableBps: null,
     bpp: 0.1,
     encoderImplementation: null,
+    paresMedidos: 1,
     ...extra,
+    // Um espectador só, por padrão: o pior é o único. Um teste que queira
+    // simular o amigo em ADSL sobrescreve `piorAvailableBps` explicitamente.
+    piorAvailableBps:
+      (extra['piorAvailableBps'] as number | null | undefined) ??
+      (extra['availableBps'] as number | null | undefined) ??
+      null,
   });
 
   /** Avança N leituras de estatística de um segundo cada. */
@@ -483,7 +494,14 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     availableBps: null,
     bpp: 0.1,
     encoderImplementation: null,
+    paresMedidos: 1,
     ...extra,
+    // Um espectador só, por padrão: o pior é o único. Um teste que queira
+    // simular o amigo em ADSL sobrescreve `piorAvailableBps` explicitamente.
+    piorAvailableBps:
+      (extra['piorAvailableBps'] as number | null | undefined) ??
+      (extra['availableBps'] as number | null | undefined) ??
+      null,
   });
 
   async function tique(ctx: ReturnType<typeof build>, vezes: number) {
@@ -719,6 +737,164 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
 
     await ctx.session.setPrioridade('fluidez');
     expect(ctx.screen.video.contentHint).toBe('motion');
+  });
+});
+
+/**
+ * ADR 0018 — os achados da revisão adversarial do pipeline.
+ */
+describe('BroadcastSession — o pior caminho é quem manda', () => {
+  const amostra = (extra: Record<string, unknown>) => ({
+    fps: 60,
+    bitrateBps: 7_000_000,
+    rttMs: 30,
+    width: 1920,
+    height: 1080,
+    limitation: 'none' as const,
+    availableBps: null,
+    bpp: 0.1,
+    encoderImplementation: null,
+    paresMedidos: 1,
+    piorAvailableBps: null,
+    ...extra,
+  });
+
+  async function tique(ctx: ReturnType<typeof build>, vezes: number) {
+    for (let i = 0; i < vezes; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+  }
+
+  it('o amigo em ADSL puxa TODO MUNDO para baixo, não a média', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    /*
+      Espectador A em fibra (60 Mbps), espectador B em ADSL (5 Mbps).
+      A média dá 32,5 Mbps e manda 24 Mbps para os DOIS — B recebe 24 Mbps num
+      cano de 5, ~80% de perda contínua, quadriculado permanente. E não
+      converge: quando a estimativa de B desaba, a média mal se mexe.
+
+      Pela R5 todos os senders recebem o MESMO `maxBitrate`, então o número
+      correto sempre foi o mínimo. A ADR 0017 declarava isso e o código fazia
+      o oposto.
+    */
+    ctx.transport.stats = amostra({
+      availableBps: 65_000_000,
+      paresMedidos: 2,
+      piorAvailableBps: 5_000_000,
+    });
+    await tique(ctx, 20);
+
+    const orcamento = ctx.transport.ceilings.at(-1) ?? 0;
+    expect(orcamento).toBeLessThanOrEqual(5_000_000);
+    expect(orcamento).toBeGreaterThan(0);
+  });
+
+  it('o divisor conta quem MEDIU, não quem está conectando', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    /*
+      `availableBps` só soma pares ICE nominados; `peers.length` contava também
+      quem estava em `connecting`. Numerador e denominador fora de fase: cinco
+      amigos clicando juntos num "vem ver" subestimavam o orçamento em até 5×
+      no pior instante — e pela catraca da ADR 0018 a transmissão morava lá.
+    */
+    ctx.transport.setPeers(
+      Array.from({ length: 5 }, (_, i) => ({
+        id: `v_${i}`,
+        connectionState: 'connecting' as RTCPeerConnectionState,
+        usingRelay: false,
+      })),
+    );
+    ctx.transport.stats = amostra({
+      availableBps: 40_000_000,
+      paresMedidos: 1,
+      piorAvailableBps: 40_000_000,
+    });
+    await tique(ctx, 20);
+
+    // Um par mediu 40 Mbps: o orçamento é ~30, não ~6.
+    expect(ctx.transport.ceilings.at(-1) ?? 0).toBeGreaterThan(20_000_000);
+  });
+
+  it('um blip de CPU não zera a calmaria da recuperação', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    ctx.transport.stats = amostra({ limitation: 'cpu' });
+    await tique(ctx, 14);
+    const fundo = ctx.session.getState();
+    const antes = fundo.status === 'live' ? fundo.presetId : 'p360p60';
+    expect(antes).not.toBe('p1080p60');
+
+    /*
+      Descer exige 5 amostras seguidas; subir exigia 60 CONSECUTIVAS, e
+      qualquer leitura de aperto zerava o contador. Um `cpu` isolado é rotina —
+      keyframe, troca de cena, alt-tab. Com 10% de leituras assim, o tempo
+      médio para recuperar UM degrau ia de 60 segundos para 92 minutos.
+      Decaindo, um blip custa dez amostras em vez de todas.
+    */
+    // 10% de blips isolados. Saldo: (9 limpas − 5 de penalidade) = +4 por
+    // dezena, então 200 amostras rendem 80 — acima das 60 de um degrau.
+    for (let i = 0; i < 200; i += 1) {
+      ctx.transport.stats = amostra({ limitation: i % 10 === 0 ? 'cpu' : 'none' });
+      await tique(ctx, 1);
+    }
+
+    const depois = ctx.session.getState();
+    const id = depois.status === 'live' ? depois.presetId : 'p360p60';
+    expect(PRESET_IDS.indexOf(id)).toBeLessThan(PRESET_IDS.indexOf(antes));
+  });
+});
+
+describe('BroadcastSession — trocar a fonte não deixa lixo', () => {
+  it('para a trilha de ÁUDIO da nova captura em vez de vazá-la', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    const antes = ctx.screen.audios.length;
+    await ctx.session.switchSource();
+    await settle();
+
+    /*
+      A requisição pede `systemAudio: true` e no Windows vem áudio junto. Ela
+      só era parada no ramo de corrida perdida; no caminho feliz ninguém
+      parava nem usava. Alternar jogo → navegador → jogo três vezes deixava
+      três capturas de som do sistema vivas na máquina do jogo.
+    */
+    const novas = ctx.screen.audios.slice(antes);
+    for (const trilha of novas) expect(trilha.stopped).toBe(true);
+  });
+
+  it('trocar a fonte rearma o throttle de ociosidade', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // Dez segundos sozinho: a captura cai para 5fps.
+    ctx.scheduler.advance(11_000);
+    await settle(4);
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+    expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ frameRate: 5 });
+
+    /*
+      A trilha nova nasce a 60fps, mas `capturaOciosa` continuava `true` e o
+      `if (this.capturaOciosa) return` de `throttleIdleCapture` bloqueava a
+      reaplicação — 1920×1080@60 permanente sem ninguém assistindo, o oposto
+      do que o modo ocioso existe para fazer.
+    */
+    await ctx.session.switchSource();
+    await settle();
+    ctx.scheduler.advance(11_000);
+    await settle(4);
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+
+    const nova = ctx.screen.video;
+    expect(nova.constraints.at(-1)).toMatchObject({ frameRate: 5 });
   });
 });
 

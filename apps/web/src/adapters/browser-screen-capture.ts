@@ -40,6 +40,26 @@ export function makeBrowserScreenCapture(): ScreenCapture {
              * rodando o jogo.
              */
             resizeMode: 'crop-and-scale',
+
+            /**
+             * Abre o seletor já na aba de TELA INTEIRA.
+             *
+             * Estava no nível de cima, fora de `video`, onde NÃO É MEMBRO de
+             * `DisplayMediaStreamOptions` — o dicionário tem só `audio` e
+             * `video`. Membro desconhecido é descartado em silêncio, e o `as`
+             * lá embaixo é exatamente o que impedia o TypeScript de acusar.
+             * `displaySurface` é constraint (`MediaTrackConstraintSet`), então
+             * o lugar dele é aqui dentro.
+             *
+             * A linha não fazia nada, e a cascata era cara: o usuário caía na
+             * aba "Janela", compartilhava o jogo em 1280×720, e a partir daí
+             * todo o orçamento era calculado em cima de 1920×1080 — teto útil
+             * de 24,9 Mbps para um quadro de 0,92 Mpx. O espectador recebia
+             * 720p esticado com a UI escrita `1080p60`. No Windows, sem tela
+             * inteira também não vem áudio do sistema, que é o outro motivo
+             * pelo qual esta linha existe.
+             */
+            displaySurface: 'monitor',
           },
           // Windows/Chrome entrega áudio do sistema por aqui. Linux e macOS
           // ignoram e o áudio vem por trilha separada.
@@ -52,9 +72,9 @@ export function makeBrowserScreenCapture(): ScreenCapture {
            * pré-requisito do áudio do sistema no Windows. Era o passo que todo
            * mundo esquecia; agora ele é o padrão em vez de uma instrução.
            */
-          displaySurface: 'monitor',
-
-          // Não padronizados, suportados em Chromium.
+          // Não padronizados, suportados em Chromium. Estes TRÊS são de fato
+          // membros de `DisplayMediaStreamOptions`; só o `displaySurface`
+          // estava no lugar errado, e ele subiu para dentro de `video`.
           surfaceSwitching: 'include',
           selfBrowserSurface: 'exclude',
           systemAudio: options.systemAudio ? 'include' : 'exclude',

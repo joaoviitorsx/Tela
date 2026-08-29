@@ -254,9 +254,10 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
     async getAggregateStats(): Promise<MediaStats | null> {
       if (topology !== null) {
-        const reports = await topology.collectStats();
+        // Uma coleta por peer, em paralelo, e o status de relay sai do mesmo
+        // relatório — eram duas em série por segundo, por espectador.
+        const reports = await topology.collectStats(isRelayed);
         if (reports.length === 0) return null;
-        void topology.refreshRelayStatus(isRelayed);
         return outbound.readMany(reports);
       }
       if (viewerLink !== null) return inbound.read(await viewerLink.stats());

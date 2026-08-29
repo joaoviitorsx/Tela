@@ -131,14 +131,54 @@ describe('UplinkGovernor', () => {
     expect(g.orcamento!).toBeGreaterThan(apertado);
   });
 
-  it('subir de banda também respeita a histerese', () => {
+  it('subir de banda respeita a histerese, agora com banda ESTREITA', () => {
     const g = new UplinkGovernor();
     aquecer(g, 10_000_000);
-    // 10% acima: não paga o custo de reconfigurar o encoder.
-    const mudancas = Array.from({ length: 12 }, () => g.observe(11_000_000)).filter(
+    // 3% acima: ruído, não notícia.
+    const mudancas = Array.from({ length: 12 }, () => g.observe(10_300_000)).filter(
       (v) => v !== null,
     );
     expect(mudancas).toHaveLength(0);
+  });
+
+  /**
+   * O defeito da ADR 0018, em forma de teste.
+   *
+   * A histerese era simétrica em 25%, e isso exigia `media ≥ 1,667 × aplicado`
+   * para subir. Mas `aplicado` VIRA o `maxBitrate` do sender, e o
+   * `AimdRateControl` do libwebrtc tampa a estimativa em `1,5 × acked`. A
+   * malha era estruturalmente incapaz de abrir: num link de 800 Mbps o
+   * orçamento travava em 13,5 Mbps no nono segundo e não subia nunca mais.
+   */
+  it('SOBE quando o link tem folga — o teto do estimador é 1,5×', () => {
+    const g = new UplinkGovernor();
+    aquecer(g, 10_000_000);
+    const antes = g.orcamento!;
+
+    // O máximo que o estimador pode reportar com o nosso teto em vigor.
+    let ultimo: number | null = null;
+    for (let i = 0; i < 30; i += 1) {
+      const v = g.observe(antes * 1.5);
+      if (v !== null) ultimo = v.bps;
+    }
+
+    expect(ultimo).not.toBeNull();
+    expect(ultimo!).toBeGreaterThan(antes);
+  });
+
+  it('NÃO corta por estar em regime — a catraca de mão única', () => {
+    const g = new UplinkGovernor();
+    aquecer(g, 10_000_000);
+    const antes = g.orcamento!;
+
+    /*
+      Em ALR o estimador reporta perto da taxa reconhecida, que é o nosso
+      próprio teto. Com histerese simétrica isso dava `variacao = 0,25`
+      exatamente — e `0,25 < 0,25` é falso, então a malha CORTAVA 25% por
+      estar funcionando. Repetido, levava a transmissão ao piso de 300 kbps.
+    */
+    for (let i = 0; i < 40; i += 1) g.observe(antes);
+    expect(g.orcamento!).toBeGreaterThanOrEqual(antes);
   });
 
   it('reset volta ao estado inicial', () => {

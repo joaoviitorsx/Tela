@@ -62,8 +62,48 @@ export const UPLINK_SHARE = 0.75;
 /** Peso da leitura nova na média móvel. Baixo = mais lento, mais estável. */
 const SUAVIZACAO = 0.25;
 
-/** Só reconfigura o encoder se o alvo mudar mais que isto. */
-const HISTERESE = 0.25;
+/**
+ * Histerese ASSIMÉTRICA, e a assimetria não é gosto — é aritmética.
+ *
+ * # A catraca de mão única (ADR 0018)
+ *
+ * Havia um limiar só, `0,25`, e ele tornava a subida IMPOSSÍVEL. A conta:
+ *
+ *     subir  exige  alvo ≥ 1,25 × aplicado  →  media ≥ 1,25/0,75 = 1,667 × aplicado
+ *     cortar exige  alvo ≤ 0,75 × aplicado  →  media ≤ 1,000 × aplicado
+ *
+ * O problema é que `aplicado` VIRA o `maxBitrate` do sender, e
+ * `availableOutgoingBitrate` é a leitura do controle de congestionamento
+ * DESSE MESMO sender. A grandeza medida é limitada pela grandeza atuada.
+ *
+ * O `AimdRateControl` do libwebrtc tampa a estimativa em
+ * `1,5 × acked_throughput + 10 kbps`, e `acked ≈ aplicado` sempre que somos
+ * nós o limitador — que é o regime permanente aqui.
+ *
+ *     media alcançável ≤ 1,500 × aplicado
+ *     media necessária ≥ 1,667 × aplicado
+ *
+ * Medido em simulação: link de 800 Mbps, o orçamento trava em 13,5 Mbps no
+ * nono segundo e não sobe mais nunca. Os 24,9 Mbps que o `BPP_TETO` autoriza
+ * eram inalcançáveis por construção — a ADR 0017 prometeu uma coisa e a
+ * aritmética entregava outra. E o par de constantes era o pior possível:
+ * `HISTERESE` valia exatamente `1 − UPLINK_SHARE`, o que deixa o sistema
+ * encostado na borda do CORTE em regime permanente.
+ *
+ * # Os números novos
+ *
+ * O teto de 1,5 limita a razão `alvo/aplicado` a `0,75 × 1,5 = 1,125` por
+ * ciclo. Qualquer banda de subida acima de 12,5% trava. `0,06` deixa margem
+ * confortável e ainda exige `media ≥ 1,413 × aplicado` — bem acima do ruído.
+ *
+ * A banda de corte é larga porque um `maxBitrate` NUNCA causa afogamento
+ * sozinho: o alocador do WebRTC entrega ao encoder `min(BWE, maxBitrate)`, e
+ * o BWE já é delay-based. O teto protege contra o BWE SUPERESTIMAR, não
+ * contra nós empurrarmos além dele — então errar para o lado de não cortar
+ * custa pouco, e cortar por ruído custa a transmissão inteira.
+ */
+const SUBIR = 0.06;
+const CORTAR = 0.30;
 
 /** Leituras ignoradas no início, enquanto o estimador ainda sonda. */
 const AQUECIMENTO_AMOSTRAS = 8;
@@ -121,7 +161,24 @@ export class UplinkGovernor {
   seed(bps: number): void {
     if (!Number.isFinite(bps) || bps <= 0) return;
     this.media = bps;
-    this.amostras = AQUECIMENTO_AMOSTRAS + 1;
+
+    /**
+     * A semente preenche `aplicado` TAMBÉM, e mantém o aquecimento.
+     *
+     * Antes ela punha `amostras = AQUECIMENTO + 1` e deixava `aplicado` nulo.
+     * O efeito era o oposto do pretendido: a primeira leitura caía no ramo
+     * `aplicado === null`, que aplica SEM histerese, com o aquecimento já
+     * desligado. Ou seja — a semente, que existe para evitar oito segundos
+     * cegos, removia as duas defesas justamente da decisão mais importante da
+     * sessão.
+     *
+     * E ela é a mais importante de verdade: um espectador que entra enquanto
+     * a captura ainda está nos 5fps do modo ocioso produz uma leitura de
+     * ~2 Mbps, e era esse número que fixava o orçamento da transmissão
+     * inteira.
+     */
+    this.aplicado = Math.max(PISO_BPS, Math.round(bps * UPLINK_SHARE));
+    this.amostras = 0;
   }
 
   reset(): void {
@@ -170,8 +227,8 @@ export class UplinkGovernor {
       return { bps: alvo };
     }
 
-    const variacao = Math.abs(alvo - this.aplicado) / this.aplicado;
-    if (variacao < HISTERESE) return null;
+    const variacao = (alvo - this.aplicado) / this.aplicado;
+    if (variacao >= 0 ? variacao < SUBIR : -variacao < CORTAR) return null;
 
     this.aplicado = alvo;
     return { bps: alvo };

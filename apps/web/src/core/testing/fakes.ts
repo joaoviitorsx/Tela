@@ -165,8 +165,23 @@ export class FakeScreenCapture implements ScreenCapture {
   withAudio = false;
   surface: CaptureSurface = 'monitor';
   lastRequest: unknown = null;
-  readonly video = fakeTrack('video');
-  readonly audio = fakeTrack('audio');
+
+  /**
+   * Uma trilha NOVA por requisição, como o `getDisplayMedia` de verdade.
+   *
+   * O fake devolvia sempre a mesma instância, e isso escondia um vazamento:
+   * `switchSource` não parava a trilha de áudio da nova captura, então
+   * alternar de fonte três vezes deixava três capturas de som do sistema vivas
+   * na máquina que está rodando o jogo. Com uma instância só, o teste não
+   * conseguia nem enxergar a diferença entre "a nova" e "a antiga".
+   *
+   * `video` e `audio` continuam apontando para a ÚLTIMA, que é o que os testes
+   * de constraints querem inspecionar.
+   */
+  readonly videos: FakeTrack[] = [];
+  readonly audios: FakeTrack[] = [];
+  video: FakeTrack = fakeTrack('video');
+  audio: FakeTrack = fakeTrack('audio');
 
   isSupported(): boolean {
     return this.supported;
@@ -176,6 +191,13 @@ export class FakeScreenCapture implements ScreenCapture {
     this.lastRequest = options;
     if (!this.supported) throw 'UNSUPPORTED';
     if (this.denied) throw 'DENIED';
+
+    this.video = fakeTrack('video');
+    this.videos.push(this.video);
+    if (this.withAudio) {
+      this.audio = fakeTrack('audio');
+      this.audios.push(this.audio);
+    }
     return {
       video: this.video,
       audio: this.withAudio ? this.audio : null,

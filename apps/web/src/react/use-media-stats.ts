@@ -13,23 +13,36 @@ export type ReadableStats = {
   /** `true` quando os bits por pixel caíram abaixo do piso de 0,10. */
   readonly bppBaixo: boolean;
   /**
-   * `hardware`, `software` ou `—`.
+   * `hardware`, `software`, `desconhecido` ou `—`.
    *
-   * O Chromium reporta `ExternalEncoder` quando o encode roda na GPU, e o nome
-   * da biblioteca (`OpenH264`, `libvpx`) quando roda na CPU. Era a única
-   * pergunta de desempenho que só se respondia em `chrome://gpu`.
+   * No transmissor vem de `encoderImplementation`; no espectador, de
+   * `decoderImplementation` — são campos diferentes, e ler só o primeiro nos
+   * dois sentidos deixava quem assiste sem resposta nenhuma. Decode em
+   * software é uma das causas de travadinha do lado de quem assiste.
+   *
+   * Era a única pergunta de desempenho que só se respondia em `chrome://gpu`.
    */
   readonly encoder: string;
 };
 
 /**
- * Nomes que o Chromium usa para o caminho de HARDWARE.
+ * Nomes que o Chromium usa para os codecs de SOFTWARE. Lista fechada, e a
+ * inversão é o conserto.
  *
- * `ExternalEncoder` é o genérico; os outros aparecem em versões e plataformas
- * específicas. Qualquer outra coisa é software, e software a 1080p60 é
- * exatamente a CPU que o jogo precisa.
+ * Era uma lista de permissão de nomes de hardware, com tudo o mais caindo em
+ * "software". Duas formas de mentir:
+ *
+ * - o MediaCodec do Android reporta `OMX.qcom.video.encoder.avc` ou
+ *   `c2.qti.avc.encoder`, que não casam com nada da lista — o painel dizia
+ *   "encode em software" E acendia alerta, mandando o usuário caçar um
+ *   problema que não existia;
+ * - `SimulcastEncoderAdapter (ExternalEncoder, libvpx, libvpx)` casava
+ *   "external" e era vendido como hardware puro.
+ *
+ * Software é o conjunto conhecido e pequeno; hardware é tudo que tem nome de
+ * driver. O que não se reconhece vira `desconhecido`, não uma acusação.
  */
-const EM_HARDWARE = /external|hardware|nvenc|videotoolbox|mediafoundation|vaapi|qsv|amf/i;
+const EM_SOFTWARE = /libvpx|libaom|openh264|ffmpeg|dav1d|libx264/i;
 
 const MOTIVOS: Record<MediaStats['limitation'], string | null> = {
   none: null,
@@ -65,7 +78,7 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
       bpp: stats.bpp > 0 ? stats.bpp.toFixed(3).replace('.', ',') : '—',
       // Só acusa com leitura de verdade: `0` é ausência de medida, não fome.
       bppBaixo: stats.bpp > 0 && stats.bpp < BPP_PISO,
-      encoder: impl === null ? '—' : EM_HARDWARE.test(impl) ? 'hardware' : 'software',
+      encoder: impl === null ? '—' : EM_SOFTWARE.test(impl) ? 'software' : 'hardware',
     };
   }, [stats]);
 }

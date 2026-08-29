@@ -82,9 +82,35 @@ describe('afinarSdp — bitrate inicial', () => {
 });
 
 describe('afinarSdp — o que não pode tocar', () => {
-  it('deixa a seção de áudio idêntica', () => {
+  it('não injeta start-bitrate no áudio', () => {
     const saida = afinarSdp(SDP, { startBitrateBps: 4_000_000 });
-    expect(saida).toContain('a=fmtp:111 minptime=10;useinbandfec=1');
+    const audio = saida.slice(saida.indexOf('m=audio'), saida.indexOf('m=video'));
+    expect(audio).not.toContain('x-google-start-bitrate');
+    expect(audio).not.toContain('profile-level-id');
+    // O que já estava lá continua lá.
+    expect(audio).toContain('minptime=10');
+    expect(audio).toContain('useinbandfec=1');
+  });
+
+  it('LIGA o estéreo do Opus — 128 kbps estavam comprando um canal só', () => {
+    /*
+      Capturamos em estéreo (`channelCount: 2`) e pagamos 128 kbps, mas o
+      libwebrtc negocia mono a menos que o fmtp peça:
+
+          inline constexpr int kOpusDefaultStereo = 0;
+          int GetChannelCount(f) { return param == "1" ? 2 : 1; }
+
+      Custo de ligar: zero bit a mais — o bitrate já estava pago.
+    */
+    const saida = afinarSdp(SDP);
+    expect(saida).toContain('stereo=1');
+    expect(saida).toContain('sprop-stereo=1');
+  });
+
+  it('o estéreo também é idempotente', () => {
+    const uma = afinarSdp(SDP);
+    expect(afinarSdp(uma)).toBe(uma);
+    expect(uma.match(/[^-]stereo=1/g)).toHaveLength(1);
   });
 
   it('preserva as quebras CRLF — SDP com \\n solto é recusado', () => {

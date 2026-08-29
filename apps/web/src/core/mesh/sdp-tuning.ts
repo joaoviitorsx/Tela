@@ -44,7 +44,6 @@
  */
 const NIVEL_MINIMO = 0x2a;
 
-/** Só a seção de vídeo. Áudio e datachannel passam intocados. */
 const SECAO = /^m=/m;
 
 export type AfinacaoSdp = {
@@ -72,8 +71,50 @@ export function afinarSdp(sdp: string, opcoes: AfinacaoSdp = {}): string {
 
   const partes = dividirSecoes(sdp);
   return partes
-    .map((secao) => (secao.startsWith('m=video') ? afinarVideo(secao, opcoes) : secao))
+    .map((secao) => {
+      if (secao.startsWith('m=video')) return afinarVideo(secao, opcoes);
+      if (secao.startsWith('m=audio')) return afinarAudio(secao);
+      return secao;
+    })
     .join('');
+}
+
+/**
+ * Liga o estéreo do Opus, que o Chromium não oferece por padrão.
+ *
+ * Capturamos em estéreo de verdade — `channelCount: 2`, com os três
+ * processamentos de voz desligados — e pagamos 128 kbps por espectador. Mas o
+ * libwebrtc negocia mono a menos que o `fmtp` peça o contrário:
+ *
+ *     inline constexpr int kOpusDefaultStereo = 0;
+ *     int GetChannelCount(format) { return param == "1" ? 2 : 1; }
+ *
+ * Ou seja: os 128 kbps estavam comprando um canal só. O comentário em
+ * `mesh-topology` diz "preserva música e efeitos", e preservava — em mono.
+ *
+ * `stereo=1` diz que queremos receber estéreo; `sprop-stereo=1` diz que o que
+ * mandamos é estéreo. Os dois, senão o casamento é assimétrico.
+ *
+ * Custo: zero bit a mais. O bitrate já estava pago.
+ */
+function afinarAudio(secao: string): string {
+  return secao
+    .split(/(?<=\n)/)
+    .map((linha) => {
+      if (!linha.startsWith('a=fmtp:')) return linha;
+      const { corpo, quebra } = partir(linha);
+      if (!/minptime=|useinbandfec=|opus/i.test(corpo)) return linha;
+      let saida = definirParametro(corpo, 'stereo', '1');
+      saida = definirParametro(saida, 'sprop-stereo', '1');
+      return saida + quebra;
+    })
+    .join('');
+}
+
+/** Separa a linha do terminador, preservando CRLF. */
+function partir(linha: string): { corpo: string; quebra: string } {
+  const quebra = linha.endsWith('\r\n') ? '\r\n' : linha.endsWith('\n') ? '\n' : '';
+  return { corpo: quebra.length > 0 ? linha.slice(0, -quebra.length) : linha, quebra };
 }
 
 /** Preâmbulo mais uma entrada por `m=`, com as quebras de linha preservadas. */
@@ -105,8 +146,7 @@ function afinarVideo(secao: string, opcoes: AfinacaoSdp): string {
     .split(/(?<=\n)/)
     .map((linha) => {
       if (!linha.startsWith('a=fmtp:')) return linha;
-      const quebra = linha.slice(linha.length - 2) === '\r\n' ? '\r\n' : linha.endsWith('\n') ? '\n' : '';
-      const corpo = quebra.length > 0 ? linha.slice(0, -quebra.length) : linha;
+      const { corpo, quebra } = partir(linha);
       return afinarFmtp(corpo, kbps) + quebra;
     })
     .join('');

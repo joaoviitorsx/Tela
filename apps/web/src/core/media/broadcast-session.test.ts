@@ -195,8 +195,10 @@ describe('BroadcastSession — qualidade', () => {
       availableBps: null,
       bpp: 0.1,
       encoderImplementation: null,
+      qp: null,
       piorAvailableBps: null,
       paresMedidos: 1,
+      availablePorPeer: {},
     };
 
     // Aquecimento (8) mais a sequência de pressão (5).
@@ -215,7 +217,7 @@ describe('BroadcastSession — qualidade', () => {
   it('uma leitura isolada com cpu NÃO derruba o preset', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null, piorAvailableBps: null, paresMedidos: 1 };
+    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null, qp: null, piorAvailableBps: null, paresMedidos: 1, availablePorPeer: {} };
 
     ctx.transport.stats = { ...base, limitation: 'cpu' };
     for (let i = 0; i < 10; i += 1) {
@@ -246,8 +248,10 @@ describe('BroadcastSession — qualidade', () => {
       availableBps: null,
       bpp: 0.1,
       encoderImplementation: null,
+      qp: null,
       piorAvailableBps: null,
       paresMedidos: 1,
+      availablePorPeer: {},
     };
 
     for (let i = 0; i < 30; i += 1) {
@@ -286,6 +290,7 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     availableBps: null,
     bpp: 0.1,
     encoderImplementation: null,
+    qp: null,
     paresMedidos: 1,
     ...extra,
     // Um espectador só, por padrão: o pior é o único. Um teste que queira
@@ -294,6 +299,15 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
       (extra['piorAvailableBps'] as number | null | undefined) ??
       (extra['availableBps'] as number | null | undefined) ??
       null,
+    /*
+      O governador suaviza CADA caminho e depois tira o mínimo, então ele
+      precisa das leituras cruas por peer. Por padrão um espectador só, com o
+      valor de `availableBps`; um teste que queira simular o amigo em ADSL
+      passa `availablePorPeer` explicitamente.
+    */
+    availablePorPeer:
+      (extra['availablePorPeer'] as Record<string, number> | undefined) ??
+      (typeof extra['availableBps'] === 'number' ? { v_1: extra['availableBps'] } : {}),
   });
 
   /** Avança N leituras de estatística de um segundo cada. */
@@ -494,6 +508,7 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     availableBps: null,
     bpp: 0.1,
     encoderImplementation: null,
+    qp: null,
     paresMedidos: 1,
     ...extra,
     // Um espectador só, por padrão: o pior é o único. Um teste que queira
@@ -502,6 +517,15 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
       (extra['piorAvailableBps'] as number | null | undefined) ??
       (extra['availableBps'] as number | null | undefined) ??
       null,
+    /*
+      O governador suaviza CADA caminho e depois tira o mínimo, então ele
+      precisa das leituras cruas por peer. Por padrão um espectador só, com o
+      valor de `availableBps`; um teste que queira simular o amigo em ADSL
+      passa `availablePorPeer` explicitamente.
+    */
+    availablePorPeer:
+      (extra['availablePorPeer'] as Record<string, number> | undefined) ??
+      (typeof extra['availableBps'] === 'number' ? { v_1: extra['availableBps'] } : {}),
   });
 
   async function tique(ctx: ReturnType<typeof build>, vezes: number) {
@@ -754,8 +778,10 @@ describe('BroadcastSession — o pior caminho é quem manda', () => {
     availableBps: null,
     bpp: 0.1,
     encoderImplementation: null,
+    qp: null,
     paresMedidos: 1,
     piorAvailableBps: null,
+    availablePorPeer: {},
     ...extra,
   });
 
@@ -783,7 +809,7 @@ describe('BroadcastSession — o pior caminho é quem manda', () => {
     ctx.transport.stats = amostra({
       availableBps: 65_000_000,
       paresMedidos: 2,
-      piorAvailableBps: 5_000_000,
+      availablePorPeer: { fibra: 60_000_000, adsl: 5_000_000 },
     });
     await tique(ctx, 20);
 
@@ -792,7 +818,7 @@ describe('BroadcastSession — o pior caminho é quem manda', () => {
     expect(orcamento).toBeGreaterThan(0);
   });
 
-  it('o divisor conta quem MEDIU, não quem está conectando', async () => {
+  it('peer que ainda CONECTA não dilui o orçamento de quem já mede', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
 
@@ -809,10 +835,15 @@ describe('BroadcastSession — o pior caminho é quem manda', () => {
         usingRelay: false,
       })),
     );
+    /*
+      O divisor sumiu junto com a média: o governador guarda uma média móvel
+      POR PEER e tira o mínimo delas. Quem ainda não reportou simplesmente não
+      aparece no mapa — não há como diluir.
+    */
     ctx.transport.stats = amostra({
       availableBps: 40_000_000,
       paresMedidos: 1,
-      piorAvailableBps: 40_000_000,
+      availablePorPeer: { v_0: 40_000_000 },
     });
     await tique(ctx, 20);
 

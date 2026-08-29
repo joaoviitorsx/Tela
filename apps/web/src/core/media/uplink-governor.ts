@@ -139,6 +139,32 @@ export class UplinkGovernor {
   private amostras = 0;
 
   /**
+   * Uma média móvel POR PEER, e o motivo é estatístico.
+   *
+   * O orçamento é o MÍNIMO entre os caminhos (R5: todos os senders recebem o
+   * mesmo `maxBitrate`, então vale o pior). Mas suavizar o mínimo de leituras
+   * ruidosas não é o mesmo que o mínimo das leituras suavizadas: com ruído de
+   * ±20%, `E[min de N]` vale `0,8 + 0,4/(N+1)` da capacidade real — um viés
+   * para baixo que cresce com N.
+   *
+   * Isso fechava a catraca de novo. Em ALR o estimador reporta até
+   * `1,5 × acked`, então a razão alcançável por ciclo é:
+   *
+   *     alvo/aplicado = 1,125 × (0,8 + 0,4/(N+1))
+   *       N=1 → 1,125   sobe          N=3 → 1,013   trava
+   *       N=2 → 1,050   trava         N=5 → 0,975   trava
+   *
+   * Com o limiar de subida em 1,06, a malha voltava a ser incapaz de abrir a
+   * partir de DOIS espectadores. Medido: link de 300 Mbps com cinco
+   * espectadores congelava em 52% do que o link pagava, para sempre.
+   *
+   * Suavizando cada peer separadamente, cada média converge para a capacidade
+   * verdadeira daquele caminho, e o mínimo delas é o mínimo verdadeiro. O viés
+   * desaparece e a razão volta a 1,125 para qualquer N.
+   */
+  private readonly porPeer = new Map<string, number>();
+
+  /**
    * Estimativa suavizada corrente, por espectador. `null` antes da primeira
    * leitura útil. Serve para guardar entre sessões.
    */
@@ -163,21 +189,33 @@ export class UplinkGovernor {
     this.media = bps;
 
     /**
-     * A semente preenche `aplicado` TAMBÉM, e mantém o aquecimento.
+     * A semente NÃO preenche `aplicado`, e a tentativa de preencher custou
+     * caro.
      *
-     * Antes ela punha `amostras = AQUECIMENTO + 1` e deixava `aplicado` nulo.
-     * O efeito era o oposto do pretendido: a primeira leitura caía no ramo
-     * `aplicado === null`, que aplica SEM histerese, com o aquecimento já
-     * desligado. Ou seja — a semente, que existe para evitar oito segundos
-     * cegos, removia as duas defesas justamente da decisão mais importante da
-     * sessão.
+     * O defeito original era outro: `seed()` punha `amostras = AQUECIMENTO+1`,
+     * pulando o aquecimento, então a PRIMEIRA leitura decidia o orçamento da
+     * sessão inteira — e se ela caísse enquanto a captura ainda estava nos 5fps
+     * do modo ocioso, a transmissão morava ali.
      *
-     * E ela é a mais importante de verdade: um espectador que entra enquanto
-     * a captura ainda está nos 5fps do modo ocioso produz uma leitura de
-     * ~2 Mbps, e era esse número que fixava o orçamento da transmissão
-     * inteira.
+     * A correção foi preencher `aplicado` para que a primeira leitura tivesse
+     * de vencer a histerese. E isso criou uma BANDA MORTA: com a semente certa,
+     * a medição real cai dentro de [−30%, +6%], `observe()` devolve `null`,
+     * `setUplinkBudget` nunca é chamado, e a topologia fica com `orcamento`
+     * nulo — usando `tetoUtil` para todo mundo. Pior: `estimativa` já é
+     * não-nula, então a escada de pressão também se cala. As duas malhas mudas
+     * ao mesmo tempo.
+     *
+     * Medido em simulação: 101 de 306 cenários com semente correta ficavam
+     * mudos, e o pior deles passou 300 segundos pedindo 24,88 Mbps num link de
+     * 5 Mbps com cinco espectadores — 0,0068 bit por pixel. A forma em campo é
+     * cruel: a PRIMEIRA transmissão funciona, a segunda não, porque a primeira
+     * é que grava a semente.
+     *
+     * A resposta certa é manter só o aquecimento. A média móvel parte do valor
+     * lembrado e converge para a realidade em oito amostras (o peso da semente
+     * decai para 10%), e `aplicado === null` garante que a primeira decisão
+     * DEPOIS do aquecimento sempre emite.
      */
-    this.aplicado = Math.max(PISO_BPS, Math.round(bps * UPLINK_SHARE));
     this.amostras = 0;
   }
 
@@ -185,6 +223,7 @@ export class UplinkGovernor {
     this.media = null;
     this.aplicado = null;
     this.amostras = 0;
+    this.porPeer.clear();
   }
 
   /** Orçamento por espectador atualmente em vigor. `null` antes do aquecimento. */
@@ -207,14 +246,31 @@ export class UplinkGovernor {
    * `availableBps` deve chegar POR ESPECTADOR. Em mesh cada espectador recebe
    * uma cópia inteira do vídeo, e o orçamento vira `maxBitrate` de cada sender.
    */
-  observe(availableBps: number | null): DecisaoOrcamento {
-    if (availableBps === null || !Number.isFinite(availableBps) || availableBps <= 0) {
-      return null;
+  observe(
+    leituras: Readonly<Record<string, number>>,
+    opcoes: { readonly permitirQueda?: boolean } = {},
+  ): DecisaoOrcamento {
+    const validas = Object.entries(leituras).filter(
+      ([, v]) => Number.isFinite(v) && v > 0,
+    );
+    if (validas.length === 0) return null;
+
+    // Peer que saiu não pode continuar segurando o mínimo.
+    const vivos = new Set(validas.map(([id]) => id));
+    for (const id of [...this.porPeer.keys()]) if (!vivos.has(id)) this.porPeer.delete(id);
+
+    for (const [id, valor] of validas) {
+      const antes = this.porPeer.get(id);
+      this.porPeer.set(id, antes === undefined ? valor : antes + SUAVIZACAO * (valor - antes));
     }
 
     this.amostras += 1;
-    this.media =
-      this.media === null ? availableBps : this.media + SUAVIZACAO * (availableBps - this.media);
+    // O mínimo dos SUAVIZADOS. Ver o bloco de `porPeer` para por que a ordem
+    // das duas operações decide se a malha abre ou não.
+    const pior = Math.min(...this.porPeer.values());
+    // Sem segunda suavização: cada peer já foi suavizado acima, e empilhar
+    // duas médias móveis só acrescenta atraso.
+    this.media = pior;
 
     // Durante o aquecimento acumula a média, mas não decide nada com ela.
     if (this.amostras <= AQUECIMENTO_AMOSTRAS) return null;
@@ -229,6 +285,27 @@ export class UplinkGovernor {
 
     const variacao = (alvo - this.aplicado) / this.aplicado;
     if (variacao >= 0 ? variacao < SUBIR : -variacao < CORTAR) return null;
+
+    /**
+     * Não corta enquanto NÓS somos o limitador por motivo que não é o link.
+     *
+     * Duas situações medidas no simulador, e as duas produzem uma leitura
+     * baixa que não fala sobre a rede:
+     *
+     * 1. O degrau caiu por CPU, então o teto do sender virou `BPP_TETO × w × h
+     *    × fps` do degrau novo. `acked` cai junto, a estimativa cai atrás, e o
+     *    governador registra isso como "o link encolheu". Um pico transitório
+     *    de CPU virava perda PERMANENTE de orçamento: link de 800 Mbps
+     *    terminando 300s em 28% da capacidade, com recuperação projetada para
+     *    t≈460s.
+     * 2. A cena está parada. O encoder não consome o alvo, `acked` desaba, e o
+     *    teto de `1,5 × acked` desce junto — sem a rede ter piorado nada. Aí o
+     *    movimento volta e a transmissão já está estrangulada.
+     *
+     * Subir continua sempre permitido: leitura alta é notícia boa e verdadeira
+     * em qualquer regime.
+     */
+    if (variacao < 0 && opcoes.permitirQueda === false) return null;
 
     this.aplicado = alvo;
     return { bps: alvo };

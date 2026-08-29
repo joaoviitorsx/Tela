@@ -64,6 +64,15 @@ export type MediaStats = {
    */
   readonly paresMedidos: number;
   /**
+   * A estimativa CRUA de cada caminho, por peer.
+   *
+   * O governador precisa suavizar cada uma separadamente antes de tirar o
+   * mínimo: com ruído de ±20%, `E[min de N]` vale `0,8 + 0,4/(N+1)` da
+   * capacidade real, e esse viés fechava a malha de subida a partir de dois
+   * espectadores. Mínimo de suavizados ≠ suavizado do mínimo.
+   */
+  readonly availablePorPeer: Readonly<Record<string, number>>;
+  /**
    * Bits por pixel do fluxo que está saindo POR ESPECTADOR. `0` sem leitura.
    *
    * É o número que prevê a imagem borrada antes de ela aparecer, e o único que
@@ -87,6 +96,23 @@ export type MediaStats = {
    * `null` quando o navegador não reporta o campo.
    */
   readonly encoderImplementation: string | null;
+  /**
+   * QP médio do encoder — a variável que o `BPP_PISO` só estimava.
+   *
+   * O `QualityScaler` do libwebrtc derruba resolução quando o QP médio de
+   * H.264 passa de **37** (escala 0–51), e sobe de volta abaixo de 24:
+   *
+   *     const int kLowH264QpThreshold  = 24;
+   *     const int kHighH264QpThreshold = 37;
+   *
+   * Todo o piso de bits por pixel existe como PROXY para "o QP fica abaixo de
+   * 37", e a ADR 0010 admite que os 0,10 vieram de literatura, não de medição.
+   * `qpSum / framesEncoded` está no mesmo relatório que já coletamos por
+   * segundo — dá para medir a coisa em vez do palpite dela.
+   *
+   * `null` no espectador e onde o navegador não reporta.
+   */
+  readonly qp: number | null;
 };
 
 export type TransportEvents = {

@@ -27,6 +27,19 @@ import { PeerLink } from './peer-link.js';
  * quarta regra de mídia do AGENTS.md R5, e a que mais parece errada à
  * primeira vista — alguém vai tentar "otimizar" isto depois. Não deixe.
  */
+/**
+ * Um relatório de estatística COM a identidade do peer.
+ *
+ * Era um array solto de `RTCStatsReport`, e o índice posicional virava chave —
+ * tanto para o delta de bytes quanto para a média por caminho. Índice não é
+ * identidade: quando um peer sai, todos os seguintes deslizam e as leituras
+ * são atribuídas ao peer errado por uma amostra.
+ */
+export type RelatorioDePeer = {
+  readonly peerId: string;
+  readonly report: RTCStatsReport;
+};
+
 export type PeerInfo = {
   readonly id: string;
   readonly connectionState: RTCPeerConnectionState;
@@ -129,6 +142,7 @@ export class MeshTopology {
    * número diz quantos bits há para gastar nela.
    */
   private orcamento: number | null = null;
+
   private prioridade: Prioridade = 'fluidez';
 
   /**
@@ -690,6 +704,24 @@ export class MeshTopology {
 
   /** Onde o bit deixa de virar imagem em movimento alto: 0,20 bpp. */
   private tetoUtil(preset: EncodingPreset): number {
+    /**
+     * O NOMINAL do degrau, e não a resolução que o encoder produziu.
+     *
+     * Tentei usar a medida — o E2E em browser real mostrou que o *quality
+     * scaler* do Chromium encolhe o quadro por cima do nosso
+     * `scaleResolutionDownBy`, e que o produto acabava pagando 10 a 12 Mbps
+     * por um quadro de 640×360. O desperdício é real.
+     *
+     * Mas realimentar a saída do encoder no teto DELE é uma espiral: teto
+     * menor → o scaler encolhe mais → teto menor ainda. Medido no simulador:
+     * os cenários com bits por pixel abaixo do piso saltaram de 65 para 570.
+     *
+     * A medida continua sendo usada onde não realimenta nada: `stats-sampler`
+     * calcula o bpp exibido a partir de `frameWidth`/`frameHeight` reais, então
+     * o console mostra a verdade mesmo quando ela é feia. Corrigir o
+     * desperdício exige a ESCADA reagir à divergência entre nominal e real —
+     * não o teto.
+     */
     const { width, height } = preset.layers[0];
     return Math.round(BPP_TETO * width * height * this.framerate(preset));
   }
@@ -792,7 +824,7 @@ export class MeshTopology {
    */
   async collectStats(
     isRelayed?: (report: RTCStatsReport) => boolean,
-  ): Promise<RTCStatsReport[]> {
+  ): Promise<readonly RelatorioDePeer[]> {
     // Enfileirado, nunca solto: dois `applyPreset` concorrentes no mesmo
     // sender foi o `InvalidStateError` da ADR 0006 A3.
     if (this.pendentes.size > 0) void this.enqueue(() => this.reaplicarPendentes());
@@ -811,11 +843,11 @@ export class MeshTopology {
       }),
     );
 
-    const reports: RTCStatsReport[] = [];
+    const reports: RelatorioDePeer[] = [];
     let mudou = false;
     for (const colhido of colhidos) {
       if (colhido === null) continue;
-      reports.push(colhido.report);
+      reports.push(colhido);
       if (isRelayed === undefined) continue;
 
       const agora = isRelayed(colhido.report);

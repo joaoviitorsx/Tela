@@ -21,3 +21,6 @@ zz-*
 # Worktrees de agente. `git add -A` já os arrastou para dentro de um commit
 # como repositório embutido — o mesmo tipo de acidente do prefixo acima.
 .claude/worktrees/
+
+# Artefato de execução do simulador de malhas (~800 KB por run).
+e2e/malhas.sim.json

@@ -10,7 +10,13 @@ import type {
 import type { Scheduler } from '../ports/scheduler.js';
 import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
-import { CONTENT_HINT_POR_PRIORIDADE, P2P_LIMITS, type Prioridade } from '@tela/shared';
+import {
+  BPP_TETO,
+  CONTENT_HINT_POR_PRIORIDADE,
+  FRAMERATE_POR_PRIORIDADE,
+  P2P_LIMITS,
+  type Prioridade,
+} from '@tela/shared';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
@@ -562,35 +568,34 @@ export class BroadcastSession {
      * de uma vez subestimavam o orçamento em até 5× no pior instante, e pela
      * catraca da ADR 0018 a transmissão morava lá o resto da sessão.
      */
-    const media =
-      stats.availableBps === null
-        ? null
-        : stats.availableBps / Math.max(1, stats.paresMedidos);
-    const porEspectador =
-      media === null
-        ? null
-        : stats.piorAvailableBps === null
-          ? media
-          : Math.min(media, stats.piorAvailableBps);
     /**
-     * A referência é o preset ESCOLHIDO, e a inversão em relação à versão
-     * anterior é deliberada.
+     * A queda só vale quando a leitura fala do LINK.
      *
-     * Antes media-se contra o CORRENTE, porque a recuperação exigia teto nulo
-     * e medir contra o escolhido empurrava o limiar de soltura para longe
-     * demais — o teto nunca largava e a recuperação ficava desligada junto.
+     * Duas condições em que ela não fala, e o simulador mediu as duas:
      *
-     * Agora o teto não bloqueia mais a recuperação: ele DEFINE o degrau. Com
-     * isso a referência precisa ser estável, senão o sistema oscila de vez —
-     * degrada para 480p60, o limiar de soltura cai junto para 2,9 Mbps, o teto
-     * solta, o degrau volta a 1080p60, o limiar sobe para 13,8 Mbps, o teto
-     * reaplica, e assim por diante uma vez por segundo. Um alvo móvel numa
-     * malha de controle é um oscilador.
+     * - o teto do sender está sendo definido pelo limite de bits por pixel do
+     *   degrau, e não pelo orçamento — então `acked` reflete a nossa escolha
+     *   de resolução, não a capacidade da rede;
+     * - o encoder não está consumindo o que lhe foi dado, porque a cena está
+     *   parada — `acked` desaba sem a rede ter mudado, e o teto de
+     *   `1,5 × acked` desce atrás.
      *
-     * O escolhido não se move sem o usuário mandar. É a única referência que
-     * serve.
+     * Nos dois casos, deixar o governador cortar transforma uma condição
+     * transitória em perda permanente de orçamento.
      */
-    const decisao = this.governor.observe(porEspectador);
+    const preset = presetById(this.presetId);
+    const { width, height } = preset.layers[0];
+    const tetoDePixel =
+      BPP_TETO * width * height * Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]);
+    const orcamento = this.governor.orcamento;
+
+    const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;
+    const enviado = stats.bitrateBps / Math.max(1, stats.paresMedidos);
+    const encoderOcioso = orcamento !== null && enviado > 0 && enviado < orcamento * 0.7;
+
+    const decisao = this.governor.observe(stats.availablePorPeer, {
+      permitirQueda: !limitadosPorPixel && !encoderOcioso,
+    });
     // `null` na maioria das leituras: o governador só fala quando a mudança
     // compensa reconfigurar o encoder.
     if (decisao === null) return;

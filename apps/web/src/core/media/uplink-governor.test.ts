@@ -10,22 +10,28 @@ import { UPLINK_SHARE, UplinkGovernor } from './uplink-governor.js';
  * exatamente isso: travamento e instabilidade.
  */
 const aquecer = (g: UplinkGovernor, bps: number) => {
-  for (let i = 0; i < 9; i += 1) g.observe(bps);
+  for (let i = 0; i < 9; i += 1) g.observe({ v_1: bps });
 };
+
+/** N peers reportando o mesmo valor — o caso que fechava a catraca. */
+const comPeers = (n: number, bps: number): Record<string, number> =>
+  Object.fromEntries(Array.from({ length: n }, (_, i) => [`v_${i}`, bps]));
 
 describe('UplinkGovernor', () => {
   it('não decide nada durante o aquecimento', () => {
     const g = new UplinkGovernor();
     for (let i = 0; i < 8; i += 1) {
-      expect(g.observe(4_000_000)).toBeNull();
+      expect(g.observe({ v_1: 4_000_000 })).toBeNull();
     }
   });
 
   it('ignora leitura ausente ou absurda', () => {
     const g = new UplinkGovernor();
-    for (const ruim of [null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(g.observe(ruim)).toBeNull();
+    for (const ruim of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(g.observe({ v_1: ruim })).toBeNull();
     }
+    // Nenhum peer reportou: não há o que medir.
+    expect(g.observe({})).toBeNull();
   });
 
   it('reporta o orçamento assim que tem medição confiável', () => {
@@ -42,7 +48,7 @@ describe('UplinkGovernor', () => {
     // Estimativa balançando ±20% a cada segundo, como o WebRTC faz de verdade.
     const ruido = [5.5, 4.6, 5.3, 4.8, 5.6, 4.5, 5.2, 4.9, 5.4, 4.7, 5.1, 5.0];
     const mudancas = ruido
-      .map((mbps) => g.observe(mbps * 1_000_000))
+      .map((mbps) => g.observe({ v_1: mbps * 1_000_000 }))
       .filter((v) => v !== null);
 
     // Sem amortecimento seriam 12 reconfigurações do encoder em 12 segundos.
@@ -57,7 +63,7 @@ describe('UplinkGovernor', () => {
     // A rede piorou de verdade e ficou assim.
     let mudou: number | null = null;
     for (let i = 0; i < 20; i += 1) {
-      const v = g.observe(2_000_000);
+      const v = g.observe({ v_1: 2_000_000 });
       if (v !== null) mudou = v.bps;
     }
 
@@ -81,14 +87,14 @@ describe('UplinkGovernor', () => {
   it('não estrangula até o nada, mas TAMBÉM não excede o medido', () => {
     const g = new UplinkGovernor();
     // Estimativa catastrófica e sustentada.
-    for (let i = 0; i < 40; i += 1) g.observe(50_000);
+    for (let i = 0; i < 40; i += 1) g.observe({ v_1: 50_000 });
 
     expect(g.orcamento).not.toBeNull();
     expect(g.orcamento!).toBeGreaterThanOrEqual(300_000);
 
     const g2 = new UplinkGovernor();
     // Link modesto e honesto: o orçamento tem que caber nele.
-    for (let i = 0; i < 40; i += 1) g2.observe(1_200_000);
+    for (let i = 0; i < 40; i += 1) g2.observe({ v_1: 1_200_000 });
     expect(g2.orcamento!).toBeLessThanOrEqual(1_200_000);
   });
 
@@ -122,7 +128,7 @@ describe('UplinkGovernor', () => {
 
     let ultimo: number | null = null;
     for (let i = 0; i < 40; i += 1) {
-      const v = g.observe(100_000_000);
+      const v = g.observe({ v_1: 100_000_000 });
       if (v !== null) ultimo = v.bps;
     }
 
@@ -135,7 +141,7 @@ describe('UplinkGovernor', () => {
     const g = new UplinkGovernor();
     aquecer(g, 10_000_000);
     // 3% acima: ruído, não notícia.
-    const mudancas = Array.from({ length: 12 }, () => g.observe(10_300_000)).filter(
+    const mudancas = Array.from({ length: 12 }, () => g.observe({ v_1: 10_300_000 })).filter(
       (v) => v !== null,
     );
     expect(mudancas).toHaveLength(0);
@@ -158,7 +164,7 @@ describe('UplinkGovernor', () => {
     // O máximo que o estimador pode reportar com o nosso teto em vigor.
     let ultimo: number | null = null;
     for (let i = 0; i < 30; i += 1) {
-      const v = g.observe(antes * 1.5);
+      const v = g.observe({ v_1: antes * 1.5 });
       if (v !== null) ultimo = v.bps;
     }
 
@@ -177,7 +183,7 @@ describe('UplinkGovernor', () => {
       exatamente — e `0,25 < 0,25` é falso, então a malha CORTAVA 25% por
       estar funcionando. Repetido, levava a transmissão ao piso de 300 kbps.
     */
-    for (let i = 0; i < 40; i += 1) g.observe(antes);
+    for (let i = 0; i < 40; i += 1) g.observe({ v_1: antes });
     expect(g.orcamento!).toBeGreaterThanOrEqual(antes);
   });
 
@@ -186,7 +192,7 @@ describe('UplinkGovernor', () => {
     aquecer(g, 3_000_000);
     g.reset();
     expect(g.orcamento).toBeNull();
-    expect(g.observe(3_000_000)).toBeNull();
+    expect(g.observe({ v_1: 3_000_000 })).toBeNull();
   });
 
   it('a folga é de 25% sobre a banda estimada', () => {
@@ -196,3 +202,80 @@ describe('UplinkGovernor', () => {
     expect(g.orcamento).toBeCloseTo(4_000_000 * UPLINK_SHARE, -5);
   });
 });
+
+/**
+ * O defeito que o simulador de 1200 cenários achou: com o mínimo entre peers e
+ * ruído de ±20%, `E[min de N]` vale `0,8 + 0,4/(N+1)` da capacidade real. Esse
+ * viés fechava a malha de subida a partir de DOIS espectadores — link de
+ * 300 Mbps com cinco espectadores congelava em 52% do que o link pagava.
+ *
+ * A correção é suavizar cada caminho ANTES de tirar o mínimo.
+ */
+describe('UplinkGovernor — a malha abre com N espectadores (ADR 0019)', () => {
+  for (const n of [1, 2, 3, 5]) {
+    it(`sobe com ${n} espectador(es), mesmo com ruído de ±20%`, () => {
+      const g = new UplinkGovernor();
+      const capacidade = 10_000_000;
+      const ruido = () => 0.8 + Math.random() * 0.4;
+
+      for (let i = 0; i < 12; i += 1) {
+        g.observe(
+          Object.fromEntries(
+            Array.from({ length: n }, (_, k) => [`v_${k}`, capacidade * ruido()]),
+          ),
+        );
+      }
+      const antes = g.orcamento!;
+
+      // O link tem folga: o estimador reporta até 1,5× o que aplicamos.
+      let ultimo = antes;
+      for (let i = 0; i < 200; i += 1) {
+        const teto = (g.orcamento ?? antes) * 1.5;
+        const v = g.observe(
+          Object.fromEntries(Array.from({ length: n }, (_, k) => [`v_${k}`, teto * ruido()])),
+        );
+        if (v !== null) ultimo = v.bps;
+      }
+
+      expect(ultimo).toBeGreaterThan(antes * 1.5);
+    });
+  }
+
+  it('um peer fraco segura todo mundo, sem viés dos outros', () => {
+    const g = new UplinkGovernor();
+    for (let i = 0; i < 40; i += 1) {
+      g.observe({ forte: 60_000_000, fraco: 5_000_000 });
+    }
+    // 5 Mbps × 0,75 — o mínimo verdadeiro, não a média nem o mínimo enviesado.
+    expect(g.orcamento).toBeCloseTo(5_000_000 * UPLINK_SHARE, -5);
+  });
+
+  it('peer que sai para de segurar o mínimo', () => {
+    const g = new UplinkGovernor();
+    for (let i = 0; i < 40; i += 1) g.observe({ forte: 60_000_000, fraco: 5_000_000 });
+    expect(g.orcamento!).toBeLessThan(10_000_000);
+
+    for (let i = 0; i < 40; i += 1) g.observe({ forte: 60_000_000 });
+    expect(g.orcamento!).toBeGreaterThan(10_000_000);
+  });
+
+  it('a semente NÃO cria banda morta — o orçamento chega ao encoder', () => {
+    /*
+      `seed()` chegou a preencher `aplicado`, e com isso a medição real caía
+      dentro da histerese: `observe()` devolvia `null` para sempre, o
+      transporte ficava sem orçamento e a escada de pressão também se calava.
+      Medido: 101 de 306 cenários mudos, o pior deles 300s a 0,0068 bpp.
+    */
+    const g = new UplinkGovernor();
+    g.seed(10_000_000);
+
+    let emitiu = false;
+    for (let i = 0; i < 12; i += 1) {
+      if (g.observe({ v_1: 10_000_000 }) !== null) emitiu = true;
+    }
+    expect(emitiu).toBe(true);
+    expect(g.orcamento).not.toBeNull();
+  });
+});
+
+void comPeers;

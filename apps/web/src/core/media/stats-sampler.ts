@@ -1,4 +1,5 @@
 import { bitsPorPixel } from '@tela/shared';
+import type { RelatorioDePeer } from '../mesh/mesh-topology.js';
 import type { MediaStats, QualityLimitation } from '../ports/media-transport.js';
 
 /**
@@ -40,11 +41,17 @@ export class StatsSampler {
 
   /** Um único relatório — o caso do espectador, que tem um peer só. */
   read(report: RTCStatsReport): MediaStats | null {
-    return this.readMany([report]);
+    return this.readMany([{ peerId: 'host', report }]);
   }
 
-  /** N relatórios, um por peer — o caso do transmissor em mesh. */
-  readMany(reports: readonly RTCStatsReport[]): MediaStats | null {
+  /**
+   * N relatórios, um por peer — o caso do transmissor em mesh.
+   *
+   * Chaveado por `peerId` e não pelo índice do array. Índice não é identidade:
+   * quando um peer sai, todos os seguintes deslizam e tanto o delta de bytes
+   * quanto a média por caminho são atribuídos ao peer errado por uma amostra.
+   */
+  readMany(entradas: readonly RelatorioDePeer[]): MediaStats | null {
     const wanted = this.direction === 'outbound' ? 'outbound-rtp' : 'inbound-rtp';
     const bytesField = this.direction === 'outbound' ? 'bytesSent' : 'bytesReceived';
 
@@ -58,9 +65,13 @@ export class StatsSampler {
     let pior: number | null = null;
     let paresMedidos = 0;
     let encoderImplementation: string | null = null;
+    let qpSoma = 0;
+    let qpQuadros = 0;
     let found = false;
 
-    reports.forEach((report, index) => {
+    const availablePorPeer: Record<string, number> = {};
+
+    entradas.forEach(({ peerId, report }) => {
       report.forEach((entry, key) => {
         const stat = entry as Record<string, unknown>;
 
@@ -71,7 +82,7 @@ export class StatsSampler {
           // reportar SSRCs iguais.
           const ssrc = stat['ssrc'];
           const id = typeof ssrc === 'number' ? String(ssrc) : String(stat['id'] ?? key);
-          current.set(`${index}:${id}`, {
+          current.set(`${peerId}:${id}`, {
             bytes: Number(stat[bytesField] ?? 0),
             timestamp: Number(stat['timestamp'] ?? 0),
           });
@@ -91,6 +102,15 @@ export class StatsSampler {
            * decode em software é uma das causas de travadinha do lado de quem
            * assiste, exatamente o lado que reclama.
            */
+          // O gatilho real do quality scaler: acima de 37 em H.264 o Chromium
+          // começa a derrubar resolução sozinho.
+          const somaQp = Number(stat['qpSum'] ?? 0);
+          const quadros = Number(stat['framesEncoded'] ?? 0);
+          if (somaQp > 0 && quadros > 0) {
+            qpSoma += somaQp;
+            qpQuadros += quadros;
+          }
+
           const impl =
             this.direction === 'outbound'
               ? stat['encoderImplementation']
@@ -123,6 +143,9 @@ export class StatsSampler {
           // o que interessa é o total que sai do link de casa.
           const banda = Number(stat['availableOutgoingBitrate'] ?? 0);
           if (banda > 0) {
+            // Crua, por peer: quem suaviza é o governador, e ele precisa
+            // suavizar CADA caminho antes de tirar o mínimo.
+            availablePorPeer[peerId] = Math.max(availablePorPeer[peerId] ?? 0, banda);
             available = (available ?? 0) + banda;
             // O pior caminho é quem manda: pela R5 todos recebem o mesmo
             // `maxBitrate`, então a média deixaria o peer fraco afogado.
@@ -188,8 +211,10 @@ export class StatsSampler {
       availableBps: available,
       piorAvailableBps: pior,
       paresMedidos,
+      availablePorPeer,
       bpp,
       encoderImplementation,
+      qp: qpQuadros > 0 ? qpSoma / qpQuadros : null,
     };
   }
 }

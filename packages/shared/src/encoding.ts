@@ -252,8 +252,15 @@ export const P2P_LIMITS = {
    * conjunto — nunca individualmente, senão viram N encoders (R5).
    */
   maxViewersBrowser: 5,
-  /** Fração do upstream medido que pode ser usada — o resto é folga anti-bufferbloat. */
-  uplinkHeadroom: 0.7,
+  /**
+   * Fração do upstream medido que pode ser usada — o resto é folga
+   * anti-bufferbloat.
+   *
+   * Era 0,7 aqui e 0,75 no `UplinkGovernor`: o produto SUGERIA o degrau com um
+   * número e OPERAVA com outro. Uma folga só, e é a do governador, porque é
+   * ela que de fato chega ao encoder.
+   */
+  uplinkHeadroom: 0.75,
 } as const;
 
 /**
@@ -269,7 +276,17 @@ export function p2pViewerBudget(
   // UI e transforma um erro de medição num teto de espectadores sem sentido.
   if (!Number.isFinite(uplinkBitsPerSecond) || uplinkBitsPerSecond <= 0) return 0;
   const usable = uplinkBitsPerSecond * P2P_LIMITS.uplinkHeadroom;
-  const perViewer = preset.main.maxBitrate;
+  /*
+    O custo real por espectador é o TETO de bits por pixel, não o nominal do
+    degrau: a topologia gasta `min(orçamento, BPP_TETO × pixels)`, que pode ser
+    bem acima do rótulo. Usar o nominal subestimava o custo e prometia mais
+    espectadores do que cabem.
+  */
+  const { width, height } = preset.layers[0];
+  const perViewer = Math.max(
+    preset.main.maxBitrate,
+    BPP_TETO * width * height * preset.main.maxFramerate,
+  );
   const byBandwidth = Math.floor(usable / perViewer);
   return Math.max(0, Math.min(byBandwidth, P2P_LIMITS.maxViewersBrowser));
 }
@@ -301,10 +318,22 @@ const PISO_DA_ESCADA: PresetId = PRESET_ORDER[PRESET_ORDER.length - 1] ?? 'p360p
 export const BPP_PISO = 0.10;
 
 /**
- * Teto útil de bits por pixel. Acima disto o retorno é desprezível em
- * movimento alto, e os bits são melhor gastos em resolução (ou não gastos).
+ * Teto útil de bits por pixel.
+ *
+ * Era 0,20, e eu tinha inventado esse número. Um levantamento das referências
+ * publicadas — OBS, Twitch, YouTube Live, Discord, Zoom, Meet, libwebrtc,
+ * LiveKit, Jitsi, mediasoup, Janus — não achou NENHUMA que passe de 0,103 bpp
+ * em 1080p60. A maior de todas é o Zoom, com 12,8 Mbps, e ele é o comparável
+ * mais justo que existe: também é tempo real, também é um passe.
+ *
+ * 0,20 autorizava 1,94× o maior número publicado do mercado, e custava
+ * 124 Mbps de subida com cinco espectadores.
+ *
+ * 0,13 fica 1,29× acima do YouTube Live e 1,21× acima do Zoom — margem que
+ * paga folgadamente o prêmio de tempo real e de movimento de gameplay, sem
+ * gastar banda que ninguém demonstrou virar imagem. Em 1080p60 são 16,2 Mbps.
  */
-export const BPP_TETO = 0.20;
+export const BPP_TETO = 0.13;
 
 /** Bits por pixel de um alvo. A conta que decide se a imagem se sustenta. */
 export function bitsPorPixel(
@@ -316,6 +345,29 @@ export function bitsPorPixel(
   const pixelsPorSegundo = width * height * fps;
   if (pixelsPorSegundo <= 0) return 0;
   return bitsPerSecond / pixelsPorSegundo;
+}
+
+/**
+ * Quanto o framerate custa em bitrate, contra a referência de 60fps.
+ *
+ * `presetForBitrate` assumia proporcionalidade direta — 30fps custaria metade
+ * de 60fps, então o mesmo orçamento pagaria o dobro de bits por pixel e caberia
+ * um degrau bem maior. Nenhuma tabela publicada concorda:
+ *
+ *     OBS (fórmula literal)   fps^0.55   →  1,46× para dobrar o fps
+ *     YouTube Live 1080p                    1,20×
+ *     YouTube Live 720p                     1,50×
+ *     Twitch 1080p / 720p                   1,33× / 1,50×
+ *
+ * A mediana do mercado é ~1,5×, não 2,0×. O modo `nitidez` estava se creditando
+ * 33% de banda que não existe, e escolhendo um degrau alto demais para o
+ * orçamento — o oposto do que ele promete.
+ *
+ * `fps^0.55` é a do OBS, que é a única publicada como fórmula em vez de tabela.
+ */
+export function custoDeFramerate(fps: number): number {
+  const alvo = Number.isFinite(fps) && fps > 0 ? fps : 60;
+  return Math.pow(alvo / 60, 0.55);
 }
 
 /**
@@ -389,9 +441,15 @@ export function presetForBitrate(
    * runtime — só em comentário, e num teste que foi afrouxado para `>= 0,09`
    * em vez de consertar o código. Agora é regra.
    */
+  /*
+    O piso de bits por pixel é a 60fps. A 30fps o mesmo quadro custa
+    `(30/60)^0.55 = 0,68` do que custaria a 60 — não metade, como a versão
+    anterior assumia. Ver `custoDeFramerate`.
+  */
+  const exigido = BPP_PISO * 60 * custoDeFramerate(alvo);
   for (const id of PRESET_ORDER) {
     const { width, height } = PRESETS[id].layers[0];
-    if (perViewerBitsPerSecond >= BPP_PISO * width * height * alvo) return id;
+    if (perViewerBitsPerSecond >= exigido * width * height) return id;
   }
   return PISO_DA_ESCADA;
 }

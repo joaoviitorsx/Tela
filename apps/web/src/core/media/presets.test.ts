@@ -104,9 +104,20 @@ describe('presets', () => {
 
 describe('orçamento P2P', () => {
   it('link de 100 Mbps aguenta o teto do browser em 1080p60', () => {
-    expect(p2pViewerBudget(100_000_000, PRESETS.p1080p60)).toBe(P2P_LIMITS.maxViewersBrowser);
-  });
+    /*
+      O custo por espectador deixou de ser o NOMINAL do degrau e passou a ser o
+      teto de bits por pixel — a topologia gasta `min(orçamento, BPP_TETO × w ×
+      h × fps)`, que em 1080p60 são 16,2 Mbps e não 12. A conta antiga
+      subestimava o custo e prometia mais espectadores do que cabem.
 
+      100 × 0,75 = 75 Mbps ÷ 16,2 = 4 espectadores, não 5.
+    */
+    expect(p2pViewerBudget(100_000_000, PRESETS.p1080p60)).toBe(4);
+    // Com 480p60 (3,8 Mbps de teto real) o limite volta a ser o do browser.
+    expect(p2pViewerBudget(100_000_000, PRESETS.p480p60)).toBe(
+      P2P_LIMITS.maxViewersBrowser,
+    );
+  });
   /**
    * 30 × 0,7 = 21 Mbps, e 1080p60 passou a custar 12 Mbps por espectador — a
    * tabela antiga dizia 8 e entregava imagem em bloco por falta de bits.
@@ -146,12 +157,21 @@ describe('orçamento P2P', () => {
   });
 
   it('sugere o melhor preset que cabe no upload dividido pelos espectadores', () => {
+    /*
+      Os números mudaram duas vezes e por dois motivos deliberados:
+
+      - a folga passou de 0,7 para 0,75, porque existiam DUAS constantes de
+        folga divergentes e o produto sugeria com uma e operava com a outra;
+      - o critério passou a ser bits por pixel (`BPP_PISO × w × h × fps`) e não
+        mais o rótulo de bitrate do degrau, porque três degraus da tabela têm
+        nominal abaixo do piso e a escada ficava não-monótona.
+    */
     expect(suggestPreset(100_000_000, 1)).toBe('p1080p60');
-    // 20 × 0,7 / 2 = 7 Mbps por espectador → cabe 720p60 (5,5), não 900p (8).
+    // 20 × 0,75 / 2 = 7,5 Mbps → 720p60 exige 5,53 e 900p60 exige 8,64.
     expect(suggestPreset(20_000_000, 2)).toBe('p720p60');
-    // 15 × 0,7 / 3 = 3,5 Mbps → 480p60 (2,5), porque 600p pede 3,6.
-    expect(suggestPreset(15_000_000, 3)).toBe('p480p60');
-    // 2 × 0,7 = 1,4 Mbps: o piso da escada, e ele ainda entrega 60fps.
+    // 15 × 0,75 / 3 = 3,75 Mbps → 576p60 exige 3,54 e 720p60 exige 5,53.
+    expect(suggestPreset(15_000_000, 3)).toBe('p600p60');
+    // 2 × 0,75 = 1,5 Mbps: o piso da escada, e ele ainda entrega 60fps.
     expect(suggestPreset(2_000_000, 1)).toBe('p360p60');
   });
 
@@ -161,7 +181,7 @@ describe('orçamento P2P', () => {
    * informação em gameplay.
    */
   it('nenhum degrau abre mão dos 60fps, nem no piso', () => {
-    // 4 Mbps × 0,7 = 2,8 Mbps → 480p60 a 2,5 Mbps.
+    // 4 Mbps × 0,75 = 3,0 Mbps → 480p60, que exige 2,46 (576p60 exige 3,54).
     expect(suggestPreset(4_000_000, 1)).toBe('p480p60');
     for (const id of PRESET_ORDER) expect(PRESETS[id].main.maxFramerate).toBe(60);
   });

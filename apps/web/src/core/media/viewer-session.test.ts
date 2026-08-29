@@ -267,8 +267,10 @@ describe('ViewerSession', () => {
       availableBps: null,
       bpp: 0.1,
       encoderImplementation: null,
+      qp: null,
       piorAvailableBps: null,
       paresMedidos: 1,
+      availablePorPeer: {},
     };
 
     ctx.scheduler.advance(1_000);

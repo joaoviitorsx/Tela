@@ -23,6 +23,10 @@ export type ReadableStats = {
    * Era a única pergunta de desempenho que só se respondia em `chrome://gpu`.
    */
   readonly encoder: string;
+  /** QP médio formatado, ou `—`. Acima de 37 o Chromium derruba resolução. */
+  readonly qp: string;
+  /** `true` quando o QP passou do limiar em que o quality scaler age. */
+  readonly qpAlto: boolean;
 };
 
 /**
@@ -42,6 +46,12 @@ export type ReadableStats = {
  * Software é o conjunto conhecido e pequeno; hardware é tudo que tem nome de
  * driver. O que não se reconhece vira `desconhecido`, não uma acusação.
  */
+/**
+ * O limiar em que o `QualityScaler` do libwebrtc começa a derrubar resolução,
+ * para H.264 na escala 0–51. Publicado em `h264_encoder_impl.cc`.
+ */
+const QP_LIMIAR = 37;
+
 const EM_SOFTWARE = /libvpx|libaom|openh264|ffmpeg|dav1d|libx264/i;
 
 const MOTIVOS: Record<MediaStats['limitation'], string | null> = {
@@ -66,6 +76,8 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         bpp: '—',
         bppBaixo: false,
         encoder: '—',
+        qp: '—',
+        qpAlto: false,
       };
     }
     const impl = stats.encoderImplementation;
@@ -79,6 +91,9 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
       // Só acusa com leitura de verdade: `0` é ausência de medida, não fome.
       bppBaixo: stats.bpp > 0 && stats.bpp < BPP_PISO,
       encoder: impl === null ? '—' : EM_SOFTWARE.test(impl) ? 'software' : 'hardware',
+      qp: stats.qp === null ? '—' : stats.qp.toFixed(0),
+      // `kHighH264QpThreshold = 37` no libwebrtc: é onde o quality scaler age.
+      qpAlto: stats.qp !== null && stats.qp >= QP_LIMIAR,
     };
   }, [stats]);
 }

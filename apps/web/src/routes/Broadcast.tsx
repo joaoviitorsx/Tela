@@ -322,9 +322,18 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         1080p60 (ADR 0015).
       */
       rotulo: 'densidade',
-      valor: stats.bpp,
-      nota: 'bits por pixel por espectador — abaixo de 0,10 a imagem borra',
-      alerta: stats.bppBaixo,
+      valor: stats.qp === '—' ? stats.bpp : `${stats.bpp} · QP ${stats.qp}`,
+      /*
+        O bpp sempre foi um PROXY para "o QP fica abaixo de 37" — é em 37 que o
+        quality scaler do Chromium começa a derrubar resolução sozinho
+        (`kHighH264QpThreshold`, escala 0–51). O QP é a variável de verdade, e
+        ele vem no mesmo `getStats()` que já coletamos por segundo.
+      */
+      nota:
+        stats.qp === '—'
+          ? 'bits por pixel por espectador — abaixo de 0,10 a imagem borra'
+          : 'bits por pixel e QP do encoder — acima de 37 o navegador corta resolução',
+      alerta: stats.bppBaixo || stats.qpAlto,
     },
     {
       rotulo: 'chega nos amigos',

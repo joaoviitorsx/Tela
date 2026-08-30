@@ -36,6 +36,14 @@ Todo encoder de hardware dos últimos doze anos faz High. É a mesma aceleraçã
 com um codificador de entropia melhor. A R5 continua valendo: o codec é H.264,
 e nada aqui liga VP9 ou AV1.
 
+> **Medido (ADR 0019).** Num Chrome for Testing 151 real, `getCapabilities`
+> ofereceu seis variantes de H.264 — `42…` (Constrained Baseline) e `4d…`
+> (Main). **Nenhuma `64…`: High profile não é oferecido.** A ordenação
+> funcionou e negociou `4d001f pm=1`, ou seja Main em vez de Baseline, o que
+> ainda é um ganho — mas os 10 a 15% de CABAC prometidos acima **não foram
+> medidos e podem não existir** neste caminho. Onde há encoder de hardware o
+> High costuma aparecer; aqui não havia.
+
 ## Decisão 2 — Elevar o nível anunciado para 4.2
 
 O Chromium anuncia `profile-level-id=…1f` em **todas** as variantes que
@@ -94,10 +102,20 @@ pede keyframe, e keyframe de quadro de gameplay custa muitos bits de uma vez. O
 resultado é um ciclo de pulsos de nitidez e mancha, com cadência irregular que
 se lê como travamento mesmo a 58ms de RTT.
 
-80ms é o menor buffer que absorve o jitter típico de Wi-Fi doméstico. O
-orçamento total continua bem abaixo de 200ms glass-to-glass — o Discord opera
-entre 150 e 300ms — e o que se compra são quadros com cadência constante, que é
-metade da sensação de qualidade.
+80ms é o menor buffer que absorve o jitter típico de Wi-Fi doméstico, e o que
+se compra são quadros com cadência constante — metade da sensação de qualidade.
+
+> **Correção (ADR 0019).** Esta seção dizia "o Discord opera entre 150 e
+> 300ms". **Não existe fonte publicada para isso**: Discord, Meet e Zoom não
+> divulgam jitter buffer nem latência absoluta. Era um número inventado.
+>
+> O que o Discord publicou é o MECANISMO, e ele sustenta a decisão melhor do
+> que o número inventado: em *From Blocky to Brilliant* eles medem que um
+> keyframe custa **6 a 10 vezes** um quadro delta, e que a imagem quadriculada
+> vinha de keyframe demais. É o ciclo que este buffer corta.
+>
+> E `jitterBufferTarget` é um PISO, não um alvo: o buffer real é
+> `max(80ms, o que o estimador calcular)`. Só custa latência com a rede calma.
 
 O áudio continua fora: ele nunca teve o buffer mexido, e continua não tendo.
 
@@ -116,9 +134,17 @@ negativa do conjunto, e é deliberada.
 Tudo isto precisa de humano com máquina e rede reais:
 
 1. `chrome://webrtc-internals` → o codec negociado é `H264` com
-   `profile-level-id` começando em `640c` ou `4d00`, e terminando em `2a`;
-2. o campo `encoderImplementation` — agora visível no próprio console da
-   transmissão como "encode em hardware/software" — diz `ExternalEncoder`;
+   `profile-level-id` terminando em `2a`. **Metade disto já foi medida**
+   (ADR 0019): num Chrome real a descrição aplicada trouxe `4d002a`, ou seja o
+   nível elevado chegou e Main foi escolhido. Falta só confirmar num navegador
+   que ofereça High (`640c…`), que o Chromium de teste não oferece;
+2. ~~o campo `encoderImplementation` diz `ExternalEncoder`~~ — **este item
+   caiu.** Medido na ADR 0019: o campo só existe no `getStats()` enquanto há
+   captura de câmera ou microfone VIVA. Numa página que só captura tela, a
+   chave nem aparece no relatório, e o mesmo vale para `decoderImplementation`
+   no espectador. O indicador "hardware/software" do console lê `null` no
+   caminho real do produto. Como reportar encode em hardware sem depender desse
+   campo continua em aberto;
 3. medir a latência glass-to-glass com câmera a 240fps antes e depois dos 80ms,
    para confirmar que o total continua abaixo de 200ms;
 4. confirmar que o nível elevado não quebra a negociação em nenhum navegador de

@@ -50,6 +50,13 @@ Referências: YouTube recomenda 12 Mbps para 1080p60 em H.264; o OBS usa
 sem B-frames, sem lookahead — custa 10 a 20% a mais que o mesmo alvo em vídeo
 gravado. A referência é piso, não teto.
 
+> **Correção (ADR 0019).** As duas primeiras referências foram verificadas e
+> conferem — os 5,8 Mbps do OBS são literais no código deles, âncora de uma
+> fórmula `pow(cx*cy, 0.85) * sqrt(pow(fps, 1.1))`. A terceira, o custo de
+> 10 a 20% do tempo real, **não tem medição publicada que eu tenha achado**.
+> Continua sendo premissa. O que tem fonte e sustenta a mesma margem é o Zoom,
+> também tempo real e também 1 passe, publicando 12,8 Mbps para 1080p60.
+
 ## Consequências
 
 **1080p60 passou a custar 12 Mbps de subida por espectador, não 8.** Quem

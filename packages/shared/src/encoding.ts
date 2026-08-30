@@ -28,9 +28,17 @@ export type SimulcastLayer = {
  * quadriculado. Acontecia com UM espectador num link de fibra, sem teto de
  * upload nenhum: não era a rede, era a tabela.
  *
- * Referências: YouTube recomenda 12 Mbps para 1080p60 em H.264; o OBS usa
- * 5,8 Mbps como MÍNIMO para 1080p60; e realtime (1 passe, CBR, sem B-frames,
- * sem lookahead) custa 10–20% a mais que o mesmo alvo em VOD.
+ * Referências verificadas (ADR 0019): o YouTube Live recomenda exatamente
+ * 12 Mbps para 1080p60 em H.264, e os 5,8 Mbps do OBS são literais no código
+ * deles — `EstimateMinBitrate` ancora `1920x1080@60 == 5800` numa fórmula
+ * `pow(cx*cy, 0.85) * sqrt(pow(fps, 1.1))`.
+ *
+ * O terceiro item desta lista dizia que realtime — 1 passe, CBR, sem B-frames,
+ * sem lookahead — custa 10 a 20% a mais que o mesmo alvo em VOD. **Não achei
+ * medição publicada disso.** É plausível e consistente com a literatura de
+ * rate-distortion, mas continua sendo premissa, não fato. O que sustenta a
+ * margem sobre o YouTube é outra coisa, e essa tem fonte: o Zoom, que também é
+ * tempo real e também é 1 passe, publica 12,8 Mbps para 1080p60.
  *
  * Todos os degraus agora são 60fps, e cada um tira PIXEL de verdade. Some o
  * `p720p30`, que tinha a mesma resolução do degrau acima e só cortava

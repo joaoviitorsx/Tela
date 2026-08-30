@@ -152,10 +152,24 @@ export class PeerLink {
    * mostra: pulsos de nitidez e mancha, e uma cadência de quadros irregular
    * que se lê como travamento mesmo com 58ms de RTT.
    *
-   * 80ms é o menor buffer que absorve o jitter típico de Wi-Fi doméstico. O
-   * orçamento total continua bem abaixo de 200ms glass-to-glass — o Discord
-   * opera entre 150 e 300ms —, e o que se compra com esses 80ms é cadência
-   * constante, que é metade da sensação de qualidade.
+   * 80ms é o menor buffer que absorve o jitter típico de Wi-Fi doméstico, e o
+   * que se compra com eles é cadência constante — metade da sensação de
+   * qualidade.
+   *
+   * A versão anterior deste comentário dizia "o Discord opera entre 150 e
+   * 300ms". **Não existe fonte publicada para isso** — Discord, Meet e Zoom
+   * não divulgam tamanho de jitter buffer nem latência absoluta. Era um número
+   * que eu inventei para justificar outro.
+   *
+   * O que o Discord publicou, e que sustenta a decisão por outro caminho, é o
+   * MECANISMO: em "From Blocky to Brilliant" eles medem que um keyframe custa
+   * de 6 a 10 vezes um quadro delta, e que a imagem quadriculada vinha de
+   * keyframe demais. É exatamente o ciclo que este buffer corta — pacote
+   * atrasado descartado, quadro incompleto, PLI, keyframe.
+   *
+   * E `jitterBufferTarget` é um PISO, não um alvo fixo: o buffer real é
+   * `max(80ms, o que o estimador de jitter calcular)`. Ele só custa latência
+   * quando a rede está calma, que é quando ela sobra.
    *
    * Só existe em Chromium; nos outros a atribuição é inócua.
    */

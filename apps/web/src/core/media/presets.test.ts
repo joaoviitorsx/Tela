@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BPP_PISO, P2P_LIMITS, SIXTY_FPS_PRESETS, p2pViewerBudget, suggestPreset } from '@tela/shared';
+import { BPP_PISO, bitrateDeReferencia, tetoDeBitrate, P2P_LIMITS, SIXTY_FPS_PRESETS, p2pViewerBudget, suggestPreset } from '@tela/shared';
 import {
   PRESETS,
   PRESET_IDS,
@@ -138,8 +138,17 @@ describe('orçamento P2P', () => {
     expect(p2pViewerBudget(5_000_000, PRESETS.p1080p60)).toBe(0);
   });
 
-  it('o mesmo upload de 5 Mbps aguenta um em 480p60', () => {
-    expect(p2pViewerBudget(5_000_000, PRESETS.p480p60)).toBe(1);
+  it('o mesmo upload de 5 Mbps aguenta um em 360p60', () => {
+    /*
+      O custo por espectador virou o TETO DA CURVA e não mais o nominal do
+      degrau — é ele que a topologia de fato gasta. Em 480p60 são 4,08 Mbps, e
+      5 × 0,75 = 3,75 não paga um. Em 360p60 são 2,50 e paga.
+
+      A conta antiga contava 2,5 Mbps por espectador em 480p60 e prometia um
+      que não cabia.
+    */
+    expect(p2pViewerBudget(5_000_000, PRESETS.p480p60)).toBe(0);
+    expect(p2pViewerBudget(5_000_000, PRESETS.p360p60)).toBe(1);
   });
 
   it('medição falha (NaN, Infinity, zero, negativo) não vira teto sem sentido', () => {
@@ -174,11 +183,12 @@ describe('orçamento P2P', () => {
         nominal abaixo do piso e a escada ficava não-monótona.
     */
     expect(suggestPreset(100_000_000, 1)).toBe('p1080p60');
-    // 20 × 0,75 / 2 = 7,5 Mbps → 720p60 exige 5,53 e 900p60 exige 8,64.
+    // 20 × 0,75 / 2 = 7,5 Mbps → 720p60 exige 6,24 e 900p60 exige 9,13.
     expect(suggestPreset(20_000_000, 2)).toBe('p720p60');
-    // 15 × 0,75 / 3 = 3,75 Mbps → 576p60 exige 3,54 e 720p60 exige 5,53.
-    expect(suggestPreset(15_000_000, 3)).toBe('p600p60');
-    // 2 × 0,75 = 1,5 Mbps: o piso da escada, e ele ainda entrega 60fps.
+    // 15 × 0,75 / 3 = 3,75 Mbps → 480p60 exige 3,14 e 576p60 exige 4,27.
+    expect(suggestPreset(15_000_000, 3)).toBe('p480p60');
+    // 2 × 0,75 = 1,5 Mbps: abaixo dos 1,92 que o piso pede, mas não há degrau
+    // menor — a escada devolve o último e a UI mostra a verdade no bpp.
     expect(suggestPreset(2_000_000, 1)).toBe('p360p60');
   });
 
@@ -188,8 +198,9 @@ describe('orçamento P2P', () => {
    * informação em gameplay.
    */
   it('nenhum degrau abre mão dos 60fps, nem no piso', () => {
-    // 4 Mbps × 0,75 = 3,0 Mbps → 480p60, que exige 2,46 (576p60 exige 3,54).
-    expect(suggestPreset(4_000_000, 1)).toBe('p480p60');
+    // 4 Mbps × 0,75 = 3,0 Mbps → 360p60, porque 480p60 passou a exigir 3,14
+    // com a curva do mercado. Rótulo menor, imagem mais densa: 0,217 bpp.
+    expect(suggestPreset(4_000_000, 1)).toBe('p360p60');
     for (const id of PRESET_ORDER) expect(PRESETS[id].main.maxFramerate).toBe(60);
   });
 });
@@ -209,35 +220,57 @@ describe('menorPreset e presetParaOrcamento', () => {
     expect(3_000_000 / (width * height * 60)).toBeGreaterThanOrEqual(BPP_PISO);
   });
 
-  it('todo orçamento da escada rende ao menos o bpp NOMINAL do degrau', () => {
+  it('todo orçamento escolhido rende ao menos o PISO de bits por pixel', () => {
     /*
-      O degrau escolhido é sempre o maior que cabe, então o orçamento nunca é
-      menor que o nominal dele — e o nominal é o que a ADR 0010 calibrou.
+      Esta asserção era contra o bpp NOMINAL do degrau, e deixou de fazer
+      sentido quando a escada passou a seguir `área^0,85` (ADR 0019): o nominal
+      dos degraus de baixo subiu para até 0,137, acima do piso, então exigir
+      que o orçamento sempre o alcance seria exigir mais do que o critério de
+      seleção pede.
 
-      A comparação não é contra `BPP_PISO` cru porque a própria tabela tem dois
-      degraus logo abaixo de 0,10 por arredondamento de resolução: `p900p60`
-      fica em 0,0926 e `p1080p60` em 0,0965. Exigir 0,10 aqui reprovaria a
-      tabela que a ADR 0010 aceitou, não o código.
+      A garantia que importa é a outra, e é ela que impede o quadriculado: o
+      degrau escolhido nunca fica abaixo de `BPP_PISO`.
     */
-    for (const mbps of [1.5, 2, 3, 4, 6, 8, 12, 20]) {
+    for (let mbps = 1.5; mbps <= 30; mbps += 0.05) {
       const bps = mbps * 1_000_000;
       const preset = PRESETS[presetParaOrcamento(bps, 'fluidez')];
-      const { width, height } = preset;
-      const nominal = preset.main.maxBitrate / (width * height * 60);
-      expect(bps / (width * height * 60)).toBeGreaterThanOrEqual(nominal);
+      expect(bps / (preset.width * preset.height * 60)).toBeGreaterThanOrEqual(BPP_PISO);
     }
   });
 
-  it('nenhum degrau da escada fica longe do piso de 0,10 bpp', () => {
+  it('a escada segue a curva do mercado: bpp SOBE quando a resolução cai', () => {
+    /*
+      A tabela usava bits por pixel constante — `área^1,0`, expoente implícito
+      0,910. Quatro fontes independentes usam `área^0,85`: a fórmula literal do
+      OBS, o YouTube Live, o `kSimulcastFormatsVP8` do libwebrtc e o Jitsi H264.
+
+      A razão é física: quadro menor tem menos redundância espacial para o
+      encoder explorar, então cada pixel custa mais bits. Manter bpp constante
+      subalimentava justamente os degraus de baixo, usados quando a rede está
+      ruim — 360p60 dava 1,4 Mbps onde a curva dá 1,9.
+
+      A assinatura da curva é esta: o bpp nominal CRESCE conforme a resolução
+      cai. Se algum dia ele voltar a ser constante, esta expectativa quebra.
+    */
+    const bpps = PRESET_IDS.map((id) => {
+      const p = PRESETS[id];
+      return p.main.maxBitrate / (p.width * p.height * 60);
+    });
+    for (let i = 1; i < bpps.length; i += 1) {
+      expect(bpps[i]!).toBeGreaterThan(bpps[i - 1]!);
+    }
+    /*
+      E cada degrau fica DENTRO da própria faixa: entre o piso e o teto que a
+      curva define para aquela resolução. `BPP_PISO` e `BPP_TETO` são os valores
+      da ÂNCORA (1920×1080@60); comparar os degraus de baixo contra eles seria
+      exatamente a incoerência que a curva veio corrigir.
+    */
     for (const id of PRESET_IDS) {
-      const preset = PRESETS[id];
-      const { width, height } = preset;
-      const bpp = preset.main.maxBitrate / (width * height * 60);
-      // 0,09 é a folga de arredondamento da tabela da ADR 0010, não licença
-      // para acrescentar um degrau faminto: 0,064 era o valor que produzia o
-      // quadriculado, e continua reprovando aqui.
-      expect(bpp).toBeGreaterThanOrEqual(0.09);
-      expect(bpp).toBeLessThanOrEqual(BPP_PISO * 1.2);
+      const p = PRESETS[id];
+      expect(p.main.maxBitrate).toBeGreaterThanOrEqual(
+        bitrateDeReferencia(p.width, p.height, 60) * 0.99,
+      );
+      expect(p.main.maxBitrate).toBeLessThanOrEqual(tetoDeBitrate(p.width, p.height, 60));
     }
   });
 

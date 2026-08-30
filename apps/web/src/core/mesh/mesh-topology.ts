@@ -1,11 +1,11 @@
 import {
-  BPP_TETO,
   DEGRADATION_BY_PRIORITY,
   type EncodingPreset,
   FRAMERATE_POR_PRIORIDADE,
   type IceServerConfig,
   type Prioridade,
   bitsPorPixel,
+  tetoDeBitrate,
 } from '@tela/shared';
 import { Emitter } from '../emitter.js';
 import { PeerLink } from './peer-link.js';
@@ -723,7 +723,7 @@ export class MeshTopology {
      * não o teto.
      */
     const { width, height } = preset;
-    return Math.round(BPP_TETO * width * height * this.framerate(preset));
+    return Math.round(tetoDeBitrate(width, height, this.framerate(preset)));
   }
 
   /**

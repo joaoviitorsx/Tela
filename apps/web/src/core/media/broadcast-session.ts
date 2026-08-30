@@ -11,11 +11,11 @@ import type { Scheduler } from '../ports/scheduler.js';
 import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
 import {
-  BPP_TETO,
   CONTENT_HINT_POR_PRIORIDADE,
   FRAMERATE_POR_PRIORIDADE,
   P2P_LIMITS,
   type Prioridade,
+  tetoDeBitrate,
 } from '@tela/shared';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
@@ -584,9 +584,11 @@ export class BroadcastSession {
      * transitória em perda permanente de orçamento.
      */
     const preset = presetById(this.presetId);
-    const { width, height } = preset;
-    const tetoDePixel =
-      BPP_TETO * width * height * Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]);
+    const tetoDePixel = tetoDeBitrate(
+      preset.width,
+      preset.height,
+      Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]),
+    );
     const orcamento = this.governor.orcamento;
 
     const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;

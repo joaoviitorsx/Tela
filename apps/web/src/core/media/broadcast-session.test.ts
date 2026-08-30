@@ -68,7 +68,7 @@ describe('BroadcastSession — caminho feliz', () => {
     expect(ctx.transport.videos).toHaveLength(1);
     // 5,5 Mbps e não 4: a escada foi recalibrada por bits por pixel, e 720p60
     // a 4 Mbps entregava 0,072 bpp — abaixo do que movimento alto exige.
-    expect(ctx.transport.videos[0]?.preset.main.maxBitrate).toBe(5_500_000);
+    expect(ctx.transport.videos[0]?.preset.main.maxBitrate).toBe(6_000_000);
   });
 
   it('pede captura na resolução e no framerate do preset', async () => {
@@ -633,7 +633,9 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     // O degrau volta para o que o orçamento paga — e não para o fundo do poço.
     const state = ctx.session.getState();
     const id = state.status === 'live' ? state.presetId : 'p360p60';
-    expect(PRESET_IDS.indexOf(id)).toBeLessThanOrEqual(PRESET_IDS.indexOf('p720p60'));
+    // 8 × 0,75 = 6,0 Mbps. Na curva do mercado 720p60 exige 6,24 e 576p60
+    // exige 4,27 — o degrau honesto para esse orçamento é o 576p60.
+    expect(PRESET_IDS.indexOf(id)).toBeLessThanOrEqual(PRESET_IDS.indexOf('p600p60'));
   });
 
   it('o orçamento não some quando o usuário troca a qualidade na mão', async () => {
@@ -669,7 +671,9 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     // leituras de `bandwidth` teriam levado o degrau até 360p60.
     const state = ctx.session.getState();
     const id = state.status === 'live' ? state.presetId : 'p360p60';
-    expect(PRESET_IDS.indexOf(id)).toBeLessThanOrEqual(PRESET_IDS.indexOf('p720p60'));
+    // 8 × 0,75 = 6,0 Mbps. Na curva do mercado 720p60 exige 6,24 e 576p60
+    // exige 4,27 — o degrau honesto para esse orçamento é o 576p60.
+    expect(PRESET_IDS.indexOf(id)).toBeLessThanOrEqual(PRESET_IDS.indexOf('p600p60'));
   });
 
   it('sem estimativa de banda, a escada continua sendo a única defesa', async () => {

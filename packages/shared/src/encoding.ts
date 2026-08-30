@@ -71,9 +71,31 @@ export type EncodingPreset = {
 };
 
 /**
- * Cada degrau abaixo mantém ~0,10 bit por pixel — o piso para conteúdo de
- * movimento alto sem virar bloco. É o número que a tabela antiga não tinha:
- * ela variava de 0,045 a 0,072 conforme o degrau, sem critério.
+ * A escada segue a curva do mercado: `bitrate ∝ área^0,85 × fps^0,55`,
+ * ancorada em 1920×1080@60 = 12 Mbps.
+ *
+ * O expoente não é escolha nossa. Ele é literal no código do OBS —
+ * `areaVal = pow(cx*cy, 0.85l) * sqrt(pow(fps, 1.1l))`, com
+ * `EstimateMinBitrate` ancorando `1920x1080@60 == 5800` — e três fontes que
+ * não conhecem o OBS chegam ao mesmo 0,855 sozinhas:
+ *
+ *     OBS (fórmula literal)          0,850
+ *     YouTube Live H.264 60fps       0,855   (12,0 / 6,0 Mbps)
+ *     libwebrtc kSimulcastFormatsVP8 0,855   (5000 / 2500 kbps)
+ *     Jitsi H264                     0,855   (4000 / 2000 kbps)
+ *
+ * A tabela anterior usava bits por pixel CONSTANTE, ou seja `área^1,0`, e o
+ * expoente implícito dela era 0,910 — mais íngreme que a de todo mundo. O
+ * aperto caía nos degraus de BAIXO, que são os usados exatamente quando a rede
+ * está ruim: 360p60 dava 1,4 Mbps onde a curva do mercado dá 1,9 (36% a mais),
+ * e 480p60 dava 2,5 onde dá 3,0 (20% a mais).
+ *
+ * A razão física é conhecida: quadro menor tem menos redundância espacial para
+ * o encoder explorar, então cada pixel custa mais bits. Manter bpp constante
+ * ignora isso e subalimenta justamente quem já está apertado.
+ *
+ * A âncora de 12 Mbps continua a mesma e continua verificada: é exatamente a
+ * recomendação H.264 do YouTube Live para 1080p60.
  */
 export const PRESET_1080P60: EncodingPreset = {
   id: 'p1080p60',
@@ -87,46 +109,46 @@ export const PRESET_1080P60: EncodingPreset = {
 export const PRESET_900P60: EncodingPreset = {
   id: 'p900p60',
   label: '900p60',
-  hint: 'Fibra comum. ~8 Mbps por espectador.',
+  hint: 'Fibra comum. ~8,8 Mbps por espectador.',
   width: 1600,
   height: 900,
-  main: { maxBitrate: 8_000_000, maxFramerate: 60, priority: 'high' },
+  main: { maxBitrate: 8_800_000, maxFramerate: 60, priority: 'high' },
 };
 
 export const PRESET_720P60: EncodingPreset = {
   id: 'p720p60',
   label: '720p60',
-  hint: 'Conexão comum. ~5,5 Mbps por espectador.',
+  hint: 'Conexão comum. ~6 Mbps por espectador.',
   width: 1280,
   height: 720,
-  main: { maxBitrate: 5_500_000, maxFramerate: 60, priority: 'high' },
+  main: { maxBitrate: 6_000_000, maxFramerate: 60, priority: 'high' },
 };
 
 export const PRESET_600P60: EncodingPreset = {
   id: 'p600p60',
   label: '576p60',
-  hint: 'Upload modesto ou vários assistindo. ~3,6 Mbps.',
+  hint: 'Upload modesto ou vários assistindo. ~4,1 Mbps.',
   width: 1024,
   height: 576,
-  main: { maxBitrate: 3_600_000, maxFramerate: 60, priority: 'high' },
+  main: { maxBitrate: 4_100_000, maxFramerate: 60, priority: 'high' },
 };
 
 export const PRESET_480P60: EncodingPreset = {
   id: 'p480p60',
   label: '480p60',
-  hint: 'Upload apertado. ~2,5 Mbps por espectador.',
+  hint: 'Upload apertado. ~3 Mbps por espectador.',
   width: 854,
   height: 480,
-  main: { maxBitrate: 2_500_000, maxFramerate: 60, priority: 'high' },
+  main: { maxBitrate: 3_000_000, maxFramerate: 60, priority: 'high' },
 };
 
 export const PRESET_360P60: EncodingPreset = {
   id: 'p360p60',
   label: '360p60',
-  hint: 'Último degrau. ~1,4 Mbps — abaixo disso a alternativa não é pior qualidade, é não transmitir.',
+  hint: 'Último degrau. ~1,9 Mbps — abaixo disso a alternativa não é pior qualidade, é não transmitir.',
   width: 640,
   height: 360,
-  main: { maxBitrate: 1_400_000, maxFramerate: 60, priority: 'high' },
+  main: { maxBitrate: 1_900_000, maxFramerate: 60, priority: 'high' },
 };
 
 export const PRESETS = {
@@ -198,6 +220,51 @@ export const DEGRADATION_BY_PRIORITY: Record<
   fluidez: 'maintain-framerate',
   nitidez: 'maintain-resolution',
 };
+
+/**
+ * A curva de referência do mercado, e a ÚNICA fonte de verdade da escada.
+ *
+ * `bitrate ∝ área^0,85 × fps^0,55`, ancorada em 1920×1080@60 = 12 Mbps — a
+ * recomendação H.264 do YouTube Live, verificada. O expoente é literal no OBS
+ * (`pow(cx*cy, 0.85l) * sqrt(pow(fps, 1.1l))`) e três fontes que não o conhecem
+ * chegam ao mesmo 0,855 sozinhas: YouTube Live, `kSimulcastFormatsVP8` do
+ * libwebrtc e o Jitsi H264.
+ *
+ * `BPP_PISO` e `BPP_TETO` deixam de ser constantes planas e passam a ser os
+ * valores DA ÂNCORA — a curva os carrega para as outras resoluções. Sem isso
+ * havia incoerência: a escada seguia `área^0,85` e o teto seguia `área^1,0`, e
+ * o nominal de 360p60 (0,137 bpp) já nascia acima do teto de 0,13.
+ *
+ * A razão física é a mesma dos dois lados: quadro menor tem menos redundância
+ * espacial para o encoder explorar, então cada pixel custa mais bits — na hora
+ * de decidir o degrau e na hora de decidir quanto gastar nele.
+ */
+const ANCORA = { width: 1920, height: 1080, fps: 60, bps: 12_000_000 } as const;
+
+export function bitrateDeReferencia(width: number, height: number, fps: number): number {
+  if (width <= 0 || height <= 0 || fps <= 0) return 0;
+  const area = (width * height) / (ANCORA.width * ANCORA.height);
+  return ANCORA.bps * Math.pow(area, 0.85) * Math.pow(fps / ANCORA.fps, 0.55);
+}
+
+/** Bits por pixel da âncora: 12 Mbps em 1920×1080@60. */
+const BPP_ANCORA = ANCORA.bps / (ANCORA.width * ANCORA.height * ANCORA.fps);
+
+/**
+ * O mínimo que um degrau precisa receber para não quebrar, nesta resolução.
+ * `BPP_PISO` na âncora, e a curva a partir dali.
+ */
+export function pisoDeBitrate(width: number, height: number, fps: number): number {
+  return bitrateDeReferencia(width, height, fps) * (BPP_PISO / BPP_ANCORA);
+}
+
+/**
+ * Onde o bit deixa de virar imagem, nesta resolução.
+ * `BPP_TETO` na âncora, e a curva a partir dali.
+ */
+export function tetoDeBitrate(width: number, height: number, fps: number): number {
+  return bitrateDeReferencia(width, height, fps) * (BPP_TETO / BPP_ANCORA);
+}
 
 /** Sem isso o Chrome trata a captura como 'detail' e gameplay vira slideshow. */
 export const CONTENT_HINT = 'motion' as const;
@@ -278,10 +345,9 @@ export function p2pViewerBudget(
     bem acima do rótulo. Usar o nominal subestimava o custo e prometia mais
     espectadores do que cabem.
   */
-  const { width, height } = preset;
   const perViewer = Math.max(
     preset.main.maxBitrate,
-    BPP_TETO * width * height * preset.main.maxFramerate,
+    tetoDeBitrate(preset.width, preset.height, preset.main.maxFramerate),
   );
   const byBandwidth = Math.floor(usable / perViewer);
   return Math.max(0, Math.min(byBandwidth, P2P_LIMITS.maxViewersBrowser));
@@ -442,10 +508,9 @@ export function presetForBitrate(
     `(30/60)^0.55 = 0,68` do que custaria a 60 — não metade, como a versão
     anterior assumia. Ver `custoDeFramerate`.
   */
-  const exigido = BPP_PISO * 60 * custoDeFramerate(alvo);
   for (const id of PRESET_ORDER) {
     const { width, height } = PRESETS[id];
-    if (perViewerBitsPerSecond >= exigido * width * height) return id;
+    if (perViewerBitsPerSecond >= pisoDeBitrate(width, height, alvo)) return id;
   }
   return PISO_DA_ESCADA;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BPP_PISO, BPP_TETO, PRESET_480P60, PRESET_720P60, PRESET_1080P60 } from '@tela/shared';
+import { BPP_PISO, BPP_TETO, tetoDeBitrate, PRESET_480P60, PRESET_720P60, PRESET_1080P60 } from '@tela/shared';
 import { MeshTopology } from './mesh-topology.js';
 import { type FakePeerConnection, fakeConnectionFactory, statsReport } from './testing.js';
 import { fakeStream, fakeTrack } from '../testing/fakes.js';
@@ -163,7 +163,7 @@ describe('MeshTopology — R5: encoding IDÊNTICO em todos os peers', () => {
         O que a R5 exige continua exigido, e é o `for` em volta deste
         `expect`: TODOS os peers com o MESMO valor.
       */
-      expect(params?.encodings?.[0]?.maxBitrate).toBe(BPP_TETO * 1920 * 1080 * 60);
+      expect(params?.encodings?.[0]?.maxBitrate).toBe(Math.round(tetoDeBitrate(1920, 1080, 60)));
       expect(params?.encodings?.[0]?.maxFramerate).toBe(60);
       expect(params?.degradationPreference).toBe('maintain-framerate');
     }
@@ -183,7 +183,7 @@ describe('MeshTopology — R5: encoding IDÊNTICO em todos os peers', () => {
     // O que a R5 exige é o `for`: todos com o MESMO valor, sempre.
     for (const pc of ctx.factory.created) {
       expect(pc.getSenders()[0]?.applied.at(-1)?.encodings?.[0]?.maxBitrate).toBe(
-        BPP_TETO * 1280 * 720 * 60,
+        Math.round(tetoDeBitrate(1280, 720, 60)),
       );
     }
   });
@@ -381,7 +381,7 @@ describe('MeshTopology — bits por pixel honestos (ADR 0015 e 0017)', () => {
 
     const aplicado = encodingDe(ctx.factory.created[0]!)?.maxBitrate ?? 0;
     const { width, height } = PRESET_480P60;
-    expect(aplicado).toBeLessThanOrEqual(BPP_TETO * width * height * 60);
+    expect(aplicado).toBeLessThanOrEqual(tetoDeBitrate(width, height, 60));
   });
 
   it('bppAtual nunca cai abaixo do piso enquanto o degrau acompanhar o orçamento', async () => {
@@ -474,7 +474,7 @@ describe('MeshTopology — banda de sobra vira imagem (ADR 0017)', () => {
       Teto não empurra: o alocador entrega `min(BWE, maxBitrate)` ao encoder.
       Quem empurra é o bitrate INICIAL, e esse continua conservador.
     */
-    expect(encodingDe(ctx.factory.created[0]!)?.maxBitrate).toBe(BPP_TETO * 1920 * 1080 * 60);
+    expect(encodingDe(ctx.factory.created[0]!)?.maxBitrate).toBe(Math.round(tetoDeBitrate(1920, 1080, 60)));
     expect(ctx.mesh.bitrateInicial()).toBe(PRESET_1080P60.main.maxBitrate);
   });
 

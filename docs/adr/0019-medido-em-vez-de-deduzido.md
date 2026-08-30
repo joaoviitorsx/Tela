@@ -233,6 +233,62 @@ espectadores dão 1 Mbps por espectador, e o último degrau da escada precisa de
 
 ---
 
+## A escada segue a curva do mercado, e a troca está medida
+
+A tabela usava bits por pixel **constante** — `área^1,0`, expoente implícito
+0,910. Quatro fontes que não se conhecem convergem em `área^0,85`:
+
+| Fonte | 1080p ÷ 720p | Expoente |
+|---|---|---|
+| OBS (`pow(cx*cy, 0.85l)`, literal) | — | 0,850 |
+| YouTube Live H.264 60fps | 2,00 | 0,855 |
+| libwebrtc `kSimulcastFormatsVP8` | 2,00 | 0,855 |
+| Jitsi H264 | 2,00 | 0,855 |
+
+A razão é física: quadro menor tem menos redundância espacial para o encoder
+explorar, então cada pixel custa mais bits. bpp constante subalimentava
+justamente os degraus de BAIXO, usados quando a rede está ruim.
+
+**E o piso e o teto seguem a MESMA curva.** Deixar a escada em `área^0,85` com
+um `BPP_TETO` plano era incoerente — o nominal de 360p60 (0,137 bpp) já nascia
+acima do teto de 0,13. `BPP_PISO` e `BPP_TETO` passam a ser os valores **da
+âncora** (1920×1080@60), e `pisoDeBitrate`/`tetoDeBitrate` os carregam para as
+outras resoluções.
+
+| degrau | nominal | piso (seleção) | teto (gasto) | bpp nom | bpp teto |
+|---|---|---|---|---|---|
+| 1080p60 | 12,0 Mbps | 12,44 | 16,17 | 0,097 | 0,130 |
+| 900p60 | 8,8 | 9,13 | 11,86 | 0,102 | 0,137 |
+| 720p60 | 6,0 | 6,24 | 8,12 | 0,109 | 0,147 |
+| 576p60 | 4,1 | 4,27 | 5,56 | 0,116 | 0,157 |
+| 480p60 | 3,0 | 3,14 | 4,08 | 0,122 | 0,166 |
+| 360p60 | 1,9 | 1,92 | 2,50 | 0,137 | 0,181 |
+
+**A troca, medida nos mesmos 1200 cenários:**
+
+| | escada plana | curva do mercado |
+|---|---|---|
+| estados absorventes | 66 | **1** |
+| qualidade < 80% do link | 201 | **138** |
+| rótulo mente sobre o bpp | 6 | **4** |
+| bpp entregue < 0,10 | 56 | 70 |
+| pedindo mais que o link | 44 | 135 |
+| sobreuso (mediana) | 0,0% | 3,2% |
+
+Os dois ganhos grandes são exatamente os sintomas relatados — "embaçou e não
+voltou" e "pior do que o link paga".
+
+Os 70 quadriculados são **mais honestos** que os 56 anteriores: a curva diz que
+360p60 precisa de 1,9 Mbps, então 1,5 Mbps genuinamente não faz 60fps. Antes o
+produto fingia que 1,38 bastava e entregava a imagem quebrada mesmo assim.
+
+O sobreuso é a parte que dói, e a causa é conhecida: teto mais alto nos degraus
+de baixo → `acked` mais alto → o teto de `1,5 × acked` sobe junto → a
+estimativa infla. A mediana de 3,2% está perto do piso de ruído do simulador, e
+a premissa P3 dele diz explicitamente que a detecção de sobreuso ali é
+otimista — não há bufferbloat modelado, então o dano real ao ping é
+subestimado. **Fica como o item a vigiar na primeira medição em rede real.**
+
 ## O que continua sem verificação
 
 1. **Encode e decode em hardware.** O E2E só teve OpenH264 em software

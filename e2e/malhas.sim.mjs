@@ -97,7 +97,9 @@ const { StatsSampler } = await import(W('core/media/stats-sampler.ts'));
 const { UplinkGovernor, UPLINK_SHARE } = await import(W('core/media/uplink-governor.ts'));
 const presetsMod = await import(W('core/media/presets.ts'));
 const { PRESETS, PRESET_IDS, presetById, presetParaOrcamento } = presetsMod;
-const { BPP_PISO, BPP_TETO } = await import(join(RAIZ, 'packages/shared/src/encoding.ts'));
+const { BPP_PISO, BPP_TETO, tetoDeBitrate } = await import(
+  join(RAIZ, 'packages/shared/src/encoding.ts'),
+);
 const fakes = await import(W('core/testing/fakes.ts'));
 const meshTesting = await import(W('core/mesh/testing.ts'));
 
@@ -122,6 +124,7 @@ for (const [nome, valor] of Object.entries({
   UPLINK_SHARE,
   BPP_PISO,
   BPP_TETO,
+  tetoDeBitrate,
 })) {
   if (valor === undefined) throw new Error(`import real quebrado: ${nome}`);
 }
@@ -503,12 +506,14 @@ const ICE_MS = 2_000;
 
 /** Teto útil de bits por pixel — a mesma conta privada de `MeshTopology`. */
 function tetoUtil(presetId, fps = 60) {
-  const { width, height } = PRESETS[presetId].layers[0];
-  return Math.round(BPP_TETO * width * height * fps);
+  // A curva de referência do mercado (ADR 0019): piso e teto seguem
+  // `área^0,85 × fps^0,55`, não bits por pixel constante.
+  const { width, height } = PRESETS[presetId];
+  return Math.round(tetoDeBitrate(width, height, fps));
 }
 
 function bppDe(bps, presetId, fps = 60) {
-  const { width, height } = PRESETS[presetId].layers[0];
+  const { width, height } = PRESETS[presetId];
   return bps / (width * height * fps);
 }
 

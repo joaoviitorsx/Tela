@@ -14,6 +14,7 @@ import type { RecepcaoStats } from '../ports/media-transport.js';
 function leitura(extra: Partial<RecepcaoStats> = {}): RecepcaoStats {
   return {
     jitterBufferMs: 80,
+    processamentoMs: 95,
     congelamentos: 0,
     tempoCongeladoS: 0,
     quadrosDescartados: 0,

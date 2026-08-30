@@ -130,9 +130,18 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         falta encode e render — mas é muito mais perto da verdade do que o RTT
         sozinho, que era o que a tela mostrava.
       */
+      /*
+        `totalProcessingDelay` ENGLOBA o jitter buffer, a remontagem do quadro e
+        o decode — então ele é a fatia certa, e somá-lo ao jitter contaria o
+        buffer duas vezes. Cai para o jitter sozinho onde o navegador não
+        reporta o processamento.
+      */
       latencia:
         stats.rttMs > 0
-          ? `${Math.round(stats.rttMs / 2 + (stats.recepcao?.jitterBufferMs ?? 0))}ms`
+          ? `${Math.round(
+              stats.rttMs / 2 +
+                (stats.recepcao?.processamentoMs ?? stats.recepcao?.jitterBufferMs ?? 0),
+            )}ms`
           : '—',
       congelado:
         stats.recepcao === null || stats.recepcao.tempoCongeladoS <= 0

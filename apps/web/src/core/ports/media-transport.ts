@@ -31,6 +31,19 @@ export type RecepcaoStats = {
    * problema é perda ou variação de chegada, não a nossa configuração.
    */
   readonly jitterBufferMs: number | null;
+  /**
+   * Tudo entre o primeiro pacote RTP chegar e o quadro ser decodificado, em ms.
+   *
+   * Inclui o jitter buffer, a remontagem do quadro a partir dos pacotes e o
+   * decode. É a fatia que faltava para fechar a conta de latência: com RTT/2 e
+   * este número, sobra só captura, encode e render — e esses o navegador não
+   * expõe ao espectador.
+   *
+   * A comparação que importa: se `processamentoMs` for muito maior que
+   * `jitterBufferMs`, o gargalo é decode ou remontagem, não o buffer que
+   * escolhemos. Se forem próximos, é o buffer.
+   */
+  readonly processamentoMs: number | null;
   /** Quantas vezes a imagem CONGELOU, acumulado na sessão. */
   readonly congelamentos: number;
   /** Tempo total congelado, em segundos. É isto que o usuário chama de travar. */

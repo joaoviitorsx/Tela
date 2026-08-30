@@ -1,6 +1,10 @@
 import { bitsPorPixel } from '@tela/shared';
 import type { RelatorioDePeer } from '../mesh/mesh-topology.js';
-import type { MediaStats, QualityLimitation } from '../ports/media-transport.js';
+import type {
+  MediaStats,
+  QualityLimitation,
+  RecepcaoStats,
+} from '../ports/media-transport.js';
 
 /**
  * Converte `RTCStatsReport` cru em números que a UI pode mostrar.
@@ -67,6 +71,22 @@ export class StatsSampler {
     let encoderImplementation: string | null = null;
     let qpSoma = 0;
     let qpQuadros = 0;
+    let encodeSegundos = 0;
+    let encodeQuadros = 0;
+
+    /**
+     * O lado de quem assiste. Acumuladores porque `inbound-rtp` reporta totais
+     * de sessão, não taxas — e para "quantas vezes travou" o total É a resposta.
+     */
+    let temRecepcao = false;
+    let jbAtraso = 0;
+    let jbEmitidos = 0;
+    let congelamentos = 0;
+    let tempoCongeladoS = 0;
+    let quadrosDescartados = 0;
+    let pacotesPerdidos = 0;
+    let pedidosDeKeyframe = 0;
+    let decoder: string | null = null;
     let found = false;
 
     const availablePorPeer: Record<string, number> = {};
@@ -109,6 +129,32 @@ export class StatsSampler {
           if (somaQp > 0 && quadros > 0) {
             qpSoma += somaQp;
             qpQuadros += quadros;
+          }
+
+          /**
+           * Quanto o encoder gasta por quadro — o substituto de
+           * `encoderImplementation`, que medimos não existir no caminho de
+           * captura de tela. Acima de 16,7 ms em 60fps ele não acompanha, e
+           * isso é quase sempre encode em software.
+           */
+          const encTempo = Number(stat['totalEncodeTime'] ?? 0);
+          if (encTempo > 0 && quadros > 0) {
+            encodeSegundos += encTempo;
+            encodeQuadros += quadros;
+          }
+
+          /* ── só no espectador ── */
+          if (this.direction === 'inbound') {
+            temRecepcao = true;
+            jbAtraso += Number(stat['jitterBufferDelay'] ?? 0);
+            jbEmitidos += Number(stat['jitterBufferEmittedCount'] ?? 0);
+            congelamentos += Number(stat['freezeCount'] ?? 0);
+            tempoCongeladoS += Number(stat['totalFreezesDuration'] ?? 0);
+            quadrosDescartados += Number(stat['framesDropped'] ?? 0);
+            pacotesPerdidos += Number(stat['packetsLost'] ?? 0);
+            pedidosDeKeyframe += Number(stat['pliCount'] ?? 0);
+            const dec = stat['decoderImplementation'];
+            if (typeof dec === 'string' && dec.length > 0) decoder = dec;
           }
 
           const impl =
@@ -201,6 +247,19 @@ export class StatsSampler {
     const fluxos = Math.max(1, fluxosContados);
     const bpp = bitsPorPixel(bitrateBps / fluxos, width, height, fps);
 
+    const recepcao: RecepcaoStats = {
+      // `jitterBufferDelay` vem em segundos ACUMULADOS; dividir pela contagem
+      // de quadros emitidos dá o atraso médio por quadro, que é o número que
+      // se compara com os 80ms que escolhemos como piso.
+      jitterBufferMs: jbEmitidos > 0 ? (jbAtraso / jbEmitidos) * 1000 : null,
+      congelamentos,
+      tempoCongeladoS,
+      quadrosDescartados,
+      pacotesPerdidos,
+      pedidosDeKeyframe,
+      decoder,
+    };
+
     return {
       fps: Math.round(fps),
       bitrateBps,
@@ -215,6 +274,8 @@ export class StatsSampler {
       bpp,
       encoderImplementation,
       qp: qpQuadros > 0 ? qpSoma / qpQuadros : null,
+      msPorQuadro: encodeQuadros > 0 ? (encodeSegundos / encodeQuadros) * 1000 : null,
+      recepcao: temRecepcao ? recepcao : null,
     };
   }
 }

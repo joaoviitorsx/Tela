@@ -287,6 +287,21 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
    *
    * Nada é calculado aqui: os quatro já vinham de `useMediaStats`.
    */
+  const [copiouDiag, setCopiouDiag] = useState(false);
+
+  /** Ver `core/media/diagnostico.ts`. Nada sai da máquina sozinho. */
+  const copiarDiagnostico = useCallback(() => {
+    const relatorio = session.diagnostico(navigator.userAgent);
+    if (relatorio === null) return;
+    void navigator.clipboard
+      .writeText(JSON.stringify(relatorio, null, 2))
+      .then(() => {
+        setCopiouDiag(true);
+        setTimeout(() => setCopiouDiag(false), 2_000);
+      })
+      .catch(() => undefined);
+  }, [session]);
+
   const caminho = [
     {
       // Era rotulado como "resolução que a captura entrega", e não é: o número
@@ -300,11 +315,17 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
     {
       rotulo: 'seu PC codifica',
       valor: stats.fps,
+      /*
+        `encoderImplementation` não existe no caminho de captura de tela —
+        medimos: o campo só aparece enquanto há câmera ou microfone vivos. O
+        substituto é o custo por quadro, que sempre existe: acima de 16,7ms o
+        encoder não faz 60fps, e isso é quase sempre software.
+      */
       nota:
-        stats.encoder === '—'
+        stats.msPorQuadro === '—'
           ? 'quadros por segundo saindo do encoder'
-          : `quadros por segundo · encode em ${stats.encoder}`,
-      alerta: state.presetForced || stats.encoder === 'software',
+          : `${stats.msPorQuadro} por quadro no encoder${stats.encoderLento ? ' — não dá conta de 60fps' : ''}`,
+      alerta: state.presetForced || stats.encoderLento,
     },
     {
       rotulo: 'sobe direto',
@@ -531,6 +552,18 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
 
             <div className="border-t border-line bg-surface px-4 py-4 sm:px-6">
               <SignalChain rotulo="caminho do vídeo agora" nodes={caminho} />
+
+              {/*
+                A série temporal, para mandar em vez de descrever. Nada sai da
+                máquina sozinho — isto copia, a pessoa decide se manda.
+              */}
+              <button
+                type="button"
+                onClick={copiarDiagnostico}
+                className="mt-3 self-start rounded-sm px-2 py-1 text-[12px] text-faint transition-colors duration-150 hover:bg-surface hover:text-muted"
+              >
+                {copiouDiag ? 'diagnóstico copiado' : 'copiar diagnóstico técnico'}
+              </button>
             </div>
           </Panel>
         </div>

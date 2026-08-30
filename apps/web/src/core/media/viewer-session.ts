@@ -1,4 +1,6 @@
 import { Emitter } from '../emitter.js';
+import { type Diagnostico, Diario } from './diagnostico.js';
+import { JitterGovernor } from './jitter-governor.js';
 import type { MediaStats, MediaTransport } from '../ports/media-transport.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
@@ -99,6 +101,24 @@ export class ViewerSession {
   private transportCancels: Cancel[] = [];
   private retryCancel: Cancel | null = null;
 
+  /**
+   * O jitter buffer deixou de ser constante.
+   *
+   * Ele é a maior fatia de latência que o produto escolhe, e um número fixo
+   * cobra o pior caso de toda conexão. Este governador o move a partir do que a
+   * recepção reporta — sobe rápido no congelamento, desce devagar na calmaria.
+   */
+  private readonly jitter = new JitterGovernor();
+
+  /**
+   * A série temporal, para o usuário MANDAR em vez de descrever.
+   *
+   * Um relato de "cerca de um segundo de atraso" é indiagnosticável sem ela:
+   * os ~940ms que faltam para os 58ms de rede podem estar no encoder, no jitter
+   * buffer, na fila do roteador ou no decoder.
+   */
+  private readonly diario = new Diario('espectador');
+
   private epoch = 0;
   /** Última contagem de plateia recebida. Fora do `attempt` porque a
    *  reconexão remonta o estado `watching` e precisa do mesmo número. */
@@ -115,6 +135,11 @@ export class ViewerSession {
 
   getState(): ViewerState {
     return this.state;
+  }
+
+  /** Nada sai da máquina sozinho: a UI copia, a pessoa decide se manda. */
+  diagnostico(navegador: string): Diagnostico | null {
+    return this.diario.vazio ? null : this.diario.relatorio(navegador);
   }
 
   subscribe(listener: () => void): () => void {
@@ -143,6 +168,8 @@ export class ViewerSession {
     this.pollMs = POLL_MIN_MS;
 
     this.cancelRetry();
+    this.jitter.reset();
+    this.diario.limpar();
     await this.dropTransport();
     if (this.stale(epoch)) return;
 
@@ -374,6 +401,12 @@ export class ViewerSession {
     if (stats === null) return;
     if (this.state.status !== 'watching') return;
     this.setState({ ...this.state, stats });
+
+    // Devolve latência quando a conexão prova que aguenta, e a retoma no
+    // primeiro sinal de que não aguentava.
+    const decisao = this.jitter.observe(stats.recepcao);
+    if (decisao !== null) this.transport?.setJitterAlvo(decisao.ms);
+    this.diario.registrar(stats, this.deps.scheduler.now());
   }
 
   private onReconnected(epoch: number): void {

@@ -17,6 +17,7 @@ import {
   type Prioridade,
   tetoDeBitrate,
 } from '@tela/shared';
+import { type Diagnostico, Diario } from './diagnostico.js';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
@@ -270,6 +271,8 @@ export class BroadcastSession {
    */
   private epoch = 0;
   private readonly governor = new UplinkGovernor();
+  /** A série temporal do lado de quem transmite. Ver `core/media/diagnostico.ts`. */
+  private readonly diario = new Diario('transmissor');
   private amostras = 0;
   private ociosoDesde: number | null = null;
   private surface: CaptureSurface = 'desconhecido';
@@ -285,6 +288,11 @@ export class BroadcastSession {
 
   getState(): BroadcastState {
     return this.state;
+  }
+
+  /** Nada sai da máquina sozinho: a UI copia, a pessoa decide se manda. */
+  diagnostico(navegador: string): Diagnostico | null {
+    return this.diario.vazio ? null : this.diario.relatorio(navegador);
   }
 
   subscribe(listener: () => void): () => void {
@@ -521,6 +529,7 @@ export class BroadcastSession {
 
     this.amostras += 1;
     this.setState({ ...this.state, stats });
+    this.diario.registrar(stats, this.deps.scheduler.now());
     this.applyUplinkCeiling(stats);
     this.trackPressure(stats.limitation);
     this.trackCapturaMorta(stats.fps);
@@ -1247,6 +1256,7 @@ export class BroadcastSession {
     this.audioTrack = null;
     this.preview = null;
     this.governor.reset();
+    this.diario.limpar();
     this.amostras = 0;
     this.ociosoDesde = null;
     this.capturaOciosa = false;

@@ -14,6 +14,43 @@ import type { PeerInfo } from '../mesh/mesh-topology.js';
 
 export type QualityLimitation = 'none' | 'cpu' | 'bandwidth' | 'other';
 
+/**
+ * O lado de quem assiste, lido de `inbound-rtp`.
+ *
+ * Nenhum destes campos era coletado. O resultado era que "está travando" e
+ * "está atrasado" chegavam como relato e saíam como palpite.
+ */
+export type RecepcaoStats = {
+  /**
+   * Atraso MÉDIO do jitter buffer, em ms — `jitterBufferDelay` dividido por
+   * `jitterBufferEmittedCount`.
+   *
+   * É a maior fatia controlável da latência depois da rede, e a única que o
+   * produto escolhe de propósito (80ms de piso, ADR 0016). Se ela vier em
+   * centenas de ms, o estimador de jitter está acima do nosso piso — e aí o
+   * problema é perda ou variação de chegada, não a nossa configuração.
+   */
+  readonly jitterBufferMs: number | null;
+  /** Quantas vezes a imagem CONGELOU, acumulado na sessão. */
+  readonly congelamentos: number;
+  /** Tempo total congelado, em segundos. É isto que o usuário chama de travar. */
+  readonly tempoCongeladoS: number;
+  /** Quadros que chegaram e foram jogados fora — decoder sem dar conta. */
+  readonly quadrosDescartados: number;
+  /** Pacotes perdidos, acumulado. Perda em rajada vira bloco na tela. */
+  readonly pacotesPerdidos: number;
+  /**
+   * Pedidos de keyframe que ESTE espectador mandou.
+   *
+   * Cada um custa 6 a 10 vezes um quadro normal (medido e publicado pelo
+   * Discord). Um PLI a cada poucos segundos é o ciclo que produz pulso de
+   * nitidez e mancha — e é o sintoma clássico de jitter buffer curto demais.
+   */
+  readonly pedidosDeKeyframe: number;
+  /** Como o navegador está decodificando. `null` quando não reporta. */
+  readonly decoder: string | null;
+};
+
 export type MediaStats = {
   /** Framerate real de saída, medido — não o configurado. */
   readonly fps: number;
@@ -113,6 +150,29 @@ export type MediaStats = {
    * `null` no espectador e onde o navegador não reporta.
    */
   readonly qp: number | null;
+  /**
+   * Milissegundos por quadro que o ENCODER gasta. `null` sem leitura.
+   *
+   * É o substituto do `encoderImplementation`, que medimos não existir no
+   * caminho de captura de tela — o campo só aparece enquanto há câmera ou
+   * microfone vivos. `totalEncodeTime / framesEncoded` está no mesmo relatório
+   * e sempre existe.
+   *
+   * Acima de 16,7 ms em 1080p60 o encoder não acompanha o framerate, e isso é
+   * quase sempre encode em SOFTWARE. Importa saber porque o Chrome no Linux
+   * vem com H.264 por hardware desligado por padrão: quando é esse o caso,
+   * nenhum ajuste de bitrate ajuda, e o produto estava mandando o usuário
+   * procurar no lugar errado.
+   */
+  readonly msPorQuadro: number | null;
+  /**
+   * O que só o ESPECTADOR sabe. `null` no transmissor.
+   *
+   * Um relato de "1 segundo de atraso" num caminho de 58ms de RTT significa que
+   * ~940ms vêm de outro lugar, e o produto não tinha um único campo capaz de
+   * dizer de onde. `MediaStats` era inteiro sobre o envio.
+   */
+  readonly recepcao: RecepcaoStats | null;
 };
 
 export type TransportEvents = {
@@ -176,6 +236,15 @@ export type MediaTransport = {
   replaceVideo(track: MediaStreamTrack): Promise<void>;
   /** O que ceder quando os bits não dão para tudo: fluidez ou nitidez. */
   setPrioridade(prioridade: Prioridade): Promise<void>;
+  /**
+   * Alvo do jitter buffer do espectador, em ms. Sem efeito no transmissor.
+   *
+   * É a maior fatia de latência que o produto ESCOLHE. Fixá-la cobra o pior
+   * caso de toda conexão, inclusive das calmas; a sessão a dirige a partir do
+   * que mede — congelamento e perda.
+   */
+  setJitterAlvo(ms: number): void;
+
   /**
    * Quantos bits o link comporta POR ESPECTADOR, medidos. `null` = sem medição.
    *

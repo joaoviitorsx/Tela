@@ -3,7 +3,7 @@ import { Emitter } from '../core/emitter.js';
 import { StatsSampler } from '../core/media/stats-sampler.js';
 import { isRelayed } from '../core/mesh/ice-config.js';
 import { MeshTopology, type PeerInfo } from '../core/mesh/mesh-topology.js';
-import { PeerLink } from '../core/mesh/peer-link.js';
+import { JITTER_INICIAL_MS, PeerLink } from '../core/mesh/peer-link.js';
 import type {
   MediaStats,
   MediaTransport,
@@ -135,7 +135,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         createConnection,
         onTrack: (track) => {
           media.addTrack(track);
-          link.minimizePlayoutDelay();
+          link.setJitterAlvo(JITTER_INICIAL_MS);
 
           /**
            * `ontrack` NÃO significa que o vídeo está chegando.
@@ -246,6 +246,10 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
     async setPrioridade(prioridade) {
       await topology?.setPrioridade(prioridade);
+    },
+
+    setJitterAlvo(ms) {
+      viewerLink?.setJitterAlvo(ms);
     },
 
     async setUplinkBudget(bps) {

@@ -25,6 +25,28 @@ export type ReadableStats = {
   readonly encoder: string;
   /** QP médio formatado, ou `—`. Acima de 37 o Chromium derruba resolução. */
   readonly qp: string;
+  /**
+   * Latência HONESTA do que o espectador vê, em ms.
+   *
+   * O produto mostrava `rttMs` e chamava de latência. RTT é a ida e volta da
+   * REDE — não inclui encoder, jitter buffer, decoder nem render. Um usuário
+   * relatou "1 segundo de atraso" com o HUD marcando 58ms, e os dois estavam
+   * certos: são grandezas diferentes, e a que a tela mostrava era a que não
+   * importa.
+   *
+   * Isto soma a metade do RTT (a ida) com o atraso medido do jitter buffer.
+   * Continua sendo piso, não total — falta o encode e o render, que o
+   * navegador não expõe ao espectador. Mas é honesto sobre o que inclui.
+   */
+  readonly latencia: string;
+  /** Quanto tempo a imagem ficou congelada, formatado. `—` sem medida. */
+  readonly congelado: string;
+  /** `true` quando houve congelamento na sessão. */
+  readonly travou: boolean;
+  /** Custo do encoder por quadro. Acima de 16,7ms ele não faz 60fps. */
+  readonly msPorQuadro: string;
+  /** `true` quando o encoder não acompanha o framerate pedido. */
+  readonly encoderLento: boolean;
   /** `true` quando o QP passou do limiar em que o quality scaler age. */
   readonly qpAlto: boolean;
 };
@@ -52,6 +74,9 @@ export type ReadableStats = {
  */
 const QP_LIMIAR = 37;
 
+/** O orçamento de tempo de um quadro a 60fps. */
+const QUADRO_60FPS_MS = 1000 / 60;
+
 const EM_SOFTWARE = /libvpx|libaom|openh264|ffmpeg|dav1d|libx264/i;
 
 const MOTIVOS: Record<MediaStats['limitation'], string | null> = {
@@ -78,6 +103,11 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         encoder: '—',
         qp: '—',
         qpAlto: false,
+        latencia: '—',
+        congelado: '—',
+        travou: false,
+        msPorQuadro: '—',
+        encoderLento: false,
       };
     }
     const impl = stats.encoderImplementation;
@@ -94,6 +124,28 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
       qp: stats.qp === null ? '—' : stats.qp.toFixed(0),
       // `kHighH264QpThreshold = 37` no libwebrtc: é onde o quality scaler age.
       qpAlto: stats.qp !== null && stats.qp >= QP_LIMIAR,
+
+      /*
+        Meia volta de RTT (a ida) mais o jitter buffer medido. Não é o total —
+        falta encode e render — mas é muito mais perto da verdade do que o RTT
+        sozinho, que era o que a tela mostrava.
+      */
+      latencia:
+        stats.rttMs > 0
+          ? `${Math.round(stats.rttMs / 2 + (stats.recepcao?.jitterBufferMs ?? 0))}ms`
+          : '—',
+      congelado:
+        stats.recepcao === null || stats.recepcao.tempoCongeladoS <= 0
+          ? '—'
+          : `${stats.recepcao.tempoCongeladoS.toFixed(1).replace('.', ',')}s`,
+      travou: (stats.recepcao?.congelamentos ?? 0) > 0,
+      msPorQuadro: stats.msPorQuadro === null ? '—' : `${stats.msPorQuadro.toFixed(1)}ms`,
+      /*
+        16,7ms é o orçamento de um quadro a 60fps. Acima disso o encoder não
+        acompanha, e em captura de tela isso é quase sempre encode em software
+        — o Chrome no Linux vem com H.264 por hardware desligado por padrão.
+      */
+      encoderLento: stats.msPorQuadro !== null && stats.msPorQuadro > QUADRO_60FPS_MS,
     };
   }, [stats]);
 }

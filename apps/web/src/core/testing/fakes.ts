@@ -273,6 +273,10 @@ export class FakeMediaTransport implements MediaTransport {
   async setPrioridade(prioridade: string): Promise<void> {
     this.prioridades.push(prioridade);
   }
+  jitterAlvos: number[] = [];
+  setJitterAlvo(ms: number): void {
+    this.jitterAlvos.push(ms);
+  }
   ceilings: (number | null)[] = [];
   async setUplinkBudget(bps: number | null): Promise<void> {
     this.ceilings.push(bps);

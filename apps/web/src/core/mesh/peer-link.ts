@@ -141,47 +141,42 @@ export class PeerLink {
   }
 
   /**
-   * Encurta o jitter buffer dos receptores — sem zerá-lo, e a diferença
-   * importa.
+   * Ajusta o jitter buffer dos receptores de vídeo.
    *
-   * Estava em ZERO nos dois campos, o que não é "buffer pequeno": é buffer
-   * NENHUM. Todo pacote que chega fora de ordem ou atrasado — o que acontece
-   * em qualquer Wi-Fi, a qualquer momento — é descartado, o quadro fica
-   * incompleto, o decoder pede keyframe, e o keyframe de um quadro de gameplay
-   * custa muitos bits de uma vez. O resultado é o ciclo que a foto do relato
-   * mostra: pulsos de nitidez e mancha, e uma cadência de quadros irregular
-   * que se lê como travamento mesmo com 58ms de RTT.
+   * # Por que é ajustável e não uma constante
    *
-   * 80ms é o menor buffer que absorve o jitter típico de Wi-Fi doméstico, e o
-   * que se compra com eles é cadência constante — metade da sensação de
-   * qualidade.
+   * Era ZERO nos dois campos, o que não é "buffer pequeno": é buffer NENHUM.
+   * Todo pacote fora de ordem ou atrasado — o que acontece em qualquer Wi-Fi —
+   * era descartado, o quadro ficava incompleto, o decoder pedia keyframe, e
+   * keyframe custa de 6 a 10 vezes um quadro normal (medido e publicado pelo
+   * Discord). O resultado era pulso de nitidez e mancha, com cadência
+   * irregular que se lê como travamento mesmo com 58ms de RTT.
    *
-   * A versão anterior deste comentário dizia "o Discord opera entre 150 e
-   * 300ms". **Não existe fonte publicada para isso** — Discord, Meet e Zoom
-   * não divulgam tamanho de jitter buffer nem latência absoluta. Era um número
-   * que eu inventei para justificar outro.
+   * Passou para 80ms fixos, e isso consertou a cadência — mas cobrou 80ms de
+   * TODA conexão, inclusive das calmas, que não precisavam. Um usuário relatou
+   * cerca de um segundo de atraso; 80ms não explicam um segundo, mas latência
+   * paga sem necessidade é latência paga sem necessidade.
    *
-   * O que o Discord publicou, e que sustenta a decisão por outro caminho, é o
-   * MECANISMO: em "From Blocky to Brilliant" eles medem que um keyframe custa
-   * de 6 a 10 vezes um quadro delta, e que a imagem quadriculada vinha de
-   * keyframe demais. É exatamente o ciclo que este buffer corta — pacote
-   * atrasado descartado, quadro incompleto, PLI, keyframe.
+   * Agora o alvo é dirigido pela sessão a partir do que ela mede — congelamento
+   * e perda. Rápido para subir, devagar para descer, que é a mesma disciplina
+   * da escada de qualidade: uma malha que reage mais rápido do que o sistema
+   * assenta oscila.
    *
-   * E `jitterBufferTarget` é um PISO, não um alvo fixo: o buffer real é
-   * `max(80ms, o que o estimador de jitter calcular)`. Ele só custa latência
-   * quando a rede está calma, que é quando ela sobra.
+   * `jitterBufferTarget` é um PISO, não um alvo fixo: o buffer real é
+   * `max(alvo, o que o estimador de jitter calcular)`. Ele só custa latência
+   * quando a rede está calma — que é exatamente quando ela sobra.
    *
    * Só existe em Chromium; nos outros a atribuição é inócua.
    */
-  minimizePlayoutDelay(): void {
+  setJitterAlvo(ms: number): void {
     for (const receiver of this.pc.getReceivers()) {
       /**
        * Só no VÍDEO.
        *
-       * Buffer de jitter zerado no áudio produz corte a cada oscilação de
-       * rede — e áudio picotado é mais destrutivo que 100ms a mais de atraso,
-       * que ninguém percebe numa call onde já se está conversando por outro
-       * canal. A latência que este produto persegue é a da imagem.
+       * Buffer de jitter curto no áudio produz corte a cada oscilação de rede,
+       * e áudio picotado é mais destrutivo que 100ms a mais de atraso, que
+       * ninguém percebe numa call onde já se está conversando por outro canal.
+       * A latência que este produto persegue é a da imagem.
        */
       if (receiver.track?.kind !== 'video') continue;
 
@@ -189,8 +184,8 @@ export class PeerLink {
         playoutDelayHint?: number;
         jitterBufferTarget?: number;
       };
-      if ('playoutDelayHint' in target) target.playoutDelayHint = ALVO_JITTER_MS / 1000;
-      if ('jitterBufferTarget' in target) target.jitterBufferTarget = ALVO_JITTER_MS;
+      if ('playoutDelayHint' in target) target.playoutDelayHint = ms / 1000;
+      if ('jitterBufferTarget' in target) target.jitterBufferTarget = ms;
     }
   }
 
@@ -281,9 +276,20 @@ export class PeerLink {
 /**
  * Alvo do jitter buffer do espectador, em milissegundos.
  *
- * Era zero. Ver `minimizePlayoutDelay` para por que zero era pior que 80.
+ * Era zero. Ver `setJitterAlvo` para por que zero era pior que 80.
  */
-const ALVO_JITTER_MS = 80;
+export const JITTER_INICIAL_MS = 80;
+
+/**
+ * O menor buffer que ainda vale tentar.
+ *
+ * Abaixo disto o ganho de latência é pequeno e o risco de voltar ao ciclo de
+ * keyframe é grande — 40ms é menos de três quadros a 60fps.
+ */
+export const JITTER_MINIMO_MS = 40;
+
+/** O maior. Acima disto o produto deixa de ser tempo real. */
+export const JITTER_MAXIMO_MS = 240;
 
 /**
  * Ordena as variantes de H.264 da melhor para a pior. Grátis em banda.

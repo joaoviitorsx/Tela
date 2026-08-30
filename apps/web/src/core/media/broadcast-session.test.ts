@@ -196,6 +196,8 @@ describe('BroadcastSession — qualidade', () => {
       bpp: 0.1,
       encoderImplementation: null,
       qp: null,
+      msPorQuadro: null,
+      recepcao: null,
       piorAvailableBps: null,
       paresMedidos: 1,
       availablePorPeer: {},
@@ -217,7 +219,7 @@ describe('BroadcastSession — qualidade', () => {
   it('uma leitura isolada com cpu NÃO derruba o preset', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null, qp: null, piorAvailableBps: null, paresMedidos: 1, availablePorPeer: {} };
+    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null, qp: null, msPorQuadro: null, recepcao: null, piorAvailableBps: null, paresMedidos: 1, availablePorPeer: {} };
 
     ctx.transport.stats = { ...base, limitation: 'cpu' };
     for (let i = 0; i < 10; i += 1) {
@@ -249,6 +251,8 @@ describe('BroadcastSession — qualidade', () => {
       bpp: 0.1,
       encoderImplementation: null,
       qp: null,
+      msPorQuadro: null,
+      recepcao: null,
       piorAvailableBps: null,
       paresMedidos: 1,
       availablePorPeer: {},
@@ -291,6 +295,8 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     bpp: 0.1,
     encoderImplementation: null,
     qp: null,
+    msPorQuadro: null,
+    recepcao: null,
     paresMedidos: 1,
     ...extra,
     // Um espectador só, por padrão: o pior é o único. Um teste que queira
@@ -509,6 +515,8 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     bpp: 0.1,
     encoderImplementation: null,
     qp: null,
+    msPorQuadro: null,
+    recepcao: null,
     paresMedidos: 1,
     ...extra,
     // Um espectador só, por padrão: o pior é o único. Um teste que queira
@@ -783,6 +791,8 @@ describe('BroadcastSession — o pior caminho é quem manda', () => {
     bpp: 0.1,
     encoderImplementation: null,
     qp: null,
+    msPorQuadro: null,
+    recepcao: null,
     paresMedidos: 1,
     piorAvailableBps: null,
     availablePorPeer: {},

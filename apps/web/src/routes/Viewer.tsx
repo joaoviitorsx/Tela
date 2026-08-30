@@ -57,6 +57,26 @@ export function Viewer({ slug }: Props) {
    * então não é preciso um segundo mecanismo de trava.
    */
   const [somAtivo, setSomAtivo] = useState(false);
+  const [copiouDiag, setCopiouDiag] = useState(false);
+
+  /**
+   * Copia a série temporal para o usuário MANDAR em vez de descrever.
+   *
+   * Nada sai da máquina sozinho — isto não é telemetria. É a resposta ao ciclo
+   * de depuração que hoje é: a pessoa relata "está travando", alguém adivinha,
+   * pede para ela olhar um número, adivinha de novo.
+   */
+  const copiarDiagnostico = useCallback(() => {
+    const relatorio = session.diagnostico(navigator.userAgent);
+    if (relatorio === null) return;
+    void navigator.clipboard
+      .writeText(JSON.stringify(relatorio, null, 2))
+      .then(() => {
+        setCopiouDiag(true);
+        setTimeout(() => setCopiouDiag(false), 2_000);
+      })
+      .catch(() => undefined);
+  }, [session]);
   const [emTelaCheia, setEmTelaCheia] = useState(false);
 
   const watching = state.status === 'watching';
@@ -274,8 +294,28 @@ export function Viewer({ slug }: Props) {
           {watching ? state.viewers : '—'}
         </span>
 
-        {/* Latência visível: é prova da qualidade, e este público repara. */}
-        <span className="tabular text-[12px] text-muted">{stats.rtt}</span>
+        {/*
+          A latência que o espectador SENTE, não o RTT.
+
+          Isto mostrava `stats.rtt` e chamava de latência. RTT é a ida e volta
+          da rede — não inclui encoder, jitter buffer, decoder nem render. Um
+          usuário relatou "1 segundo de atraso" com esta linha marcando 58ms, e
+          os dois números estavam certos: eram grandezas diferentes, e a tela
+          mostrava a que não importa.
+        */}
+        <span className="tabular text-[12px] text-muted" title={`rede ${stats.rtt}`}>
+          {stats.latencia}
+        </span>
+
+        {/* Só aparece quando travou de verdade. Silêncio é boa notícia. */}
+        {stats.travou && (
+          <span
+            className="tabular text-[12px] text-warn"
+            title="tempo total de imagem congelada nesta sessão"
+          >
+            {stats.congelado} travado
+          </span>
+        )}
 
         {hasAudio && (
           <VolumeControl
@@ -289,6 +329,19 @@ export function Viewer({ slug }: Props) {
             onAtivo={setSomAtivo}
           />
         )}
+
+        {/*
+          Só aparece quando há o que mandar. Um botão que não faz nada é pior
+          que botão nenhum.
+        */}
+        <button
+          type="button"
+          onClick={copiarDiagnostico}
+          aria-label="Copiar diagnóstico técnico desta sessão"
+          className="pointer-events-auto inline-flex h-11 shrink-0 items-center rounded-sm px-2.5 text-[12px] text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
+        >
+          {copiouDiag ? 'copiado' : 'diagnóstico'}
+        </button>
 
         <button
           type="button"

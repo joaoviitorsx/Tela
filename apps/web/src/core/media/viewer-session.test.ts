@@ -268,6 +268,8 @@ describe('ViewerSession', () => {
       bpp: 0.1,
       encoderImplementation: null,
       qp: null,
+      msPorQuadro: null,
+      recepcao: null,
       piorAvailableBps: null,
       paresMedidos: 1,
       availablePorPeer: {},

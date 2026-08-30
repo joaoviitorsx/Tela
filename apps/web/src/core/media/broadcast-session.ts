@@ -370,8 +370,8 @@ export class BroadcastSession {
     let capture;
     try {
       capture = await this.deps.screen.request({
-        width: preset.layers[0].width,
-        height: preset.layers[0].height,
+        width: preset.width,
+        height: preset.height,
         frameRate: preset.main.maxFramerate,
         systemAudio: true,
       });
@@ -584,7 +584,7 @@ export class BroadcastSession {
      * transitória em perda permanente de orçamento.
      */
     const preset = presetById(this.presetId);
-    const { width, height } = preset.layers[0];
+    const { width, height } = preset;
     const tetoDePixel =
       BPP_TETO * width * height * Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]);
     const orcamento = this.governor.orcamento;
@@ -974,8 +974,8 @@ export class BroadcastSession {
     let capture;
     try {
       capture = await this.deps.screen.request({
-        width: preset.layers[0].width,
-        height: preset.layers[0].height,
+        width: preset.width,
+        height: preset.height,
         frameRate: preset.main.maxFramerate,
         systemAudio: true,
       });
@@ -1189,8 +1189,8 @@ export class BroadcastSession {
     void track
       .applyConstraints({
         frameRate,
-        width: { ideal: preset.layers[0].width, max: preset.layers[0].width },
-        height: { ideal: preset.layers[0].height, max: preset.layers[0].height },
+        width: { ideal: preset.width, max: preset.width },
+        height: { ideal: preset.height, max: preset.height },
         resizeMode: 'crop-and-scale',
       } as MediaTrackConstraints)
       .catch(() => {

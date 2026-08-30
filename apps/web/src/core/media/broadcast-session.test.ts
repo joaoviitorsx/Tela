@@ -558,7 +558,7 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
 
     const state = ctx.session.getState();
     const id = state.status === 'live' ? state.presetId : 'p1080p60';
-    const { width, height } = PRESETS[id].layers[0];
+    const { width, height } = PRESETS[id];
     const teto = ctx.transport.ceilings.at(-1) ?? 0;
 
     // A conta que a foto do relato reprovava: 3 Mbps em 1080p60 dão 0,024.

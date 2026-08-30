@@ -111,7 +111,7 @@ export function Home({ onStart }: Props) {
   const vitrine = useVitrine(noTubo, focaOCampo);
 
   const preset = PRESETS[presetId];
-  const maiorCamada = preset.layers[0];
+  const maiorCamada = preset;
   const teto = P2P_LIMITS.maxViewersBrowser;
 
   /**

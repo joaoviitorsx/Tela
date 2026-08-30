@@ -22,6 +22,13 @@ Três presets, escolhíveis antes de iniciar **e com a transmissão no ar**:
 | 720p60 econômico | 2,5 Mbps | Upload apertado ou vários espectadores em P2P |
 
 Todos mantêm **60fps** e **duas camadas** de simulcast. O que muda entre eles é
+
+> **Superado (ADR 0019).** Simulcast saiu do tipo. Em malha P2P cada conexão
+> tem UM receptor e o controle de congestionamento dela já adapta o encoding
+> àquele espectador — a segunda camada nunca foi lida em lugar nenhum do
+> runtime desde a ADR 0005, que trocou o SFU por malha. O que restou de
+> `layers[0]` virou `width`/`height` no preset.
+
 resolução e bitrate — nunca framerate, que é a regra do produto.
 
 Trocar ao vivo republica a trilha sem derrubar quem já está assistindo.

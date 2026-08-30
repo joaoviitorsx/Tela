@@ -1,21 +1,27 @@
 /**
  * Presets de encoding.
  *
- * REGRA INEGOCIÁVEL (AGENTS.md R5): duas camadas de simulcast, nunca três.
- * Cada camada é um encoder rodando na mesma máquina que o jogo. Três encoders
- * 1080p60 derrubam o FPS do jogo. Duas cobrem os dois cenários reais que
- * importam — fibra e móvel — com metade do custo de CPU.
+ * # Simulcast não existe aqui, e o tipo dizia que sim
+ *
+ * Este cabeçalho anunciava "REGRA INEGOCIÁVEL: duas camadas de simulcast,
+ * nunca três", e o tipo carregava `layers: [SimulcastLayer, SimulcastLayer]`
+ * mais um `upstreamBps`. Nada disso era lido em lugar nenhum do runtime: só
+ * `layers[0].width` e `layers[0].height` chegavam ao encoder, e a `encoding`
+ * de dentro da camada duplicava o `main`.
+ *
+ * A regra era verdadeira na topologia de SFU, onde o transmissor sobe uma vez
+ * e o servidor escolhe a camada por espectador. Em malha P2P cada conexão tem
+ * UM receptor, e o controle de congestionamento dela já adapta o encoding
+ * àquele espectador — simulcast só multiplicaria encoders na máquina que está
+ * rodando o jogo. A ADR 0005 trocou a topologia; o tipo ficou descrevendo a
+ * antiga.
+ *
+ * O que sobrou é o que sempre foi usado: uma resolução e um encoding.
  */
 
 export type LayerEncoding = {
   readonly maxBitrate: number;
   readonly maxFramerate: number;
-};
-
-export type SimulcastLayer = {
-  readonly width: number;
-  readonly height: number;
-  readonly encoding: LayerEncoding;
 };
 
 /**
@@ -58,10 +64,10 @@ export type EncodingPreset = {
   readonly label: string;
   /** Texto curto que a UI mostra abaixo do rótulo. Fala de rede, não de pixel. */
   readonly hint: string;
-  /** Upstream total aproximado com as duas camadas, em bits/s. Base do orçamento P2P. */
-  readonly upstreamBps: number;
+  /** A resolução que o encoder recebe. Era `layers[0]`, quando havia camadas. */
+  readonly width: number;
+  readonly height: number;
   readonly main: LayerEncoding & { readonly priority: 'high' };
-  readonly layers: readonly [SimulcastLayer, SimulcastLayer];
 };
 
 /**
@@ -73,72 +79,54 @@ export const PRESET_1080P60: EncodingPreset = {
   id: 'p1080p60',
   label: '1080p60',
   hint: 'Fibra boa. ~12 Mbps de subida por espectador.',
-  upstreamBps: 16_000_000,
+  width: 1920,
+  height: 1080,
   main: { maxBitrate: 12_000_000, maxFramerate: 60, priority: 'high' },
-  layers: [
-    { width: 1920, height: 1080, encoding: { maxBitrate: 12_000_000, maxFramerate: 60 } },
-    { width: 1280, height: 720, encoding: { maxBitrate: 4_000_000, maxFramerate: 30 } },
-  ],
 };
 
 export const PRESET_900P60: EncodingPreset = {
   id: 'p900p60',
   label: '900p60',
   hint: 'Fibra comum. ~8 Mbps por espectador.',
-  upstreamBps: 10_600_000,
+  width: 1600,
+  height: 900,
   main: { maxBitrate: 8_000_000, maxFramerate: 60, priority: 'high' },
-  layers: [
-    { width: 1600, height: 900, encoding: { maxBitrate: 8_000_000, maxFramerate: 60 } },
-    { width: 1024, height: 576, encoding: { maxBitrate: 2_600_000, maxFramerate: 30 } },
-  ],
 };
 
 export const PRESET_720P60: EncodingPreset = {
   id: 'p720p60',
   label: '720p60',
   hint: 'Conexão comum. ~5,5 Mbps por espectador.',
-  upstreamBps: 7_300_000,
+  width: 1280,
+  height: 720,
   main: { maxBitrate: 5_500_000, maxFramerate: 60, priority: 'high' },
-  layers: [
-    { width: 1280, height: 720, encoding: { maxBitrate: 5_500_000, maxFramerate: 60 } },
-    { width: 854, height: 480, encoding: { maxBitrate: 1_800_000, maxFramerate: 30 } },
-  ],
 };
 
 export const PRESET_600P60: EncodingPreset = {
   id: 'p600p60',
   label: '576p60',
   hint: 'Upload modesto ou vários assistindo. ~3,6 Mbps.',
-  upstreamBps: 4_800_000,
+  width: 1024,
+  height: 576,
   main: { maxBitrate: 3_600_000, maxFramerate: 60, priority: 'high' },
-  layers: [
-    { width: 1024, height: 576, encoding: { maxBitrate: 3_600_000, maxFramerate: 60 } },
-    { width: 640, height: 360, encoding: { maxBitrate: 1_200_000, maxFramerate: 30 } },
-  ],
 };
 
 export const PRESET_480P60: EncodingPreset = {
   id: 'p480p60',
   label: '480p60',
   hint: 'Upload apertado. ~2,5 Mbps por espectador.',
-  upstreamBps: 3_400_000,
+  width: 854,
+  height: 480,
   main: { maxBitrate: 2_500_000, maxFramerate: 60, priority: 'high' },
-  layers: [
-    { width: 854, height: 480, encoding: { maxBitrate: 2_500_000, maxFramerate: 60 } },
-    { width: 640, height: 360, encoding: { maxBitrate: 900_000, maxFramerate: 30 } },
-  ],
 };
 
 export const PRESET_360P60: EncodingPreset = {
   id: 'p360p60',
   label: '360p60',
   hint: 'Último degrau. ~1,4 Mbps — abaixo disso a alternativa não é pior qualidade, é não transmitir.',
-  upstreamBps: 1_900_000,
+  width: 640,
+  height: 360,
   main: { maxBitrate: 1_400_000, maxFramerate: 60, priority: 'high' },
-  layers: [
-    { width: 640, height: 360, encoding: { maxBitrate: 1_400_000, maxFramerate: 60 } },
-    { width: 426, height: 240, encoding: { maxBitrate: 500_000, maxFramerate: 30 } },
-  ],
 };
 
 export const PRESETS = {
@@ -290,7 +278,7 @@ export function p2pViewerBudget(
     bem acima do rótulo. Usar o nominal subestimava o custo e prometia mais
     espectadores do que cabem.
   */
-  const { width, height } = preset.layers[0];
+  const { width, height } = preset;
   const perViewer = Math.max(
     preset.main.maxBitrate,
     BPP_TETO * width * height * preset.main.maxFramerate,
@@ -456,7 +444,7 @@ export function presetForBitrate(
   */
   const exigido = BPP_PISO * 60 * custoDeFramerate(alvo);
   for (const id of PRESET_ORDER) {
-    const { width, height } = PRESETS[id].layers[0];
+    const { width, height } = PRESETS[id];
     if (perViewerBitsPerSecond >= exigido * width * height) return id;
   }
   return PISO_DA_ESCADA;

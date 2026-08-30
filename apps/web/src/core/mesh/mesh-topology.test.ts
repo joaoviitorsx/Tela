@@ -380,7 +380,7 @@ describe('MeshTopology — bits por pixel honestos (ADR 0015 e 0017)', () => {
     await settle();
 
     const aplicado = encodingDe(ctx.factory.created[0]!)?.maxBitrate ?? 0;
-    const { width, height } = PRESET_480P60.layers[0];
+    const { width, height } = PRESET_480P60;
     expect(aplicado).toBeLessThanOrEqual(BPP_TETO * width * height * 60);
   });
 
@@ -397,7 +397,7 @@ describe('MeshTopology — bits por pixel honestos (ADR 0015 e 0017)', () => {
   it('o pareamento ERRADO é o que produzia a imagem borrada', () => {
     // Documenta a aritmética do defeito, sem reintroduzi-lo: 1920×1080@60 com
     // 3 Mbps são 0,024 bpp, um quarto do piso. Nenhum encoder salva isso.
-    const { width, height } = PRESET_1080P60.layers[0];
+    const { width, height } = PRESET_1080P60;
     expect(3_000_000 / (width * height * 60)).toBeLessThan(BPP_PISO / 3);
   });
 
@@ -523,7 +523,7 @@ describe('MeshTopology — a escala tira PIXEL de verdade', () => {
       o orçamento pagou.
     */
     const escala = encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy ?? 0;
-    expect(escala).toBeCloseTo(1080 / PRESET_480P60.layers[0].height, 3);
+    expect(escala).toBeCloseTo(1080 / PRESET_480P60.height, 3);
   });
 
   it('escala medida cedo demais é corrigida no relógio das estatísticas', async () => {
@@ -549,7 +549,7 @@ describe('MeshTopology — a escala tira PIXEL de verdade', () => {
     await settle();
 
     const escala = encodingDe(ctx.factory.created[0]!)?.scaleResolutionDownBy ?? 0;
-    expect(escala).toBeCloseTo(1080 / PRESET_480P60.layers[0].height, 3);
+    expect(escala).toBeCloseTo(1080 / PRESET_480P60.height, 3);
   });
 
   it('a escala olha as DUAS dimensões — 16:10 não escapa', async () => {

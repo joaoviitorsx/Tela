@@ -11,15 +11,26 @@ import {
 } from './presets.js';
 
 describe('presets', () => {
-  it('todo preset tem exatamente duas camadas (R5)', () => {
-    for (const id of PRESET_ORDER) expect(PRESETS[id].layers).toHaveLength(2);
-  });
-
-  it('a segunda camada é sempre menor que a primeira', () => {
+  /**
+   * Estes dois testes exigiam DUAS camadas de simulcast por preset, e a
+   * segunda menor que a primeira. Eram verdade na topologia de SFU, onde o
+   * servidor escolhe a camada por espectador.
+   *
+   * Em malha P2P cada conexão tem UM receptor e o controle de congestionamento
+   * dela já adapta o encoding àquele espectador — simulcast só multiplicaria
+   * encoders na máquina que está rodando o jogo. A ADR 0005 trocou a
+   * topologia; o tipo e os testes ficaram descrevendo a antiga, e `layers[1]`
+   * nunca foi lido em lugar nenhum do runtime.
+   *
+   * O que sobra é o que sempre foi usado: uma resolução, e ela tem que ser
+   * coerente.
+   */
+  it('todo preset tem resolução válida e 16:9', () => {
     for (const id of PRESET_ORDER) {
-      const [alta, baixa] = PRESETS[id].layers;
-      expect(baixa.width).toBeLessThan(alta.width);
-      expect(baixa.encoding.maxBitrate).toBeLessThan(alta.encoding.maxBitrate);
+      const { width, height } = PRESETS[id];
+      expect(width).toBeGreaterThan(0);
+      expect(height).toBeGreaterThan(0);
+      expect(width / height).toBeCloseTo(16 / 9, 1);
     }
   });
 
@@ -71,10 +82,7 @@ describe('presets', () => {
    * não alivia nada.
    */
   it('todo degrau tira pixel do anterior', () => {
-    const areas = PRESET_ORDER.map((id) => {
-      const [principal] = PRESETS[id].layers;
-      return principal.width * principal.height;
-    });
+    const areas = PRESET_ORDER.map((id) => PRESETS[id].width * PRESETS[id].height);
     for (let i = 1; i < areas.length; i += 1) {
       expect(areas[i]!).toBeLessThan(areas[i - 1]!);
     }
@@ -88,8 +96,7 @@ describe('presets', () => {
   it('todo degrau entrega pelo menos 0,09 bit por pixel', () => {
     for (const id of PRESET_ORDER) {
       const preset = PRESETS[id];
-      const [principal] = preset.layers;
-      const pixelsPorSegundo = principal.width * principal.height * preset.main.maxFramerate;
+      const pixelsPorSegundo = preset.width * preset.height * preset.main.maxFramerate;
       const bpp = preset.main.maxBitrate / pixelsPorSegundo;
       expect(bpp).toBeGreaterThanOrEqual(0.09);
     }
@@ -198,7 +205,7 @@ describe('menorPreset e presetParaOrcamento', () => {
     // A conta do relato: 3 Mbps por espectador. Não é 1080p60, e fingir que
     // era é o que produzia a imagem borrada (ADR 0015).
     const id = presetParaOrcamento(3_000_000, 'fluidez');
-    const { width, height } = PRESETS[id].layers[0];
+    const { width, height } = PRESETS[id];
     expect(3_000_000 / (width * height * 60)).toBeGreaterThanOrEqual(BPP_PISO);
   });
 
@@ -215,7 +222,7 @@ describe('menorPreset e presetParaOrcamento', () => {
     for (const mbps of [1.5, 2, 3, 4, 6, 8, 12, 20]) {
       const bps = mbps * 1_000_000;
       const preset = PRESETS[presetParaOrcamento(bps, 'fluidez')];
-      const { width, height } = preset.layers[0];
+      const { width, height } = preset;
       const nominal = preset.main.maxBitrate / (width * height * 60);
       expect(bps / (width * height * 60)).toBeGreaterThanOrEqual(nominal);
     }
@@ -224,7 +231,7 @@ describe('menorPreset e presetParaOrcamento', () => {
   it('nenhum degrau da escada fica longe do piso de 0,10 bpp', () => {
     for (const id of PRESET_IDS) {
       const preset = PRESETS[id];
-      const { width, height } = preset.layers[0];
+      const { width, height } = preset;
       const bpp = preset.main.maxBitrate / (width * height * 60);
       // 0,09 é a folga de arredondamento da tabela da ADR 0010, não licença
       // para acrescentar um degrau faminto: 0,064 era o valor que produzia o
@@ -249,7 +256,7 @@ describe('menorPreset e presetParaOrcamento', () => {
 
 describe('a escada é MONÓTONA — mais banda nunca piora a imagem (ADR 0018)', () => {
   const bppDe = (bps: number, fps: number) => {
-    const { width, height } = PRESETS[presetParaOrcamento(bps, fps === 60 ? 'fluidez' : 'nitidez')].layers[0];
+    const { width, height } = PRESETS[presetParaOrcamento(bps, fps === 60 ? 'fluidez' : 'nitidez')];
     return bps / (width * height * fps);
   };
 

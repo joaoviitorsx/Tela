@@ -71,7 +71,7 @@ export type MeshTopologyDeps = {
  * inválido, e aumentar resolução acima da captura não existe.
  */
 function escalaPara(track: MediaStreamTrack | null, preset: EncodingPreset): number {
-  const { width: alvoW, height: alvoH } = preset.layers[0];
+  const { width: alvoW, height: alvoH } = preset;
   const settings = track?.getSettings?.();
   const w = settings?.width ?? 0;
   const h = settings?.height ?? 0;
@@ -722,7 +722,7 @@ export class MeshTopology {
      * desperdício exige a ESCADA reagir à divergência entre nominal e real —
      * não o teto.
      */
-    const { width, height } = preset.layers[0];
+    const { width, height } = preset;
     return Math.round(BPP_TETO * width * height * this.framerate(preset));
   }
 
@@ -764,7 +764,7 @@ export class MeshTopology {
   bppAtual(): number | null {
     const preset = this.preset;
     if (preset === null) return null;
-    const { width, height } = preset.layers[0];
+    const { width, height } = preset;
     return bitsPorPixel(this.effectiveBitrate(preset), width, height, this.framerate(preset));
   }
 

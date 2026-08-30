@@ -718,6 +718,13 @@ export const PRESET_720P60 = {
 
 **Só duas camadas de simulcast, não três.** Cada camada é um encoder rodando. Três encoders 1080p60 em software derrubam o FPS do jogo. Duas cobrem os dois cenários reais (fibra e móvel) com metade do custo.
 
+> **Superado (ADR 0019).** Simulcast saiu do tipo. Em malha P2P cada conexão
+> tem UM receptor e o controle de congestionamento dela já adapta o encoding
+> àquele espectador — a segunda camada nunca foi lida em lugar nenhum do
+> runtime desde a ADR 0005, que trocou o SFU por malha. O que restou de
+> `layers[0]` virou `width`/`height` no preset.
+
+
 ### 8.4 Espectador
 
 ```ts

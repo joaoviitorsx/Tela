@@ -76,3 +76,10 @@ recapturar.
 
 `contentHint = 'motion'`, `videoCodec: 'h264'`, parâmetros idênticos entre
 peers e duas camadas por preset seguem inalterados e inegociáveis.
+
+> **Superado (ADR 0019).** Simulcast saiu do tipo. Em malha P2P cada conexão
+> tem UM receptor e o controle de congestionamento dela já adapta o encoding
+> àquele espectador — a segunda camada nunca foi lida em lugar nenhum do
+> runtime desde a ADR 0005, que trocou o SFU por malha. O que restou de
+> `layers[0]` virou `width`/`height` no preset.
+

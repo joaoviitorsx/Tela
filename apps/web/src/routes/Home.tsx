@@ -8,7 +8,7 @@ import { Masthead } from '../components/Masthead.js';
 import { QualityPicker } from '../components/QualityPicker.js';
 import { SignalChain } from '../components/SignalChain.js';
 import { SlugPicker } from '../components/SlugPicker.js';
-import { audioCue, identity, platform, preferences } from '../container.js';
+import { audioCue, identity, platform, preferences, presetSustentavel } from '../container.js';
 import { isPresetId } from '../core/media/presets.js';
 import { useAudioSources } from '../react/use-audio-sources.js';
 import { useSlugCheck } from '../react/use-slug-check.js';
@@ -63,6 +63,11 @@ export function Home({ onStart }: Props) {
   const [audioDeviceId, setAudioDeviceId] = useState<string | null>(null);
   const check = useSlugCheck(slug);
   const presets = useMemo(() => PRESET_ORDER.map((id) => PRESETS[id]), []);
+  /*
+    O que o link da última transmissão sustentou — lido uma vez, porque é
+    preferência gravada e não muda enquanto a página está aberta.
+  */
+  const sustentavel = useMemo(() => presetSustentavel(), []);
   const fontes = useAudioSources();
   const os = platform.osName();
   const modoAudio = platform.systemAudio();
@@ -249,7 +254,12 @@ export function Home({ onStart }: Props) {
               <h2 data-vidro="texto" className="serigrafia mb-3">
                 qualidade
               </h2>
-              <QualityPicker presets={presets} value={presetId} onChange={choosePreset} />
+              <QualityPicker
+                presets={presets}
+                value={presetId}
+                onChange={choosePreset}
+                {...(sustentavel === null ? {} : { sustentavel })}
+              />
             </div>
 
             <div className="border-t border-line py-5 lg:border-l lg:border-t-0 lg:pl-6">

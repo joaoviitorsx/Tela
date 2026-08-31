@@ -47,7 +47,8 @@ export function ViewerSlots({ total, conectados, viaRelay, conectando }: Props) 
         ))}
       </span>
 
-      <span className="tabular text-[13px] text-muted">
+      {/* `nowrap`: em 640px "até 5" quebrava entre a palavra e o número. */}
+      <span className="tabular whitespace-nowrap text-[13px] text-muted">
         {conectados} de {total}
         {conectando > 0 && ` · ${conectando} entrando`}
       </span>

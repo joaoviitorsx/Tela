@@ -8,6 +8,15 @@ type Props = {
   readonly forced?: boolean;
   readonly compact?: boolean;
   readonly disabled?: boolean;
+  /**
+   * O melhor degrau que o link MEDIDO sustenta. `undefined` sem medição.
+   *
+   * Escolher acima dele não é proibido — o usuário manda —, mas o produto para
+   * de fingir que o rótulo é o resultado. Desde a ADR 0015 o orçamento decide a
+   * resolução de verdade: pedir 1080p60 num link de 10 Mbps entrega 576p60, e
+   * até agora nada na tela avisava disso antes de a pessoa começar.
+   */
+  readonly sustentavel?: PresetId;
 };
 
 /**
@@ -24,15 +33,25 @@ export function QualityPicker({
   forced = false,
   compact = false,
   disabled = false,
+  sustentavel,
 }: Props) {
+  /**
+   * Quais degraus o link medido NÃO paga.
+   *
+   * `presets` já vem do melhor para o pior, então tudo antes do sustentável
+   * está acima do que a medição suporta. Eles continuam clicáveis — a escolha é
+   * do usuário — só param de parecer promessa.
+   */
+  const limite = sustentavel === undefined ? -1 : presets.findIndex((p) => p.id === sustentavel);
+  const acimaDoLink = (i: number) => limite >= 0 && i < limite;
   if (compact) {
     return (
       <div
-        className="grid grid-cols-3 gap-1 rounded-md border border-edge bg-void p-1 sm:flex sm:items-center"
+        className="grid grid-cols-3 gap-1 rounded-md border border-edge bg-void p-1 sm:grid-cols-6"
         role="group"
         aria-label="Qualidade da transmissão"
       >
-        {presets.map((preset) => {
+        {presets.map((preset, i) => {
           const active = preset.id === value;
           return (
             <button
@@ -43,11 +62,14 @@ export function QualityPicker({
               aria-pressed={active}
               title={preset.hint}
               className={[
-                'tabular min-h-11 flex-1 rounded-sm px-2 text-[12px] transition-colors duration-150',
+                // Grade, não flex. Ver o bloco na variante completa.
+                'tabular min-h-11 rounded-sm px-1 text-[12px] transition-colors duration-150',
                 'disabled:opacity-40',
                 active
                   ? 'bg-text text-void font-medium'
-                  : 'text-muted hover:bg-surface hover:text-text',
+                  : acimaDoLink(i)
+                    ? 'text-faint hover:bg-surface hover:text-muted'
+                    : 'text-muted hover:bg-surface hover:text-text',
               ].join(' ')}
             >
               {preset.label.replace(' econômico', '·eco')}
@@ -88,16 +110,32 @@ export function QualityPicker({
       */}
       <div
         data-vidro="contorno"
-        className="grid grid-cols-3 gap-1 rounded-md border border-edge bg-void p-1 sm:flex"
+        className="grid grid-cols-3 gap-1 rounded-md border border-edge bg-void p-1 sm:grid-cols-6"
       >
-        {presets.map((preset) => {
+        {presets.map((preset, i) => {
           const active = preset.id === value;
           return (
             <label
               key={preset.id}
               className={[
-                'tabular flex min-h-11 flex-1 cursor-pointer items-center justify-center',
-                'rounded-sm px-3 text-center text-[13px]',
+                /*
+                  GRADE, e não flex, e a diferença é o que consertou o
+                  desalinhamento da pílula.
+
+                  `flex-1` do Tailwind já é `flex: 1 1 0%`, então a base zero
+                  não era o problema: era `min-width: auto`, que impede um item
+                  flex de encolher abaixo do próprio conteúdo. "1080p60" tem um
+                  caractere a mais que os outros rótulos, então quando o espaço
+                  apertava — 464px no layout de duas colunas — a célula dele
+                  ficava 78px contra 71 das vizinhas, e a pílula branca do
+                  selecionado saía visivelmente fora de alinhamento.
+
+                  `grid-cols-6` do Tailwind emite `minmax(0, 1fr)`, que IGNORA o
+                  min-content e produz colunas exatamente iguais em qualquer
+                  largura.
+                */
+                'tabular flex min-h-11 cursor-pointer items-center justify-center',
+                'rounded-sm px-1 text-center text-[13px]',
                 'whitespace-nowrap transition-colors duration-150',
                 /*
                   O rádio é `sr-only`, então o anel de foco do navegador ia
@@ -111,8 +149,11 @@ export function QualityPicker({
                 'has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent',
                 active
                   ? 'bg-text font-medium text-void'
-                  : 'text-muted hover:bg-surface hover:text-text',
+                  : acimaDoLink(i)
+                    ? 'text-faint hover:bg-surface hover:text-muted'
+                    : 'text-muted hover:bg-surface hover:text-text',
               ].join(' ')}
+              title={acimaDoLink(i) ? `${preset.hint} — acima do que sua subida mediu` : preset.hint}
             >
               <input
                 type="radio"
@@ -129,6 +170,21 @@ export function QualityPicker({
       </div>
 
       <p className="mt-2 min-h-5 text-[13px] text-muted">{selecionado?.hint}</p>
+
+      {/*
+        O produto para de fingir que o rótulo é o resultado.
+
+        Desde a ADR 0015 quem decide a resolução é o orçamento medido: pedir
+        1080p60 num link que paga 4 Mbps entrega 576p60, e até aqui nada avisava
+        antes de a pessoa começar — ela descobria olhando a imagem.
+      */}
+      {sustentavel !== undefined && limite > 0 && presets.findIndex((p) => p.id === value) < limite && (
+        <p role="status" className="mt-1 text-[13px] text-warn">
+          Sua última transmissão sustentou{' '}
+          {presets[limite]?.label}. Acima disso a imagem desce sozinha para o que
+          couber — o rótulo muda, a nitidez não melhora.
+        </p>
+      )}
 
       {forced && (
         <p role="status" className="mt-1 text-[13px] text-warn">

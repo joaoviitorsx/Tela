@@ -1,4 +1,4 @@
-import { OFFENSIVE, RESERVED, suggestPreset } from '@tela/shared';
+import { OFFENSIVE, type PresetId, RESERVED, suggestPreset } from '@tela/shared';
 import { makeBrowserAudioCapture } from './adapters/browser-audio-capture.js';
 import { makeBrowserAudioGain } from './adapters/browser-audio-gain.js';
 import { makeBrowserFrameTiming } from './adapters/browser-frame-timing.js';
@@ -84,6 +84,22 @@ export const preferences = {
   },
   write: (value: string) => storage.set('tela.preset', value),
 };
+
+/**
+ * O melhor degrau que o link MEDIDO na última transmissão sustentou.
+ *
+ * Separado da preferência de preset de propósito: aquela é o que o usuário
+ * ESCOLHEU, esta é o que o link PAGOU. Desde a ADR 0015 as duas podem divergir
+ * — pedir 1080p60 num link de 10 Mbps entrega 576p60 — e o seletor precisa das
+ * duas para parar de fingir que o rótulo é o resultado.
+ *
+ * `null` na primeira transmissão do aparelho, quando ainda não há medição.
+ */
+export function presetSustentavel(): PresetId | null {
+  const lembrado = Number(uplinkMemory.read() ?? '');
+  if (!Number.isFinite(lembrado) || lembrado <= 0) return null;
+  return suggestPreset(lembrado, 1);
+}
 
 export const shareUrlFor = (slug: string): string =>
   `${window.location.origin}/${slug}`;

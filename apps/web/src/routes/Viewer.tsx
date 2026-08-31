@@ -50,6 +50,26 @@ export function Viewer({ slug }: Props) {
   const session = useMemo(() => createViewerSession(), []);
   const state = useViewer(session);
   const videoRef = useRef<HTMLVideoElement>(null);
+  /**
+   * O elemento também como ESTADO, e não só como ref.
+   *
+   * `videoRef.current` não é reativo: na render em que os efeitos são
+   * declarados ele ainda é `null` — o `<video>` só é montado depois, e atribuir
+   * `.current` não dispara render nenhuma. Um efeito que dependa de
+   * `videoRef.current` roda uma vez com `null` e nunca mais.
+   *
+   * Isso matou a medição de latência por quadro no commit em que ela nasceu:
+   * `useFrameLatency` recebia `null`, saía pelo early return, e o recurso
+   * inteiro era código morto que passava em todos os testes.
+   *
+   * O ref continua para quem precisa dele de forma imperativa (play, volume,
+   * tela cheia); o estado existe para quem precisa REAGIR à montagem.
+   */
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const montarVideo = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    setVideoEl(el);
+  }, []);
   const som = useVolume(volumePreference);
 
   /**
@@ -117,7 +137,7 @@ export function Viewer({ slug }: Props) {
       session.registrarLatencia(amostra),
     [session],
   );
-  useFrameLatency(videoRef.current, comImagem, registrar);
+  useFrameLatency(videoEl, comImagem, registrar);
 
   useTabTitle(watching ? `● tela.gg/${slug}` : `${slug} · tela`);
 
@@ -215,7 +235,7 @@ export function Viewer({ slug }: Props) {
     const sincronizar = () => setEmTelaCheia(document.fullscreenElement != null);
     const entrou = () => setEmTelaCheia(true);
     const saiu = () => setEmTelaCheia(false);
-    const video = videoRef.current;
+    const video = videoEl;
     document.addEventListener('fullscreenchange', sincronizar);
     video?.addEventListener('webkitbeginfullscreen', entrou);
     video?.addEventListener('webkitendfullscreen', saiu);
@@ -278,7 +298,7 @@ export function Viewer({ slug }: Props) {
         autoplay inteiro e o espectador vê tela preta em vez de vídeo.
       */}
       <video
-        ref={videoRef}
+        ref={montarVideo}
         autoPlay
         playsInline
         muted={som.mudo}

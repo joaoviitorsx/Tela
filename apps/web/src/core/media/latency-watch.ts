@@ -82,11 +82,25 @@ export class LatencyWatch {
     };
   }
 
+  /** Sessão nova, rede nova: esquece tudo, inclusive o direito de agir. */
   reset(): void {
+    this.esquecerMedida();
+    this.jaAgiu = false;
+  }
+
+  /**
+   * Esquece a MEDIDA, conserva o `jaAgiu`.
+   *
+   * É o que a reconexão precisa: a média de antes não vale mais (é outra
+   * conexão), mas o fato de já termos reconectado uma vez vale — senão a
+   * terceira defesa contra o falso positivo, "uma vez por sessão", é apagada
+   * justamente por quem ela deveria limitar. Medido: 302 reconexões em 400
+   * segundos.
+   */
+  esquecerMedida(): void {
     this.media = null;
     this.origem = null;
     this.acima = 0;
-    this.jaAgiu = false;
   }
 
   /** Uma medida vinda do quadro. Barata de propósito: roda a 60 Hz. */

@@ -34,13 +34,44 @@ function asLimitation(raw: unknown): QualityLimitation {
 
 type Reading = { bytes: number; timestamp: number };
 
+/**
+ * Um par acumulador/contador do `getStats()`, e por que ele precisa de delta.
+ *
+ * `jitterBufferDelay`, `totalProcessingDelay`, `totalDecodeTime`, `qpSum` e
+ * `totalEncodeTime` são somas desde o INÍCIO do fluxo, e os divisores
+ * (`jitterBufferEmittedCount`, `framesDecoded`, `framesEncoded`) também.
+ * Dividir acumulado por acumulado dá a média da SESSÃO, não a do segundo.
+ *
+ * Medido: dez minutos calmos seguidos de trinta segundos com 800ms de
+ * processamento reportavam **81ms**. O diagnóstico existe para o usuário
+ * mandar o episódio, e mostrava a média que dilui o episódio até ele sumir.
+ * `qpAlto` e `encoderLento` ficavam permanentemente desarmados pelo mesmo
+ * motivo, depois do primeiro minuto.
+ *
+ * É o mesmo erro que `bytesSent` já resolvia guardando a leitura anterior —
+ * só que os outros cinco pares nunca foram tratados assim.
+ */
+type ParAcumulado = { soma: number; conta: number };
+
+/** Média do INTERVALO entre duas leituras, e não da sessão inteira. */
+function taxa(agora: ParAcumulado, antes: ParAcumulado | undefined): number | null {
+  const soma = antes === undefined ? agora.soma : agora.soma - antes.soma;
+  const conta = antes === undefined ? agora.conta : agora.conta - antes.conta;
+  // Contador que anda para trás é fluxo reiniciado; sem delta útil, sem número.
+  if (conta <= 0 || soma < 0) return null;
+  return soma / conta;
+}
+
 export class StatsSampler {
   private readonly previous = new Map<string, Reading>();
+  /** A leitura anterior dos acumuladores, para reportar taxa e não média. */
+  private acumuladores: Record<string, ParAcumulado> = {};
 
   constructor(private readonly direction: StatsDirection) {}
 
   reset(): void {
     this.previous.clear();
+    this.acumuladores = {};
   }
 
   /** Um único relatório — o caso do espectador, que tem um peer só. */
@@ -127,12 +158,24 @@ export class StatsSampler {
            */
           // O gatilho real do quality scaler: acima de 37 em H.264 o Chromium
           // começa a derrubar resolução sozinho.
+          /*
+            O divisor do QP depende do SENTIDO. `inbound-rtp` tem `qpSum` mas
+            não tem `framesEncoded` — tem `framesDecoded`. Lendo o campo do
+            transmissor nos dois lados, a guarda `> 0` descartava tudo e a
+            coluna `qp` do diagnóstico do espectador vinha sempre vazia: quem
+            reclama de imagem quadriculada copiava o relatório e a única coluna
+            que responde a pergunta estava em branco.
+          */
           const somaQp = Number(stat['qpSum'] ?? 0);
-          const quadros = Number(stat['framesEncoded'] ?? 0);
-          if (somaQp > 0 && quadros > 0) {
+          const quadrosQp = Number(
+            this.direction === 'outbound' ? stat['framesEncoded'] : stat['framesDecoded'] ?? 0,
+          );
+          if (somaQp > 0 && quadrosQp > 0) {
             qpSoma += somaQp;
-            qpQuadros += quadros;
+            qpQuadros += quadrosQp;
           }
+
+          const quadros = Number(stat['framesEncoded'] ?? 0);
 
           /**
            * Quanto o encoder gasta por quadro — o substituto de
@@ -253,13 +296,32 @@ export class StatsSampler {
     const fluxos = Math.max(1, fluxosContados);
     const bpp = bitsPorPixel(bitrateBps / fluxos, width, height, fps);
 
+    /*
+      Os cinco pares acumulados viram TAXA do intervalo. Ver `ParAcumulado`.
+    */
+    const pares: Record<string, ParAcumulado> = {
+      qp: { soma: qpSoma, conta: qpQuadros },
+      encode: { soma: encodeSegundos, conta: encodeQuadros },
+      jitter: { soma: jbAtraso, conta: jbEmitidos },
+      processamento: { soma: procAtraso, conta: procQuadros },
+      decode: { soma: decodeSegundos, conta: procQuadros },
+    };
+    const anteriores = this.acumuladores;
+    this.acumuladores = pares;
+    const noIntervalo = (chave: string): number | null =>
+      taxa(pares[chave]!, anteriores[chave]);
+    /** O mesmo, já convertido de segundos para milissegundos. */
+    const emSegundos = (chave: string): number | null => {
+      const v = noIntervalo(chave);
+      return v === null ? null : v * 1000;
+    };
+
     const recepcao: RecepcaoStats = {
-      // `jitterBufferDelay` vem em segundos ACUMULADOS; dividir pela contagem
-      // de quadros emitidos dá o atraso médio por quadro, que é o número que
-      // se compara com os 80ms que escolhemos como piso.
-      jitterBufferMs: jbEmitidos > 0 ? (jbAtraso / jbEmitidos) * 1000 : null,
-      processamentoMs: procQuadros > 0 ? (procAtraso / procQuadros) * 1000 : null,
-      decodeMs: procQuadros > 0 ? (decodeSegundos / procQuadros) * 1000 : null,
+      // Taxa do INTERVALO, não média da sessão. Ver `ParAcumulado`: dez
+      // minutos calmos seguidos de um episódio de 800ms reportavam 81ms.
+      jitterBufferMs: emSegundos('jitter'),
+      processamentoMs: emSegundos('processamento'),
+      decodeMs: emSegundos('decode'),
       congelamentos,
       tempoCongeladoS,
       quadrosDescartados,
@@ -281,8 +343,8 @@ export class StatsSampler {
       availablePorPeer,
       bpp,
       encoderImplementation,
-      qp: qpQuadros > 0 ? qpSoma / qpQuadros : null,
-      msPorQuadro: encodeQuadros > 0 ? (encodeSegundos / encodeQuadros) * 1000 : null,
+      qp: noIntervalo('qp'),
+      msPorQuadro: emSegundos('encode'),
       recepcao: temRecepcao ? recepcao : null,
     };
   }

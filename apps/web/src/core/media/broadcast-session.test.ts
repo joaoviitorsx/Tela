@@ -943,6 +943,110 @@ describe('BroadcastSession — trocar a fonte não deixa lixo', () => {
   });
 });
 
+describe('BroadcastSession — colapso de link não pode calar as duas malhas', () => {
+  const amostra = (extra: Record<string, unknown>) => ({
+    fps: 60,
+    bitrateBps: 7_000_000,
+    rttMs: 40,
+    width: 1920,
+    height: 1080,
+    limitation: 'none' as const,
+    availableBps: null,
+    bpp: 0.1,
+    encoderImplementation: null,
+    qp: null,
+    msPorQuadro: null,
+    recepcao: null,
+    paresMedidos: 1,
+    piorAvailableBps: null,
+    availablePorPeer: {},
+    ...extra,
+  });
+
+  async function tique(ctx: ReturnType<typeof build>, vezes: number) {
+    for (let i = 0; i < vezes; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+  }
+
+  /**
+   * DEFEITO CONHECIDO, e este teste existe para não deixar esquecer.
+   *
+   * `it.fails` afirma que ele REPROVA hoje. No dia em que alguém consertar o
+   * caso, este teste passa a passar e o vitest acusa — que é exatamente o
+   * lembrete que se quer. Apagá-lo esconderia o defeito; deixá-lo verde
+   * mentiria; deixá-lo vermelho ensinaria a ignorar o vermelho.
+   *
+   * Ver o bloco em `broadcast-session.ts` sobre as duas guardas: três consertos
+   * foram tentados e MEDIDOS, e os três pioraram de uma a duas ordens de
+   * grandeza o que o simulador consegue medir.
+   */
+  it.fails('o link despencando DERRUBA o orçamento, mesmo com o envio caindo junto', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+
+    // Link farto: o orçamento sobe e o degrau fica no topo.
+    ctx.transport.stats = amostra({
+      availableBps: 27_000_000,
+      bitrateBps: 20_000_000,
+      availablePorPeer: { v_1: 27_000_000 },
+    });
+    await tique(ctx, 30);
+    const gordo = ctx.transport.ceilings.at(-1) ?? 0;
+    expect(gordo).toBeGreaterThan(15_000_000);
+
+    /*
+      O link colapsa. O WebRTC entrega `min(BWE, maxBitrate)` ao encoder, então
+      o ENVIO cai junto — e a guarda de "cena parada", que existe para não
+      cortar quando o encoder simplesmente não tem o que codificar, tratava os
+      dois casos como o mesmo. O corte ficava bloqueado indefinidamente:
+      medido, 300s com o orçamento congelado em 20,25 Mbps num cano de 2,7, o
+      degrau parado em 1080p60 e `motivoDegradacao` em `null`. 0,0217 bpp, e a
+      tela não dizia nada.
+    */
+    ctx.transport.stats = amostra({
+      availableBps: 2_700_000,
+      bitrateBps: 2_000_000,
+      availablePorPeer: { v_1: 2_700_000 },
+    });
+    await tique(ctx, 60);
+
+    const magro = ctx.transport.ceilings.at(-1) ?? 0;
+    expect(magro).toBeLessThan(gordo / 2);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.presetId).not.toBe('p1080p60');
+  });
+
+  it('cena parada de VERDADE ainda não derruba o orçamento', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({
+      availableBps: 27_000_000,
+      bitrateBps: 20_000_000,
+      availablePorPeer: { v_1: 27_000_000 },
+    });
+    await tique(ctx, 30);
+    const antes = ctx.transport.ceilings.at(-1) ?? 0;
+
+    /*
+      O encoder para de consumir porque não há o que codificar, mas a
+      ESTIMATIVA não se move — é isso que distingue do colapso. O orçamento tem
+      que ficar de pé para o movimento voltar sem passar por uma queda de
+      degrau que não era necessária.
+    */
+    ctx.transport.stats = amostra({
+      availableBps: 27_000_000,
+      bitrateBps: 1_000_000,
+      availablePorPeer: { v_1: 27_000_000 },
+    });
+    await tique(ctx, 15);
+
+    expect(ctx.transport.ceilings.at(-1) ?? 0).toBeGreaterThanOrEqual(antes * 0.9);
+  });
+});
+
 describe('BroadcastSession — nitidez que vira slideshow volta atrás', () => {
   const amostra = (extra: Record<string, unknown>) => ({
     fps: 60,
@@ -983,12 +1087,33 @@ describe('BroadcastSession — nitidez que vira slideshow volta atrás', () => {
 
       Oito quadros por segundo não é "nítido a 30fps", é apresentação de slides.
     */
-    ctx.transport.stats = amostra({ fps: 8 });
+    ctx.transport.stats = amostra({ fps: 8, limitation: 'cpu' });
     await tique(ctx, 16);
 
     const state = ctx.session.getState();
     expect(state.status === 'live' && state.prioridade).toBe('fluidez');
     expect(ctx.screen.video.contentHint).toBe('motion');
+  });
+
+  it('cena PARADA a 8fps não desfaz o modo — é para isso que ele existe', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.setPrioridade('nitidez');
+
+    /*
+      `framesPerSecond` do `outbound-rtp` são quadros ENVIADOS, e captura de
+      tela é dirigida a mudança: um mapa, um inventário ou uma planilha
+      produzem poucos quadros por segundo com a máquina inteiramente folgada.
+
+      A versão anterior olhava só o fps e desligava `nitidez` em cinco
+      segundos — no conteúdo exato para o qual o modo foi criado, e de forma
+      circular: reescolher era revertido de novo. O que justifica desistir é o
+      encoder NÃO DAR CONTA, e isso `qualityLimitationReason` diz.
+    */
+    ctx.transport.stats = amostra({ fps: 4, limitation: 'none' });
+    await tique(ctx, 30);
+
+    expect(ctx.session.getState()).toMatchObject({ prioridade: 'nitidez' });
   });
 
   it('nitidez entregando framerate de vídeo é deixada em paz', async () => {

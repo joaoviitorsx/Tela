@@ -215,7 +215,10 @@ export class ViewerSession {
     await this.attempt(epoch);
   }
 
-  private async attempt(epoch: number): Promise<void> {
+  private async attempt(
+    epoch: number,
+    opcoes: { readonly manterImagem?: boolean } = {},
+  ): Promise<void> {
     if (this.stale(epoch)) return;
     this.retryCancel = null;
 
@@ -234,7 +237,17 @@ export class ViewerSession {
     }
     this.adiadoPorVisibilidade = false;
 
-    this.setState({ status: 'connecting', slug: this.slug });
+    /*
+      `connecting` não carrega stream, e a rota desmonta o `<video>` para
+      qualquer estado que não seja `watching` ou `reconnecting` com imagem.
+      Quando já HÁ mídia — o caso da reconexão por latência — o estado certo é
+      `reconnecting`, que preserva o elemento.
+    */
+    this.setState(
+      opcoes.manterImagem === true
+        ? { status: 'reconnecting', slug: this.slug, stream: this.stream }
+        : { status: 'connecting', slug: this.slug },
+    );
 
     /**
      * O transporte é LOCAL desta tentativa até dar certo.
@@ -444,7 +457,14 @@ export class ViewerSession {
      * segundos de imagem, e um vigia com gatilho errado troca uma transmissão
      * ruim por nenhuma.
      */
-    const podeDescer = this.jitter.atual > JITTER_MINIMO_MS;
+    /*
+      "O ajuste barato ainda tem saída?" — e a pergunta certa não é só se o
+      alvo está acima do piso. Com perda sustentada o governador sobe até o
+      teto e fica lá; o alvo fica alto, mas ele não tem mais nada a tentar.
+      Perguntar só pelo piso desarmava o vigia exatamente no caso que ele
+      existe para cobrir.
+    */
+    const podeDescer = this.jitter.atual > JITTER_MINIMO_MS && !this.jitter.noTeto;
     if (this.latencia.deveReconectar(podeDescer)) void this.reabrirPorLatencia(this.epoch);
   }
 
@@ -476,11 +496,58 @@ export class ViewerSession {
    */
   private async reabrirPorLatencia(epoch: number): Promise<void> {
     if (this.stale(epoch)) return;
+
+    /**
+     * O epoch sobe e o transporte VELHO morre, nesta ordem. Sem os dois isto
+     * era pior que o problema que conserta.
+     *
+     * `attempt()` publica `this.transport` e `this.transportCancels` sem olhar
+     * o que havia antes — todos os outros chamadores garantem que não há
+     * transporte vivo (o `open` faz `dropTransport`, os retries só rodam depois
+     * de `abandonar`). Este é o primeiro que entra com a sessão em `watching` e
+     * uma conexão VIVA.
+     *
+     * Medido: os cancelamentos anteriores eram sobrescritos sem serem
+     * invocados, e o transporte órfão nunca recebia `disconnect()`. Pior — ele
+     * ficava com os handlers registrados no MESMO epoch, então quando a
+     * conexão dele morria sozinha, `onClosed` não era considerado obsoleto e
+     * derrubava o transporte NOVO. O espectador reconectava e, segundos depois,
+     * perdia a imagem que já tinha voltado.
+     *
+     * E com o vigia rearmado a cada volta (ver abaixo), 400 segundos de
+     * latência alta produziam 302 WebSockets e 302 `RTCPeerConnection` vivos
+     * numa aba. Cada aba contava como vários espectadores no servidor.
+     */
+    this.epoch += 1;
+    const novoEpoch = this.epoch;
+    await this.dropTransport();
+    if (this.stale(novoEpoch)) return;
+
+    /**
+     * O vigia perde só a MÉDIA, e conserva o `jaAgiu`.
+     *
+     * `reset()` limpava também a marca de já ter agido, e como quem chama é a
+     * própria reconexão, a garantia de "uma vez por sessão" — a terceira
+     * defesa contra o falso positivo — nunca valia. Se reconectar não
+     * resolveu, o problema não é o buffer, e insistir troca uma transmissão
+     * ruim por nenhuma.
+     */
     this.jitter.reset();
-    this.latencia.reset();
+    this.latencia.esquecerMedida();
+
+    /**
+     * `reconnecting` COM o stream, e `attempt` avisado para não regredir.
+     *
+     * Sem o segundo argumento, `attempt` sobrescrevia com `connecting`, que não
+     * carrega stream — e `connecting` cai no early return da rota, desmontando
+     * o `<video>`. Ou seja: a reconexão que existe para consertar a latência
+     * reintroduzia, por outro caminho, exatamente a tela preta que a ADR 0018
+     * tirou.
+     */
     this.setState({ status: 'reconnecting', slug: this.slug, stream: this.stream });
-    await this.attempt(epoch);
+    await this.attempt(novoEpoch, { manterImagem: this.stream !== null });
   }
+
 
   private async onClosed(epoch: number): Promise<void> {
     if (this.stale(epoch)) return;

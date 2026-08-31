@@ -218,6 +218,7 @@ const OCIOSO_GRACA_MS = 10_000;
  */
 const AQUECIMENTO_AMOSTRAS = 8;
 
+
 export class BroadcastSession {
   private readonly emitter = new Emitter<BroadcastEvents>();
 
@@ -534,7 +535,7 @@ export class BroadcastSession {
     this.applyUplinkCeiling(stats);
     this.trackPressure(stats.limitation);
     this.trackCapturaMorta(stats.fps);
-    this.vigiarNitidez(stats.fps);
+    this.vigiarNitidez(stats.fps, stats.limitation);
     this.lembrarBanda();
   }
 
@@ -602,10 +603,42 @@ export class BroadcastSession {
     );
     const orcamento = this.governor.orcamento;
 
+    /**
+     * DEFEITO CONHECIDO E EM ABERTO: colapso de link cala as duas malhas.
+     *
+     * As duas guardas abaixo existem por bons motivos, e nenhuma delas
+     * distingue a própria causa de um colapso de rede. Num colapso o WebRTC
+     * entrega `min(BWE, maxBitrate)` ao encoder, então o envio cai junto —
+     * exatamente como na cena parada — e a estimativa cai junto com o envio,
+     * exatamente como quando somos nós o limitador.
+     *
+     * Medido, com o `BroadcastSession` real: link por espectador de 27 para
+     * 2,7 Mbps sustentado por 300 segundos deixa o orçamento congelado em
+     * 20,25 Mbps, o degrau em 1080p60 e `motivoDegradacao` em `null`.
+     * **0,0217 bit por pixel, e a tela não diz nada.**
+     *
+     * Tentei três consertos e MEDI os três no simulador de 1200 cenários:
+     *
+     *   guardas expirando em 20 amostras   → absorventes 1 → 261
+     *   desempate pela leitura crua        → três testes de dinâmica reprovados
+     *   desempate pela estimativa suavizada → absorventes 1 → 89
+     *
+     * Os três trocam um defeito que o simulador NÃO vê (a premissa P5 dele diz
+     * que o encoder sempre consome o alvo) por uma piora de duas ordens de
+     * grandeza no que ele vê. Ficar com o pior medido para consertar o não
+     * medido seria ajustar à hipótese em vez da evidência — que é o erro que
+     * a ADR 0019 inteira documenta.
+     *
+     * O conserto de verdade provavelmente precisa de um sinal que o produto
+     * ainda não tem: `qualityLimitationReason` do lado certo, ou a leitura de
+     * perda do transmissor. Fica registrado, não esquecido.
+     */
     const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;
     const enviado = stats.bitrateBps / Math.max(1, stats.paresMedidos);
     const encoderOcioso = orcamento !== null && enviado > 0 && enviado < orcamento * 0.7;
 
+    // O pior caminho medido nesta amostra, para comparar com o orçamento em
+    // vigor: é ele que distingue cena parada de link que encolheu.
     const decisao = this.governor.observe(stats.availablePorPeer, {
       permitirQueda: !limitadosPorPixel && !encoderOcioso,
     });
@@ -859,7 +892,7 @@ export class BroadcastSession {
    * Voltar para `fluidez` religa o scaler. A imagem fica menor e volta a se
    * mexer, que é melhor que nítida e parada.
    */
-  private vigiarNitidez(fps: number): void {
+  private vigiarNitidez(fps: number, limitacao: QualityLimitation): void {
     if (this.prioridade !== 'nitidez') {
       this.nitidezLenta = 0;
       return;
@@ -867,15 +900,41 @@ export class BroadcastSession {
     // Aquecimento e transientes: só uma sequência sustentada significa algo.
     if (this.amostras <= AQUECIMENTO_AMOSTRAS || fps <= 0) return;
 
+    /**
+     * Framerate baixo só conta quando há APERTO. Sem isso o modo se
+     * autodestruía no conteúdo para o qual foi criado.
+     *
+     * `framesPerSecond` do `outbound-rtp` são quadros ENVIADOS, e captura de
+     * tela é dirigida a mudança: um mapa, um inventário ou uma planilha
+     * produzem poucos quadros por segundo com a máquina inteiramente folgada.
+     * A guarda de `fps <= 0` não cobria a faixa de 1 a 19.
+     *
+     * O resultado era cruel e circular: a pessoa escolhia `nitidez` para
+     * mostrar o mapa, mexia o mouse de vez em quando, e cinco segundos depois
+     * o produto voltava para `fluidez` e borrava o mapa. Reescolher `nitidez`
+     * era revertido de novo em cinco segundos.
+     *
+     * O que justifica desistir é o encoder NÃO DAR CONTA — e isso o
+     * `qualityLimitationReason` diz. Cena parada reporta `none`.
+     */
+    if (limitacao === 'none') {
+      this.nitidezLenta = 0;
+      return;
+    }
+
     this.nitidezLenta = fps < NITIDEZ_FPS_MINIMO ? this.nitidezLenta + 1 : 0;
     if (this.nitidezLenta < PRESSURE_SAMPLES) return;
 
     this.nitidezLenta = 0;
-    void this.setPrioridade('fluidez');
+    // `catch` obrigatório: `setPrioridade` faz `setParameters`, que rejeita se
+    // um sender fechou no meio — a mesma unhandled rejection que
+    // `aplicarDegrau` documenta ter produzido.
+    void this.setPrioridade('fluidez').catch(() => undefined);
   }
 
   /** Amostras seguidas em que `nitidez` não entregou framerate de vídeo. */
   private nitidezLenta = 0;
+
 
   private trackCapturaMorta(fps: number): void {
     if (this.state.status !== 'live') return;

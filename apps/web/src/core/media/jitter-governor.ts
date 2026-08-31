@@ -66,6 +66,25 @@ export class JitterGovernor {
     return this.alvo;
   }
 
+  /**
+   * `true` quando o governador já subiu tudo que podia e não tem mais o que
+   * tentar.
+   *
+   * Existe porque o vigia de latência perguntava a coisa errada. Ele usava
+   * "o alvo está acima do piso?" como sinal de que o ajuste barato ainda tinha
+   * saída — mas com perda sustentada este governador sobe até o TETO e fica
+   * lá, porque cada amostra com perda zera a calmaria. O alvo fica em 240ms,
+   * acima do piso, e o vigia concluía para sempre que era melhor esperar.
+   *
+   * Medido: com três pacotes perdidos por segundo — Wi-Fi comum — o vigia
+   * nunca disparava. Ele só disparava em link limpo, que é justamente onde o
+   * estimador do Chromium NÃO infla o buffer. A malha estava invertida em
+   * relação à própria motivação.
+   */
+  get noTeto(): boolean {
+    return this.alvo >= JITTER_MAXIMO_MS;
+  }
+
   reset(): void {
     this.alvo = JITTER_INICIAL_MS;
     this.calmaria = 0;

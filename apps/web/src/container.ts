@@ -1,6 +1,7 @@
 import { OFFENSIVE, RESERVED, suggestPreset } from '@tela/shared';
 import { makeBrowserAudioCapture } from './adapters/browser-audio-capture.js';
 import { makeBrowserAudioGain } from './adapters/browser-audio-gain.js';
+import { makeBrowserFrameTiming } from './adapters/browser-frame-timing.js';
 import { makeBrowserPlatform } from './adapters/browser-platform.js';
 import { makeBrowserScheduler } from './adapters/browser-scheduler.js';
 import { makeBrowserScreenCapture } from './adapters/browser-screen-capture.js';
@@ -31,6 +32,15 @@ const audioCapture = makeBrowserAudioCapture();
 
 /** De onde vem o áudio do jogo depende do sistema. Ver `AudioSourcePicker`. */
 export const platform = makeBrowserPlatform();
+
+/**
+ * A medição de latência por quadro precisa do `<video>`, que só existe em
+ * tempo de render — então o container exporta a FÁBRICA, não a instância.
+ *
+ * É o mesmo motivo de `createViewerSession` ser função: a fiação passa por
+ * aqui, mas o objeto nasce quando quem usa tem o que ele precisa.
+ */
+export const frameTimingDe = makeBrowserFrameTiming;
 export const audio = audioCapture;
 
 /**

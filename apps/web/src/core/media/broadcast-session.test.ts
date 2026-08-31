@@ -943,6 +943,78 @@ describe('BroadcastSession — trocar a fonte não deixa lixo', () => {
   });
 });
 
+describe('BroadcastSession — nitidez que vira slideshow volta atrás', () => {
+  const amostra = (extra: Record<string, unknown>) => ({
+    fps: 60,
+    bitrateBps: 3_000_000,
+    rttMs: 30,
+    width: 1280,
+    height: 720,
+    limitation: 'none' as const,
+    availableBps: null,
+    bpp: 0.11,
+    encoderImplementation: null,
+    qp: null,
+    msPorQuadro: null,
+    recepcao: null,
+    paresMedidos: 1,
+    piorAvailableBps: null,
+    availablePorPeer: {},
+    ...extra,
+  });
+
+  async function tique(ctx: ReturnType<typeof build>, vezes: number) {
+    for (let i = 0; i < vezes; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+  }
+
+  it('abaixo de 20fps em nitidez, o modo desiste sozinho', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.setPrioridade('nitidez');
+
+    /*
+      O E2E em browser real mediu `nitidez` a 8 fps no degrau de 360p60: o
+      encoder encosta no teto de QP e só lhe resta descartar quadro. E o modo
+      põe o `contentHint` em `detail`, que DESLIGA o quality scaler do Chromium
+      — a rede de segurança que teria tirado resolução em vez de quadro.
+
+      Oito quadros por segundo não é "nítido a 30fps", é apresentação de slides.
+    */
+    ctx.transport.stats = amostra({ fps: 8 });
+    await tique(ctx, 16);
+
+    const state = ctx.session.getState();
+    expect(state.status === 'live' && state.prioridade).toBe('fluidez');
+    expect(ctx.screen.video.contentHint).toBe('motion');
+  });
+
+  it('nitidez entregando framerate de vídeo é deixada em paz', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.setPrioridade('nitidez');
+
+    ctx.transport.stats = amostra({ fps: 30 });
+    await tique(ctx, 30);
+
+    expect(ctx.session.getState()).toMatchObject({ prioridade: 'nitidez' });
+  });
+
+  it('uma queda isolada de fps não desfaz a escolha do usuário', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.setPrioridade('nitidez');
+
+    for (let i = 0; i < 20; i += 1) {
+      ctx.transport.stats = amostra({ fps: i % 5 === 0 ? 8 : 30 });
+      await tique(ctx, 1);
+    }
+    expect(ctx.session.getState()).toMatchObject({ prioridade: 'nitidez' });
+  });
+});
+
 describe('BroadcastSession — encerramento', () => {
   it('stop solta trilhas, desconecta e cancela timers', async () => {
     const ctx = build();

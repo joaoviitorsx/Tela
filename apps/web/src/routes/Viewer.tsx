@@ -11,6 +11,7 @@ import type { ViewerState } from '../core/media/viewer-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useMediaStats } from '../react/use-media-stats.js';
 import { useHotkeys, useTabTitle } from '../react/use-page-effects.js';
+import { useFrameLatency } from '../react/use-frame-latency.js';
 import { useViewer } from '../react/use-viewer.js';
 import { PASSO_VOLUME, useVolume } from '../react/use-volume.js';
 
@@ -59,6 +60,7 @@ export function Viewer({ slug }: Props) {
   const [somAtivo, setSomAtivo] = useState(false);
   const [copiouDiag, setCopiouDiag] = useState(false);
 
+
   /**
    * Copia a série temporal para o usuário MANDAR em vez de descrever.
    *
@@ -94,6 +96,28 @@ export function Viewer({ slug }: Props) {
   const comImagem = watching || reconectando;
   const controls = useAutoHide(2_000, watching && !somAtivo);
   const stats = useMediaStats(watching ? state.stats : null);
+  /*
+    Lido do estado, que muda uma vez por segundo com as estatísticas — e não a
+    60 Hz junto com os quadros. Re-renderizar a página inteira por quadro seria
+    trabalho na máquina de quem está assistindo, exatamente o que o produto
+    evita do outro lado.
+  */
+  const medida = session.latenciaAtual;
+  /**
+   * A latência ponta a ponta, medida no quadro.
+   *
+   * `getStats()` mede pedaços — RTT é a rede, `totalProcessingDelay` vai do
+   * primeiro pacote até o decode. Faltam captura, encode, o pacer e o render, e
+   * é justamente aí que mora a diferença entre os 58ms que o HUD mostrava e o
+   * segundo que o usuário relatou. `requestVideoFrameCallback` é a única API do
+   * navegador que fecha essa conta.
+   */
+  const registrar = useCallback(
+    (amostra: Parameters<typeof session.registrarLatencia>[0]) =>
+      session.registrarLatencia(amostra),
+    [session],
+  );
+  useFrameLatency(videoRef.current, comImagem, registrar);
 
   useTabTitle(watching ? `● tela.gg/${slug}` : `${slug} · tela`);
 
@@ -303,8 +327,26 @@ export function Viewer({ slug }: Props) {
           os dois números estavam certos: eram grandezas diferentes, e a tela
           mostrava a que não importa.
         */}
-        <span className="tabular text-[12px] text-muted" title={`rede ${stats.rtt}`}>
-          {stats.latencia}
+        {/*
+          Prefere a medida do QUADRO, que é a única completa. `stats.latencia`
+          entra quando `requestVideoFrameCallback` não existe ou ainda não
+          produziu amostra — ela é `rtt/2 + processamento`, que é um piso
+          honesto mas ainda perde captura, encode e render.
+        */}
+        <span
+          className={[
+            'tabular text-[12px]',
+            medida.alta ? 'text-warn' : 'text-muted',
+          ].join(' ')}
+          title={
+            medida.ms === null
+              ? `rede ${stats.rtt}`
+              : `rede ${stats.rtt} · medido no quadro (${
+                  medida.origem === 'captura' ? 'ponta a ponta' : 'só a recepção'
+                })`
+          }
+        >
+          {medida.ms === null ? stats.latencia : `${Math.round(medida.ms)}ms`}
         </span>
 
         {/* Só aparece quando travou de verdade. Silêncio é boa notícia. */}

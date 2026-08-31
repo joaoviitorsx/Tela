@@ -27,6 +27,14 @@ jobs:
       # Ciclo de dependência não aparece em typecheck nem em teste. Só aqui.
       - run: pnpm depcruise
 
+      # As malhas de controle não têm defeito que teste unitário pegue: elas
+      # falham por DINÂMICA — oscilação, estado absorvente, uma malha medindo a
+      # própria atuação. O simulador roda 1200 cenários de 300s em cinco
+      # segundos, e já pegou uma regressão que deixava as duas malhas mudas ao
+      # mesmo tempo, com 275 testes verdes ao lado dela (ADR 0019).
+      - name: as malhas de controle não regrediram
+        run: node e2e/malhas.sim.mjs --portao
+
       # As fronteiras do AGENTS.md precisam FALHAR quando violadas. Um lint que
       # passa porque a regra foi apagada por engano é pior que nenhum lint.
       - name: fronteiras de camada realmente bloqueiam

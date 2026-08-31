@@ -13,6 +13,7 @@ import { isSignalingError } from '../ports/signaling-channel.js';
 import {
   CONTENT_HINT_POR_PRIORIDADE,
   FRAMERATE_POR_PRIORIDADE,
+  NITIDEZ_FPS_MINIMO,
   P2P_LIMITS,
   type Prioridade,
   tetoDeBitrate,
@@ -533,6 +534,7 @@ export class BroadcastSession {
     this.applyUplinkCeiling(stats);
     this.trackPressure(stats.limitation);
     this.trackCapturaMorta(stats.fps);
+    this.vigiarNitidez(stats.fps);
     this.lembrarBanda();
   }
 
@@ -845,6 +847,36 @@ export class BroadcastSession {
    * Só vale com plateia: sem espectador não há `outbound-rtp`, e sem ninguém
    * do outro lado não há tela preta para ninguém ver.
    */
+  /**
+   * `nitidez` que virou apresentação de slides volta para `fluidez`.
+   *
+   * O E2E mediu o modo a 8 fps no fundo da escada: o encoder encosta no teto de
+   * QP e só lhe resta descartar quadro. E `nitidez` põe o `contentHint` em
+   * `detail`, que desliga o quality scaler do Chromium — a rede de segurança
+   * que teria tirado resolução em vez de quadro. As duas coisas juntas fazem o
+   * modo falhar exatamente onde ele mais promete.
+   *
+   * Voltar para `fluidez` religa o scaler. A imagem fica menor e volta a se
+   * mexer, que é melhor que nítida e parada.
+   */
+  private vigiarNitidez(fps: number): void {
+    if (this.prioridade !== 'nitidez') {
+      this.nitidezLenta = 0;
+      return;
+    }
+    // Aquecimento e transientes: só uma sequência sustentada significa algo.
+    if (this.amostras <= AQUECIMENTO_AMOSTRAS || fps <= 0) return;
+
+    this.nitidezLenta = fps < NITIDEZ_FPS_MINIMO ? this.nitidezLenta + 1 : 0;
+    if (this.nitidezLenta < PRESSURE_SAMPLES) return;
+
+    this.nitidezLenta = 0;
+    void this.setPrioridade('fluidez');
+  }
+
+  /** Amostras seguidas em que `nitidez` não entregou framerate de vídeo. */
+  private nitidezLenta = 0;
+
   private trackCapturaMorta(fps: number): void {
     if (this.state.status !== 'live') return;
 

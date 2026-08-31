@@ -1,7 +1,10 @@
 import { Emitter } from '../emitter.js';
 import { type Diagnostico, Diario } from './diagnostico.js';
+import { JITTER_MINIMO_MS } from '../mesh/peer-link.js';
 import { JitterGovernor } from './jitter-governor.js';
+import { type EstadoLatencia, LatencyWatch } from './latency-watch.js';
 import type { MediaStats, MediaTransport } from '../ports/media-transport.js';
+import type { AmostraLatencia } from '../ports/frame-timing.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
 
@@ -119,6 +122,17 @@ export class ViewerSession {
    */
   private readonly diario = new Diario('espectador');
 
+  /**
+   * O teto duro de latência.
+   *
+   * `jitterBufferTarget` é um piso sem contraparte: nenhuma API impõe um TETO
+   * ao buffer de playout. Quando o estimador decide que precisa de meio
+   * segundo, ele fica com meio segundo, e baixar o nosso piso não muda nada.
+   * Reconectar é a única alavanca que sobra — e é por isso que ela só é puxada
+   * depois que o ajuste barato falhou.
+   */
+  private readonly latencia = new LatencyWatch();
+
   private epoch = 0;
   /** Última contagem de plateia recebida. Fora do `attempt` porque a
    *  reconexão remonta o estado `watching` e precisa do mesmo número. */
@@ -135,6 +149,19 @@ export class ViewerSession {
 
   getState(): ViewerState {
     return this.state;
+  }
+
+  /**
+   * Uma medida vinda do quadro apresentado. Chamada a 60 Hz pelo adapter, então
+   * é barata de propósito: só alimenta uma média móvel.
+   */
+  registrarLatencia(amostra: AmostraLatencia): void {
+    this.latencia.registrar(amostra);
+  }
+
+  /** A latência ponta a ponta que o espectador está sentindo. */
+  get latenciaAtual(): EstadoLatencia {
+    return this.latencia.estado;
   }
 
   /** Nada sai da máquina sozinho: a UI copia, a pessoa decide se manda. */
@@ -169,6 +196,7 @@ export class ViewerSession {
 
     this.cancelRetry();
     this.jitter.reset();
+    this.latencia.reset();
     this.diario.limpar();
     await this.dropTransport();
     if (this.stale(epoch)) return;
@@ -407,6 +435,17 @@ export class ViewerSession {
     const decisao = this.jitter.observe(stats.recepcao);
     if (decisao !== null) this.transport?.setJitterAlvo(decisao.ms);
     this.diario.registrar(stats, this.deps.scheduler.now());
+
+    /**
+     * O último recurso, e ele só é alcançado quando o primeiro se esgotou.
+     *
+     * `podeDescer` é o governador dizendo que ainda tem buffer para devolver.
+     * Enquanto tiver, a resposta certa é devolver — reconectar custa alguns
+     * segundos de imagem, e um vigia com gatilho errado troca uma transmissão
+     * ruim por nenhuma.
+     */
+    const podeDescer = this.jitter.atual > JITTER_MINIMO_MS;
+    if (this.latencia.deveReconectar(podeDescer)) void this.reabrirPorLatencia(this.epoch);
   }
 
   private onReconnected(epoch: number): void {
@@ -422,6 +461,25 @@ export class ViewerSession {
       viewers: this.plateia,
       stats: null,
     });
+  }
+
+  /**
+   * Reconecta porque a latência não desceu de outro jeito.
+   *
+   * Precedente: o watchdog da Rainway com `bufferLimitMs: 500`, que reiniciava
+   * o stream em vez de deixar o buffer crescer. Grosseiro, e é a alavanca que o
+   * navegador deixa.
+   *
+   * Passa por `attempt`, o mesmo caminho da reconexão comum, então o
+   * `<video>` não é desmontado: o estado `reconnecting` carrega o stream desde
+   * a ADR 0018.
+   */
+  private async reabrirPorLatencia(epoch: number): Promise<void> {
+    if (this.stale(epoch)) return;
+    this.jitter.reset();
+    this.latencia.reset();
+    this.setState({ status: 'reconnecting', slug: this.slug, stream: this.stream });
+    await this.attempt(epoch);
   }
 
   private async onClosed(epoch: number): Promise<void> {

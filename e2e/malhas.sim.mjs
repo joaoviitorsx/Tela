@@ -906,7 +906,7 @@ function tabela(linhas, colunas) {
 async function main() {
   if (flag('premissas')) {
     console.log(PREMISSAS);
-    return;
+    return null;
   }
 
   const casos = SO_QUEDAS ? montarQuedas() : [...montarMatriz(), ...montarQuedas()];
@@ -1254,6 +1254,8 @@ async function main() {
 
   console.log(`Resultados completos: ${arquivo}`);
   console.log(PREMISSAS);
+
+  return resultados;
 }
 
 function imprimirLista(titulo, lista) {
@@ -1285,6 +1287,7 @@ function imprimirLista(titulo, lista) {
   );
   if (lista.length > 25) console.log(`  … e mais ${lista.length - 25}`);
   console.log();
+
 }
 
 function mediana(xs) {
@@ -1296,4 +1299,72 @@ function percentil(xs, p) {
   return s[Math.min(s.length - 1, Math.floor(s.length * p))];
 }
 
-await main();
+/* ═══════════════════════════════════════════════════════════════════════
+   PORTÃO DE CI
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Tetos de regressão, com folga sobre o medido em 2026-08-31.
+ *
+ * Estes números não são metas — são ALARMES. Eles existem porque as malhas de
+ * controle não falham de um jeito que teste unitário pegue: elas falham por
+ * dinâmica, e a suíte ficou verde em 275 testes enquanto uma regressão deixava
+ * as duas malhas mudas ao mesmo tempo (ADR 0019).
+ *
+ * A folga é de ~25% sobre o medido. Apertar mais transformaria o ruído do
+ * simulador em build vermelho, e um portão que grita sem motivo é um portão
+ * que alguém desliga.
+ *
+ * Quando um número aqui subir de propósito, mude o teto NO MESMO COMMIT que
+ * muda o comportamento, e diga por quê. Ajustar o teto depois, para o build
+ * passar, é o mesmo erro que afrouxar um teste para caber no código.
+ */
+const TETOS = {
+  quadriculado: 90, // medido 70
+  mudos: 0, // medido 0 — este não tem folga, é binário
+  absorventes: 10, // medido 1
+  abaixoDoLink: 175, // medido 138
+  afogando: 175, // medido 135
+};
+
+export function portao(resultados) {
+  const medido = {
+    quadriculado: resultados.filter((r) => r.bppEntregue < BPP_PISO || r.pctAbaixoPiso >= 50)
+      .length,
+    mudos: resultados.filter((r) => r.mudo).length,
+    absorventes: resultados.filter((r) => r.absorvente).length,
+    abaixoDoLink: resultados.filter((r) => r.degrausPerdidos >= 1 || r.razaoBitrate < 0.8)
+      .length,
+    afogando: resultados.filter((r) => r.pctSobreuso > 10).length,
+  };
+
+  const falhas = Object.entries(TETOS).filter(([k, teto]) => medido[k] > teto);
+
+  console.log('\n══════════════════════════════════════════════════════════════');
+  console.log('PORTÃO DE CI');
+  console.log('══════════════════════════════════════════════════════════════');
+  for (const [k, teto] of Object.entries(TETOS)) {
+    const v = medido[k];
+    console.log(`  ${v > teto ? 'FALHA' : '  ok '}  ${k.padEnd(16)} ${String(v).padStart(4)} / ${teto}`);
+  }
+
+  if (falhas.length === 0) {
+    console.log('\n  As malhas não regrediram.\n');
+    return true;
+  }
+  console.log(
+    `\n  ${falhas.length} métrica(s) de dinâmica pioraram. Se foi de propósito,` +
+      '\n  mude o teto NESTE commit e diga por quê — não depois, para o build passar.\n',
+  );
+  return false;
+}
+
+const resultados = await main();
+
+/*
+  Portão de CI. Sem a flag o simulador só REPORTA, que é o uso interativo; com
+  ela ele DECIDE, que é o uso no build.
+*/
+if (flag('portao') && Array.isArray(resultados) && !portao(resultados)) {
+  process.exitCode = 1;
+}

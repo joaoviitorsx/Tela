@@ -452,6 +452,23 @@ export const FRAMERATE_POR_PRIORIDADE: Record<Prioridade, number> = {
 };
 
 /**
+ * O menor framerate que ainda é vídeo, e não uma sequência de fotos.
+ *
+ * O E2E em browser real mediu `nitidez` a **8 fps** no degrau de 360p60: o
+ * OpenH264 encostou no teto de QP e só lhe restou descartar quadro. E `nitidez`
+ * troca o `contentHint` para `detail`, que DESLIGA o quality scaler do
+ * Chromium — a rede de segurança que teria tirado resolução em vez de quadro.
+ *
+ * Oito quadros por segundo não é "nítido a 30fps", é apresentação de slides. O
+ * modo existe para quem mostra um mapa ou um inventário; ninguém pediu isso.
+ *
+ * Abaixo deste piso a promessa do modo deixa de valer, e a resposta certa é
+ * voltar para `fluidez` — onde o quality scaler está ligado e derruba pixel em
+ * vez de quadro.
+ */
+export const NITIDEZ_FPS_MINIMO = 20;
+
+/**
  * Maior preset que CABE num orçamento já calculado POR ESPECTADOR.
  *
  * # Por que isto existe

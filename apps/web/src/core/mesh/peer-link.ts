@@ -278,17 +278,49 @@ export class PeerLink {
  *
  * Era zero. Ver `setJitterAlvo` para por que zero era pior que 80.
  */
-export const JITTER_INICIAL_MS = 80;
+/**
+ * Por onde o buffer começa, antes de o governador medir qualquer coisa.
+ *
+ * Era 80ms, escolhido por intuição. O número calibrado veio depois, e é
+ * medido: Carrascosa & Bellalta instrumentaram o **Stadia** (arXiv:2009.09786,
+ * Computer Communications 188/2022) e mediram o jitter buffer dele em
+ *
+ *     720p  58,42 ms      1080p  45,34 ms      4K  35,35 ms
+ *
+ * Dois a três quadros, e ENCOLHENDO conforme a resolução sobe. E o Stadia é
+ * WebRTC quase de estoque — "no substantial modifications", por Di Domenico et
+ * al. (arXiv:2012.06774) — o que faz dele o comparável mais direto que existe
+ * para este produto.
+ *
+ * 60ms fica acima dos 45 deles, porque eles saem de datacenter e nós saímos do
+ * link doméstico de alguém. Mas os 80 não tinham defesa: eram 1,8× o medido, e
+ * latência paga sem evidência é latência jogada fora. O governador sobe na
+ * primeira travada se este valor for otimista demais.
+ */
+export const JITTER_INICIAL_MS = 60;
 
 /**
  * O menor buffer que ainda vale tentar.
  *
  * Abaixo disto o ganho de latência é pequeno e o risco de voltar ao ciclo de
  * keyframe é grande — 40ms é menos de três quadros a 60fps.
+ *
+ * E o número caiu em cima do medido por acidente: o Stadia opera 1080p em
+ * 45,34 ms. Nosso piso é praticamente o regime dele.
  */
 export const JITTER_MINIMO_MS = 40;
 
-/** O maior. Acima disto o produto deixa de ser tempo real. */
+/**
+ * O maior. Acima disto o produto deixa de ser tempo real.
+ *
+ * O MQP do WPI (Claypool, abr/2024) mediu esta troca no Moonlight com jitter
+ * injetado por `tc-netem`: uma fila de 2 quadros (+33 ms) já cortou pela metade
+ * a magnitude do jitter em cenário baixo e médio, e só o jitter extremo — 100 ms
+ * de magnitude, dez vezes por segundo — precisou de 10 quadros (+167 ms).
+ *
+ * 240 é mais do que o pior caso medido por eles precisou, então este teto não é
+ * a restrição que morde. A velocidade de descida é.
+ */
 export const JITTER_MAXIMO_MS = 240;
 
 /**

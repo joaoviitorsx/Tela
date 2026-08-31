@@ -83,6 +83,7 @@ export class StatsSampler {
     let jbEmitidos = 0;
     let procAtraso = 0;
     let procQuadros = 0;
+    let decodeSegundos = 0;
     let congelamentos = 0;
     let tempoCongeladoS = 0;
     let quadrosDescartados = 0;
@@ -152,6 +153,7 @@ export class StatsSampler {
             jbEmitidos += Number(stat['jitterBufferEmittedCount'] ?? 0);
             procAtraso += Number(stat['totalProcessingDelay'] ?? 0);
             procQuadros += Number(stat['framesDecoded'] ?? 0);
+            decodeSegundos += Number(stat['totalDecodeTime'] ?? 0);
             congelamentos += Number(stat['freezeCount'] ?? 0);
             tempoCongeladoS += Number(stat['totalFreezesDuration'] ?? 0);
             quadrosDescartados += Number(stat['framesDropped'] ?? 0);
@@ -257,6 +259,7 @@ export class StatsSampler {
       // se compara com os 80ms que escolhemos como piso.
       jitterBufferMs: jbEmitidos > 0 ? (jbAtraso / jbEmitidos) * 1000 : null,
       processamentoMs: procQuadros > 0 ? (procAtraso / procQuadros) * 1000 : null,
+      decodeMs: procQuadros > 0 ? (decodeSegundos / procQuadros) * 1000 : null,
       congelamentos,
       tempoCongeladoS,
       quadrosDescartados,

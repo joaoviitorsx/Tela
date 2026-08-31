@@ -40,6 +40,7 @@ export type AmostraDiagnostico = {
   /** Só no espectador. */
   readonly jitterMs: number | null;
   readonly processamentoMs: number | null;
+  readonly decodeMs: number | null;
   readonly congelamentos: number | null;
   readonly perdidos: number | null;
   readonly keyframesPedidos: number | null;
@@ -92,6 +93,8 @@ export class Diario {
         stats.recepcao?.processamentoMs == null
           ? null
           : Math.round(stats.recepcao.processamentoMs),
+      decodeMs:
+        stats.recepcao?.decodeMs == null ? null : Number(stats.recepcao.decodeMs.toFixed(1)),
       congelamentos: stats.recepcao?.congelamentos ?? null,
       perdidos: stats.recepcao?.pacotesPerdidos ?? null,
       keyframesPedidos: stats.recepcao?.pedidosDeKeyframe ?? null,

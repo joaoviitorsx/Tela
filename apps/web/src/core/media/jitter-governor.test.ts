@@ -15,6 +15,7 @@ function leitura(extra: Partial<RecepcaoStats> = {}): RecepcaoStats {
   return {
     jitterBufferMs: 80,
     processamentoMs: 95,
+    decodeMs: 8,
     congelamentos: 0,
     tempoCongeladoS: 0,
     quadrosDescartados: 0,

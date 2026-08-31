@@ -115,7 +115,16 @@ se compra são quadros com cadência constante — metade da sensação de quali
 > vinha de keyframe demais. É o ciclo que este buffer corta.
 >
 > E `jitterBufferTarget` é um PISO, não um alvo: o buffer real é
-> `max(80ms, o que o estimador calcular)`. Só custa latência com a rede calma.
+> `max(alvo, o que o estimador calcular)`. Só custa latência com a rede calma.
+>
+> **E o número calibrado apareceu depois (ADR 0020).** Carrascosa & Bellalta
+> instrumentaram o **Stadia** — que é WebRTC quase de estoque — e mediram o
+> jitter buffer dele: **58,42 ms em 720p, 45,34 ms em 1080p, 35,35 ms em 4K**
+> (arXiv:2009.09786, Computer Communications 188/2022). Dois a três quadros, e
+> encolhendo conforme a resolução sobe.
+>
+> É a régua que faltava, e ela é revisada por pares em vez de inventada. Os
+> 80ms fixos eram 1,8× o que o Stadia opera em 1080p.
 
 O áudio continua fora: ele nunca teve o buffer mexido, e continua não tendo.
 

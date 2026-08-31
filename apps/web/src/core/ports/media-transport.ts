@@ -44,6 +44,20 @@ export type RecepcaoStats = {
    * escolhemos. Se forem próximos, é o buffer.
    */
   readonly processamentoMs: number | null;
+  /**
+   * Só o decode, em ms por quadro. Separado do processamento por um motivo
+   * contraintuitivo e medido.
+   *
+   * Bhuyan et al. (POMACS 6(1) Art. 10), instrumentando o Moonlight, acharam
+   * que **o tempo de decode AUMENTA conforme o bitrate CAI**. Ou seja: quando a
+   * nossa escada desce um degrau sob pressão, o decode do espectador pode
+   * ficar mais lento, não mais rápido — e a queda que devia aliviar cobra em
+   * outro lugar.
+   *
+   * Sem este campo, essa possibilidade fica indistinguível de jitter buffer
+   * grande dentro do `processamentoMs`, que engloba os dois.
+   */
+  readonly decodeMs: number | null;
   /** Quantas vezes a imagem CONGELOU, acumulado na sessão. */
   readonly congelamentos: number;
   /** Tempo total congelado, em segundos. É isto que o usuário chama de travar. */

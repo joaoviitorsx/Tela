@@ -165,13 +165,20 @@ export function Viewer({ slug }: Props) {
     void element.play().catch(() => undefined);
   }, [streamAtual]);
 
-  /** O elemento é a fonte da verdade do áudio; o hook é a fonte da intenção. */
+  /**
+   * O elemento é a fonte da verdade do áudio; o hook é a fonte da intenção.
+   *
+   * Depende de `videoEl` e não de `videoRef.current`: o ref não é reativo, e um
+   * efeito que dependesse dele rodaria uma vez com `null` e nunca mais. E de
+   * `comImagem`, que é o que o corpo de fato lê — a dependência tinha ficado em
+   * `watching` quando o corpo passou a olhar `comImagem`, então o volume não
+   * era reaplicado ao voltar de um soluço de rede.
+   */
   useEffect(() => {
-    const element = videoRef.current;
-    if (!element || !comImagem) return;
-    element.muted = som.mudo;
-    element.volume = som.volume;
-  }, [watching, som.mudo, som.volume]);
+    if (videoEl === null || !comImagem) return;
+    videoEl.muted = som.mudo;
+    videoEl.volume = som.volume;
+  }, [videoEl, comImagem, som.mudo, som.volume]);
 
   const liberarSom = useCallback(() => {
     som.reativar();
@@ -244,7 +251,13 @@ export function Viewer({ slug }: Props) {
       video?.removeEventListener('webkitbeginfullscreen', entrou);
       video?.removeEventListener('webkitendfullscreen', saiu);
     };
-  }, []);
+    /*
+      `videoEl` na lista, e sem ele o fallback do iPhone nunca funcionava: com
+      a lista vazia o efeito rodava uma vez, quando o elemento ainda era `null`,
+      e os dois listeners de `webkitfullscreen` jamais eram registrados. Mesmo
+      defeito que matou a medição de latência por quadro — ref não é reativo.
+    */
+  }, [videoEl]);
 
   useHotkeys(
     useMemo(

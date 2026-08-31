@@ -170,11 +170,22 @@ export function Home({ onStart }: Props) {
       <main className="flex flex-1 flex-col">
         {/*
           O canal. A folga vertical toda vive aqui — `flex-1` com o conteúdo
-          centrado verticalmente. Em 1440×900 a sobra vira respiro em volta do
-          TRANSMITIR, que é onde ela vale alguma coisa, em vez de virar um vazio
-          pendurado embaixo do último filete.
+          centrado verticalmente. A sobra vira respiro em volta do TRANSMITIR,
+          que é onde ela vale alguma coisa, em vez de virar um vazio pendurado
+          embaixo do último filete.
+
+          MEDIDO, e a medida mudou os números. Em 1024×900 a faixa tinha 453px
+          para 340px de conteúdo: os 113px de diferença eram `py-14` puro, e não
+          o `flex-1` esticando. Em 1920×1080 aí sim o `flex-1` acrescentava mais
+          62px por cima do padding.
+
+          Duas correções, e as duas medidas. A folga de `sm` cai de 56 para
+          40px, que continua sendo respiro e para de ler como buraco entre o
+          botão e o filete de QUALIDADE. E `max-h` limita o quanto a faixa pode
+          crescer: acima disso a sobra desce para o resto da página, onde vira
+          conteúdo acima da dobra em vez de vazio no meio dela.
         */}
-        <section className="flex flex-1 items-center border-b border-line py-10 sm:py-14">
+        <section className="flex max-h-[560px] flex-1 items-center border-b border-line py-10 sm:py-10 lg:py-12">
           {/*
             Campo à esquerda, aparelho à direita.
 

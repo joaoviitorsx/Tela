@@ -212,6 +212,33 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
     void stop();
   }, [live, state, stop]);
 
+  /**
+   * ANTES dos early returns, e a posição é o ponto.
+   *
+   * Estes dois hooks estavam declarados depois de `if (!live) return …`, o que
+   * é violação de ordem de hooks: enquanto a transmissão não começa o
+   * componente registra N hooks, e no instante em que ela começa registra N+2.
+   * React responde com "Rendered more hooks than during the previous render" e
+   * derruba o console — exatamente quando a pessoa aperta TRANSMITIR.
+   *
+   * Passou no lint porque `eslint-plugin-react-hooks` não estava instalado.
+   * Agora está.
+   */
+  const [copiouDiag, setCopiouDiag] = useState(false);
+
+  /** Ver `core/media/diagnostico.ts`. Nada sai da máquina sozinho. */
+  const copiarDiagnostico = useCallback(() => {
+    const relatorio = session.diagnostico(navigator.userAgent);
+    if (relatorio === null) return;
+    void navigator.clipboard
+      .writeText(JSON.stringify(relatorio, null, 2))
+      .then(() => {
+        setCopiouDiag(true);
+        setTimeout(() => setCopiouDiag(false), 2_000);
+      })
+      .catch(() => undefined);
+  }, [session]);
+
   if (state.status === 'ended') {
     const falhou = state.reason !== ENCERRAMENTO_NORMAL;
     return (
@@ -287,21 +314,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
    *
    * Nada é calculado aqui: os quatro já vinham de `useMediaStats`.
    */
-  const [copiouDiag, setCopiouDiag] = useState(false);
-
-  /** Ver `core/media/diagnostico.ts`. Nada sai da máquina sozinho. */
-  const copiarDiagnostico = useCallback(() => {
-    const relatorio = session.diagnostico(navigator.userAgent);
-    if (relatorio === null) return;
-    void navigator.clipboard
-      .writeText(JSON.stringify(relatorio, null, 2))
-      .then(() => {
-        setCopiouDiag(true);
-        setTimeout(() => setCopiouDiag(false), 2_000);
-      })
-      .catch(() => undefined);
-  }, [session]);
-
   const caminho = [
     {
       // Era rotulado como "resolução que a captura entrega", e não é: o número

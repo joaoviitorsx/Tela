@@ -53,7 +53,30 @@
       precisar estar pronto ANTES de a decisão poder ser tomada com tempo de
       mostrar alguma coisa.
     -->
-    <link rel="preload" href="/tela-crt.glb" as="fetch" type="model/gltf-binary" crossorigin />
+    <script>
+      /*
+        O preload era estático, e por isso acontecia em TODA rota.
+
+        A abertura só roda na tela inicial. Mas o SPA serve o mesmo `index.html`
+        para tudo, então o espectador que abre `tela.gg/joao` — a pessoa que
+        recebeu o link, muitas vezes no celular, em rede móvel — baixava 208 KB
+        de um modelo 3D que a página dele nunca usa. O próprio navegador
+        reclamava: "preloaded but not used within a few seconds".
+
+        Um script inline no `<head>` roda durante o parse, antes do módulo, então
+        o download continua paralelo ao bundle — que é o motivo de o preload ser
+        estático em primeiro lugar. Só que agora ele pergunta antes.
+      */
+      if (location.pathname === '/' || location.pathname === '') {
+        var l = document.createElement('link');
+        l.rel = 'preload';
+        l.href = '/tela-crt.glb';
+        l.as = 'fetch';
+        l.type = 'model/gltf-binary';
+        l.crossOrigin = 'anonymous';
+        document.head.appendChild(l);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

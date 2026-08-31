@@ -1,4 +1,5 @@
 import js from '@eslint/js';
+import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 /**
@@ -93,6 +94,32 @@ export default tseslint.config(
     },
   },
 
+  {
+    /**
+     * As regras de hooks do React, e elas entraram pagando uma dívida.
+     *
+     * Dois hooks foram declarados DEPOIS de um early return em `Broadcast.tsx`.
+     * Enquanto a transmissão não começava o componente registrava N hooks; no
+     * instante em que ela começava, N+2. React responde com "Rendered more
+     * hooks than during the previous render" e derruba o console — exatamente
+     * quando a pessoa aperta TRANSMITIR.
+     *
+     * Isso foi para produção com lint verde, typecheck verde e 321 testes
+     * verdes, porque nenhum deles renderiza a rota nos dois estados. A regra
+     * `rules-of-hooks` existe precisamente para esta classe de defeito e pega
+     * em tempo de lint, sem renderizar nada.
+     *
+     * `exhaustive-deps` fica como AVISO e não erro: ele tem falso positivo
+     * conhecido com dependências estáveis, e transformar cada um em build
+     * vermelho ensina a silenciar a regra — que é como se perde a que importa.
+     */
+    files: ['apps/web/src/**/*.tsx', 'apps/web/src/**/*.ts'],
+    plugins: { 'react-hooks': reactHooks },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
+  },
   {
     files: ['apps/web/src/components/**/*.tsx', 'apps/web/src/components/**/*.ts'],
     rules: {

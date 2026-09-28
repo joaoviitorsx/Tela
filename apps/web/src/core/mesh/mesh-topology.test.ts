@@ -645,3 +645,98 @@ describe('MeshTopology — a escala tira PIXEL de verdade', () => {
     expect(ctx.factory.created[0]!.senders[0]!.applied.length).toBe(antes);
   });
 });
+
+describe('MeshTopology — parâmetros de áudio verificáveis (TELA-008)', () => {
+  const erro = (name: string) => Object.assign(new Error('x'), { name });
+
+  async function comAudio(peers: string[]) {
+    const ctx = build(5);
+    const audio = fakeTrack('audio');
+    await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
+    const senders = peers.map((id) => {
+      ctx.mesh.admit(id);
+      const pc = ctx.factory.created.at(-1) as FakePeerConnection;
+      return pc.getSenders().find((s) => s.track.kind === 'audio')!;
+    });
+    return { ctx, senders };
+  }
+  const amostra = async (ctx: ReturnType<typeof build>) => {
+    await ctx.mesh.collectStats();
+    await settle(20);
+  };
+
+  it('sender sem encoding negociado: não fabrica [{}], espera e aplica quando negocia', async () => {
+    const { ctx, senders } = await comAudio(['v_1']);
+    const sender = senders[0]!;
+    sender.encodingsIniciais = [];
+    await settle(20);
+
+    expect(sender.applied).toHaveLength(0);
+    expect(ctx.mesh.resumoConfigAudio()).toMatchObject({ aguardando: 1, aplicados: 0 });
+
+    sender.encodingsIniciais = [{ active: true }];
+    await amostra(ctx);
+
+    expect(sender.applied.at(-1)?.encodings).toHaveLength(1);
+    expect(sender.applied.at(-1)?.encodings?.[0]).toMatchObject({ maxBitrate: 128_000, active: true });
+    expect(ctx.mesh.resumoConfigAudio()).toMatchObject({ aplicados: 1, aguardando: 0, maxBitrate: 128_000 });
+  });
+
+  it('esperar a negociação não gasta as tentativas de falha', async () => {
+    const { ctx, senders } = await comAudio(['v_1']);
+    const sender = senders[0]!;
+    sender.encodingsIniciais = [];
+    await settle(20);
+    for (let i = 0; i < 10; i += 1) await amostra(ctx);
+    expect(ctx.mesh.resumoConfigAudio()?.aguardando).toBe(1);
+
+    sender.encodingsIniciais = [{}];
+    await amostra(ctx);
+    expect(ctx.mesh.resumoConfigAudio()?.aplicados).toBe(1);
+  });
+
+  it('recusa da prioridade opcional não impede o bitrate essencial', async () => {
+    const { ctx, senders } = await comAudio(['v_1']);
+    senders[0]!.recusar = (p) =>
+      p.encodings?.[0]?.networkPriority !== undefined ? erro('OperationError') : null;
+    await settle(20);
+
+    const aplicado = senders[0]!.applied.at(-1)?.encodings?.[0];
+    expect(aplicado?.maxBitrate).toBe(128_000);
+    expect(aplicado?.networkPriority).toBeUndefined();
+    expect(ctx.mesh.resumoConfigAudio()).toMatchObject({
+      aplicados: 1, comPrioridade: 0, ultimoErro: 'OperationError',
+    });
+  });
+
+  it('recusa persistente: tentativas limitadas, erro registrado, e os outros peers seguem', async () => {
+    const { ctx, senders } = await comAudio(['v_1', 'v_2']);
+    senders[0]!.recusar = () => erro('InvalidModificationError');
+    await settle(20);
+    for (let i = 0; i < 6; i += 1) await amostra(ctx);
+
+    expect(senders[1]!.applied.at(-1)?.encodings?.[0]?.maxBitrate).toBe(128_000);
+    const resumo = ctx.mesh.resumoConfigAudio();
+    expect(resumo).toMatchObject({
+      senders: 2, aplicados: 1, desistiu: 1, ultimoErro: 'InvalidModificationError',
+    });
+    // Só um sender aceitou: o teto afirmado é o dele, e o `desistiu` diz o resto.
+    expect(resumo?.maxBitrate).toBe(128_000);
+  });
+
+  it('não afirma teto quando nada foi aplicado', async () => {
+    const { ctx, senders } = await comAudio(['v_1']);
+    senders[0]!.recusar = () => erro('InvalidStateError');
+    await settle(20);
+    expect(ctx.mesh.resumoConfigAudio()).toMatchObject({ aplicados: 0, maxBitrate: null });
+  });
+
+  it('peer que sai leva junto o registro da configuração', async () => {
+    const { ctx } = await comAudio(['v_1', 'v_2']);
+    await settle(20);
+    ctx.mesh.drop('v_1');
+    expect(ctx.mesh.resumoConfigAudio()?.senders).toBe(1);
+    ctx.mesh.drop('v_2');
+    expect(ctx.mesh.resumoConfigAudio()).toBeNull();
+  });
+});

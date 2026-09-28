@@ -107,6 +107,51 @@ const MAX_TENTATIVAS_PARAMS = 3;
 /** Áudio de jogo, não de voz: 128 kbps preserva música e efeitos. */
 const AUDIO_BITRATE = 128_000;
 
+/**
+ * Quantas amostras um sender de áudio pode esperar pela negociação.
+ *
+ * Sem encoding negociado não há o que configurar, e isso NÃO é falha: é
+ * cedo. Contar a espera como tentativa esgotava as três em três segundos e
+ * deixava o áudio no default de voz para sempre. Trinta segundos cobrem uma
+ * renegociação lenta; depois disso, algo está errado e insistir não ajuda.
+ */
+const MAX_ESPERA_NEGOCIACAO = 30;
+
+/**
+ * O que foi pedido ao sender de áudio e o que ele aceitou.
+ *
+ * Existe para o produto não afirmar "128 kbps" quando o `setParameters`
+ * recusou — e para o diagnóstico dizer POR QUE recusou, com o nome do erro e
+ * nada além.
+ */
+export type ConfigAudio = {
+  readonly estado: 'aplicado' | 'aguardando' | 'pendente' | 'desistiu';
+  /** O `maxBitrate` lido de volta depois de aplicar. É teto, não consumo. */
+  readonly maxBitrate: number | null;
+  /** `networkPriority` alto aceito. Opcional: recusa aqui não impede o resto. */
+  readonly prioridade: boolean;
+  /** Nome do último erro (`InvalidModificationError`…). Nunca a mensagem. */
+  readonly erro: string | null;
+};
+
+/** Resumo coletivo: um peer que recusa não some na média dos outros. */
+export type ResumoConfigAudio = {
+  readonly senders: number;
+  readonly aplicados: number;
+  readonly comPrioridade: number;
+  readonly aguardando: number;
+  readonly pendentes: number;
+  readonly desistiu: number;
+  /** O teto comum; `null` quando não há aplicado ou quando divergem. */
+  readonly maxBitrate: number | null;
+  readonly ultimoErro: string | null;
+};
+
+function nomeDoErro(erro: unknown): string {
+  const nome = erro instanceof Error ? erro.name : null;
+  return nome !== null && /^[A-Za-z]{1,48}$/.test(nome) ? nome : 'Error';
+}
+
 export class MeshTopology {
   private readonly emitter = new Emitter<TopologyEvents>();
   private readonly links = new Map<string, PeerLink>();
@@ -325,6 +370,8 @@ export class MeshTopology {
     for (const sender of this.senders.get(peerId) ?? []) {
       this.pendentes.delete(sender);
       this.tentativasAnteriores.delete(sender);
+      this.configAudio.delete(sender);
+      this.esperasAudio.delete(sender);
     }
     this.senders.delete(peerId);
     this.relayed.delete(peerId);
@@ -642,25 +689,148 @@ export class MeshTopology {
   private readonly tentativasAnteriores = new Map<RTCRtpSender, number>();
 
   /**
-   * Parâmetros do áudio do jogo.
+   * Parâmetros do áudio do jogo (TELA-008).
    *
    * 128 kbps porque o WebRTC assume voz e aperta demais por padrão — trilha
-   * de jogo com música vira lata. E o bitrate é o ÚNICO ajuste feito aqui:
-   * DTX e RED se negociam no SDP, e ligá-los seria ruim de propósito. DTX
-   * corta o que ele acha que é silêncio, e em jogo isso vira gaguejo; RED
-   * manda redundância, e redundância custa latência.
+   * de jogo com música vira lata. O bitrate é o ajuste ESSENCIAL; a
+   * prioridade de rede alta é opcional, e recusa dela não pode derrubar o
+   * essencial. DTX e RED se negociam no SDP e ficam fora daqui.
+   *
+   * # O que mudou, e por quê
+   *
+   * A versão anterior mandava `encodings: [{}]` quando o sender ainda não
+   * tinha encoding — o mesmo erro que o caminho de vídeo já tinha corrigido:
+   * a spec rejeita `setParameters` que muda a cardinalidade, e a rejeição era
+   * engolida. O áudio ficava no default de voz, calado, e nada registrava.
+   *
+   * Agora: sem encoding é ESPERA (reaplica no ritmo das estatísticas, até
+   * `MAX_ESPERA_NEGOCIACAO`); rejeição é tentativa (até
+   * `MAX_TENTATIVAS_PARAMS`, com `getParameters` fresco a cada uma, porque o
+   * Blink invalida o anterior ao entrar em `setParameters`); e o resultado
+   * fica em `configAudio` para o diagnóstico.
    */
   private async applyAudioParams(sender: RTCRtpSender): Promise<void> {
+    let params: RTCRtpSendParameters;
     try {
-      const params = sender.getParameters();
-      const encodings = params.encodings?.length ? params.encodings : [{}];
-      // Áudio tem prioridade ALTA: se algo tem que ceder sob aperto de rede,
-      // é a imagem. Vídeo picotado dá para acompanhar; som picotado, não.
-      encodings[0] = { ...encodings[0], maxBitrate: AUDIO_BITRATE, networkPriority: 'high' };
-      await sender.setParameters({ ...params, encodings } as RTCRtpSendParameters);
-    } catch {
-      // Navegador que recusa o campo continua transmitindo no default.
+      params = sender.getParameters();
+    } catch (erro) {
+      this.falhouAudio(sender, nomeDoErro(erro));
+      return;
     }
+
+    if (!params.encodings?.length) {
+      this.aguardarNegociacao(sender);
+      return;
+    }
+
+    // Áudio tem prioridade ALTA: se algo tem que ceder sob aperto de rede,
+    // é a imagem. Vídeo picotado dá para acompanhar; som picotado, não.
+    const completo = { maxBitrate: AUDIO_BITRATE, networkPriority: 'high' as const };
+    try {
+      params.encodings[0] = { ...params.encodings[0], ...completo };
+      await sender.setParameters(params);
+      this.aplicouAudio(sender, true);
+      return;
+    } catch (erro) {
+      this.registrarAudio(sender, { erro: nomeDoErro(erro) });
+    }
+
+    /*
+      Segunda chamada só com o essencial, e com parâmetros FRESCOS. Se a
+      recusa foi da prioridade, o bitrate ainda entra; se foi do bitrate, a
+      tentativa conta e a fila tenta de novo na próxima amostra.
+    */
+    try {
+      const frescos = sender.getParameters();
+      if (!frescos.encodings?.length) {
+        this.aguardarNegociacao(sender);
+        return;
+      }
+      frescos.encodings[0] = { ...frescos.encodings[0], maxBitrate: AUDIO_BITRATE };
+      await sender.setParameters(frescos);
+      this.aplicouAudio(sender, false);
+    } catch (erro) {
+      this.falhouAudio(sender, nomeDoErro(erro));
+    }
+  }
+
+  /** O estado da configuração de áudio, por sender. Some junto com o peer. */
+  private readonly configAudio = new Map<RTCRtpSender, ConfigAudio>();
+  /** Esperas por negociação, separadas das tentativas: esperar não é falhar. */
+  private readonly esperasAudio = new Map<RTCRtpSender, number>();
+
+  private registrarAudio(sender: RTCRtpSender, mudanca: Partial<ConfigAudio>): void {
+    const atual = this.configAudio.get(sender) ?? {
+      estado: 'pendente', maxBitrate: null, prioridade: false, erro: null,
+    };
+    this.configAudio.set(sender, { ...atual, ...mudanca });
+  }
+
+  private aplicouAudio(sender: RTCRtpSender, prioridade: boolean): void {
+    let efetivo: number | null = null;
+    try {
+      const lido = sender.getParameters().encodings?.[0]?.maxBitrate;
+      efetivo = typeof lido === 'number' ? lido : null;
+    } catch {
+      // Sem leitura de volta, não se afirma o valor.
+    }
+    this.pendentes.delete(sender);
+    this.tentativasAnteriores.delete(sender);
+    this.esperasAudio.delete(sender);
+    this.registrarAudio(sender, { estado: 'aplicado', maxBitrate: efetivo, prioridade });
+  }
+
+  private aguardarNegociacao(sender: RTCRtpSender): void {
+    const esperas = (this.esperasAudio.get(sender) ?? 0) + 1;
+    this.esperasAudio.set(sender, esperas);
+    if (esperas > MAX_ESPERA_NEGOCIACAO) {
+      this.pendentes.delete(sender);
+      this.registrarAudio(sender, { estado: 'desistiu', erro: 'NoNegotiatedEncoding' });
+      return;
+    }
+    this.pendentes.set(sender, this.pendentes.get(sender) ?? 0);
+    this.registrarAudio(sender, { estado: 'aguardando' });
+  }
+
+  private falhouAudio(sender: RTCRtpSender, erro: string): void {
+    this.marcarPendente(sender);
+    const desistiu = !this.pendentes.has(sender);
+    this.registrarAudio(sender, { estado: desistiu ? 'desistiu' : 'pendente', erro });
+  }
+
+  /** O que o áudio de fato aceitou, somando todos os peers. */
+  resumoConfigAudio(): ResumoConfigAudio | null {
+    const vivos = [...this.senders.values()]
+      .flat()
+      .filter((sender) => sender.track?.kind === 'audio');
+    if (vivos.length === 0) return null;
+    let aplicados = 0;
+    let comPrioridade = 0;
+    let aguardando = 0;
+    let pendentes = 0;
+    let desistiu = 0;
+    let ultimoErro: string | null = null;
+    const tetos = new Set<number>();
+    for (const sender of vivos) {
+      const c = this.configAudio.get(sender);
+      if (c === undefined || c.estado === 'aguardando') aguardando += 1;
+      else if (c.estado === 'aplicado') aplicados += 1;
+      else if (c.estado === 'pendente') pendentes += 1;
+      else desistiu += 1;
+      if (c?.prioridade === true) comPrioridade += 1;
+      if (c?.estado === 'aplicado' && c.maxBitrate !== null) tetos.add(c.maxBitrate);
+      if (c?.erro != null) ultimoErro = c.erro;
+    }
+    return {
+      senders: vivos.length,
+      aplicados,
+      comPrioridade,
+      aguardando,
+      pendentes,
+      desistiu,
+      maxBitrate: aplicados > 0 && tetos.size === 1 ? [...tetos][0]! : null,
+      ultimoErro,
+    };
   }
 
   /**

@@ -214,6 +214,11 @@ if (conectou) {
   ok((audioEnvio?.bitrateBps ?? 0) > 0, 'taxa de áudio de envio medida por delta');
   ok((audioEnvio?.nivel ?? 0) > 0.01, 'nível do oscilador medido na media-source — a fonte não está muda');
   ok(audioEnvio?.codec?.mimeType === 'audio/opus', 'codec de áudio negociado lido do relatório');
+  // TELA-008: o teto só é afirmado quando o sender aceitou e ele foi lido de volta.
+  ok(
+    audioEnvio?.configuracao?.aplicados === 1 && audioEnvio?.configuracao?.maxBitrate === 128000,
+    `sender de áudio aceitou 128 kbps (${JSON.stringify(audioEnvio?.configuracao)})`,
+  );
 
   console.log('\n   Troca de qualidade ao vivo NÃO pode derrubar quem assiste');
   await host.evaluate(async () => {

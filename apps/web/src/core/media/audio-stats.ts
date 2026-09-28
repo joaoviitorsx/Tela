@@ -1,4 +1,4 @@
-import type { RelatorioDePeer } from '../mesh/mesh-topology.js';
+import type { RelatorioDePeer, ResumoConfigAudio } from '../mesh/mesh-topology.js';
 
 /**
  * O áudio no `getStats()`, separado do vídeo (TELA-007, §6.9 do plano).
@@ -86,6 +86,11 @@ export type AudioStats = {
   /** Só no espectador: quantas vezes o decoder começou a inventar som no intervalo. */
   readonly eventosOcultacao: number | null;
   readonly codec: CodecDeAudio | null;
+  /**
+   * Só no transmissor: o que os senders ACEITARAM (TELA-008). O amostrador
+   * não sabe disso — quem preenche é o transporte, que tem a topologia.
+   */
+  readonly configuracao: ResumoConfigAudio | null;
 };
 
 type Leitura = {
@@ -279,6 +284,7 @@ export class AudioStatsSampler {
       ocultacao: amostras > 0 ? ocultadas / amostras : null,
       eventosOcultacao: eventos,
       codec,
+      configuracao: null,
     };
   }
 }

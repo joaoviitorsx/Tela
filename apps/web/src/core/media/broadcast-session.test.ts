@@ -1377,7 +1377,7 @@ describe('BroadcastSession — estado do áudio (TELA-007)', () => {
     qp: null, msPorQuadro: null, recepcao: null,
     audio: {
       fluxos: 1, bitrateBps: 128_000, nivel, perda: null, jitterMs: null,
-      jitterBufferMs: null, ocultacao: null, eventosOcultacao: null, codec: null,
+      jitterBufferMs: null, ocultacao: null, eventosOcultacao: null, codec: null, configuracao: null,
     },
   });
   const audioDe = (s: BroadcastSession) => {

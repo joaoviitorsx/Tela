@@ -490,7 +490,7 @@ describe('ViewerSession — estado do áudio (TELA-007)', () => {
     qp: null, msPorQuadro: null, recepcao: null,
     audio: {
       fluxos: 1, bitrateBps: 128_000, nivel: 0.1, perda: 0.08, jitterMs: 12,
-      jitterBufferMs: 60, ocultacao, eventosOcultacao: 4, codec: null,
+      jitterBufferMs: 60, ocultacao, eventosOcultacao: 4, codec: null, configuracao: null,
     },
   });
   const audioDe = (s: ViewerSession) => {

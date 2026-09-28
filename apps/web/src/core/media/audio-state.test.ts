@@ -18,6 +18,7 @@ const stats = (extra: Partial<AudioStats> = {}): AudioStats => ({
   ocultacao: 0,
   eventosOcultacao: 0,
   codec: null,
+  configuracao: null,
   ...extra,
 });
 

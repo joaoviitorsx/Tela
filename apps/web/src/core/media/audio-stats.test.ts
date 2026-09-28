@@ -120,6 +120,8 @@ describe('AudioStatsSampler — recepção', () => {
       clockRate: 48000,
       parametros: { minptime: 10, useinbandfec: 1, stereo: 1, maxaveragebitrate: 128000 },
     });
+    // Quem preenche a configuração é o transporte, não o amostrador.
+    expect(a?.configuracao).toBeNull();
   });
 });
 

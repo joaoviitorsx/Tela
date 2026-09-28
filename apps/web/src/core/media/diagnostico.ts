@@ -1,4 +1,5 @@
 import type { MediaStats } from '../ports/media-transport.js';
+import type { ResumoConfigAudio } from '../mesh/mesh-topology.js';
 import type { EstadoAudio } from './audio-state.js';
 
 /**
@@ -121,6 +122,8 @@ export type Diagnostico = {
   readonly decoder: string | null;
   readonly encoder: string | null;
   readonly codecAudio: CodecDiagnostico | null;
+  /** O que os senders de áudio aceitaram, na última leitura. Só no transmissor. */
+  readonly configAudio: ResumoConfigAudio | null;
   /** `null` significa que esta etapa ainda não foi observada. */
   readonly etapas: Readonly<Record<EtapaDiagnostico, CodigoDiagnostico | null>>;
   readonly eventos: readonly EventoDiagnostico[];
@@ -167,6 +170,7 @@ export class Diario {
   private encoder: string | null = null;
   private decoder: string | null = null;
   private codecAudio: CodecDiagnostico | null = null;
+  private configAudio: ResumoConfigAudio | null = null;
   private sessaoId = 'unknown';
   private tentativaId = 'unknown';
   private versaoApp: string | null = null;
@@ -206,6 +210,7 @@ export class Diario {
       this.decoder = implementacaoSegura(stats.recepcao.decoder);
     }
     if (stats.audio?.codec != null) this.codecAudio = { ...stats.audio.codec };
+    if (stats.audio?.configuracao != null) this.configAudio = { ...stats.audio.configuracao };
     const a = stats.audio;
 
     this.amostras.push({
@@ -253,6 +258,7 @@ export class Diario {
     this.encoder = null;
     this.decoder = null;
     this.codecAudio = null;
+    this.configAudio = null;
     this.sessaoId = 'unknown';
     this.tentativaId = 'unknown';
     this.versaoApp = null;
@@ -280,6 +286,7 @@ export class Diario {
       decoder: this.decoder,
       encoder: this.encoder,
       codecAudio: this.codecAudio,
+      configAudio: this.configAudio,
       etapas: { ...this.etapas },
       eventos: [...this.eventos],
       amostras: [...this.amostras],

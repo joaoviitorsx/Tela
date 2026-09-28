@@ -9,12 +9,20 @@
  */
 export class FakeSender {
   applied: RTCRtpSendParameters[] = [];
+  /** Encodings antes do primeiro `setParameters`. `[]` = ainda não negociado. */
+  encodingsIniciais: RTCRtpEncodingParameters[] = [{}];
+  /** Decide se a chamada rejeita, olhando o que foi pedido. `null` aceita. */
+  recusar: ((params: RTCRtpSendParameters) => Error | null) | null = null;
   constructor(readonly track: MediaStreamTrack) {}
 
   getParameters(): RTCRtpSendParameters {
-    return (this.applied.at(-1) ?? { encodings: [{}] }) as RTCRtpSendParameters;
+    return (this.applied.at(-1) ?? {
+      encodings: this.encodingsIniciais.map((e) => ({ ...e })),
+    }) as RTCRtpSendParameters;
   }
   async setParameters(params: RTCRtpSendParameters): Promise<void> {
+    const erro = this.recusar?.(params) ?? null;
+    if (erro !== null) throw erro;
     this.applied.push(params);
   }
 }

@@ -1,5 +1,5 @@
 import { PRESETS, PRESET_ORDER, type PresetId, type Prioridade } from '@tela/shared';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
 import { Botao } from '../components/Botao.js';
 import { Cabecalho } from '../components/Cabecalho.js';
@@ -225,11 +225,33 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
    * estiver ociosa, então re-executar é seguro. As dependências são só valores
    * estáveis: se uma ação do hook entrar aqui sem ser estável, o cleanup passa a
    * rodar a cada render e derruba a transmissão.
+   *
+   * O encerramento espera um tique (TELA-026). Sem isso, o remonte do
+   * StrictMode encerrava a primeira sessão no meio do `getDisplayMedia` e a
+   * segunda pedia a captura de novo — medido: dois seletores de tela do
+   * sistema a cada TRANSMITIR em desenvolvimento. Remonte imediato com os
+   * mesmos parâmetros cancela o encerramento e a sessão em curso segue; com
+   * parâmetros diferentes, encerra na hora e começa outra, como antes.
    */
+  const encerrarAdiado = useRef<{ readonly chave: string; readonly timer: number } | null>(null);
   useEffect(() => {
+    const chave = JSON.stringify([slug, presetId, audioDeviceId, prioridadeInicial]);
+    const adiado = encerrarAdiado.current;
+    if (adiado !== null) {
+      window.clearTimeout(adiado.timer);
+      encerrarAdiado.current = null;
+      if (adiado.chave !== chave) void session.stop('USER_STOPPED');
+    }
+    // Sessão já em curso (remonte): `start` sai cedo sozinho.
     void start(slug, identity.ownerToken(), presetId, audioDeviceId, prioridadeInicial);
     return () => {
-      void session.stop('USER_STOPPED');
+      encerrarAdiado.current = {
+        chave,
+        timer: window.setTimeout(() => {
+          encerrarAdiado.current = null;
+          void session.stop('USER_STOPPED');
+        }, 0),
+      };
     };
   }, [session, start, slug, presetId, audioDeviceId, prioridadeInicial]);
 
@@ -459,7 +481,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
         aria-hidden={hud.visible}
         className={[
           'pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 transition-opacity duration-300',
-          hud.visible ? 'opacity-0' : 'opacity-100',
+          hud.visible ? 'animacoes-pausadas opacity-0' : 'opacity-100',
         ].join(' ')}
       >
         <span className="flex items-center gap-2.5 font-[family-name:var(--font-pixel)] text-[13px] text-danger">
@@ -487,7 +509,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
       <div
         className={[
           'flex min-h-0 flex-1 flex-col transition-opacity duration-300',
-          hud.visible ? 'opacity-100' : 'opacity-0',
+          hud.visible ? 'opacity-100' : 'animacoes-pausadas opacity-0',
         ].join(' ')}
       >
         <Cabecalho>

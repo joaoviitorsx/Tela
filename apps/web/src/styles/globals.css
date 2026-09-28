@@ -538,6 +538,19 @@
   animation-play-state: paused !important;
 }
 
+/*
+  Camada invisível: pausa o que está dentro (TELA-026). O console ao vivo e a
+  placa de repouso se revezam por opacidade, e o LED da camada apagada seguia
+  piscando — medido: duas animações infinitas rodando a transmissão inteira,
+  sem ninguém ver.
+*/
+.animacoes-pausadas,
+.animacoes-pausadas *,
+.animacoes-pausadas *::before,
+.animacoes-pausadas *::after {
+  animation-play-state: paused !important;
+}
+
 /**
  * Rede de segurança para o que for acrescentado depois e esquecer de declarar
  * dentro de `no-preference`.

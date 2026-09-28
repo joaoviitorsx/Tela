@@ -121,6 +121,21 @@ export function montarDiagnostico(estado: EstadoAoVivo, stats: ReadableStats): D
         tom: 'neutro',
       },
       { rotulo: 'LIMITAÇÃO', ...limitacao },
+      {
+        rotulo: 'DENSIDADE',
+        valor: stats.qp === '—' ? stats.bpp : `${stats.bpp} · QP ${stats.qp}`,
+        nota: 'bits por pixel: abaixo de 0,10 a imagem borra; QP acima de 37 o navegador corta resolução',
+        tom: stats.bppBaixo || stats.qpAlto ? 'alerta' : 'neutro',
+      },
+      {
+        rotulo: 'ENCODER',
+        valor: stats.encoder,
+        nota:
+          stats.msPorQuadro === '—'
+            ? 'custo por quadro ainda sem medida'
+            : `${stats.msPorQuadro} por quadro${stats.encoderLento ? ': não dá conta de 60fps' : ''}`,
+        tom: stats.encoderLento || stats.encoder === 'software' ? 'alerta' : 'neutro',
+      },
     ],
     espectadores,
     audio: TEXTO_AUDIO[estado.audio],

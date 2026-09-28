@@ -1,4 +1,4 @@
-import { PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
+import { PRESETS, PRESET_ORDER, type PresetId, type Prioridade } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
 import { Botao } from '../components/Botao.js';
@@ -44,6 +44,8 @@ type Props = {
   readonly presetId: PresetId;
   /** Só usado no Linux, onde o áudio do sistema não vem com a tela. */
   readonly audioDeviceId: string | null;
+  /** 60 fps (fluidez) ou 30 fps (nitidez), escolhido no passo 02. */
+  readonly prioridade: Prioridade;
   readonly onExit: () => void;
 };
 
@@ -122,7 +124,7 @@ const IDS_BASE = ['resolucao', 'rede'] as const;
  * hooks than during the previous render" no instante em que a pessoa apertava
  * TRANSMITIR. `rules-of-hooks` no lint pega isso agora.
  */
-export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
+export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridadeInicial, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
   const {
     state,
@@ -211,11 +213,11 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
    * rodar a cada render e derruba a transmissão.
    */
   useEffect(() => {
-    void start(slug, identity.ownerToken(), presetId, audioDeviceId);
+    void start(slug, identity.ownerToken(), presetId, audioDeviceId, prioridadeInicial);
     return () => {
       void session.stop('USER_STOPPED');
     };
-  }, [session, start, slug, presetId, audioDeviceId]);
+  }, [session, start, slug, presetId, audioDeviceId, prioridadeInicial]);
 
   const handleStop = useCallback(() => {
     // Só pergunta se tem gente assistindo. Confirmar quando o usuário está
@@ -265,7 +267,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   if (state.status === 'ended') {
     const falhou = state.reason !== ENCERRAMENTO_NORMAL;
     const relatorio = session.diagnostico(navigator.userAgent);
-    const recomecar = () => void start(slug, identity.ownerToken(), presetId, audioDeviceId);
+    const recomecar = () =>
+      void start(slug, identity.ownerToken(), presetId, audioDeviceId, prioridadeInicial);
     return (
       <div className="flex min-h-dvh flex-col bg-void">
         <VidroCrt />

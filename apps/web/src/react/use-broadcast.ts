@@ -10,6 +10,7 @@ export type BroadcastControls = {
     ownerToken: string,
     presetId?: PresetId,
     audioDeviceId?: string | null,
+    prioridade?: Prioridade,
   ) => Promise<void>;
   stop: () => Promise<void>;
   setPreset: (presetId: PresetId) => Promise<void>;
@@ -56,10 +57,11 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
   );
 
   const start = useCallback<BroadcastControls['start']>(
-    (slug, ownerToken, presetId, audioDeviceId) =>
+    (slug, ownerToken, presetId, audioDeviceId, prioridade) =>
       session.start(slug, ownerToken, {
         ...(presetId === undefined ? {} : { presetId }),
         ...(audioDeviceId === null || audioDeviceId === undefined ? {} : { audioDeviceId }),
+        ...(prioridade === undefined ? {} : { prioridade }),
       }),
     [session],
   );

@@ -1,4 +1,4 @@
-import { PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
+import { FRAMERATE_POR_PRIORIDADE, PRESETS, PRESET_ORDER, type PresetId, type Prioridade } from '@tela/shared';
 import { useCallback, useMemo, useState } from 'react';
 import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
 import { BarraAjuda } from '../components/BarraAjuda.js';
@@ -11,7 +11,11 @@ import { Medidor } from '../components/Medidor.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
 import { PainelOsd } from '../components/PainelOsd.js';
 import { Passos, type Passo } from '../components/Passos.js';
-import { SeletorDeResolucao, type OpcaoDeResolucao } from '../components/SeletorDeResolucao.js';
+import {
+  SeletorDeResolucao,
+  type OpcaoDeQuadros,
+  type OpcaoDeResolucao,
+} from '../components/SeletorDeResolucao.js';
 import { Vitrine } from '../components/Vitrine.js';
 import {
   audioCue,
@@ -32,20 +36,33 @@ import { ModalApp } from './ModalApp.js';
 import { ModalDiagnosticoPreAr } from './ModalDiagnosticoPreAr.js';
 
 type Props = {
-  readonly onStart: (slug: string, presetId: PresetId, audioDeviceId: string | null) => void;
+  readonly onStart: (
+    slug: string,
+    presetId: PresetId,
+    audioDeviceId: string | null,
+    prioridade: Prioridade,
+  ) => void;
 };
 
 type NumeroDoPasso = 1 | 2 | 3;
 
 const NOMES = { 1: 'CANAL', 2: 'TELA OU JOGO', 3: 'ÁUDIO' } as const;
 
-/** "576p60 econômico" cabe mal numa linha de menu. */
-const rotuloDoPreset = (id: PresetId): string => PRESETS[id].label.replace(' econômico', ' eco');
+/** "576p60 econômico" cabe mal numa linha de menu. A 30 fps, o rótulo diz 30. */
+const rotuloDoPreset = (id: PresetId, fps: number): string =>
+  PRESETS[id].label.replace(' econômico', ' eco').replace(/p\d+$/, `p${fps}`);
+
+const QUADROS: readonly OpcaoDeQuadros[] = [
+  { id: 'fluidez', fps: FRAMERATE_POR_PRIORIDADE.fluidez, nome: 'FLUIDEZ' },
+  { id: 'nitidez', fps: FRAMERATE_POR_PRIORIDADE.nitidez, nome: 'NITIDEZ' },
+];
+
+const ehPrioridade = (id: string): id is Prioridade => id === 'fluidez' || id === 'nitidez';
 
 const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
   1: [],
-  // O seletor de resolução usa o mesmo menu: ←→ troca, Enter continua.
-  2: ['resolucao'],
+  // O seletor de resolução usa o mesmo menu: ↑↓ escolhe a linha, ←→ troca, Enter continua.
+  2: ['resolucao', 'quadros'],
   3: ['volume'],
 };
 
@@ -66,10 +83,15 @@ const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
  *
  * # O que NÃO existe aqui
  *
- * Uma lista de janelas ou tipos de captura (quem escolhe é o seletor do navegador), uma escolha
- * "sem áudio" no Windows (a caixa do Chrome decide), uma linha de 30 fps (só
- * existe dentro do modo NITIDEZ, que se liga ao vivo — R5) e a prioridade
- * fluidez/nitidez no passo 02, porque a sessão só a aceita depois de ao vivo.
+ * Uma lista de janelas ou tipos de captura (quem escolhe é o seletor do navegador), e uma escolha
+ * "sem áudio" no Windows (a caixa do Chrome decide).
+ *
+ * # 30 ou 60 fps
+ *
+ * A chave do passo 02 não é um número solto: 30 fps É o modo NITIDEZ
+ * (`detail` + `maintain-resolution` + 30 fps, ADR 0015), o mesmo que se liga
+ * ao vivo. Não fica gravada — cada visita começa no padrão de 60 (R5), e ao
+ * vivo o modo continua voltando sozinho a FLUIDEZ se travar.
  *
  * # Continua sem reserva de slug
  *
@@ -84,6 +106,8 @@ export function Home({ onStart }: Props) {
     return isPresetId(saved) ? saved : 'p1080p60';
   });
   const [audioDeviceId, setAudioDeviceId] = useState<string | null>(null);
+  const [prioridade, setPrioridade] = useState<Prioridade>('fluidez');
+  const fps = FRAMERATE_POR_PRIORIDADE[prioridade];
   const [modal, setModal] = useState<'diagnostico' | 'app' | null>(null);
   /** As instruções de áudio do sistema ficam fechadas até alguém pedir. */
   const [comoAudio, setComoAudio] = useState(false);
@@ -116,8 +140,8 @@ export function Home({ onStart }: Props) {
     // do primeiro gesto. Este é o gesto.
     audioCue.estouro();
     identity.rememberSlug(wanted);
-    onStart(wanted, presetId, audioDeviceId);
-  }, [slug, valido, presetId, audioDeviceId, onStart]);
+    onStart(wanted, presetId, audioDeviceId, prioridade);
+  }, [slug, valido, presetId, audioDeviceId, prioridade, onStart]);
 
   /**
    * O que o tubo da vitrine mostra: o MESMO dado do campo, traduzido para o
@@ -148,7 +172,10 @@ export function Home({ onStart }: Props) {
   const limite = sustentavel === null ? -1 : PRESET_ORDER.indexOf(sustentavel);
 
   const ajudaResolucao = [
-    `${preset.width}×${preset.height} a ${preset.main.maxFramerate} quadros. ~${(preset.main.maxBitrate / 1_000_000).toFixed(1).replace('.', ',')} Mbps de subida por espectador.`,
+    `${preset.width}×${preset.height} a ${fps} quadros. ~${(preset.main.maxBitrate / 1_000_000).toFixed(1).replace('.', ',')} Mbps de subida por espectador.`,
+    prioridade === 'nitidez'
+      ? 'A 30 fps cada quadro recebe o dobro de bits: texto, mapa e menu ficam nítidos, o movimento rápido perde suavidade.'
+      : '',
     sustentavel !== null ? `Sua última transmissão sustentou ${PRESETS[sustentavel].label}.` : '',
     limite > 0 && indice < limite
       ? 'Acima disso a imagem desce sozinha para o que couber: o rótulo muda, a nitidez não melhora.'
@@ -161,13 +188,13 @@ export function Home({ onStart }: Props) {
     (): readonly OpcaoDeResolucao[] =>
       PRESET_ORDER.map((id) => ({
         id,
-        rotulo: rotuloDoPreset(id),
+        rotulo: rotuloDoPreset(id, Math.min(PRESETS[id].main.maxFramerate, fps)),
         largura: PRESETS[id].width,
         altura: PRESETS[id].height,
-        fps: PRESETS[id].main.maxFramerate,
+        fps: Math.min(PRESETS[id].main.maxFramerate, fps),
         mbps: (PRESETS[id].main.maxBitrate / 1_000_000).toFixed(1).replace('.', ','),
       })),
-    [],
+    [fps],
   );
 
   const linhas: readonly LinhaMenu[] =
@@ -189,6 +216,9 @@ export function Home({ onStart }: Props) {
         // Sem dar a volta: de 1080p, "←" não pode cair em 360p por acidente.
         const proximo = PRESET_ORDER[Math.min(PRESET_ORDER.length - 1, Math.max(0, indice + direcao))];
         if (proximo !== undefined) escolherPreset(proximo);
+      } else if (id === 'quadros') {
+        // Duas posições: ← é 60, → é 30, na ordem em que aparecem.
+        setPrioridade(direcao < 0 ? 'fluidez' : 'nitidez');
       } else if (id === 'volume') {
         som.definir(Math.round((som.volume + direcao * 0.1) * 10) / 10);
       }
@@ -322,6 +352,12 @@ export function Home({ onStart }: Props) {
                     if (isPresetId(id)) escolherPreset(id);
                   }}
                   propsGrupo={menu.propsLinha('resolucao')}
+                  quadros={QUADROS}
+                  quadrosEscolhido={prioridade}
+                  aoEscolherQuadros={(id) => {
+                    if (ehPrioridade(id)) setPrioridade(id);
+                  }}
+                  propsQuadros={menu.propsLinha('quadros')}
                 />
               </div>
               <RodapeDoPasso>
@@ -357,7 +393,7 @@ export function Home({ onStart }: Props) {
                 colunas={3}
                 tamanho="p"
                 medidas={[
-                  { rotulo: 'IMAGEM', valor: rotuloDoPreset(presetId) },
+                  { rotulo: 'IMAGEM', valor: rotuloDoPreset(presetId, Math.min(preset.main.maxFramerate, fps)) },
                   { rotulo: 'ÁUDIO', valor: resumoAudio },
                   { rotulo: 'VOLUME', valor: resumoAudio === 'MUDO' ? '—' : `${Math.round(som.volume * 100)}%` },
                 ]}

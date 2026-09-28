@@ -10,6 +10,20 @@ export type OpcaoDeResolucao = {
   readonly mbps: string;
 };
 
+type PropsDeLinha = {
+  readonly ref: (el: HTMLElement | null) => void;
+  readonly tabIndex: 0 | -1;
+  readonly 'data-linha': string;
+  readonly onFocus: () => void;
+};
+
+export type OpcaoDeQuadros = {
+  readonly id: string;
+  readonly fps: number;
+  /** "FLUIDEZ" / "NITIDEZ": o que se ganha, não só o número. */
+  readonly nome: string;
+};
+
 type Props = {
   readonly opcoes: readonly OpcaoDeResolucao[];
   readonly escolhido: string;
@@ -18,12 +32,11 @@ type Props = {
   readonly ajuda: string;
   readonly aoEscolher: (id: string) => void;
   /** Foco e teclas vêm do menu OSD (←→ troca, Enter continua). */
-  readonly propsGrupo: {
-    readonly ref: (el: HTMLElement | null) => void;
-    readonly tabIndex: 0 | -1;
-    readonly 'data-linha': string;
-    readonly onFocus: () => void;
-  };
+  readonly propsGrupo: PropsDeLinha;
+  readonly quadros: readonly OpcaoDeQuadros[];
+  readonly quadrosEscolhido: string;
+  readonly aoEscolherQuadros: (id: string) => void;
+  readonly propsQuadros: PropsDeLinha;
 };
 
 /**
@@ -33,9 +46,21 @@ type Props = {
  * vez. Sem lista de janelas: quem escolhe tela, janela ou aba é o seletor do
  * próprio navegador, que abre ao ir ao ar.
  */
-export function SeletorDeResolucao({ opcoes, escolhido, sustentavel, ajuda, aoEscolher, propsGrupo }: Props) {
+export function SeletorDeResolucao({
+  opcoes,
+  escolhido,
+  sustentavel,
+  ajuda,
+  aoEscolher,
+  propsGrupo,
+  quadros,
+  quadrosEscolhido,
+  aoEscolherQuadros,
+  propsQuadros,
+}: Props) {
   const atual = opcoes.find((o) => o.id === escolhido) ?? opcoes[0];
   if (atual === undefined) return null;
+  const quadroAtual = quadros.find((q) => q.id === quadrosEscolhido) ?? quadros[0];
   const topo = opcoes[0] ?? atual;
   const escalaL = (atual.largura / topo.largura) * 100;
   const escalaA = (atual.altura / topo.altura) * 100;
@@ -59,7 +84,7 @@ export function SeletorDeResolucao({ opcoes, escolhido, sustentavel, ajuda, aoEs
         </div>
 
         <p
-          key={atual.id}
+          key={`${atual.id}-${atual.fps}`}
           aria-live="polite"
           className="numeral entra m-0 text-[clamp(48px,7vw,80px)] leading-none text-accent-hi [text-shadow:0_0_18px_rgb(242_169_59_/_0.45),3px_3px_0_#000]"
         >
@@ -98,6 +123,44 @@ export function SeletorDeResolucao({ opcoes, escolhido, sustentavel, ajuda, aoEs
             </button>
           );
         })}
+      </div>
+
+      {/*
+        Quadros por segundo, logo abaixo das resoluções: 60 segura movimento,
+        30 dá o dobro de bits a cada quadro. Chave de duas posições, porque é
+        um pacote (ADR 0015) e não um número solto.
+      */}
+      <div className="mt-3 flex flex-col items-center gap-2 px-3 sm:px-4">
+        <span className="rotulo">QUADROS POR SEGUNDO</span>
+        <div
+          {...propsQuadros}
+          role="radiogroup"
+          aria-label="Quadros por segundo"
+          className="flex border-2 border-line bg-deep p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          {quadros.map((q) => {
+            const marcado = q.id === quadroAtual?.id;
+            return (
+              <button
+                key={q.id}
+                type="button"
+                role="radio"
+                aria-checked={marcado}
+                tabIndex={-1}
+                onClick={() => aoEscolherQuadros(q.id)}
+                className={[
+                  'flex min-h-11 min-w-[132px] items-center justify-center gap-2 px-4 font-[family-name:var(--font-pixel)] text-[12px] transition-colors duration-150',
+                  marcado
+                    ? 'bg-accent text-ink shadow-[0_0_16px_rgb(242_169_59_/_0.3)]'
+                    : 'text-text hover:text-accent-hi',
+                ].join(' ')}
+              >
+                <span className="numeral text-[20px] leading-none">{q.fps}</span>
+                <span>FPS · {q.nome}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mt-3 border-t-2 border-line">

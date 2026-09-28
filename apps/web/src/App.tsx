@@ -1,4 +1,4 @@
-import { type PresetId } from '@tela/shared';
+import { type PresetId, type Prioridade } from '@tela/shared';
 import { useState } from 'react';
 import { Abertura } from './components/Abertura.js';
 import { useAbaVisivel } from './react/use-aba-visivel.js';
@@ -19,6 +19,7 @@ export function App() {
     slug: string;
     presetId: PresetId;
     audioDeviceId: string | null;
+    prioridade: Prioridade;
   } | null>(null);
 
   switch (route.name) {
@@ -34,8 +35,8 @@ export function App() {
           */}
           <AberturaDaHome />
           <Home
-            onStart={(slug, presetId, audioDeviceId) => {
-              setPending({ slug, presetId, audioDeviceId });
+            onStart={(slug, presetId, audioDeviceId, prioridade) => {
+              setPending({ slug, presetId, audioDeviceId, prioridade });
               navigate('/transmitir');
             }}
           />
@@ -48,8 +49,8 @@ export function App() {
       if (pending === null) {
         return (
           <Home
-            onStart={(slug, presetId, audioDeviceId) => {
-              setPending({ slug, presetId, audioDeviceId });
+            onStart={(slug, presetId, audioDeviceId, prioridade) => {
+              setPending({ slug, presetId, audioDeviceId, prioridade });
               navigate('/transmitir');
             }}
           />
@@ -60,6 +61,7 @@ export function App() {
           slug={pending.slug}
           presetId={pending.presetId}
           audioDeviceId={pending.audioDeviceId}
+          prioridade={pending.prioridade}
           onExit={() => {
             setPending(null);
             navigate('/');

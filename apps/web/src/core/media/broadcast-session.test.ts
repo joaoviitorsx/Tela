@@ -795,6 +795,29 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     await ctx.session.setPrioridade('fluidez');
     expect(ctx.screen.video.contentHint).toBe('motion');
   });
+
+  it('30 fps escolhido antes do ar liga o pacote inteiro de nitidez (ADR 0015)', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN, { prioridade: 'nitidez' });
+
+    // A captura já nasce a 30, o hint é `detail` e o transporte sabe antes do
+    // primeiro espectador — nunca só o framerate sozinho (R5).
+    expect(ctx.screen.lastRequest).toMatchObject({ frameRate: 30 });
+    expect(ctx.screen.video.contentHint).toBe('detail');
+    expect(ctx.transport.prioridades).toEqual(['nitidez']);
+    const estado = ctx.session.getState();
+    expect(estado.status === 'live' && estado.prioridade).toBe('nitidez');
+  });
+
+  it('sem escolha, a transmissão seguinte volta ao padrão de 60 fps', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN, { prioridade: 'nitidez' });
+    await ctx.session.stop();
+    await ctx.session.start(SLUG, TOKEN);
+
+    expect(ctx.screen.lastRequest).toMatchObject({ frameRate: 60 });
+    expect(ctx.screen.video.contentHint).toBe('motion');
+  });
 });
 
 /**

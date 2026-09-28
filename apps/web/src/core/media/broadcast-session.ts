@@ -31,7 +31,6 @@ import {
 } from './diagnostico.js';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
-  CONTENT_HINT,
   DEFAULT_PRESET_ID,
   type PresetId,
   menorPreset,
@@ -436,7 +435,7 @@ export class BroadcastSession {
   async start(
     slug: string,
     ownerToken: string,
-    options: { audioDeviceId?: string; presetId?: PresetId } = {},
+    options: { audioDeviceId?: string; presetId?: PresetId; prioridade?: Prioridade } = {},
   ): Promise<void> {
     if (this.state.status !== 'idle' && this.state.status !== 'ended') return;
 
@@ -471,7 +470,12 @@ export class BroadcastSession {
     this.desceuPorColapso = false;
     this.amostras = 0;
     this.ociosoDesde = null;
-    this.prioridade = 'fluidez';
+    /*
+      A prioridade pode vir escolhida de antes do ar ("30 FPS" no passo 02).
+      É o pacote inteiro da ADR 0015 — `detail` + `maintain-resolution` +
+      30 fps —, nunca só o framerate: pela R5, 30 fps sozinho não alivia nada.
+    */
+    this.prioridade = options.prioridade ?? 'fluidez';
     // Estado que sobrevivia entre transmissões e não devia.
     this.calmaria = 0;
     this.semImagem = 0;
@@ -504,7 +508,7 @@ export class BroadcastSession {
     const pedido = await this.deps.screen.request({
       width: preset.width,
       height: preset.height,
-      frameRate: preset.main.maxFramerate,
+      frameRate: Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]),
       systemAudio: true,
     });
     if (!pedido.ok) {
@@ -536,7 +540,7 @@ export class BroadcastSession {
      * nitidez sacrificando framerate, porque assume que você está mostrando um
      * documento. Gameplay a 15fps nítido é inútil.
      */
-    this.videoTrack.contentHint = CONTENT_HINT;
+    this.videoTrack.contentHint = CONTENT_HINT_POR_PRIORIDADE[this.prioridade];
 
     // Linux: sem áudio do sistema no getDisplayMedia. O usuário escolheu um
     // monitor de sink virtual; capturamos com todo processamento de voz
@@ -609,6 +613,8 @@ export class BroadcastSession {
 
     try {
       await this.deps.transport.publishVideo(this.videoTrack, preset);
+      // Fora do padrão, os senders precisam saber antes do primeiro espectador.
+      if (this.prioridade !== 'fluidez') await this.deps.transport.setPrioridade(this.prioridade);
       if (this.audioTrack !== null) await this.deps.transport.publishAudio(this.audioTrack);
     } catch {
       if (this.stale(epoch)) return this.abandon();
@@ -1493,7 +1499,7 @@ export class BroadcastSession {
     const pedido = await this.deps.screen.request({
       width: preset.width,
       height: preset.height,
-      frameRate: preset.main.maxFramerate,
+      frameRate: Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]),
       systemAudio: true,
     });
     // Cancelar o seletor — ou ele falhar — é desistir da troca, não da

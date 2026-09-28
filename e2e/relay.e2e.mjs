@@ -24,7 +24,7 @@ async function credentials() {
     return await Promise.race([
       new Promise((resolve, reject) => {
         socket.addEventListener('open', () => socket.send(JSON.stringify({
-          type: 'host', protocol: 2, slug, ownerToken: randomBytes(32).toString('base64url'),
+          type: 'host', protocol: 3, slug, ownerToken: randomBytes(32).toString('base64url'),
           invite: randomBytes(16).toString('base64url'),
         })));
         socket.addEventListener('message', (event) => {

@@ -91,6 +91,11 @@ await host.evaluate(
     });
     window.__sessao = session;
     await session.start(slug, 'k'.repeat(43), { presetId: 'p1080p60' });
+    // Este harness mede banda, não aprovação (ADR 0025): aceita todo pedido.
+    session.subscribe(() => {
+      const s = session.getState();
+      if (s.status === 'live') for (const p of s.pedidos) session.aceitarPedido(p.peerId);
+    });
   },
   [SLUG, CONVITE],
 );
@@ -130,6 +135,8 @@ for (const pagina of [host]) {
   });
   cdps.push(cdp);
 }
+// Aprovação manual (ADR 0025): o espectador chega com apelido e o host aceita.
+await host.context().addInitScript(() => localStorage.setItem('tela.apelido', 'banda'));
 const viewer = await host.context().newPage();
 await viewer.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
 

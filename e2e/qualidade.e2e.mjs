@@ -501,6 +501,8 @@ async function novaPagina(rotulo, { semApp = false } = {}) {
     content: `window.__semStartBitrate = ${process.env.SEM_START_BITRATE === '1'};`,
   });
   await page.addInitScript(instrumentar);
+  // Aprovação manual (ADR 0025): espectador já com apelido, sem formulário.
+  await page.addInitScript((apelido) => localStorage.setItem('tela.apelido', apelido), rotulo);
   await page.addInitScript({ content: `window.__criarFonte = ${fonteAnimada.toString()};` });
   if (semApp) {
     // A UI inteira fica de fora: só o servidor de módulos do Vite interessa.
@@ -554,6 +556,8 @@ const subiu = await host.evaluate(
     });
     window.__transport = transport;
     await transport.host(slug, 'q'.repeat(43), convite);
+    // Este harness mede qualidade, não aprovação (ADR 0025): aceita todo pedido.
+    transport.on('pedido', (p) => transport.responderPedido(p.peerId, true));
     await transport.publishVideo(track, shared.PRESET_1080P60);
 
     /**

@@ -212,6 +212,7 @@ describe('BroadcastSession — qualidade', () => {
       qp: null,
       msPorQuadro: null,
       recepcao: null,
+      audio: null,
       piorAvailableBps: null,
       paresMedidos: 1,
       availablePorPeer: {},
@@ -233,7 +234,7 @@ describe('BroadcastSession — qualidade', () => {
   it('uma leitura isolada com cpu NÃO derruba o preset', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null, qp: null, msPorQuadro: null, recepcao: null, piorAvailableBps: null, paresMedidos: 1, availablePorPeer: {} };
+    const base = { fps: 55, bitrateBps: 7_000_000, rttMs: 30, width: 1920, height: 1080, availableBps: null, bpp: 0.1, encoderImplementation: null, qp: null, msPorQuadro: null, recepcao: null, audio: null, piorAvailableBps: null, paresMedidos: 1, availablePorPeer: {} };
 
     ctx.transport.stats = { ...base, limitation: 'cpu' };
     for (let i = 0; i < 10; i += 1) {
@@ -267,6 +268,7 @@ describe('BroadcastSession — qualidade', () => {
       qp: null,
       msPorQuadro: null,
       recepcao: null,
+      audio: null,
       piorAvailableBps: null,
       paresMedidos: 1,
       availablePorPeer: {},
@@ -311,6 +313,7 @@ describe('BroadcastSession — não atrapalhar o jogo', () => {
     qp: null,
     msPorQuadro: null,
     recepcao: null,
+    audio: null,
     paresMedidos: 1,
     ...extra,
     // Um espectador só, por padrão: o pior é o único. Um teste que queira
@@ -531,6 +534,7 @@ describe('BroadcastSession — o teto de upload escolhe o DEGRAU', () => {
     qp: null,
     msPorQuadro: null,
     recepcao: null,
+    audio: null,
     paresMedidos: 1,
     ...extra,
     // Um espectador só, por padrão: o pior é o único. Um teste que queira
@@ -807,6 +811,7 @@ describe('BroadcastSession — o pior caminho é quem manda', () => {
     qp: null,
     msPorQuadro: null,
     recepcao: null,
+    audio: null,
     paresMedidos: 1,
     piorAvailableBps: null,
     availablePorPeer: {},
@@ -971,6 +976,7 @@ describe('BroadcastSession — colapso de link não pode calar as duas malhas', 
     qp: null,
     msPorQuadro: null,
     recepcao: null,
+    audio: null,
     paresMedidos: 1,
     piorAvailableBps: null,
     availablePorPeer: {},
@@ -1075,6 +1081,7 @@ describe('BroadcastSession — nitidez que vira slideshow volta atrás', () => {
     qp: null,
     msPorQuadro: null,
     recepcao: null,
+    audio: null,
     paresMedidos: 1,
     piorAvailableBps: null,
     availablePorPeer: {},
@@ -1359,5 +1366,66 @@ describe('BroadcastSession — áudio', () => {
     await ctx.session.start(SLUG, TOKEN, { audioDeviceId: 'monitor-1' });
     expect(ctx.session.getState().status).toBe('live');
     expect(ctx.transport.audios).toHaveLength(0);
+  });
+});
+
+describe('BroadcastSession — estado do áudio (TELA-007)', () => {
+  const comAudio = (nivel: number | null) => ({
+    fps: 60, bitrateBps: 8_000_000, rttMs: 20, limitation: 'none' as const,
+    width: 1920, height: 1080, availableBps: null, piorAvailableBps: null,
+    paresMedidos: 1, availablePorPeer: {}, bpp: 0.1, encoderImplementation: null,
+    qp: null, msPorQuadro: null, recepcao: null,
+    audio: {
+      fluxos: 1, bitrateBps: 128_000, nivel, perda: null, jitterMs: null,
+      jitterBufferMs: null, ocultacao: null, eventosOcultacao: null, codec: null,
+    },
+  });
+  const audioDe = (s: BroadcastSession) => {
+    const st = s.getState();
+    return st.status === 'live' ? st.audio : null;
+  };
+
+  it('sem trilha de áudio começa e continua em sem-fonte', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    expect(audioDe(ctx.session)).toBe('sem-fonte');
+  });
+
+  it('com trilha: desconhecido até medir, transmitindo quando mede, e vira evento do diagnóstico', async () => {
+    const ctx = build();
+    ctx.screen.withAudio = true;
+    await ctx.session.start(SLUG, TOKEN);
+    expect(audioDe(ctx.session)).toBe('desconhecido');
+
+    ctx.transport.stats = comAudio(0.1);
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+    expect(audioDe(ctx.session)).toBe('transmitindo');
+    const codigos = ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo);
+    expect(codigos).toContain('AUDIO_FLOWING');
+  });
+
+  it('volume zero escolhido é mudo, não "sem sinal"', async () => {
+    const ctx = build();
+    ctx.screen.withAudio = true;
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.session.setVolumeTransmissao(0);
+    ctx.transport.stats = comAudio(0);
+    for (let i = 0; i < 30; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+    expect(audioDe(ctx.session)).toBe('mudo');
+  });
+
+  it('fonte de som que termina é encerrada, mesmo com o grafo de ganho ainda vivo', async () => {
+    const ctx = build();
+    ctx.screen.withAudio = true;
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = comAudio(0.1);
+    ctx.screen.audio.fireEnded();
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+    expect(audioDe(ctx.session)).toBe('encerrada');
   });
 });

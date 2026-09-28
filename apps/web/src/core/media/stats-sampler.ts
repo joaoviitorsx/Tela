@@ -1,5 +1,6 @@
 import { bitsPorPixel } from '@tela/shared';
 import type { RelatorioDePeer } from '../mesh/mesh-topology.js';
+import { AudioStatsSampler } from './audio-stats.js';
 import type {
   MediaStats,
   QualityLimitation,
@@ -66,12 +67,17 @@ export class StatsSampler {
   private readonly previous = new Map<string, Reading>();
   /** A leitura anterior dos acumuladores, para reportar taxa e não média. */
   private acumuladores: Record<string, ParAcumulado> = {};
+  /** O áudio tem contabilidade própria. Ver `audio-stats.ts`. */
+  private readonly audio: AudioStatsSampler;
 
-  constructor(private readonly direction: StatsDirection) {}
+  constructor(private readonly direction: StatsDirection) {
+    this.audio = new AudioStatsSampler(direction);
+  }
 
   reset(): void {
     this.previous.clear();
     this.acumuladores = {};
+    this.audio.reset();
   }
 
   /** Um único relatório — o caso do espectador, que tem um peer só. */
@@ -251,6 +257,9 @@ export class StatsSampler {
       });
     });
 
+    // Antes do early return: a leitura anterior do áudio precisa andar junto,
+    // ou o próximo delta cobriria dois intervalos.
+    const audio = this.audio.readMany(entradas);
     if (!found) return null;
 
     let bitrateBps = 0;
@@ -346,6 +355,7 @@ export class StatsSampler {
       qp: noIntervalo('qp'),
       msPorQuadro: emSegundos('encode'),
       recepcao: temRecepcao ? recepcao : null,
+      audio,
     };
   }
 }

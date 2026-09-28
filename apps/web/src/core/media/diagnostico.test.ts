@@ -6,7 +6,7 @@ const stats: MediaStats = {
   fps: 60, bitrateBps: 8_000_000, rttMs: 24, limitation: 'none',
   width: 1920, height: 1080, availableBps: null, piorAvailableBps: null,
   paresMedidos: 1, availablePorPeer: {}, bpp: 0.11,
-  encoderImplementation: null, qp: null, msPorQuadro: null, recepcao: null,
+  encoderImplementation: null, qp: null, msPorQuadro: null, recepcao: null, audio: null,
 };
 
 describe('Diario', () => {
@@ -20,7 +20,7 @@ describe('Diario', () => {
 
     const relatorio = diario.relatorio('Chrome/127 token=segredo 192.0.2.1');
     expect(relatorio).toMatchObject({
-      versao: 2,
+      versao: 3,
       versaoApp: null,
       sessaoId: 'sessaosegredo',
       tentativaId: 'tentativasegredo',

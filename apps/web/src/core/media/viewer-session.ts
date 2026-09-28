@@ -1,5 +1,6 @@
 import { Emitter } from '../emitter.js';
-import { type Diagnostico, Diario, idLocal } from './diagnostico.js';
+import { ClassificadorDeAudio, type EstadoAudio } from './audio-state.js';
+import { CODIGO_AUDIO, type Diagnostico, Diario, idLocal } from './diagnostico.js';
 import { JITTER_MINIMO_MS } from '../mesh/peer-link.js';
 import { JitterGovernor } from './jitter-governor.js';
 import { type EstadoLatencia, LatencyWatch } from './latency-watch.js';
@@ -28,6 +29,8 @@ export type ViewerState =
       /** Quantos estão assistindo, incluindo este. Mínimo 1. */
       readonly viewers: number;
       readonly stats: MediaStats | null;
+      /** O que dá para afirmar sobre o som que chega. Ver `audio-state.ts`. */
+      readonly audio: EstadoAudio;
     }
   /**
    * A mídia hesitou, mas ela AINDA ESTÁ AQUI — e é por isso que o stream vem
@@ -82,6 +85,11 @@ export type ViewerSessionDeps = {
   appVersion?: string | null;
 };
 
+/** Antes da primeira amostra: só se sabe se a trilha existe. */
+function audioInicial(stream: MediaStream): EstadoAudio {
+  return stream.getAudioTracks().length > 0 ? 'desconhecido' : 'sem-fonte';
+}
+
 /** Polling de 5s com backoff até 30s: a aba pode ficar aberta a tarde inteira. */
 const POLL_MIN_MS = 5_000;
 const POLL_MAX_MS = 30_000;
@@ -126,6 +134,13 @@ export class ViewerSession {
    */
   private readonly diario = new Diario('espectador');
 
+  private readonly classificadorAudio = new ClassificadorDeAudio();
+  /**
+   * O que a PÁGINA sabe sobre a reprodução, e a sessão não: se o navegador
+   * bloqueou o autoplay e se a pessoa silenciou. Informado pela UI.
+   */
+  private reproducao = { bloqueada: false, mudo: false };
+
   /**
    * O teto duro de latência.
    *
@@ -169,6 +184,15 @@ export class ViewerSession {
   /** A latência ponta a ponta que o espectador está sentindo. */
   get latenciaAtual(): EstadoLatencia {
     return this.latencia.estado;
+  }
+
+  /**
+   * A reprodução é da página: só ela vê o `play()` recusado e o botão de mudo.
+   * Entra na próxima amostra — o classificador conta amostras, e uma chamada
+   * extra fora do relógio contaria a mesma medida duas vezes.
+   */
+  informarReproducao(reproducao: { readonly bloqueada: boolean; readonly mudo: boolean }): void {
+    this.reproducao = { ...reproducao };
   }
 
   /** Nada sai da máquina sozinho: a UI copia, a pessoa decide se manda. */
@@ -233,6 +257,7 @@ export class ViewerSession {
     this.cancelRetry();
     this.jitter.reset();
     this.latencia.reset();
+    this.classificadorAudio.reiniciar();
     this.diario.iniciar((this.deps.diagnosticId ?? idLocal)(), this.deps.appVersion ?? null);
     this.diario.evento('session', 'START', this.deps.scheduler.now());
     await this.dropTransport();
@@ -336,6 +361,7 @@ export class ViewerSession {
           hasAudio: stream.getAudioTracks().length > 0,
           viewers: this.plateia,
           stats: this.state.status === 'watching' ? this.state.stats : null,
+          audio: this.state.status === 'watching' ? this.state.audio : audioInicial(stream),
         });
       }),
       transport.on('viewers', ({ count }) => {
@@ -505,13 +531,23 @@ export class ViewerSession {
     const stats = await this.transport.getAggregateStats();
     if (stats === null) return;
     if (this.state.status !== 'watching') return;
-    this.setState({ ...this.state, stats });
+    const agora = this.deps.scheduler.now();
+    const trilha = this.state.stream.getAudioTracks()[0];
+    const audio = this.classificadorAudio.observar({
+      trilha: trilha === undefined ? 'ausente' : trilha.readyState === 'ended' ? 'encerrada' : 'viva',
+      mudoIntencional: this.reproducao.mudo && !this.reproducao.bloqueada,
+      reproducaoBloqueada: this.reproducao.bloqueada,
+      stats: stats.audio,
+      agora,
+    });
+    if (audio !== this.state.audio) this.diario.evento('audio', CODIGO_AUDIO[audio], agora);
+    this.setState({ ...this.state, stats, audio });
 
     // Devolve latência quando a conexão prova que aguenta, e a retoma no
     // primeiro sinal de que não aguentava.
     const decisao = this.jitter.observe(stats.recepcao);
     if (decisao !== null) this.transport?.setJitterAlvo(decisao.ms);
-    this.diario.registrar(stats, this.deps.scheduler.now());
+    this.diario.registrar(stats, agora);
 
     /**
      * O último recurso, e ele só é alcançado quando o primeiro se esgotou.
@@ -544,6 +580,7 @@ export class ViewerSession {
       hasAudio: stream.getAudioTracks().length > 0,
       viewers: this.plateia,
       stats: null,
+      audio: audioInicial(stream),
     });
   }
 

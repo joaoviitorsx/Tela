@@ -1,4 +1,5 @@
 import type { MediaStats } from '../ports/media-transport.js';
+import type { EstadoAudio } from './audio-state.js';
 
 /**
  * A linha do tempo das estatísticas, para o usuário poder MANDAR em vez de
@@ -44,7 +45,21 @@ export type CodigoDiagnostico =
   | 'RELAY_AVAILABLE' | 'RELAY_UNAVAILABLE' | 'RELAY_NOT_CONFIGURED'
   | 'CAPTURE_DENIED' | 'CAPTURE_UNSUPPORTED' | 'CAPTURE_ENDED'
   | 'SLUG_TAKEN' | 'SLUG_INVALID' | 'RATE_LIMITED'
-  | 'TRANSPORT_FAILED' | 'USER_STOPPED' | 'ENDED';
+  | 'TRANSPORT_FAILED' | 'USER_STOPPED' | 'ENDED'
+  | 'AUDIO_NONE' | 'AUDIO_ENDED' | 'AUDIO_BLOCKED' | 'AUDIO_MUTED'
+  | 'AUDIO_LOSS' | 'AUDIO_NO_SIGNAL' | 'AUDIO_FLOWING' | 'AUDIO_UNKNOWN';
+
+/** Cada mudança de estado do som vira um evento da etapa `audio`. */
+export const CODIGO_AUDIO: Readonly<Record<EstadoAudio, CodigoDiagnostico>> = {
+  'sem-fonte': 'AUDIO_NONE',
+  encerrada: 'AUDIO_ENDED',
+  bloqueado: 'AUDIO_BLOCKED',
+  mudo: 'AUDIO_MUTED',
+  perda: 'AUDIO_LOSS',
+  'sem-sinal': 'AUDIO_NO_SIGNAL',
+  transmitindo: 'AUDIO_FLOWING',
+  desconhecido: 'AUDIO_UNKNOWN',
+};
 
 export type EventoDiagnostico = {
   readonly t: number;
@@ -73,10 +88,30 @@ export type AmostraDiagnostico = {
   readonly congelamentos: number | null;
   readonly perdidos: number | null;
   readonly keyframesPedidos: number | null;
+  /**
+   * O áudio, desde a versão 3. `null` é "não medido", nunca zero.
+   *
+   * `audioNivel` em dBFS: é a unidade em que "baixo" e "sumiu" se distinguem
+   * a olho — 0,001 e 0,01 de RMS linear parecem iguais numa planilha.
+   */
+  readonly audioKbps: number | null;
+  readonly audioNivelDb: number | null;
+  readonly audioPerdaPct: number | null;
+  readonly audioOcultacaoPct: number | null;
+  readonly audioJitterMs: number | null;
+  readonly audioBufferMs: number | null;
+};
+
+/** Os parâmetros negociados do áudio, como chegaram ao transporte. */
+export type CodecDiagnostico = {
+  readonly mimeType: string | null;
+  readonly canais: number | null;
+  readonly clockRate: number | null;
+  readonly parametros: Readonly<Record<string, number>>;
 };
 
 export type Diagnostico = {
-  readonly versao: 2;
+  readonly versao: 3;
   readonly versaoApp: string | null;
   readonly sessaoId: string;
   readonly tentativaId: string;
@@ -85,6 +120,7 @@ export type Diagnostico = {
   readonly navegador: string;
   readonly decoder: string | null;
   readonly encoder: string | null;
+  readonly codecAudio: CodecDiagnostico | null;
   /** `null` significa que esta etapa ainda não foi observada. */
   readonly etapas: Readonly<Record<EtapaDiagnostico, CodigoDiagnostico | null>>;
   readonly eventos: readonly EventoDiagnostico[];
@@ -107,6 +143,11 @@ function implementacaoSegura(valor: string | null): string | null {
   return /^[a-zA-Z][a-zA-Z0-9 _.-]{0,63}$/.test(valor) ? valor : null;
 }
 
+/** Silêncio digital vira o piso de -100 dB, e não `-Infinity`, que JSON não representa. */
+function decibeis(rms: number): number {
+  return rms <= 0.00001 ? -100 : Math.round(20 * Math.log10(rms));
+}
+
 function etapasVazias(): Record<EtapaDiagnostico, CodigoDiagnostico | null> {
   return {
     capture: null, signaling: null, turn: null, ice: null, dtls: null,
@@ -125,6 +166,7 @@ export class Diario {
   private etapas = etapasVazias();
   private encoder: string | null = null;
   private decoder: string | null = null;
+  private codecAudio: CodecDiagnostico | null = null;
   private sessaoId = 'unknown';
   private tentativaId = 'unknown';
   private versaoApp: string | null = null;
@@ -163,6 +205,8 @@ export class Diario {
     if (stats.recepcao?.decoder != null) {
       this.decoder = implementacaoSegura(stats.recepcao.decoder);
     }
+    if (stats.audio?.codec != null) this.codecAudio = { ...stats.audio.codec };
+    const a = stats.audio;
 
     this.amostras.push({
       t: Math.round(agora),
@@ -191,6 +235,12 @@ export class Diario {
       congelamentos: stats.recepcao?.congelamentos ?? null,
       perdidos: stats.recepcao?.pacotesPerdidos ?? null,
       keyframesPedidos: stats.recepcao?.pedidosDeKeyframe ?? null,
+      audioKbps: a?.bitrateBps == null ? null : Math.round(a.bitrateBps / 1000),
+      audioNivelDb: a?.nivel == null ? null : decibeis(a.nivel),
+      audioPerdaPct: a?.perda == null ? null : Number((a.perda * 100).toFixed(1)),
+      audioOcultacaoPct: a?.ocultacao == null ? null : Number((a.ocultacao * 100).toFixed(1)),
+      audioJitterMs: a?.jitterMs == null ? null : Math.round(a.jitterMs),
+      audioBufferMs: a?.jitterBufferMs == null ? null : Math.round(a.jitterBufferMs),
     });
 
     if (this.amostras.length > CAPACIDADE) this.amostras.shift();
@@ -202,6 +252,7 @@ export class Diario {
     this.etapas = etapasVazias();
     this.encoder = null;
     this.decoder = null;
+    this.codecAudio = null;
     this.sessaoId = 'unknown';
     this.tentativaId = 'unknown';
     this.versaoApp = null;
@@ -221,13 +272,14 @@ export class Diario {
 
   private dados(): Omit<Diagnostico, 'quando' | 'navegador'> {
     return {
-      versao: 2,
+      versao: 3,
       versaoApp: this.versaoApp,
       sessaoId: this.sessaoId,
       tentativaId: this.tentativaId,
       papel: this.papel,
       decoder: this.decoder,
       encoder: this.encoder,
+      codecAudio: this.codecAudio,
       etapas: { ...this.etapas },
       eventos: [...this.eventos],
       amostras: [...this.amostras],

@@ -1,4 +1,5 @@
 import type { EncodingPreset, Prioridade, RelayStatus } from '@tela/shared';
+import type { AudioStats } from '../media/audio-stats.js';
 import type { PeerInfo } from '../mesh/mesh-topology.js';
 
 /**
@@ -200,6 +201,13 @@ export type MediaStats = {
    * dizer de onde. `MediaStats` era inteiro sobre o envio.
    */
   readonly recepcao: RecepcaoStats | null;
+  /**
+   * O áudio, medido à parte do vídeo. `null` quando não há fluxo de áudio.
+   *
+   * Até a TELA-007 não existia: o som saía e chegava sem um número, e
+   * problema de origem, de rede e de reprodução eram indistinguíveis.
+   */
+  readonly audio: AudioStats | null;
 };
 
 export type TransportEvents = {

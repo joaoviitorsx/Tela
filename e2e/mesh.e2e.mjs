@@ -198,12 +198,22 @@ if (conectou) {
     'overlay "clique para ativar o som" apareceu — sem ele o espectador fica mudo sem saber',
   );
 
-  const rtpAudio = await viewer.evaluate(async () => {
-    await new Promise((r) => setTimeout(r, 2000));
-    const stats = await window.__viewerPc?.getStats?.();
-    return stats ? true : 'sem acesso direto';
+  /*
+    TELA-007: o áudio medido à parte, contra o `getStats()` que existe. Os
+    testes unitários provam a conta; só um Chrome de verdade prova que os
+    nomes de campo (`media-source`, `totalAudioEnergy`, `codecId`) são os que
+    o navegador reporta. Duas leituras, porque taxa exige delta.
+  */
+  const audioEnvio = await host.evaluate(async () => {
+    await window.__transport.getAggregateStats();
+    await new Promise((r) => setTimeout(r, 1500));
+    const s = await window.__transport.getAggregateStats();
+    return s?.audio ?? null;
   });
-  void rtpAudio;
+  ok(audioEnvio !== null, `transmissor mede o áudio à parte do vídeo (${JSON.stringify(audioEnvio)})`);
+  ok((audioEnvio?.bitrateBps ?? 0) > 0, 'taxa de áudio de envio medida por delta');
+  ok((audioEnvio?.nivel ?? 0) > 0.01, 'nível do oscilador medido na media-source — a fonte não está muda');
+  ok(audioEnvio?.codec?.mimeType === 'audio/opus', 'codec de áudio negociado lido do relatório');
 
   console.log('\n   Troca de qualidade ao vivo NÃO pode derrubar quem assiste');
   await host.evaluate(async () => {

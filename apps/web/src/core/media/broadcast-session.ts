@@ -18,7 +18,8 @@ import {
   type Prioridade,
   tetoDeBitrate,
 } from '@tela/shared';
-import { type Diagnostico, Diario, idLocal } from './diagnostico.js';
+import { ClassificadorDeAudio, type EstadoAudio } from './audio-state.js';
+import { CODIGO_AUDIO, type Diagnostico, Diario, idLocal } from './diagnostico.js';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
@@ -97,6 +98,14 @@ export type BroadcastState =
        */
       readonly motivoDegradacao: QualityLimitation | null;
       readonly volumeAudio: number;
+      /**
+       * O que dá para AFIRMAR sobre o som que sai. Ver `audio-state.ts`.
+       *
+       * `hasAudio` diz se existe trilha; isto diz se ela está entregando —
+       * volume zero escolhido, fonte que acabou e fonte muda há 20s são três
+       * estados diferentes, e antes eram todos `hasAudio: true`.
+       */
+      readonly audio: EstadoAudio;
       /** `false` quando o navegador não deu Web Audio e o ganho não entrou. */
       readonly volumeAjustavel: boolean;
       /**
@@ -227,6 +236,12 @@ export class BroadcastSession {
   private state: BroadcastState = { status: 'idle' };
   private videoTrack: MediaStreamTrack | null = null;
   private audioTrack: MediaStreamTrack | null = null;
+  /**
+   * A trilha CRUA da captura de som. `audioTrack` é a saída do grafo de ganho,
+   * e ela não termina quando a fonte termina — só esta diz se o som acabou.
+   */
+  private audioFonte: MediaStreamTrack | null = null;
+  private readonly classificadorAudio = new ClassificadorDeAudio();
   private timers: Array<() => void> = [];
   private unsubscribes: Array<() => void> = [];
   /**
@@ -463,6 +478,7 @@ export class BroadcastSession {
      * depois deste ponto significa que o controle de volume vale para os dois
      * sem que nenhum deles precise saber que ele existe.
      */
+    this.audioFonte = this.audioTrack;
     if (this.audioTrack !== null) {
       this.audioTrack = this.deps.gain.attach(this.audioTrack);
       // Antes de publicar: senão o primeiro segundo sai no volume cheio, que
@@ -517,6 +533,7 @@ export class BroadcastSession {
       capturaSemImagem: false,
       motivoDegradacao: null,
       volumeAudio: this.volumeTransmissao,
+      audio: this.audioTrack === null ? 'sem-fonte' : 'desconhecido',
       volumeAjustavel: this.deps.gain.ativo,
       semSinalizacao: false,
       preview: this.preview,
@@ -559,8 +576,23 @@ export class BroadcastSession {
     if (this.state.status !== 'live') return;
 
     this.amostras += 1;
-    this.setState({ ...this.state, stats });
-    this.diario.registrar(stats, this.deps.scheduler.now());
+    const agora = this.deps.scheduler.now();
+    const audio = this.classificadorAudio.observar({
+      trilha:
+        this.audioFonte === null
+          ? 'ausente'
+          : this.audioFonte.readyState === 'ended'
+            ? 'encerrada'
+            : 'viva',
+      mudoIntencional: this.volumeTransmissao === 0,
+      // Quem transmite não reproduz o próprio som: nada a bloquear.
+      reproducaoBloqueada: false,
+      stats: stats.audio,
+      agora,
+    });
+    if (audio !== this.state.audio) this.diario.evento('audio', CODIGO_AUDIO[audio], agora);
+    this.setState({ ...this.state, stats, audio });
+    this.diario.registrar(stats, agora);
     this.applyUplinkCeiling(stats);
     this.trackPressure(stats.limitation);
     this.trackCapturaMorta(stats.fps);
@@ -1376,6 +1408,8 @@ export class BroadcastSession {
     this.deps.gain.close();
     this.videoTrack = null;
     this.audioTrack = null;
+    this.audioFonte = null;
+    this.classificadorAudio.reiniciar();
     this.preview = null;
     this.governor.reset();
     this.amostras = 0;

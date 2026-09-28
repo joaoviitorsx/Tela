@@ -334,6 +334,7 @@ describe('ViewerSession', () => {
       qp: null,
       msPorQuadro: null,
       recepcao: null,
+      audio: null,
       piorAvailableBps: null,
       paresMedidos: 1,
       availablePorPeer: {},
@@ -478,5 +479,59 @@ describe('ViewerSession — a imagem sobrevive ao soluço (ADR 0018)', () => {
 
     const estado = ctx.session.getState();
     if (estado.status === 'reconnecting') expect(estado.stream).toBeNull();
+  });
+});
+
+describe('ViewerSession — estado do áudio (TELA-007)', () => {
+  const comAudio = (ocultacao: number) => ({
+    fps: 60, bitrateBps: 8_000_000, rttMs: 20, limitation: 'none' as const,
+    width: 1920, height: 1080, availableBps: null, piorAvailableBps: null,
+    paresMedidos: 1, availablePorPeer: {}, bpp: 0.1, encoderImplementation: null,
+    qp: null, msPorQuadro: null, recepcao: null,
+    audio: {
+      fluxos: 1, bitrateBps: 128_000, nivel: 0.1, perda: 0.08, jitterMs: 12,
+      jitterBufferMs: 60, ocultacao, eventosOcultacao: 4, codec: null,
+    },
+  });
+  const audioDe = (s: ViewerSession) => {
+    const st = s.getState();
+    return st.status === 'watching' ? st.audio : null;
+  };
+
+  it('stream só com vídeo é sem-fonte', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().deliver();
+    expect(audioDe(ctx.session)).toBe('sem-fonte');
+  });
+
+  it('autoplay bloqueado informado pela página vira bloqueado na próxima amostra', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().deliver(fakeStream([fakeTrack('video'), fakeTrack('audio')]));
+    expect(audioDe(ctx.session)).toBe('desconhecido');
+    ctx.session.informarReproducao({ bloqueada: true, mudo: true });
+    ctx.ultimo().stats = comAudio(0);
+    ctx.scheduler.advance(1_000);
+    await settle(20);
+    expect(audioDe(ctx.session)).toBe('bloqueado');
+  });
+
+  it('ocultação sustentada vira perda, e a série do diagnóstico traz o áudio', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().deliver(fakeStream([fakeTrack('video'), fakeTrack('audio')]));
+    ctx.ultimo().stats = comAudio(0.12);
+    for (let i = 0; i < 3; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(20);
+    }
+    expect(audioDe(ctx.session)).toBe('perda');
+    const relatorio = ctx.session.diagnostico('Chrome/130');
+    expect(relatorio?.eventos.map((e) => e.codigo)).toContain('AUDIO_LOSS');
+    expect(relatorio?.amostras.at(-1)).toMatchObject({
+      audioKbps: 128, audioNivelDb: -20, audioPerdaPct: 8, audioOcultacaoPct: 12,
+      audioJitterMs: 12, audioBufferMs: 60,
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afinarSdp } from './sdp-tuning.js';
+import { afinarSdp, NIVEL_1080P60 } from './sdp-tuning.js';
 
 /**
  * SDP mínimo com as duas seções que importam: áudio, que precisa sair
@@ -22,30 +22,42 @@ const SDP = [
   '',
 ].join('\r\n');
 
-describe('afinarSdp — nível do H.264', () => {
-  it('sobe 3.1 para 4.2 em toda variante de H.264', () => {
-    const saida = afinarSdp(SDP);
+describe('afinarSdp — nível do H.264 (ADR 0020)', () => {
+  it('por padrão PRESERVA o nível que o receptor anunciou — não inventa capacidade', () => {
+    const saida = afinarSdp(SDP, { startBitrateBps: 4_000_000 });
+    expect(saida).toContain('profile-level-id=42e01f');
+    expect(saida).toContain('profile-level-id=640c1f');
+    expect(saida).not.toContain('2a');
+  });
+
+  it('com nível explícito, sobe só o byte de nível em toda variante', () => {
+    const saida = afinarSdp(SDP, { nivelH264: NIVEL_1080P60 });
     expect(saida).toContain('profile-level-id=42e02a');
     expect(saida).toContain('profile-level-id=640c2a');
     expect(saida).not.toContain('01f');
   });
 
   it('PRESERVA profile_idc e profile_iop — é por eles que a negociação casa', () => {
-    const saida = afinarSdp(SDP);
-    // Só os dois últimos dígitos mudam. Mexer nos quatro primeiros faria os
-    // dois lados deixarem de casar o codec, e a chamada cairia para VP8.
+    const saida = afinarSdp(SDP, { nivelH264: NIVEL_1080P60 });
     expect(saida).toContain('profile-level-id=42e0');
     expect(saida).toContain('profile-level-id=640c');
   });
 
-  it('não REBAIXA um nível que já está acima do mínimo', () => {
+  it('não REBAIXA um nível que já está acima do pedido', () => {
     const alto = SDP.replace('42e01f', '42e034');
-    expect(afinarSdp(alto)).toContain('profile-level-id=42e034');
+    expect(afinarSdp(alto, { nivelH264: NIVEL_1080P60 })).toContain('profile-level-id=42e034');
+  });
+
+  it('nível inválido é ignorado, não aplicado', () => {
+    for (const nivel of [0, -1, 256, 1.5, Number.NaN]) {
+      expect(afinarSdp(SDP, { nivelH264: nivel })).toContain('profile-level-id=42e01f');
+    }
   });
 
   it('é idempotente — rodar duas vezes dá o mesmo SDP', () => {
-    const uma = afinarSdp(SDP, { startBitrateBps: 4_000_000 });
-    expect(afinarSdp(uma, { startBitrateBps: 4_000_000 })).toBe(uma);
+    const opcoes = { startBitrateBps: 4_000_000, nivelH264: NIVEL_1080P60 };
+    const uma = afinarSdp(SDP, opcoes);
+    expect(afinarSdp(uma, opcoes)).toBe(uma);
   });
 });
 

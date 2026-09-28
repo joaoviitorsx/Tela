@@ -23,7 +23,7 @@ Contexto: desde 17/08/2026 o Discord suspendeu compartilhamento de tela no Brasi
 | `docs/adr/` | Decisões já tomadas e seus motivos — comece pela 0005 |
 | `docs/TELA-documentacao-tecnica.md` | Fluxos, pipeline de mídia, UI. As partes de SFU e infra estão obsoletas |
 | `docs/TELA-coreografia-abertura.md` | A abertura 3D, em números. Os desvios estão na ADR 0011 |
-| `docs/adr/0015`–`0019` | **Leia antes de tocar em qualquer parâmetro de encoding.** Por que a imagem borrava, e o que passou a decidir a qualidade |
+| `docs/adr/0015`–`0020` | **Leia antes de tocar em qualquer parâmetro de encoding.** Por que a imagem borrava, e o que passou a decidir a qualidade |
 | `docs/DEPLOY.md` | Subir o front estático e o servidor de sinalização |
 
 O documento de padrões de engenharia citado na versão original deste arquivo

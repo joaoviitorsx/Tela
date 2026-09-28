@@ -3,10 +3,9 @@
  *
  * # Por que na descrição REMOTA, e não na local
  *
- * Os dois parâmetros aqui são declarações do RECEPTOR sobre o que ele aceita,
- * e é o transmissor que as obedece. `profile-level-id` diz até onde o decoder
- * do outro lado vai; `x-google-start-bitrate` diz por onde o encoder deve
- * começar. Nos dois casos o valor útil está no SDP que recebemos, não no que
+ * Os parâmetros aqui são declarações do RECEPTOR sobre o que ele aceita, e é
+ * o transmissor que as obedece. `x-google-start-bitrate` diz por onde o
+ * encoder deve começar; o `fmtp` do Opus diz se ele aceita estéreo. Nos dois casos o valor útil está no SDP que recebemos, não no que
  * mandamos.
  *
  * Mexer na descrição LOCAL seria pior de duas formas: o Chromium já recusa
@@ -24,7 +23,17 @@
  */
 
 /**
- * Nível mínimo que 1080p60 exige em H.264.
+ * Nível mínimo que 1080p60 exige em H.264 — e por que ele NÃO é mais aplicado
+ * por padrão (ADR 0020, TELA-014).
+ *
+ * Com `level-asymmetry-allowed=1`, o `profile-level-id` que o receptor manda
+ * é o que o DECODER dele aceita. Reescrevê-lo na entrada é afirmar, em nome
+ * de outra máquina, uma capacidade que ninguém mediu. A ADR 0016 fazia isso
+ * em todo SDP; a elevação agora só acontece quando quem chama passa
+ * `nivelH264` explicitamente — um workaround por capacidade, com teste e
+ * reversível, e hoje nenhum chamador o liga.
+ *
+ * O raciocínio original, que continua valendo como hipótese a medir:
  *
  * A conta: 1920×1080 são 8160 macroblocos, a 60fps são 489.600 MB/s. O nível
  * 4.2 (`0x2a`) permite 522.240 — cabe. O 3.1 (`0x1f`), que é o que o Chromium
@@ -37,12 +46,11 @@
  * erro nenhum em lugar nenhum. É o mesmo teto que a comparação de encoders da
  * gethopp documentou no LiveKit, que fixa `42e01f` e para em 1280×720.
  *
- * Só o último byte muda. `profile_idc` e `profile_iop` ficam intactos porque é
- * por eles que a negociação casa os dois lados; o nível pode divergir por
- * projeto, e é o que `level-asymmetry-allowed=1` — que o Chromium sempre manda
- * — autoriza explicitamente.
+ * Só o último byte mudaria. `level-asymmetry-allowed=1` permite que os níveis
+ * dos dois SENTIDOS divirjam; não autoriza fingir que o receptor decodifica
+ * um nível que ele não anunciou.
  */
-const NIVEL_MINIMO = 0x2a;
+export const NIVEL_1080P60 = 0x2a;
 
 const SECAO = /^m=/m;
 
@@ -59,6 +67,14 @@ export type AfinacaoSdp = {
    * mergulho inicial. `null` deixa o padrão do navegador.
    */
   readonly startBitrateBps?: number | null | undefined;
+  /**
+   * Nível H.264 a assumir para o receptor, SÓ quando há evidência de que ele
+   * decodifica isso (ADR 0020). `null`/ausente preserva o SDP recebido.
+   *
+   * Tem de ser o mesmo para todos os peers: formato negociado diferente é
+   * encoder diferente, e a R5 existe para impedir isso.
+   */
+  readonly nivelH264?: number | null | undefined;
 };
 
 /**
@@ -134,6 +150,13 @@ function dividirSecoes(sdp: string): string[] {
 }
 
 function afinarVideo(secao: string, opcoes: AfinacaoSdp): string {
+  const nivel =
+    typeof opcoes.nivelH264 === 'number' &&
+    Number.isInteger(opcoes.nivelH264) &&
+    opcoes.nivelH264 > 0 &&
+    opcoes.nivelH264 <= 0xff
+      ? opcoes.nivelH264
+      : null;
   const kbps =
     opcoes.startBitrateBps !== undefined &&
     opcoes.startBitrateBps !== null &&
@@ -147,25 +170,25 @@ function afinarVideo(secao: string, opcoes: AfinacaoSdp): string {
     .map((linha) => {
       if (!linha.startsWith('a=fmtp:')) return linha;
       const { corpo, quebra } = partir(linha);
-      return afinarFmtp(corpo, kbps) + quebra;
+      return afinarFmtp(corpo, kbps, nivel) + quebra;
     })
     .join('');
 }
 
-function afinarFmtp(linha: string, kbps: number | null): string {
-  let saida = elevarNivel(linha);
+function afinarFmtp(linha: string, kbps: number | null, nivel: number | null): string {
+  let saida = nivel === null ? linha : elevarNivel(linha, nivel);
   if (kbps !== null && saida.includes('profile-level-id=')) {
     saida = definirParametro(saida, 'x-google-start-bitrate', String(kbps));
   }
   return saida;
 }
 
-/** Sobe só o byte de nível, e só quando está abaixo do que 1080p60 exige. */
-function elevarNivel(linha: string): string {
+/** Sobe só o byte de nível, e só quando está abaixo do pedido. Nunca desce. */
+function elevarNivel(linha: string, minimo: number): string {
   return linha.replace(/profile-level-id=([0-9a-fA-F]{6})/g, (inteiro, id: string) => {
     const nivel = Number.parseInt(id.slice(4), 16);
-    if (!Number.isFinite(nivel) || nivel >= NIVEL_MINIMO) return inteiro;
-    return `profile-level-id=${id.slice(0, 4)}${NIVEL_MINIMO.toString(16).padStart(2, '0')}`;
+    if (!Number.isFinite(nivel) || nivel >= minimo) return inteiro;
+    return `profile-level-id=${id.slice(0, 4)}${minimo.toString(16).padStart(2, '0')}`;
   });
 }
 

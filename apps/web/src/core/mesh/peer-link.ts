@@ -619,8 +619,8 @@ export const JITTER_MAXIMO_MS = 240;
  *    aceleração, com um codificador de entropia melhor.
  *
  * O nível anunciado NÃO entra aqui: o Chromium oferece `1f` (3.1) em todas as
- * variantes, então não há o que preferir. Ele é corrigido na entrada, em
- * `sdp-tuning.ts`.
+ * variantes, então não há o que preferir. E ele não é mais reescrito na
+ * entrada por padrão — ver ADR 0020.
  */
 export function ordenarH264(
   codecs: readonly RTCRtpCodec[],

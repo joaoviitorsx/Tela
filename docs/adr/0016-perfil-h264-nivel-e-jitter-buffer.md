@@ -1,7 +1,7 @@
 # ADR 0016 — Perfil H.264, nível anunciado e jitter buffer do espectador
 
 **Data:** 2026-08-28
-**Estado:** aceita
+**Estado:** aceita — Decisão 2 substituída pela ADR 0020
 **Complementa:** ADR 0015 · **Mantém:** R5 (o codec continua sendo H.264)
 
 ## Contexto
@@ -45,6 +45,10 @@ e nada aqui liga VP9 ou AV1.
 > High costuma aparecer; aqui não havia.
 
 ## Decisão 2 — Elevar o nível anunciado para 4.2
+
+> **Substituída pela ADR 0020.** O nível do receptor não é mais reescrito por
+> padrão: era capacidade fabricada, não medida. O texto abaixo fica como
+> registro do raciocínio e da hipótese a medir.
 
 O Chromium anuncia `profile-level-id=…1f` em **todas** as variantes que
 oferece. `1f` é o nível 3.1, que permite 108.000 macroblocos por segundo.

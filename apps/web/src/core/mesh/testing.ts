@@ -75,6 +75,14 @@ export class FakePeerConnection {
     return this.transceivers;
   }
 
+  /** SDP que `createAnswer` devolve; o teste troca para ter Opus de verdade. */
+  answerSdp = 'v=0 answer';
+
+  async createAnswer(): Promise<RTCSessionDescriptionInit> {
+    if (this.failLocalDescription) throw new Error('InvalidStateError');
+    return { type: 'answer', sdp: this.answerSdp };
+  }
+
   async setLocalDescription(description?: RTCSessionDescriptionInit): Promise<void> {
     if (this.failLocalDescription) throw new Error('InvalidStateError');
     const type = this.remoteDescription?.type === 'offer' ? 'answer' : 'offer';

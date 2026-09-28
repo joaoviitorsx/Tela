@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afinarSdp, NIVEL_1080P60 } from './sdp-tuning.js';
+import { afinarSdp, NIVEL_1080P60, pedirEstereo } from './sdp-tuning.js';
 
 /**
  * SDP mínimo com as duas seções que importam: áudio, que precisa sair
@@ -138,5 +138,54 @@ describe('afinarSdp — o que não pode tocar', () => {
   it('devolve entrada vazia ou inválida sem quebrar', () => {
     expect(afinarSdp('')).toBe('');
     expect(afinarSdp('lixo sem m=')).toBe('lixo sem m=');
+  });
+});
+
+describe('afinarSdp — Opus pelo payload type (TELA-011)', () => {
+  const audio = (linhas: string[], eol = '\r\n') =>
+    ['v=0', 'o=- 1 2 IN IP4 127.0.0.1', 's=-', 't=0 0', 'm=audio 9 UDP/TLS/RTP/SAVPF 109 63 126', ...linhas, '']
+      .join(eol);
+
+  it('acha o Opus em payload type diferente de 111', () => {
+    const sdp = audio(['a=rtpmap:109 opus/48000/2', 'a=fmtp:109 useinbandfec=1']);
+    expect(afinarSdp(sdp)).toContain('a=fmtp:109 useinbandfec=1;stereo=1;sprop-stereo=1');
+  });
+
+  it('não toca RED nem telephone-event, mesmo com parâmetros parecidos', () => {
+    const sdp = audio([
+      'a=rtpmap:109 opus/48000/2', 'a=fmtp:109 minptime=10',
+      'a=rtpmap:63 red/48000/2', 'a=fmtp:63 109/109',
+      'a=rtpmap:126 telephone-event/8000', 'a=fmtp:126 0-15;minptime=10',
+    ]);
+    const saida = afinarSdp(sdp);
+    expect(saida).toContain('a=fmtp:63 109/109\r\n');
+    expect(saida).toContain('a=fmtp:126 0-15;minptime=10\r\n');
+  });
+
+  it('Opus sem fmtp não ganha fmtp inventado; sem Opus, nada muda', () => {
+    const semFmtp = audio(['a=rtpmap:109 opus/48000/2']);
+    expect(afinarSdp(semFmtp)).toBe(semFmtp);
+    const semOpus = audio(['a=rtpmap:0 PCMU/8000']);
+    expect(afinarSdp(semOpus)).toBe(semOpus);
+  });
+
+  it('LF puro também funciona, e a renegociação é idempotente', () => {
+    const sdp = audio(['a=rtpmap:109 opus/48000/2', 'a=fmtp:109 minptime=10'], '\n');
+    const uma = afinarSdp(sdp);
+    expect(uma).toContain('a=fmtp:109 minptime=10;stereo=1;sprop-stereo=1\n');
+    expect(afinarSdp(uma)).toBe(uma);
+  });
+});
+
+describe('pedirEstereo — preferência do receptor (TELA-011)', () => {
+  it('só stereo, só no Opus, idempotente', () => {
+    const sdp = ['v=0', 'm=audio 9 X 109 63', 'a=rtpmap:109 opus/48000/2', 'a=fmtp:109 minptime=10',
+      'a=rtpmap:63 red/48000/2', 'a=fmtp:63 109/109', 'm=video 9 X 96', 'a=fmtp:96 profile-level-id=42e01f', ''].join('\r\n');
+    const uma = pedirEstereo(sdp);
+    expect(uma).toContain('a=fmtp:109 minptime=10;stereo=1\r\n');
+    expect(uma).toContain('a=fmtp:63 109/109\r\n');
+    expect(uma).toContain('a=fmtp:96 profile-level-id=42e01f\r\n');
+    expect(uma).not.toContain('sprop');
+    expect(pedirEstereo(uma)).toBe(uma);
   });
 });

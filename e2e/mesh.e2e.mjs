@@ -108,7 +108,11 @@ const resultado = await host.evaluate(
     const osc = audioCtx.createOscillator();
     osc.frequency.value = 440;
     const dest = audioCtx.createMediaStreamDestination();
-    osc.connect(dest);
+    // Só no canal ESQUERDO: é o que permite provar, do outro lado, que o
+    // estéreo chegou de verdade e não virou mono (TELA-011).
+    const merger = audioCtx.createChannelMerger(2);
+    osc.connect(merger, 0, 0);
+    merger.connect(dest);
     osc.start();
     const audioTrack = dest.stream.getAudioTracks()[0];
 
@@ -234,6 +238,44 @@ if (conectou) {
     return Boolean(v && v.srcObject && v.videoWidth > 0 && !v.paused);
   });
   ok(aindaAssistindo, 'espectador continuou assistindo depois da troca de preset');
+}
+
+console.log('\n3a. Estéreo de verdade: o que sai só na esquerda chega só na esquerda (TELA-011)');
+{
+  const canais = await viewer.evaluate(async () => {
+    const video = document.querySelector('video');
+    const stream = video?.srcObject;
+    if (!(stream instanceof MediaStream) || stream.getAudioTracks().length === 0) return null;
+    const ctx = new AudioContext();
+    await ctx.resume();
+    const origem = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+    const divisor = ctx.createChannelSplitter(2);
+    origem.connect(divisor);
+    const medidores = [0, 1].map((i) => {
+      const a = ctx.createAnalyser();
+      a.fftSize = 2048;
+      divisor.connect(a, i);
+      return a;
+    });
+    const buf = new Float32Array(2048);
+    const rms = [0, 0];
+    for (let k = 0; k < 20; k += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      medidores.forEach((a, i) => {
+        a.getFloatTimeDomainData(buf);
+        let soma = 0;
+        for (const v of buf) soma += v * v;
+        rms[i] += Math.sqrt(soma / buf.length) / 20;
+      });
+    }
+    await ctx.close();
+    return { esquerda: Number(rms[0].toFixed(4)), direita: Number(rms[1].toFixed(4)) };
+  });
+  ok(canais !== null, `espectador tem trilha de áudio para medir (${JSON.stringify(canais)})`);
+  ok(
+    canais !== null && canais.esquerda > 0.05 && canais.direita < canais.esquerda * 0.1,
+    'esquerda com sinal, direita quase muda — os dois canais chegaram separados',
+  );
 }
 
 console.log('\n3b. Grafo de ganho em Chrome real (TELA-009)');

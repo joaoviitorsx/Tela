@@ -1,6 +1,6 @@
 import type { IceServerConfig } from '@tela/shared';
 import { rtcConfiguration } from './ice-config.js';
-import { afinarSdp } from './sdp-tuning.js';
+import { afinarSdp, pedirEstereo } from './sdp-tuning.js';
 
 /**
  * Uma conexão direta com um peer, negociada pelo padrão canônico do W3C
@@ -377,7 +377,7 @@ export class PeerLink {
       await this.flushCandidates();
       if (this.closed) return;
       if (description.type === 'offer') {
-        await this.pc.setLocalDescription();
+        await this.responder();
         if (!this.closed) this.sendLocalDescription();
       }
       if (this.pc.signalingState === 'stable' && this.needsRenegotiation) {
@@ -386,6 +386,33 @@ export class PeerLink {
       }
     } catch {
       if (!this.closed) throw new PeerLinkError('LOCAL_DESCRIPTION_FAILED');
+    }
+  }
+
+  /**
+   * A resposta, com a preferência de estéreo do receptor (TELA-011). Ver
+   * `pedirEstereo`: sem isto o espectador decodificava em mono o que o
+   * transmissor mandava em estéreo.
+   *
+   * `createAnswer` explícito em vez de `setLocalDescription()` sem argumento:
+   * o perfect negotiation continua o mesmo — quem responde é sempre quem
+   * recebeu a oferta, na mesma fila serial —, só que a resposta passa por
+   * uma edição de `fmtp` antes de valer. Se o navegador recusar a edição,
+   * cai para a resposta intacta: mono é pior que estéreo, sem áudio é pior
+   * que mono.
+   */
+  private async responder(): Promise<void> {
+    const resposta = await this.pc.createAnswer();
+    if (typeof resposta.sdp !== 'string') {
+      await this.pc.setLocalDescription(resposta);
+      return;
+    }
+    const comEstereo = pedirEstereo(resposta.sdp);
+    try {
+      await this.pc.setLocalDescription({ type: resposta.type, sdp: comEstereo });
+    } catch {
+      if (comEstereo === resposta.sdp) throw new Error('LOCAL_DESCRIPTION_FAILED');
+      await this.pc.setLocalDescription(resposta);
     }
   }
 

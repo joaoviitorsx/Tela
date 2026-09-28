@@ -112,17 +112,75 @@ export function afinarSdp(sdp: string, opcoes: AfinacaoSdp = {}): string {
  * mandamos é estéreo. Os dois, senão o casamento é assimétrico.
  *
  * Custo: zero bit a mais. O bitrate já estava pago.
+ *
+ * # Por que reescrever o SDP remoto aqui não é inventar capacidade
+ *
+ * `stereo=1` no SDP do receptor diz "prefiro receber estéreo". O receptor é
+ * sempre o espectador do próprio Tela, e essa É a preferência dele; e todo
+ * decoder Opus decodifica estéreo (RFC 7587 §7.1: o parâmetro é preferência,
+ * não capacidade). É diferente do nível H.264 da ADR 0020, que afirmava uma
+ * capacidade de decoder que ninguém mediu. Se um dia outro cliente entrar na
+ * sala, o lugar certo desta preferência passa a ser a descrição LOCAL dele.
  */
 function afinarAudio(secao: string): string {
-  return secao
-    .split(/(?<=\n)/)
+  /*
+    Opus identificado pelo PAYLOAD TYPE do `a=rtpmap` (TELA-011, §6.5). Antes a
+    linha era escolhida por conter `minptime`, `useinbandfec` ou "opus" no
+    `fmtp` — o que casaria qualquer codec que um dia usasse esses nomes, e não
+    casaria um Opus cujo `fmtp` não os tivesse. `red/48000/2` (`fmtp:63
+    111/111`) e `telephone-event` ficam intocados.
+  */
+  const linhas = secao.split(/(?<=\n)/);
+  const opus = new Set<string>();
+  for (const linha of linhas) {
+    const m = /^a=rtpmap:(\d+) opus\/48000(?:\/\d+)?\s*$/i.exec(linha);
+    if (m?.[1] !== undefined) opus.add(m[1]);
+  }
+  if (opus.size === 0) return secao;
+  return linhas
     .map((linha) => {
-      if (!linha.startsWith('a=fmtp:')) return linha;
+      const m = /^a=fmtp:(\d+) /.exec(linha);
+      if (m?.[1] === undefined || !opus.has(m[1])) return linha;
       const { corpo, quebra } = partir(linha);
-      if (!/minptime=|useinbandfec=|opus/i.test(corpo)) return linha;
       let saida = definirParametro(corpo, 'stereo', '1');
       saida = definirParametro(saida, 'sprop-stereo', '1');
       return saida + quebra;
+    })
+    .join('');
+}
+
+/**
+ * O RECEPTOR pedindo estéreo na própria resposta (TELA-011).
+ *
+ * Medido em Chrome real: com `stereo=1` só na descrição remota do
+ * transmissor, ele CODIFICA estéreo — e o espectador decodifica em mono,
+ * porque o decoder do libwebrtc lê o `stereo` da descrição LOCAL de quem
+ * recebe. Um tom só na esquerda chegava igual nos dois canais (0,35 e 0,35).
+ *
+ * Aqui é o lugar honesto dessa preferência: quem diz "quero estéreo" é o
+ * próprio receptor, na resposta dele. Só `stereo` — `sprop-stereo` descreve o
+ * que se ENVIA, e o espectador não envia áudio.
+ */
+export function pedirEstereo(sdp: string): string {
+  if (typeof sdp !== 'string' || sdp.length === 0) return sdp;
+  return dividirSecoes(sdp)
+    .map((secao) => (secao.startsWith('m=audio') ? pedirEstereoNaSecao(secao) : secao))
+    .join('');
+}
+
+function pedirEstereoNaSecao(secao: string): string {
+  const linhas = secao.split(/(?<=\n)/);
+  const opus = new Set<string>();
+  for (const linha of linhas) {
+    const m = /^a=rtpmap:(\d+) opus\/48000(?:\/\d+)?\s*$/i.exec(linha);
+    if (m?.[1] !== undefined) opus.add(m[1]);
+  }
+  return linhas
+    .map((linha) => {
+      const m = /^a=fmtp:(\d+) /.exec(linha);
+      if (m?.[1] === undefined || !opus.has(m[1])) return linha;
+      const { corpo, quebra } = partir(linha);
+      return definirParametro(corpo, 'stereo', '1') + quebra;
     })
     .join('');
 }

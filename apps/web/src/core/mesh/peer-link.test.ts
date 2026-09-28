@@ -387,3 +387,37 @@ describe('ordenarH264', () => {
     expect(ordem[0]?.sdpFmtpLine).toBe(HIGH_M1.sdpFmtpLine);
   });
 });
+
+describe('PeerLink — o receptor pede estéreo na própria resposta (TELA-011)', () => {
+  const OFERTA = [
+    'v=0', 'o=- 1 2 IN IP4 127.0.0.1', 's=-', 't=0 0',
+    'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'a=rtpmap:111 opus/48000/2', 'a=fmtp:111 minptime=10', '',
+  ].join('\r\n');
+
+  it('a resposta local leva stereo=1 no Opus — sem sprop, porque o espectador não envia', async () => {
+    const ctx = build(true);
+    ctx.pc.answerSdp = OFERTA;
+    await ctx.link.handleSignal({ description: { type: 'offer', sdp: OFERTA } });
+    await settle();
+    const local = ctx.pc.localDescription?.sdp ?? '';
+    expect(local).toContain('a=fmtp:111 minptime=10;stereo=1\r\n');
+    expect(local).not.toContain('sprop-stereo');
+    expect(ctx.sent.at(-1)?.description?.type).toBe('answer');
+  });
+
+  it('navegador que recusa a edição: responde com a resposta intacta, sem cair', async () => {
+    const ctx = build(true);
+    ctx.pc.answerSdp = OFERTA;
+    const original = ctx.pc.setLocalDescription.bind(ctx.pc);
+    let chamadas = 0;
+    ctx.pc.setLocalDescription = async (d?: RTCSessionDescriptionInit) => {
+      chamadas += 1;
+      if (chamadas === 1) throw new Error('InvalidModificationError');
+      return original(d);
+    };
+    await ctx.link.handleSignal({ description: { type: 'offer', sdp: OFERTA } });
+    await settle();
+    expect(ctx.pc.localDescription?.sdp).toBe(OFERTA);
+    expect(ctx.fatals).toEqual([]);
+  });
+});

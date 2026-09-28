@@ -533,6 +533,7 @@ const subiu = await host.evaluate(
   async ([slug, fonte]) => {
     const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
+    const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
     const shared = await import('/node_modules/@tela/shared/dist/index.js');
     window.__shared = shared;
 
@@ -547,6 +548,8 @@ const subiu = await host.evaluate(
       channel: makeWsSignaling(
         `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`,
       ),
+      // Obrigatório desde a TELA-005: é quem agenda a renovação do ICE.
+      scheduler: makeBrowserScheduler(),
     });
     window.__transport = transport;
     await transport.host(slug, 'q'.repeat(43));

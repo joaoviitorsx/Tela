@@ -7,6 +7,7 @@ import type {
   PeerInfo,
   QualityLimitation,
 } from '../ports/media-transport.js';
+import type { QuadroNeutro } from '../ports/quadro-neutro.js';
 import type { Scheduler } from '../ports/scheduler.js';
 import type { CaptureError, CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
@@ -148,6 +149,12 @@ export type BroadcastState =
        * pessoa só descobre quando um amigo reclama.
        */
       readonly audioPerdidoPelaEscolha: boolean;
+      /**
+       * Pausa de privacidade (TELA-022). `null` fora da pausa; dentro, se o
+       * som continua. Os amigos veem o quadro neutro, a sala e a captura
+       * continuam — retomar é instantâneo.
+       */
+      readonly pausa: { readonly comSom: boolean } | null;
     }
   | { readonly status: 'ended'; readonly reason: BroadcastFailure };
 
@@ -174,6 +181,12 @@ export type BroadcastSessionDeps = {
    * `renovar` troca e guarda o novo. Quem implementa é a identidade do dono.
    */
   convite: { atual(): string; renovar(): string };
+  /**
+   * Quadro da pausa de privacidade. Opcional: sem ele a pausa desliga a
+   * trilha (`enabled = false`), que manda preto — neutro, mas mudo sobre o
+   * motivo.
+   */
+  quadroNeutro?: QuadroNeutro;
   /**
    * O que o link deste aparelho sustentou da última vez, por espectador.
    *
@@ -623,6 +636,7 @@ export class BroadcastSession {
         this.audioTrack === null &&
         this.surface !== 'monitor' &&
         this.surface !== 'desconhecido',
+      pausa: null,
     });
 
     this.timers.push(
@@ -1164,6 +1178,11 @@ export class BroadcastSession {
 
   private trackCapturaMorta(fps: number): void {
     if (this.state.status !== 'live') return;
+    // O quadro neutro anda a 2 fps de propósito: não é captura morta.
+    if (this.pausa !== null) {
+      this.semImagem = 0;
+      return;
+    }
 
     const relevante = this.state.peers.length > 0 && this.amostras > AQUECIMENTO_AMOSTRAS;
     this.semImagem = relevante && fps === 0 ? this.semImagem + 1 : 0;
@@ -1263,6 +1282,49 @@ export class BroadcastSession {
     this.deps.transport.removeViewers();
   }
 
+  /** Pausa em curso. Espelha `state.pausa`, e sobrevive a trocas de estado. */
+  private pausa: { readonly comSom: boolean; readonly quadro: MediaStreamTrack | null } | null = null;
+
+  /**
+   * Oculta a transmissão sem perder a sala (TELA-022, §10.3).
+   *
+   * O vídeo vira o quadro neutro por `replaceTrack` — sem renegociar, sem
+   * congelar o último conteúdo. O som para por padrão; manter é escolha
+   * explícita. A captura continua viva: "pausar" não é "encerrar", e retomar
+   * não pede o seletor de novo. O que já saiu antes do clique não volta —
+   * pacote enviado não se recolhe.
+   */
+  async pausar(opcoes: { readonly manterSom?: boolean } = {}): Promise<void> {
+    if (this.state.status !== 'live' || this.pausa !== null) return;
+    const comSom = opcoes.manterSom === true;
+    const quadro = this.deps.quadroNeutro?.abrir() ?? null;
+    this.pausa = { comSom, quadro };
+    if (quadro !== null) {
+      await this.deps.transport.replaceVideo(quadro);
+    } else if (this.videoTrack !== null) {
+      this.videoTrack.enabled = false;
+    }
+    if (!comSom && this.audioTrack !== null) this.audioTrack.enabled = false;
+    this.diario.evento('session', 'PRIVACY_PAUSED', this.deps.scheduler.now());
+    if (this.state.status === 'live') this.setState({ ...this.state, pausa: { comSom } });
+  }
+
+  async retomar(): Promise<void> {
+    const pausa = this.pausa;
+    if (pausa === null) return;
+    this.pausa = null;
+    if (this.videoTrack !== null) {
+      this.videoTrack.enabled = true;
+      // Sempre: se a fonte foi trocada durante a pausa, o sender ainda está
+      // com o quadro neutro — ou com a trilha antiga, já parada.
+      await this.deps.transport.replaceVideo(this.videoTrack);
+    }
+    this.deps.quadroNeutro?.fechar();
+    if (this.audioTrack !== null) this.audioTrack.enabled = true;
+    this.diario.evento('session', 'PRIVACY_RESUMED', this.deps.scheduler.now());
+    if (this.state.status === 'live') this.setState({ ...this.state, pausa: null });
+  }
+
   /**
    * O áudio numa troca de tela (TELA-012, §6.8).
    *
@@ -1292,6 +1354,8 @@ export class BroadcastSession {
       // `attach` desmonta o grafo antigo e para a trilha crua dele.
       this.audioTrack = this.deps.gain.attach(novo);
       this.deps.gain.set(this.volumeTransmissao);
+      // Trocar a tela na pausa sem som não pode religar o som.
+      if (this.pausa !== null && !this.pausa.comSom) this.audioTrack.enabled = false;
       this.origemAudio = 'captura';
       this.classificadorAudio.reiniciar();
       this.diario.registrarCapturaAudio(descreverCaptura(novo, fonteDaSuperficie(surface)));
@@ -1429,7 +1493,9 @@ export class BroadcastSession {
     this.surface = capture.surface;
     this.preview = this.deps.createStream([capture.video]);
 
-    await this.deps.transport.replaceVideo(capture.video);
+    // Na pausa, a tela nova fica guardada: trocar de fonte não pode vazar
+    // imagem para quem está vendo o quadro neutro.
+    if (this.pausa === null) await this.deps.transport.replaceVideo(capture.video);
 
     await this.trocarAudioJunto(capture.audio, capture.surface);
 
@@ -1665,6 +1731,10 @@ export class BroadcastSession {
     this.audioTrack = null;
     this.audioFonte = null;
     this.origemAudio = null;
+    if (this.pausa !== null) {
+      this.deps.quadroNeutro?.fechar();
+      this.pausa = null;
+    }
     this.classificadorAudio.reiniciar();
     this.grafoAudio = 'indisponivel';
     this.preview = null;

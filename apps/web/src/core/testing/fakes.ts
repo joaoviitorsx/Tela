@@ -492,6 +492,22 @@ export class FakeRandom implements Random {
 
 export const shareUrlFor = (slug: string, invite: string) => `https://tela.gg/${slug}#k=${invite}`;
 
+/** Quadro neutro falso: devolve uma trilha nova e conta aberturas/fechamentos. */
+export class FakeQuadroNeutro {
+  aberturas = 0;
+  fechamentos = 0;
+  ultima: FakeTrack | null = null;
+  abrir(): MediaStreamTrack {
+    this.aberturas += 1;
+    this.ultima = fakeTrack('video');
+    return this.ultima as unknown as MediaStreamTrack;
+  }
+  fechar(): void {
+    this.fechamentos += 1;
+    this.ultima?.stop();
+  }
+}
+
 /** Convite em memória, com renovação previsível para os testes afirmarem. */
 export class FakeConvites {
   valor = 'c'.repeat(22);

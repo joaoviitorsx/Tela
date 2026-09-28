@@ -101,6 +101,7 @@ const resultado = await host.evaluate(
     const stream = canvas.captureStream(30);
     const track = stream.getVideoTracks()[0];
     track.contentHint = 'motion';
+    window.__canvasTrack = track;
 
     // Áudio de verdade: um oscilador no lugar da trilha do jogo. É o que prova
     // que quem assiste OUVE, e não só vê.
@@ -325,6 +326,29 @@ console.log('\n3a2. Trocar o som sem renegociar: agora só na DIREITA (TELA-012)
     trocado !== null && trocado.direita > 0.05 && trocado.esquerda < trocado.direita * 0.1,
     `a trilha nova chegou pelo mesmo sender, sem renegociar (${JSON.stringify(trocado)})`,
   );
+}
+
+console.log('\n3a3. Pausa de privacidade: o quadro neutro chega no lugar da tela (TELA-022)');
+{
+  const dims = () => viewer.evaluate(() => {
+    const v = document.querySelector('video');
+    return v ? `${v.videoWidth}x${v.videoHeight}` : null;
+  });
+  const antes = await dims();
+  await host.evaluate(async () => {
+    const { makeCanvasQuadroNeutro } = await import('/src/adapters/canvas-quadro-neutro.ts');
+    window.__quadro = makeCanvasQuadroNeutro();
+    await window.__transport.replaceVideo(window.__quadro.abrir());
+  });
+  await viewer.waitForTimeout(4000);
+  const pausado = await dims();
+  ok(pausado === '480x270' && pausado !== antes, `espectador recebe o quadro neutro, não o último quadro da tela (${antes} → ${pausado})`);
+  await host.evaluate(async () => {
+    await window.__transport.replaceVideo(window.__canvasTrack);
+    window.__quadro.fechar();
+  });
+  await viewer.waitForTimeout(3000);
+  ok((await dims()) === antes, `retomar devolve a tela (${await dims()})`);
 }
 
 console.log('\n3b. Grafo de ganho em Chrome real (TELA-009)');

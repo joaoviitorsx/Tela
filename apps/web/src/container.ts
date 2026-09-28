@@ -8,6 +8,7 @@ import { makeBrowserScreenCapture } from './adapters/browser-screen-capture.js';
 import { makeCryptoRandom } from './adapters/crypto-random.js';
 import { makeLocalStorage } from './adapters/local-storage.js';
 import { makeMeshTransport } from './adapters/mesh-transport.js';
+import { makeCanvasQuadroNeutro } from './adapters/canvas-quadro-neutro.js';
 import { makeWebAudioCue } from './adapters/web-audio-cue.js';
 import { suportaWebGL } from './adapters/webgl-probe.js';
 import { makeWsSignaling } from './adapters/ws-signaling.js';
@@ -125,6 +126,7 @@ export function createBroadcastSession(): BroadcastSession {
     scheduler,
     shareUrlFor,
     convite: { atual: () => identity.convite(), renovar: () => identity.renovarConvite() },
+    quadroNeutro: makeCanvasQuadroNeutro(),
     createStream: (tracks) => new MediaStream([...tracks]),
     diagnosticId,
     appVersion,

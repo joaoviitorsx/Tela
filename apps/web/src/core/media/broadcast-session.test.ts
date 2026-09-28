@@ -9,6 +9,7 @@ import {
   createStream,
   shareUrlFor,
   FakeConvites,
+  FakeQuadroNeutro,
 } from '../testing/fakes.js';
 import { BroadcastSession } from './broadcast-session.js';
 import { PRESETS, PRESET_IDS } from './presets.js';
@@ -1725,5 +1726,94 @@ describe('BroadcastSession — o som acompanha a troca de tela quando veio dela 
     await ctx.session.switchSource();
     expect(ctx.transport.audiosTrocados).toEqual([]);
     expect(ctx.screen.audio.stopped).toBe(false);
+  });
+});
+
+describe('BroadcastSession — pausa de privacidade (TELA-022)', () => {
+  function montar() {
+    const transport = new FakeMediaTransport();
+    const screen = new FakeScreenCapture();
+    screen.withAudio = true;
+    const gain = new FakeAudioGain();
+    const quadro = new FakeQuadroNeutro();
+    const scheduler = new FakeScheduler();
+    const session = new BroadcastSession({
+      transport, screen, audio: new FakeAudioCapture(), gain, scheduler, shareUrlFor,
+      convite: new FakeConvites(), quadroNeutro: quadro, createStream, statsIntervalMs: 1_000,
+    });
+    return { transport, screen, gain, quadro, scheduler, session };
+  }
+  const pausaDe = (s: BroadcastSession) => {
+    const st = s.getState();
+    return st.status === 'live' ? st.pausa : 'fora do ar';
+  };
+
+  it('troca a tela pelo quadro neutro e silencia; a captura continua viva', async () => {
+    const ctx = montar();
+    await ctx.session.start(SLUG, TOKEN);
+    const tela = ctx.screen.video;
+    await ctx.session.pausar();
+    expect(ctx.transport.substituidas.at(-1)).toBe(ctx.quadro.ultima);
+    expect(ctx.screen.audio.enabled).toBe(false);
+    expect(tela.stopped).toBe(false);
+    expect(pausaDe(ctx.session)).toEqual({ comSom: false });
+    expect(ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo)).toContain('PRIVACY_PAUSED');
+  });
+
+  it('manter o som é escolha explícita', async () => {
+    const ctx = montar();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.pausar({ manterSom: true });
+    expect(ctx.screen.audio.enabled).not.toBe(false);
+    expect(pausaDe(ctx.session)).toEqual({ comSom: true });
+  });
+
+  it('retomar devolve a tela e o som, e fecha o quadro neutro', async () => {
+    const ctx = montar();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.pausar();
+    await ctx.session.retomar();
+    expect(ctx.transport.substituidas.at(-1)).toBe(ctx.screen.video);
+    expect(ctx.screen.audio.enabled).toBe(true);
+    expect(ctx.quadro.fechamentos).toBe(1);
+    expect(pausaDe(ctx.session)).toBeNull();
+  });
+
+  it('trocar a fonte durante a pausa não vaza imagem nem religa o som', async () => {
+    const ctx = montar();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.pausar();
+    await ctx.session.switchSource();
+    // Nenhuma tela nova foi para o sender: o último vídeo enviado é o quadro.
+    expect(ctx.transport.substituidas.at(-1)).toBe(ctx.quadro.ultima);
+    expect(ctx.screen.audio.enabled).toBe(false);
+    await ctx.session.retomar();
+    expect(ctx.transport.substituidas.at(-1)).toBe(ctx.screen.video);
+  });
+
+  it('pausa longa não acende o alarme de captura sem imagem', async () => {
+    const ctx = montar();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.setPeers([{ id: 'v_1', connectionState: 'connected', usingRelay: false }]);
+    await ctx.session.pausar();
+    ctx.transport.stats = {
+      fps: 0, bitrateBps: 50_000, rttMs: 20, limitation: 'none', width: 640, height: 360,
+      availableBps: null, piorAvailableBps: null, paresMedidos: 1, availablePorPeer: {},
+      bpp: 0, encoderImplementation: null, qp: null, msPorQuadro: null, recepcao: null, audio: null,
+    };
+    for (let i = 0; i < 20; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+    const st = ctx.session.getState();
+    expect(st.status === 'live' && st.capturaSemImagem).toBe(false);
+  });
+
+  it('encerrar durante a pausa libera o quadro neutro', async () => {
+    const ctx = montar();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.pausar();
+    await ctx.session.stop('USER_STOPPED');
+    expect(ctx.quadro.fechamentos).toBe(1);
   });
 });

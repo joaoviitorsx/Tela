@@ -23,6 +23,9 @@ export type BroadcastControls = {
   /** Troca o convite; `true` quando o servidor confirmou. */
   renovarConvite: () => Promise<boolean>;
   desconectarTodos: () => void;
+  /** Pausa de privacidade: quadro neutro no lugar da tela; som só se pedido. */
+  pausar: (opcoes?: { readonly manterSom?: boolean }) => Promise<void>;
+  retomar: () => Promise<void>;
 };
 
 /**
@@ -77,6 +80,11 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
   const retomarAudio = useCallback(() => session.retomarAudio(), [session]);
   const renovarConvite = useCallback(() => session.renovarConvite(), [session]);
   const desconectarTodos = useCallback(() => session.desconectarTodos(), [session]);
+  const pausar = useCallback(
+    (opcoes?: { readonly manterSom?: boolean }) => session.pausar(opcoes),
+    [session],
+  );
+  const retomar = useCallback(() => session.retomar(), [session]);
 
   return {
     state,
@@ -89,5 +97,7 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
     retomarAudio,
     renovarConvite,
     desconectarTodos,
+    pausar,
+    retomar,
   };
 }

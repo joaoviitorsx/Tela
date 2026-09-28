@@ -9,6 +9,7 @@ import { makeCryptoRandom } from './adapters/crypto-random.js';
 import { makeLocalStorage } from './adapters/local-storage.js';
 import { makeMeshTransport } from './adapters/mesh-transport.js';
 import { makeCanvasQuadroNeutro } from './adapters/canvas-quadro-neutro.js';
+import { makeBrowserSondaDeRede } from './adapters/browser-sonda-de-rede.js';
 import { makeWebAudioCue } from './adapters/web-audio-cue.js';
 import { suportaWebGL } from './adapters/webgl-probe.js';
 import { makeWsSignaling } from './adapters/ws-signaling.js';
@@ -185,3 +186,6 @@ export const abrirVitrineCrt: AbreVitrine = async (opcoes) => {
 
 /** O chiado do §10. Mudo global persistido; a abertura em si é sempre muda. */
 export const audioCue = makeWebAudioCue(storage);
+
+/** Teste de rede do diagnóstico, antes e durante a transmissão. */
+export const sondaDeRede = makeBrowserSondaDeRede();

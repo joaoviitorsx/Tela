@@ -35,11 +35,32 @@ type Peer = {
   readonly socket: Socket;
   readonly participantId?: string;
   readonly attemptId?: string;
+  /** Só espectador: apelido e sha256 da chave do navegador (ADR 0025). */
+  readonly name?: string;
+  readonly fingerprint?: string;
+};
+
+/**
+ * Um pedido para entrar, na mão do transmissor (ADR 0025).
+ *
+ * Sem vaga e sem credencial TURN: tudo isso só depois do `admit`. As duas
+ * funções moram na closure da conexão do espectador — é ela que sabe
+ * transformar o socket em peer.
+ */
+type Pedido = {
+  readonly id: string;
+  readonly socket: Socket;
+  readonly name: string;
+  readonly fingerprint: string;
+  readonly participantId?: string;
+  admitir(): void;
+  recusar(code: SignalingErrorCode): void;
 };
 
 type Channel = {
   host: Peer | null;
   readonly viewers: Map<string, Peer>;
+  readonly pedidos: Map<string, Pedido>;
   /** sha256 do ownerToken de quem reivindicou o canal. */
   ownerHash: string;
   /**
@@ -91,11 +112,23 @@ export function makeChannelRegistry(deps: RegistryDeps) {
   function reap(name: string): void {
     const channel = channels.get(name);
     if (channel === undefined) return;
-    if (channel.host !== null || channel.viewers.size > 0) return;
+    if (channel.host !== null || channel.viewers.size > 0 || channel.pedidos.size > 0) return;
     if (channel.emptySince !== null && deps.now() - channel.emptySince < OWNERSHIP_GRACE_MS) {
       return; // ainda no período de carência do dono
     }
     channels.delete(name);
+  }
+
+  /** O que o transmissor precisa para reconhecer um espectador. */
+  function quemE(viewer: Peer): { name?: string; fingerprint?: string } {
+    return {
+      ...(viewer.name === undefined ? {} : { name: viewer.name }),
+      ...(viewer.fingerprint === undefined ? {} : { fingerprint: viewer.fingerprint }),
+    };
+  }
+
+  function pedidoParaHost(p: Pedido): ServerMessage {
+    return { type: 'join-request', peerId: p.id, name: p.name, fingerprint: p.fingerprint };
   }
 
   function peerIn(channel: Channel, id: string): Peer | null {
@@ -120,6 +153,8 @@ export function makeChannelRegistry(deps: RegistryDeps) {
 
     accept(socket: Socket, remoteAddress: string): Connection {
       let peer: Peer | null = null;
+      /** Espectador esperando o transmissor responder. */
+      let pedido: Pedido | null = null;
       let channelName: string | null = null;
       let closed = false;
 
@@ -132,7 +167,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
       let inWindow = 0;
 
       const cancelHelloTimer = deps.setTimer(HELLO_TIMEOUT_MS, () => {
-        if (peer === null && !closed) fail('HELLO_TIMEOUT');
+        if (peer === null && pedido === null && !closed) fail('HELLO_TIMEOUT');
       });
 
       function fail(code: SignalingErrorCode): void {
@@ -182,6 +217,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           channels.set(slug, {
             host: peer,
             viewers: new Map(),
+            pedidos: new Map(),
             ownerHash,
             inviteHash: deps.hash(invite),
             emptySince: null,
@@ -210,8 +246,10 @@ export function makeChannelRegistry(deps: RegistryDeps) {
          * desistir, e nada na tela dizia o motivo.
          */
         for (const viewer of existing?.viewers.values() ?? []) {
-          socket.send({ type: 'peer-joined', peerId: viewer.id });
+          socket.send({ type: 'peer-joined', peerId: viewer.id, ...quemE(viewer) });
         }
+        // Pedidos que esperavam o transmissor voltar continuam de pé.
+        for (const p of existing?.pedidos.values() ?? []) socket.send(pedidoParaHost(p));
       }
 
       /**
@@ -233,7 +271,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
 
       function joinChannel(
         slug: string, protocol: number | undefined, invite: string | undefined,
-        participantId?: string, attemptId?: string,
+        participantId?: string, attemptId?: string, name?: string, viewerKey?: string,
       ): void {
         const versao = versaoRecusada(protocol);
         if (versao !== null) return fail(versao);
@@ -254,19 +292,75 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         if (invite === undefined || !deps.equals(channel.inviteHash, deps.hash(invite))) {
           return fail('INVITE_INVALID');
         }
-        const previous = participantId === undefined ? undefined : [...channel.viewers.values()]
-          .find((viewer) => viewer.participantId === participantId);
-        if (previous === undefined && channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
+        // Sem apelido e chave não há o que mostrar ao transmissor (ADR 0025).
+        if (name === undefined || viewerKey === undefined) return fail('BAD_MESSAGE');
+        const fingerprint = deps.hash(viewerKey);
 
+        /*
+          Retomada: o MESMO navegador (chave e participante) cujo socket caiu e
+          voltou antes de o servidor notar. Já foi aceito — pedir de novo por
+          uma piscada de rede seria punir a pessoa pela rede dela.
+        */
+        const previous = participantId === undefined ? undefined : [...channel.viewers.values()]
+          .find((viewer) => viewer.participantId === participantId &&
+            viewer.fingerprint !== undefined && deps.equals(viewer.fingerprint, fingerprint));
+        channelName = slug;
+        cancelHelloTimer();
+        if (previous !== undefined) return entrar(channel, previous.id, name, fingerprint, participantId, attemptId, previous);
+
+        if (channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
+
+        // O mesmo pedido chegando por outro socket substitui o anterior.
+        const repetido = participantId === undefined ? undefined : [...channel.pedidos.values()]
+          .find((p) => p.participantId === participantId && deps.equals(p.fingerprint, fingerprint));
+        if (repetido === undefined && channel.pedidos.size >= deps.limits.maxPending) return fail('RATE_LIMITED');
+
+        const id = repetido?.id ?? deps.newPeerId('v');
+        if (repetido !== undefined) {
+          channel.pedidos.delete(repetido.id);
+          repetido.socket.close();
+        }
+        const meu: Pedido = {
+          id, socket, name, fingerprint,
+          ...(participantId === undefined ? {} : { participantId }),
+          admitir: () => {
+            if (pedido !== meu || closed) return;
+            pedido = null;
+            channel.pedidos.delete(id);
+            // A vaga é conferida de novo: pode ter enchido enquanto esperava.
+            if (channel.viewers.size >= deps.limits.maxPeers) {
+              channel.host?.socket.send({ type: 'join-cancelled', peerId: id });
+              return fail('CHANNEL_FULL');
+            }
+            entrar(channel, id, name, fingerprint, participantId, attemptId, undefined);
+          },
+          recusar: (code) => {
+            if (pedido !== meu || closed) return;
+            pedido = null;
+            channel.pedidos.delete(id);
+            fail(code);
+          },
+        };
+        pedido = meu;
+        channel.pedidos.set(id, meu);
+        socket.send({ type: 'awaiting-approval' });
+        host.socket.send(pedidoParaHost(meu));
+      }
+
+      /** Da aprovação (ou da retomada) em diante: vaga, credencial, `watching`. */
+      function entrar(
+        channel: Channel, id: string, name: string, fingerprint: string,
+        participantId: string | undefined, attemptId: string | undefined, previous: Peer | undefined,
+      ): void {
+        const host = channel.host;
+        if (host === null) return fail('NOT_HOSTING');
         peer = {
-          id: previous?.id ?? deps.newPeerId('v'), role: 'viewer', socket,
+          id, role: 'viewer', socket, name, fingerprint,
           ...(participantId === undefined ? {} : { participantId }),
           ...(attemptId === undefined ? {} : { attemptId }),
         };
         channel.viewers.set(peer.id, peer);
         previous?.socket.close();
-        channelName = slug;
-        cancelHelloTimer();
         const ice = deps.iceServersFor(peer.id);
 
         socket.send({
@@ -280,8 +374,23 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           viewers: channel.viewers.size,
         });
         // O transmissor é quem oferece — ele tem a mídia.
-        host.socket.send({ type: 'peer-joined', peerId: peer.id, ...(attemptId === undefined ? {} : { attemptId }) });
+        host.socket.send({
+          type: 'peer-joined', peerId: peer.id,
+          ...(attemptId === undefined ? {} : { attemptId }),
+          ...quemE(peer),
+        });
         anunciarPlateia(channel);
+      }
+
+      /** Só o transmissor atual responde a pedido. Pedido sumido é silêncio. */
+      function responder(peerId: string, aceitar: boolean): void {
+        if (peer === null || channelName === null || peer.role !== 'host') return fail('BAD_MESSAGE');
+        const channel = channels.get(channelName);
+        if (channel === undefined || channel.host !== peer) return;
+        const alvo = channel.pedidos.get(peerId);
+        if (alvo === undefined) return;
+        if (aceitar) alvo.admitir();
+        else alvo.recusar('DENIED');
       }
 
       /** Só o transmissor atual troca o convite. Quem está dentro fica. */
@@ -360,11 +469,15 @@ export function makeChannelRegistry(deps: RegistryDeps) {
               if (peer !== null) return;
               return claimChannel(message.slug, message.ownerToken, message.protocol, message.invite);
             case 'watch':
-              if (peer !== null) return;
+              if (peer !== null || pedido !== null) return;
               return joinChannel(
                 message.slug, message.protocol, message.invite,
-                message.participantId, message.attemptId,
+                message.participantId, message.attemptId, message.name, message.viewerKey,
               );
+            case 'admit':
+              return responder(message.peerId, true);
+            case 'deny':
+              return responder(message.peerId, false);
             case 'set-invite':
               return setInvite(message.invite);
             case 'remove-viewers':
@@ -397,6 +510,17 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           if (closed) return;
           closed = true;
           cancelHelloTimer();
+          if (pedido !== null && channelName !== null) {
+            // Desistiu (ou caiu) antes da resposta: some da fila do transmissor.
+            const channel = channels.get(channelName);
+            if (channel?.pedidos.get(pedido.id) === pedido) {
+              channel.pedidos.delete(pedido.id);
+              channel.host?.socket.send({ type: 'join-cancelled', peerId: pedido.id });
+              reap(channelName);
+            }
+            pedido = null;
+            return;
+          }
           if (peer === null || channelName === null) return;
 
           const channel = channels.get(channelName);
@@ -435,6 +559,9 @@ export function makeChannelRegistry(deps: RegistryDeps) {
                 viewer.socket.close();
               }
               channel.viewers.clear();
+              // Quem esperava resposta não vai ter: não há mais transmissão.
+              for (const p of [...channel.pedidos.values()]) p.recusar('NOT_HOSTING');
+              channel.pedidos.clear();
             }
           } else {
             channel.viewers.delete(peer.id);

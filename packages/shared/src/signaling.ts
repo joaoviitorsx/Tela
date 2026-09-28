@@ -24,8 +24,11 @@ export const PeerIdSchema = z.string().min(1).max(64);
  * Versão do protocolo (TELA-018). Cliente sem o campo é da versão 1, que não
  * conhece convite — e é recusado com `BAD_MESSAGE`, um código que ele entende.
  * Nunca se converte uma sala privada em aberta para aceitar cliente antigo.
+ *
+ * A 3 trouxe a aprovação manual (ADR 0025): quem fala 2 entraria sem pedir, e
+ * por isso recebe `PROTOCOL_MISMATCH` — "recarregue" — em vez de passar.
  */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /**
  * Segredo de convite: pelo menos 128 bits em base64url (16 bytes = 22 chars).
@@ -36,6 +39,28 @@ export const PROTOCOL_VERSION = 2;
  */
 export const InviteSchema = z.string().regex(/^[A-Za-z0-9_-]{22,128}$/);
 export type PeerId = z.infer<typeof PeerIdSchema>;
+
+/**
+ * Chave do navegador de quem assiste (ADR 0025): mesmo formato do convite.
+ *
+ * É o que faz "já aprovei esta pessoa" valer na volta. O transmissor nunca vê a
+ * chave, só o sha256 dela (`fingerprint`), calculado PELO SERVIDOR — um cliente
+ * que mandasse o próprio fingerprint poderia se passar por quem já foi aceito.
+ */
+export const ViewerKeySchema = InviteSchema;
+
+/**
+ * Como o transmissor reconhece quem pede para entrar. Não é conta (R6): não
+ * tem senha, não é único, e o servidor só o segura enquanto a conexão existe.
+ * Sem caractere de controle, para não quebrar a linha de quem lê.
+ */
+export const APELIDO_MAX = 24;
+export const ApelidoSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(APELIDO_MAX)
+  .regex(/^[^\p{C}]+$/u);
 
 export const SignalingErrorCodeSchema = z.enum([
   'SLUG_TAKEN', // já existe transmissão nesse slug, de outro dono
@@ -51,6 +76,8 @@ export const SignalingErrorCodeSchema = z.enum([
   'PROTOCOL_MISMATCH',
   /** O transmissor tirou este espectador. Não tentar de novo sozinho. */
   'REMOVED',
+  /** O transmissor recusou o pedido. Pedir de novo é escolha da pessoa. */
+  'DENIED',
   'HELLO_TIMEOUT', // conectou e não se apresentou
   /**
    * O canal nem chegou a abrir.
@@ -95,7 +122,16 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     participantId: z.string().min(16).max(128).optional(),
     /** Nova PC = nova tentativa; reconexão apenas do socket preserva este ID. */
     attemptId: z.string().min(16).max(128).optional(),
+    /** Obrigatórios a partir da versão 3 (ADR 0025); quem exige é o servidor. */
+    name: ApelidoSchema.optional(),
+    viewerKey: ViewerKeySchema.optional(),
   }),
+  /**
+   * Só o transmissor: responde a um `join-request`. `admit` segue a entrada
+   * normal (vaga, credencial, `watching`); `deny` fecha com `DENIED`.
+   */
+  z.object({ type: z.literal('admit'), peerId: PeerIdSchema }),
+  z.object({ type: z.literal('deny'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('refresh-ice'), requestId: z.string().min(1).max(64) }),
   /**
    * Só o transmissor: troca o convite. Quem já está assistindo fica; só
@@ -164,7 +200,31 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
   }),
   /** Resposta a `set-invite`: o convite novo já vale para entradas novas. */
   z.object({ type: z.literal('invite-set') }),
-  z.object({ type: z.literal('peer-joined'), peerId: PeerIdSchema, attemptId: z.string().optional() }),
+  /**
+   * Para o espectador: convite aceito, pedido na mão do transmissor. Nada de
+   * vaga nem credencial TURN ainda — isso só depois do `admit` (ADR 0025).
+   */
+  z.object({ type: z.literal('awaiting-approval') }),
+  /**
+   * Para o transmissor: alguém com o convite pede para entrar. `peerId` é o que
+   * ele terá ao entrar; `fingerprint` é o sha256 da chave do navegador dele.
+   */
+  z.object({
+    type: z.literal('join-request'),
+    peerId: PeerIdSchema,
+    name: ApelidoSchema,
+    fingerprint: z.string().min(16).max(128),
+  }),
+  /** Para o transmissor: o pedido sumiu (a pessoa desistiu ou caiu). */
+  z.object({ type: z.literal('join-cancelled'), peerId: PeerIdSchema }),
+  z.object({
+    type: z.literal('peer-joined'),
+    peerId: PeerIdSchema,
+    attemptId: z.string().optional(),
+    /** Quem é, para a lista do transmissor sobreviver a um F5 dele. */
+    name: ApelidoSchema.optional(),
+    fingerprint: z.string().min(16).max(128).optional(),
+  }),
   z.object({ type: z.literal('peer-left'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('signal'), from: PeerIdSchema, payload: z.unknown() }),
   z.object({ type: z.literal('error'), code: SignalingErrorCodeSchema }),

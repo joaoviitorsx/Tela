@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '@tela/shared';
 import { describe, expect, it } from 'vitest';
 import { makeNodeDriver } from './testing-node-driver.js';
 import { makeWorkerDriver } from './testing-worker-driver.js';
@@ -8,6 +9,8 @@ import {
   OWNER,
   SLUG,
   type ConformanceDriver,
+  chaveDe,
+  comAprovacao,
   errorOf,
   ofType,
   peerIdOf,
@@ -21,8 +24,8 @@ import {
  * que elas divirjam com o tempo.
  */
 const implementacoes: [string, () => ConformanceDriver][] = [
-  ['node + ws', makeNodeDriver],
-  ['cloudflare durable object', makeWorkerDriver],
+  ['node + ws', () => comAprovacao(makeNodeDriver())],
+  ['cloudflare durable object', () => comAprovacao(makeWorkerDriver())],
 ];
 
 describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
@@ -92,7 +95,7 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     const host = await d.host('h', SLUG, OWNER);
     const viewer = await d.watch('v', SLUG);
     expect(ofType(host, 'peer-joined')).toEqual([
-      { type: 'peer-joined', peerId: peerIdOf(viewer) },
+      { type: 'peer-joined', peerId: peerIdOf(viewer), name: 'v', fingerprint: expect.any(String) },
     ]);
   });
 
@@ -100,8 +103,7 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER);
     const viewer = await d.watch('v', SLUG);
-    const first = viewer.received()[0];
-    expect(first?.type === 'watching' && first.hostId).toBe(peerIdOf(host));
+    expect(ofType(viewer, 'watching')[0]?.hostId).toBe(peerIdOf(host));
   });
 
   it('R8: payload atravessa intacto, do transmissor ao espectador', async () => {
@@ -162,12 +164,16 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     await d.watch('v2', SLUG);
     await d.watch('v3', SLUG);
     d.hibernar?.();
-    const replacement = await d.watch('v1-next', SLUG, { participantId, attemptId: 'b'.repeat(32) });
+    // Mesmo navegador (mesma chave): retoma sem pedir de novo.
+    const replacement = await d.watch(
+      'v1-next', SLUG, { participantId, attemptId: 'b'.repeat(32) }, { viewerKey: chaveDe('v1') },
+    );
     expect(first.closed()).toBe(true);
     expect(peerIdOf(replacement)).toBe(peerIdOf(first));
     expect(ofType(host, 'peer-left')).toEqual([]);
     expect(ofType(host, 'peer-joined').at(-1)).toEqual({
       type: 'peer-joined', peerId: peerIdOf(first), attemptId: 'b'.repeat(32),
+      name: 'v1-next', fingerprint: expect.any(String),
     });
     expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
   });
@@ -341,10 +347,10 @@ it('Worker libera reserva e não envia watching depois do socket fechar durante 
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   let viewersIssued = 0;
-  const d = makeWorkerDriver(async (peerId) => {
+  const d = comAprovacao(makeWorkerDriver(async (peerId) => {
     if (peerId.startsWith('v') && ++viewersIssued === 1) await gate;
     return { servers: [{ urls: ['stun:test'] }], relayStatus: 'not-configured' };
-  });
+  }));
   const host = await d.host('h', SLUG, OWNER);
   const pending = d.watch('v1', SLUG);
   await d.watch('v2', SLUG);
@@ -361,10 +367,10 @@ it('Worker libera reserva e não envia watching depois do socket fechar durante 
 it('Worker espera TURN antes de reapresentar a reserva ao host reconectado', async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
-  const d = makeWorkerDriver(async (peerId) => {
+  const d = comAprovacao(makeWorkerDriver(async (peerId) => {
     if (peerId.startsWith('v')) await gate;
     return { servers: [{ urls: ['stun:test'] }], relayStatus: 'not-configured' };
-  });
+  }));
   await d.host('h1', SLUG, OWNER);
   const pending = d.watch('v', SLUG);
   const newHost = await d.host('h2', SLUG, OWNER);
@@ -373,7 +379,7 @@ it('Worker espera TURN antes de reapresentar a reserva ao host reconectado', asy
   const viewer = await pending;
   expect(ofType(viewer, 'watching')[0]?.hostId).toBe(peerIdOf(newHost));
   expect(ofType(newHost, 'peer-joined')).toEqual([
-    { type: 'peer-joined', peerId: peerIdOf(viewer) },
+    { type: 'peer-joined', peerId: peerIdOf(viewer), name: 'v', fingerprint: expect.any(String) },
   ]);
 });
 
@@ -421,8 +427,17 @@ describe.each(implementacoes)('convite privado e protocolo versionado (TELA-018)
 
   it('versão diferente recebe PROTOCOL_MISMATCH', async () => {
     const d = criar();
-    const futuro = await d.host('h', SLUG, OWNER, { protocol: 3 });
+    const futuro = await d.host('h', SLUG, OWNER, { protocol: PROTOCOL_VERSION + 1 });
     expect(errorOf(futuro)).toBe('PROTOCOL_MISMATCH');
+  });
+
+  it('espectador v2 (sem aprovação) recebe PROTOCOL_MISMATCH, nunca entra direto', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const antigo = await d.watch('v', SLUG, undefined, { protocol: 2, name: null, viewerKey: null });
+    expect(errorOf(antigo)).toBe('PROTOCOL_MISMATCH');
+    expect(ofType(host, 'join-request')).toEqual([]);
+    expect(ofType(host, 'peer-joined')).toEqual([]);
   });
 
   it('renovar convite barra entradas novas e mantém quem já está dentro', async () => {
@@ -507,4 +522,155 @@ it('Worker: convite inválido não gasta credencial TURN', async () => {
   const antes = pedidos.length;
   await d.watch('v', SLUG, undefined, { invite: OUTRO_CONVITE });
   expect(pedidos.length).toBe(antes);
+});
+
+describe.each(implementacoes)('aprovação manual (ADR 0025) — %s', (_nome, criar) => {
+  const esperar = { aprovar: false } as const;
+
+  it('o pedido chega ao transmissor antes de vaga e de credencial', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const v = await d.watch('ana', SLUG, undefined, esperar);
+    expect(ofType(v, 'awaiting-approval')).toHaveLength(1);
+    expect(ofType(v, 'watching')).toEqual([]);
+    expect(ofType(host, 'peer-joined')).toEqual([]);
+    const [pedido] = ofType(host, 'join-request');
+    expect(pedido?.name).toBe('ana');
+    // O transmissor recebe o hash da chave, nunca a chave.
+    expect(pedido?.fingerprint).not.toBe(chaveDe('ana'));
+    expect(JSON.stringify(host.received())).not.toContain(chaveDe('ana'));
+    expect(v.closed()).toBe(false);
+  });
+
+  it('aceitar dá vaga, credencial e avisa o transmissor', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const v = await d.watch('ana', SLUG, undefined, esperar);
+    const peerId = ofType(host, 'join-request')[0]!.peerId;
+    await d.send('h', { type: 'admit', peerId });
+    expect(ofType(v, 'watching')[0]?.peerId).toBe(peerId);
+    expect(ofType(host, 'peer-joined')).toEqual([
+      { type: 'peer-joined', peerId, name: 'ana', fingerprint: ofType(host, 'join-request')[0]!.fingerprint },
+    ]);
+  });
+
+  it('recusar fecha com DENIED e não dá vaga', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const v = await d.watch('ana', SLUG, undefined, esperar);
+    await d.send('h', { type: 'deny', peerId: ofType(host, 'join-request')[0]!.peerId });
+    expect(errorOf(v)).toBe('DENIED');
+    expect(v.closed()).toBe(true);
+    expect(ofType(v, 'watching')).toEqual([]);
+    expect(ofType(host, 'peer-joined')).toEqual([]);
+    expect(ofType(host, 'join-cancelled')).toEqual([]);
+  });
+
+  it('quem desiste da espera some da fila do transmissor', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    await d.watch('ana', SLUG, undefined, esperar);
+    const peerId = ofType(host, 'join-request')[0]!.peerId;
+    d.disconnect('ana');
+    expect(ofType(host, 'join-cancelled')).toEqual([{ type: 'join-cancelled', peerId }]);
+    // Aceitar depois é silêncio: não há mais ninguém.
+    await d.send('h', { type: 'admit', peerId });
+    expect(ofType(host, 'peer-joined')).toEqual([]);
+    expect(host.closed()).toBe(false);
+  });
+
+  it('sem apelido ou sem chave não há pedido', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    expect(errorOf(await d.watch('a', SLUG, undefined, { ...esperar, name: null }))).toBe('BAD_MESSAGE');
+    expect(errorOf(await d.watch('b', SLUG, undefined, { ...esperar, viewerKey: null }))).toBe('BAD_MESSAGE');
+    expect(errorOf(await d.watch('c', SLUG, undefined, { ...esperar, name: 'a\u0007b' }))).toBe('BAD_MESSAGE');
+    expect(errorOf(await d.watch('d', SLUG, undefined, { ...esperar, name: 'x'.repeat(25) }))).toBe('BAD_MESSAGE');
+    expect(ofType(host, 'join-request')).toEqual([]);
+  });
+
+  it('só o transmissor responde a pedido', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const dentro = await d.watch('dentro', SLUG);
+    const esperando = await d.watch('ana', SLUG, undefined, esperar);
+    const peerId = ofType(host, 'join-request').find((m) => m.name === 'ana')!.peerId;
+    await d.send('dentro', { type: 'admit', peerId });
+    expect(errorOf(dentro)).toBe('BAD_MESSAGE');
+    expect(ofType(esperando, 'watching')).toEqual([]);
+  });
+
+  it('a mesma chave gera a mesma impressão; outra chave, outra', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    await d.watch('ana', SLUG, undefined, esperar);
+    await d.watch('ana-de-novo', SLUG, undefined, { ...esperar, viewerKey: chaveDe('ana') });
+    await d.watch('bia', SLUG, undefined, esperar);
+    const [a, a2, b] = ofType(host, 'join-request').map((m) => m.fingerprint);
+    expect(a).toBe(a2);
+    expect(b).not.toBe(a);
+  });
+
+  it('a fila tem teto: pedido excedente é recusado sem chegar ao transmissor', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    for (let i = 0; i < 8; i += 1) await d.watch(`p${i}`, SLUG, undefined, esperar);
+    expect(errorOf(await d.watch('p8', SLUG, undefined, esperar))).toBe('RATE_LIMITED');
+    expect(ofType(host, 'join-request')).toHaveLength(8);
+  });
+
+  it('canal cheio no momento de aceitar: CHANNEL_FULL e o pedido sai da fila', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const v = await d.watch('ana', SLUG, undefined, esperar);
+    const peerId = ofType(host, 'join-request')[0]!.peerId;
+    for (const id of ['x', 'y', 'z']) await d.watch(id, SLUG);
+    await d.send('h', { type: 'admit', peerId });
+    expect(errorOf(v)).toBe('CHANNEL_FULL');
+    expect(ofType(host, 'join-cancelled')).toEqual([{ type: 'join-cancelled', peerId }]);
+  });
+
+  it('transmissor que reconecta recebe de novo os pedidos em espera', async () => {
+    const d = criar();
+    await d.host('h1', SLUG, OWNER);
+    const v = await d.watch('ana', SLUG, undefined, esperar);
+    d.disconnect('h1');
+    d.hibernar?.();
+    const h2 = await d.host('h2', SLUG, OWNER);
+    const [pedido] = ofType(h2, 'join-request');
+    expect(pedido?.name).toBe('ana');
+    await d.send('h2', { type: 'admit', peerId: pedido!.peerId });
+    expect(ofType(v, 'watching')[0]?.hostId).toBe(peerIdOf(h2));
+  });
+
+  it('transmissor que ENCERRA derruba quem esperava com NOT_HOSTING', async () => {
+    const d = criar();
+    await d.host('h', SLUG, OWNER);
+    const v = await d.watch('ana', SLUG, undefined, esperar);
+    await d.leave('h');
+    d.disconnect('h');
+    expect(errorOf(v)).toBe('NOT_HOSTING');
+    expect(v.closed()).toBe(true);
+  });
+
+  it('o pedido sobrevive à hibernação e é aceito depois dela', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const v = await d.watch('ana', SLUG, undefined, esperar);
+    d.hibernar?.();
+    await d.send('h', { type: 'admit', peerId: ofType(host, 'join-request')[0]!.peerId });
+    expect(ofType(v, 'watching')).toHaveLength(1);
+  });
+
+  it('retomar a vaga exige a MESMA chave: participante sem ela vira pedido', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const participantId = 'p'.repeat(32);
+    const dentro = await d.watch('ana', SLUG, { participantId, attemptId: 'a'.repeat(32) });
+    const impostor = await d.watch('eva', SLUG, { participantId, attemptId: 'b'.repeat(32) }, esperar);
+    expect(ofType(impostor, 'awaiting-approval')).toHaveLength(1);
+    expect(ofType(impostor, 'watching')).toEqual([]);
+    expect(dentro.closed()).toBe(false);
+    expect(ofType(host, 'join-request').map((m) => m.name)).toEqual(['ana', 'eva']);
+  });
 });

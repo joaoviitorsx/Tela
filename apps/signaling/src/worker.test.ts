@@ -113,6 +113,7 @@ describe('Worker endurecido (TELA-019)', () => {
     const certo = new FakeHibernatableSocket();
     depois.accept(certo);
     await depois.handleMessage(certo, SLUG, JSON.stringify(saudar({ type: 'watch', slug: SLUG }, { invite: CONVITE })));
-    expect(certo.sent[0]?.type).toBe('watching');
+    // Convite certo: o pedido chega ao transmissor (a entrada é dele, ADR 0025).
+    expect(certo.sent[0]?.type).toBe('awaiting-approval');
   });
 });

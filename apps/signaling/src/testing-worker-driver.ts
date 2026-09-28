@@ -161,7 +161,7 @@ export function makeWorkerDriver(
       return await open(id, slug, saudar({ type: 'host', slug, ownerToken }, saudacao));
     },
     async watch(id, slug, identity, saudacao) {
-      return await open(id, slug, saudar({ type: 'watch', slug, ...identity }, saudacao));
+      return await open(id, slug, saudar({ type: 'watch', slug, ...identity }, saudacao, id));
     },
     async send(id, message) {
       const socket = sockets.get(id);

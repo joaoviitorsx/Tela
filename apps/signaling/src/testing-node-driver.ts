@@ -33,7 +33,7 @@ export function makeNodeDriver(): ConformanceDriver {
       return open(id, saudar({ type: 'host', slug, ownerToken }, saudacao), '10.0.0');
     },
     async watch(id, slug, identity, saudacao) {
-      return open(id, saudar({ type: 'watch', slug, ...identity }, saudacao), '10.0.1');
+      return open(id, saudar({ type: 'watch', slug, ...identity }, saudacao, id), '10.0.1');
     },
     async send(id, message) {
       conns.get(id)?.receive(JSON.stringify(message));

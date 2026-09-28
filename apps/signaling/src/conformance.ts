@@ -28,6 +28,15 @@ export type ConformanceClient = {
 export type Saudacao = {
   readonly invite?: string | null;
   readonly protocol?: number | null;
+  /** Só `watch`. Padrão: o id do cliente. `null` omite. */
+  readonly name?: string | null;
+  /** Só `watch`. Padrão: derivada do id do cliente. `null` omite. */
+  readonly viewerKey?: string | null;
+  /**
+   * Só `watch`: o transmissor aceita o pedido na hora (padrão). `false` deixa
+   * o pedido esperando — é assim que se testa a aprovação em si (ADR 0025).
+   */
+  readonly aprovar?: boolean;
 };
 
 export type ConformanceDriver = {
@@ -73,20 +82,65 @@ export const OUTRO_CONVITE = 'd'.repeat(22);
 export function saudar(
   base: Record<string, unknown>,
   saudacao: Saudacao = {},
+  id = 'espectador',
 ): Record<string, unknown> {
   const invite = saudacao.invite === undefined ? CONVITE : saudacao.invite;
   const protocol = saudacao.protocol === undefined ? PROTOCOL_VERSION : saudacao.protocol;
+  const assiste = base['type'] === 'watch';
+  const name = saudacao.name === undefined ? id : saudacao.name;
+  const viewerKey = saudacao.viewerKey === undefined ? chaveDe(id) : saudacao.viewerKey;
   return {
     ...base,
     ...(invite === null ? {} : { invite }),
     ...(protocol === null ? {} : { protocol }),
+    ...(assiste && name !== null ? { name } : {}),
+    ...(assiste && viewerKey !== null ? { viewerKey } : {}),
+  };
+}
+
+/** Chave de navegador estável por cliente de teste: mesmo id, mesmo navegador. */
+export function chaveDe(id: string): string {
+  return `k${id.replace(/[^A-Za-z0-9_-]/g, '_')}`.padEnd(22, 'k');
+}
+
+/**
+ * Envolve um driver para que todo `watch` seja aceito pelo transmissor, como
+ * era antes da aprovação manual (ADR 0025). Os cenários antigos continuam
+ * dizendo o que diziam; os de aprovação pedem `aprovar: false`.
+ */
+export function comAprovacao(driver: ConformanceDriver): ConformanceDriver {
+  const hosts: ConformanceClient[] = [];
+  return {
+    ...driver,
+    async host(id, slug, ownerToken, saudacao) {
+      const host = await driver.host(id, slug, ownerToken, saudacao);
+      hosts.push(host);
+      return host;
+    },
+    async watch(id, slug, identity, saudacao) {
+      const viewer = await driver.watch(id, slug, identity, saudacao);
+      if (saudacao?.aprovar === false) return viewer;
+      if (!viewer.received().some((m) => m.type === 'awaiting-approval')) return viewer;
+      const name = saudacao?.name ?? id;
+      // O host mais recente que recebeu este pedido é quem responde.
+      for (const host of [...hosts].reverse()) {
+        const pedido = host.received()
+          .filter((m): m is Extract<ServerMessage, { type: 'join-request' }> => m.type === 'join-request')
+          .reverse()
+          .find((m) => m.name === name);
+        if (pedido === undefined || host.closed()) continue;
+        await driver.send(host.id, { type: 'admit', peerId: pedido.peerId });
+        break;
+      }
+      return viewer;
+    },
   };
 }
 
 export function peerIdOf(client: ConformanceClient): string {
-  const first = client.received()[0];
-  if (first?.type === 'hosting' || first?.type === 'watching') return first.peerId;
-  throw new Error(`cliente ${client.id} não entrou no canal: ${JSON.stringify(first)}`);
+  const entrada = client.received().find((m) => m.type === 'hosting' || m.type === 'watching');
+  if (entrada?.type === 'hosting' || entrada?.type === 'watching') return entrada.peerId;
+  throw new Error(`cliente ${client.id} não entrou no canal: ${JSON.stringify(client.received()[0])}`);
 }
 
 export function errorOf(client: ConformanceClient): string | undefined {

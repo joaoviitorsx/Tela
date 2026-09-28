@@ -1,3 +1,4 @@
+import { PROTOCOL_VERSION } from '@tela/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { OWNERSHIP_GRACE_MS, makeChannelRegistry } from './channel-registry.js';
 import { DEFAULT_LIMITS } from './limits.js';
@@ -17,17 +18,39 @@ describe('registro de canais', () => {
     registry = makeChannelRegistry(testDeps(clock, { maxPeers: 3 }));
   });
 
+  let hosts: { socket: SpySocket; conn: ReturnType<typeof registry.accept> }[] = [];
+  let espectadores = 0;
+  beforeEach(() => {
+    hosts = [];
+    espectadores = 0;
+  });
+
   function host(slug = SLUG, ownerToken = OWNER, ip = '1.1.1.1') {
     const socket = new SpySocket();
     const conn = registry.accept(socket, ip);
-    conn.receive(JSON.stringify({ type: 'host', slug, ownerToken, protocol: 2, invite: CONVITE }));
+    conn.receive(JSON.stringify({ type: 'host', slug, ownerToken, protocol: PROTOCOL_VERSION, invite: CONVITE }));
+    hosts.push({ socket, conn });
     return { socket, conn };
   }
 
+  /** Entra e, como antes da aprovação manual (ADR 0025), é aceito na hora. */
   function watch(slug = SLUG, ip = '2.2.2.2') {
     const socket = new SpySocket();
     const conn = registry.accept(socket, ip);
-    conn.receive(JSON.stringify({ type: 'watch', slug, protocol: 2, invite: CONVITE }));
+    espectadores += 1;
+    const name = `amigo${espectadores}`;
+    conn.receive(JSON.stringify({
+      type: 'watch', slug, protocol: PROTOCOL_VERSION, invite: CONVITE,
+      name, viewerKey: `k${name}`.padEnd(22, 'k'),
+    }));
+    if (socket.ofType('awaiting-approval').length > 0) {
+      for (const h of [...hosts].reverse()) {
+        const pedido = h.socket.ofType('join-request').find((m) => m.name === name);
+        if (pedido === undefined || h.socket.closed) continue;
+        h.conn.receive(JSON.stringify({ type: 'admit', peerId: pedido.peerId }));
+        break;
+      }
+    }
     return { socket, conn };
   }
 
@@ -118,7 +141,9 @@ describe('registro de canais', () => {
     it('avisa o transmissor da entrada', () => {
       const h = host();
       watch();
-      expect(h.socket.ofType('peer-joined')).toEqual([{ type: 'peer-joined', peerId: 'v_002' }]);
+      expect(h.socket.ofType('peer-joined')).toEqual([
+        { type: 'peer-joined', peerId: 'v_002', name: 'amigo1', fingerprint: expect.any(String) },
+      ]);
     });
 
     it('aplica o teto de espectadores', () => {
@@ -340,12 +365,12 @@ describe('convite (TELA-018)', () => {
     });
     const hostSock = new SpySocket();
     registry.accept(hostSock, '1.1.1.1').receive(JSON.stringify({
-      type: 'host', slug: SLUG, ownerToken: OWNER, protocol: 2, invite: CONVITE,
+      type: 'host', slug: SLUG, ownerToken: OWNER, protocol: PROTOCOL_VERSION, invite: CONVITE,
     }));
     const antes = pedidos.length;
     const intruso = new SpySocket();
     registry.accept(intruso, '2.2.2.2').receive(JSON.stringify({
-      type: 'watch', slug: SLUG, protocol: 2, invite: 'x'.repeat(22),
+      type: 'watch', slug: SLUG, protocol: PROTOCOL_VERSION, invite: 'x'.repeat(22),
     }));
     expect(intruso.last()).toEqual({ type: 'error', code: 'INVITE_INVALID' });
     expect(pedidos.length).toBe(antes);

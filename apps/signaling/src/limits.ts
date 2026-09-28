@@ -18,6 +18,11 @@ export type Limits = {
    */
   readonly openLimit: number;
   readonly openWindowMs: number;
+  /**
+   * Pedidos esperando o transmissor responder, por canal (ADR 0025). Sem teto,
+   * quem tem o link enche a fila dele de pedidos e esconde os amigos de verdade.
+   */
+  readonly maxPending: number;
 };
 
 export const DEFAULT_LIMITS: Limits = {
@@ -54,6 +59,8 @@ export const DEFAULT_LIMITS: Limits = {
 
   openLimit: 120,
   openWindowMs: 60_000,
+
+  maxPending: 8,
 };
 
 /**

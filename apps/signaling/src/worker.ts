@@ -67,6 +67,15 @@ type Attachment = {
   readonly attemptId?: string;
   /** Reserva de vaga durante a emissão TURN; oferta só depois de `watching`. */
   readonly ready?: boolean;
+  /**
+   * Pedido na mão do transmissor (ADR 0025): sem vaga, sem credencial, sem
+   * sinal. No attachment porque o objeto hiberna enquanto a pessoa espera — e
+   * esperar é justamente o que um pedido faz.
+   */
+  readonly pendente?: boolean;
+  /** Só espectador: apelido e sha256 da chave do navegador. */
+  readonly name?: string;
+  readonly fingerprint?: string;
   /** Só no socket do host: sha256 do ownerToken de quem reivindicou. */
   readonly ownerHash?: string;
   /**
@@ -272,7 +281,25 @@ export class ChannelRoom {
   }
 
   private viewers(): { socket: HibernatableSocket; at: Attachment }[] {
-    return this.peers().filter((p) => p.at.role === 'viewer' && p.at.removido !== true);
+    return this.peers().filter((p) => p.at.role === 'viewer' && p.at.removido !== true && p.at.pendente !== true);
+  }
+
+  private pedidos(): { socket: HibernatableSocket; at: Attachment }[] {
+    return this.peers().filter((p) => p.at.role === 'viewer' && p.at.removido !== true && p.at.pendente === true);
+  }
+
+  private pedidoParaHost(at: Attachment): ServerMessage {
+    return {
+      type: 'join-request', peerId: at.peerId, name: at.name ?? '?', fingerprint: at.fingerprint ?? '',
+    };
+  }
+
+  /** O que o transmissor precisa para reconhecer um espectador. */
+  private quemE(at: Attachment): { name?: string; fingerprint?: string } {
+    return {
+      ...(at.name === undefined ? {} : { name: at.name }),
+      ...(at.fingerprint === undefined ? {} : { fingerprint: at.fingerprint }),
+    };
   }
 
   /** Versão do cliente: sem o campo é v1, recusado com código que ele entende. */
@@ -372,8 +399,13 @@ export class ChannelRoom {
         if (versao !== null) return this.fail(socket, versao);
         return await this.join(
           socket, slug, message.slug, message.invite, message.participantId, message.attemptId,
+          message.name, message.viewerKey,
         );
       }
+      case 'admit':
+      case 'deny':
+        if (at === null) return this.fail(socket, 'BAD_MESSAGE');
+        return await this.responder(socket, at, message.peerId, message.type === 'admit');
       case 'set-invite':
         if (at === null) return this.fail(socket, 'BAD_MESSAGE');
         return await this.setInvite(socket, at, message.invite);
@@ -570,13 +602,16 @@ export class ChannelRoom {
       this.send(socket, {
         type: 'peer-joined', peerId: viewer.at.peerId,
         ...(viewer.at.attemptId === undefined ? {} : { attemptId: viewer.at.attemptId }),
+        ...this.quemE(viewer.at),
       });
     }
+    // Pedidos que esperavam o transmissor voltar continuam de pé.
+    for (const p of this.pedidos()) this.send(socket, this.pedidoParaHost(p.at));
   }
 
   private async join(
     socket: HibernatableSocket, slug: string, wanted: string, invite: string | undefined,
-    participantId?: string, attemptId?: string,
+    participantId?: string, attemptId?: string, name?: string, viewerKey?: string,
   ): Promise<void> {
     // `isBlockedSlug` também aqui: sem ele o Node responde `SLUG_INVALID` e o
     // Worker responde `NOT_HOSTING` para o mesmo pedido, e a diferença deixa
@@ -604,23 +639,97 @@ export class ChannelRoom {
       return this.fail(socket, 'INVITE_INVALID');
     }
 
+    // Sem apelido e chave não há o que mostrar ao transmissor (ADR 0025).
+    if (name === undefined || viewerKey === undefined) return this.fail(socket, 'BAD_MESSAGE');
+    const fingerprint = await this.deps.hash(viewerKey);
+    if (!this.ctx.getWebSockets().includes(socket)) return;
+    const hostDoPedido = this.host();
+    if (hostDoPedido === null) return this.fail(socket, 'NOT_HOSTING');
+
+    /*
+      Retomada: o MESMO navegador (chave e participante) cujo socket caiu e
+      voltou antes de o objeto notar. Já foi aceito — pedir de novo por uma
+      piscada de rede seria punir a pessoa pela rede dela.
+    */
     const previous = participantId === undefined ? undefined : this.viewers()
-      .find((viewer) => viewer.at.participantId === participantId);
-    if (previous === undefined && this.viewers().length >= this.deps.limits.maxPeers) {
-      return this.fail(socket, 'CHANNEL_FULL');
+      .find((viewer) => viewer.at.participantId === participantId &&
+        typeof viewer.at.fingerprint === 'string' && this.deps.equals(viewer.at.fingerprint, fingerprint));
+    if (previous !== undefined) {
+      return await this.admitir(socket, previous.at.peerId, name, fingerprint, participantId, attemptId, previous.socket);
     }
 
-    const peerId = previous?.at.peerId ?? this.deps.newPeerId('v');
+    if (this.viewers().length >= this.deps.limits.maxPeers) return this.fail(socket, 'CHANNEL_FULL');
+
+    // O mesmo pedido chegando por outro socket substitui o anterior.
+    const repetido = participantId === undefined ? undefined : this.pedidos()
+      .find((p) => p.at.participantId === participantId &&
+        typeof p.at.fingerprint === 'string' && this.deps.equals(p.at.fingerprint, fingerprint));
+    if (repetido === undefined && this.pedidos().length >= this.deps.limits.maxPending) {
+      return this.fail(socket, 'RATE_LIMITED');
+    }
+    const peerId = repetido?.at.peerId ?? this.deps.newPeerId('v');
+    if (repetido !== undefined) {
+      // Marca antes de fechar: o `webSocketClose` dele não pode cancelar o pedido novo.
+      repetido.socket.serializeAttachment({ ...repetido.at, removido: true } satisfies Attachment);
+      repetido.socket.close(1000, 'substituido');
+    }
+    const pedido: Attachment = {
+      peerId,
+      role: 'viewer',
+      pendente: true,
+      ready: false,
+      name,
+      fingerprint,
+      ...(participantId === undefined ? {} : { participantId }),
+      ...(attemptId === undefined ? {} : { attemptId }),
+      janelaInicio: Date.now(),
+      janelaContagem: 0,
+    };
+    socket.serializeAttachment(pedido);
+    this.send(socket, { type: 'awaiting-approval' });
+    this.send(hostDoPedido.socket, this.pedidoParaHost(pedido));
+  }
+
+  /** Só o transmissor atual responde a pedido. Pedido sumido é silêncio. */
+  private async responder(
+    socket: HibernatableSocket, at: Attachment, peerId: string, aceitar: boolean,
+  ): Promise<void> {
+    if (at.role !== 'host' || this.host()?.socket !== socket) return this.fail(socket, 'BAD_MESSAGE');
+    const alvo = this.pedidos().find((p) => p.at.peerId === peerId);
+    if (alvo === undefined) return;
+    if (!aceitar) {
+      alvo.socket.serializeAttachment({ ...alvo.at, removido: true } satisfies Attachment);
+      return this.fail(alvo.socket, 'DENIED');
+    }
+    // A vaga é conferida de novo: pode ter enchido enquanto esperava.
+    if (this.viewers().length >= this.deps.limits.maxPeers) {
+      alvo.socket.serializeAttachment({ ...alvo.at, removido: true } satisfies Attachment);
+      this.send(socket, { type: 'join-cancelled', peerId });
+      return this.fail(alvo.socket, 'CHANNEL_FULL');
+    }
+    await this.admitir(
+      alvo.socket, peerId, alvo.at.name ?? '?', alvo.at.fingerprint ?? '',
+      alvo.at.participantId, alvo.at.attemptId, null,
+    );
+  }
+
+  /** Da aprovação (ou da retomada) em diante: vaga, credencial, `watching`. */
+  private async admitir(
+    socket: HibernatableSocket, peerId: string, name: string, fingerprint: string,
+    participantId: string | undefined, attemptId: string | undefined, anterior: HibernatableSocket | null,
+  ): Promise<void> {
     socket.serializeAttachment({
       peerId,
       role: 'viewer',
+      name,
+      fingerprint,
       ...(participantId === undefined ? {} : { participantId }),
       ...(attemptId === undefined ? {} : { attemptId }),
       ready: false,
       janelaInicio: Date.now(),
       janelaContagem: 0,
     } satisfies Attachment);
-    previous?.socket.close(1000, 'substituido');
+    anterior?.close(1000, 'substituido');
 
     const ice = await this.deps.iceServersFor(peerId);
     const current = this.attachmentOf(socket);
@@ -643,6 +752,8 @@ export class ChannelRoom {
     this.send(currentHost.socket, {
       type: 'peer-joined', peerId,
       ...(attemptId === undefined ? {} : { attemptId }),
+      name,
+      fingerprint,
     });
     this.anunciarPlateia();
   }
@@ -773,11 +884,22 @@ export class ChannelRoom {
         this.send(viewer.socket, { type: 'peer-left', peerId: at.peerId });
         viewer.socket.close(1000, 'host saiu');
       }
+      // Quem esperava resposta não vai ter: não há mais transmissão.
+      for (const p of this.pedidos()) {
+        p.socket.serializeAttachment({ ...p.at, removido: true } satisfies Attachment);
+        this.fail(p.socket, 'NOT_HOSTING');
+      }
       return;
     }
 
     // Removido pelo transmissor: `peer-left` e plateia já foram avisados.
     if (at.removido === true) return;
+    if (at.pendente === true) {
+      // Desistiu (ou caiu) antes da resposta: some da fila do transmissor.
+      const hostAtual = this.host();
+      if (hostAtual !== null) this.send(hostAtual.socket, { type: 'join-cancelled', peerId: at.peerId });
+      return;
+    }
     if (this.viewers().some((viewer) => viewer.at.peerId === at.peerId)) return;
     const host = this.host();
     if (at.ready !== false && host !== null) this.send(host.socket, { type: 'peer-left', peerId: at.peerId });

@@ -1,6 +1,6 @@
 import { Emitter } from '../emitter.js';
 import type { AudioCapture } from '../ports/audio-capture.js';
-import type { AudioGain } from '../ports/audio-gain.js';
+import type { AudioGain, EstadoGrafo } from '../ports/audio-gain.js';
 import type {
   MediaStats,
   MediaTransport,
@@ -18,8 +18,15 @@ import {
   type Prioridade,
   tetoDeBitrate,
 } from '@tela/shared';
+import { descreverCaptura, fonteDaSuperficie, type TipoFonteAudio } from './audio-fonte.js';
 import { ClassificadorDeAudio, type EstadoAudio } from './audio-state.js';
-import { CODIGO_AUDIO, type Diagnostico, Diario, idLocal } from './diagnostico.js';
+import {
+  CODIGO_AUDIO,
+  CODIGO_GRAFO,
+  type Diagnostico,
+  Diario,
+  idLocal,
+} from './diagnostico.js';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
@@ -106,6 +113,12 @@ export type BroadcastState =
        * estados diferentes, e antes eram todos `hasAudio: true`.
        */
       readonly audio: EstadoAudio;
+      /**
+       * O grafo de ganho. `suspenso` quer dizer que o navegador parou o
+       * processamento — a trilha segue `live` e sai SILÊNCIO — e só um gesto
+       * do usuário o retoma (`retomarAudio`).
+       */
+      readonly grafoAudio: EstadoGrafo;
       /** `false` quando o navegador não deu Web Audio e o ganho não entrou. */
       readonly volumeAjustavel: boolean;
       /**
@@ -242,6 +255,7 @@ export class BroadcastSession {
    */
   private audioFonte: MediaStreamTrack | null = null;
   private readonly classificadorAudio = new ClassificadorDeAudio();
+  private grafoAudio: EstadoGrafo = 'indisponivel';
   private timers: Array<() => void> = [];
   private unsubscribes: Array<() => void> = [];
   /**
@@ -479,8 +493,23 @@ export class BroadcastSession {
      * sem que nenhum deles precise saber que ele existe.
      */
     this.audioFonte = this.audioTrack;
+    const tipoFonte: TipoFonteAudio =
+      this.audioTrack === null
+        ? 'nenhuma'
+        : capture.audio !== null
+          ? fonteDaSuperficie(capture.surface)
+          : 'dispositivo';
+    this.diario.registrarCapturaAudio(descreverCaptura(this.audioFonte, tipoFonte));
+    if (this.audioFonte !== null) {
+      const fonte = this.audioFonte;
+      // Observado na hora, e não na próxima amostra: o fim da fonte é o
+      // único estado do som que não volta sozinho.
+      fonte.addEventListener('ended', () => this.onFonteAudioEncerrada(fonte));
+    }
     if (this.audioTrack !== null) {
+      this.unsubscribes.push(this.deps.gain.onEstado((estado) => this.onGrafoAudio(estado)));
       this.audioTrack = this.deps.gain.attach(this.audioTrack);
+      this.grafoAudio = this.deps.gain.estado;
       // Antes de publicar: senão o primeiro segundo sai no volume cheio, que
       // é justamente o susto que o controle existe para evitar.
       this.deps.gain.set(this.volumeTransmissao);
@@ -534,6 +563,7 @@ export class BroadcastSession {
       motivoDegradacao: null,
       volumeAudio: this.volumeTransmissao,
       audio: this.audioTrack === null ? 'sem-fonte' : 'desconhecido',
+      grafoAudio: this.grafoAudio,
       volumeAjustavel: this.deps.gain.ativo,
       semSinalizacao: false,
       preview: this.preview,
@@ -585,8 +615,9 @@ export class BroadcastSession {
             ? 'encerrada'
             : 'viva',
       mudoIntencional: this.volumeTransmissao === 0,
-      // Quem transmite não reproduz o próprio som: nada a bloquear.
-      reproducaoBloqueada: false,
+      // Quem transmite não reproduz o próprio som; o que pode estar parado é
+      // o PROCESSAMENTO, e para os amigos o efeito é o mesmo: silêncio.
+      reproducaoBloqueada: this.grafoAudio === 'suspenso' || this.grafoAudio === 'interrompido',
       stats: stats.audio,
       agora,
     });
@@ -1065,6 +1096,31 @@ export class BroadcastSession {
    * Síncrono e sem renegociação: mexe num `GainNode` no caminho do áudio, não
    * nos parâmetros do sender. Arrastar a barra não custa nada à transmissão.
    */
+  /**
+   * Retoma o grafo de áudio suspenso. Só funciona dentro de um GESTO: é o
+   * botão "ativar áudio da transmissão" que chama isto.
+   */
+  async retomarAudio(): Promise<void> {
+    const estado = await this.deps.gain.retomar();
+    this.onGrafoAudio(estado);
+  }
+
+  private onGrafoAudio(estado: EstadoGrafo): void {
+    if (estado === this.grafoAudio) return;
+    this.grafoAudio = estado;
+    this.diario.evento('audio', CODIGO_GRAFO[estado], this.deps.scheduler.now());
+    if (this.state.status === 'live') this.setState({ ...this.state, grafoAudio: estado });
+  }
+
+  private onFonteAudioEncerrada(fonte: MediaStreamTrack): void {
+    if (fonte !== this.audioFonte) return;
+    const agora = this.deps.scheduler.now();
+    this.diario.evento('audio', 'AUDIO_SOURCE_ENDED', agora);
+    if (this.state.status !== 'live' || this.state.audio === 'encerrada') return;
+    this.diario.evento('audio', CODIGO_AUDIO.encerrada, agora);
+    this.setState({ ...this.state, audio: 'encerrada' });
+  }
+
   setVolumeTransmissao(volume: number): void {
     const limitado = Math.min(1, Math.max(0, volume));
     this.volumeTransmissao = limitado;
@@ -1410,6 +1466,7 @@ export class BroadcastSession {
     this.audioTrack = null;
     this.audioFonte = null;
     this.classificadorAudio.reiniciar();
+    this.grafoAudio = 'indisponivel';
     this.preview = null;
     this.governor.reset();
     this.amostras = 0;

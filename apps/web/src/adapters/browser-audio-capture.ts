@@ -32,10 +32,15 @@ export function makeBrowserAudioCapture(): AudioCapture {
       const monitores = entradas.filter((device) => MONITOR_HINT.test(device.label));
       // Se nada casar com o padrão de monitor, devolve todas as entradas: um
       // sink virtual com nome inventado pelo usuário ainda precisa ser
-      // escolhível, e uma lista vazia não dá saída nenhuma a ele.
+      // escolhível, e uma lista vazia não dá saída nenhuma a ele. Mas cada uma
+      // sai marcada: a UI separa o que parece som do jogo do que é microfone.
       return (monitores.length > 0 ? monitores : entradas)
         .filter((device) => device.deviceId !== '')
-        .map((device) => ({ id: device.deviceId, label: device.label || 'entrada sem nome' }));
+        .map((device) => ({
+          id: device.deviceId,
+          label: device.label || 'entrada sem nome',
+          tipo: MONITOR_HINT.test(device.label) ? ('monitor' as const) : ('entrada' as const),
+        }));
     },
 
     async capture(deviceId) {

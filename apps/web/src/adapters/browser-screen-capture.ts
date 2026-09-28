@@ -61,9 +61,23 @@ export function makeBrowserScreenCapture(): ScreenCapture {
              */
             displaySurface: 'monitor',
           },
-          // Windows/Chrome entrega áudio do sistema por aqui. Linux e macOS
-          // ignoram e o áudio vem por trilha separada.
-          audio: options.systemAudio,
+          /**
+           * Windows/Chrome entrega áudio do sistema por aqui. Linux e macOS
+           * ignoram e o áudio vem por trilha separada.
+           *
+           * Com o mesmo contrato do caminho Linux: nada de processamento de
+           * VOZ em som de jogo (§6.3). Cancelamento de eco apagaria o próprio
+           * jogo, supressão de ruído trataria efeito como ruído, ganho
+           * automático achataria a dinâmica. É pedido, não garantia — a sessão
+           * confere `getSettings()` e registra o que veio.
+           */
+          audio: options.systemAudio
+            ? {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+              }
+            : false,
 
           /**
            * Abre o seletor já na aba de TELA INTEIRA.

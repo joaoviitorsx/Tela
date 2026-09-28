@@ -1,5 +1,7 @@
 import type { MediaStats } from '../ports/media-transport.js';
 import type { ResumoConfigAudio } from '../mesh/mesh-topology.js';
+import type { EstadoGrafo } from '../ports/audio-gain.js';
+import type { CapturaAudio } from './audio-fonte.js';
 import type { EstadoAudio } from './audio-state.js';
 
 /**
@@ -48,7 +50,18 @@ export type CodigoDiagnostico =
   | 'SLUG_TAKEN' | 'SLUG_INVALID' | 'RATE_LIMITED'
   | 'TRANSPORT_FAILED' | 'USER_STOPPED' | 'ENDED'
   | 'AUDIO_NONE' | 'AUDIO_ENDED' | 'AUDIO_BLOCKED' | 'AUDIO_MUTED'
-  | 'AUDIO_LOSS' | 'AUDIO_NO_SIGNAL' | 'AUDIO_FLOWING' | 'AUDIO_UNKNOWN';
+  | 'AUDIO_LOSS' | 'AUDIO_NO_SIGNAL' | 'AUDIO_FLOWING' | 'AUDIO_UNKNOWN'
+  | 'AUDIO_SOURCE_ENDED'
+  | 'AUDIO_GRAPH_ACTIVE' | 'AUDIO_GRAPH_SUSPENDED' | 'AUDIO_GRAPH_INTERRUPTED'
+  | 'AUDIO_GRAPH_CLOSED' | 'AUDIO_GRAPH_UNAVAILABLE';
+
+export const CODIGO_GRAFO: Readonly<Record<EstadoGrafo, CodigoDiagnostico>> = {
+  ativo: 'AUDIO_GRAPH_ACTIVE',
+  suspenso: 'AUDIO_GRAPH_SUSPENDED',
+  interrompido: 'AUDIO_GRAPH_INTERRUPTED',
+  fechado: 'AUDIO_GRAPH_CLOSED',
+  indisponivel: 'AUDIO_GRAPH_UNAVAILABLE',
+};
 
 /** Cada mudança de estado do som vira um evento da etapa `audio`. */
 export const CODIGO_AUDIO: Readonly<Record<EstadoAudio, CodigoDiagnostico>> = {
@@ -124,6 +137,8 @@ export type Diagnostico = {
   readonly codecAudio: CodecDiagnostico | null;
   /** O que os senders de áudio aceitaram, na última leitura. Só no transmissor. */
   readonly configAudio: ResumoConfigAudio | null;
+  /** Fonte do som e o processamento que o navegador DIZ ter aplicado. */
+  readonly capturaAudio: CapturaAudio | null;
   /** `null` significa que esta etapa ainda não foi observada. */
   readonly etapas: Readonly<Record<EtapaDiagnostico, CodigoDiagnostico | null>>;
   readonly eventos: readonly EventoDiagnostico[];
@@ -171,6 +186,7 @@ export class Diario {
   private decoder: string | null = null;
   private codecAudio: CodecDiagnostico | null = null;
   private configAudio: ResumoConfigAudio | null = null;
+  private capturaAudio: CapturaAudio | null = null;
   private sessaoId = 'unknown';
   private tentativaId = 'unknown';
   private versaoApp: string | null = null;
@@ -199,6 +215,11 @@ export class Diario {
       t: Math.round(agora), tentativaId: this.tentativaId, etapa, codigo,
     });
     if (this.eventos.length > CAPACIDADE_EVENTOS) this.eventos.shift();
+  }
+
+  registrarCapturaAudio(captura: CapturaAudio): void {
+    if (this.congelado !== null) return;
+    this.capturaAudio = { ...captura };
   }
 
   registrar(stats: MediaStats, agora: number): void {
@@ -259,6 +280,7 @@ export class Diario {
     this.decoder = null;
     this.codecAudio = null;
     this.configAudio = null;
+    this.capturaAudio = null;
     this.sessaoId = 'unknown';
     this.tentativaId = 'unknown';
     this.versaoApp = null;
@@ -287,6 +309,7 @@ export class Diario {
       encoder: this.encoder,
       codecAudio: this.codecAudio,
       configAudio: this.configAudio,
+      capturaAudio: this.capturaAudio,
       etapas: { ...this.etapas },
       eventos: [...this.eventos],
       amostras: [...this.amostras],

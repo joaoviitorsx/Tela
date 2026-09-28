@@ -1,4 +1,14 @@
-export type AudioDevice = { readonly id: string; readonly label: string };
+/**
+ * `monitor` é o que parece saída de um sink (o som do jogo). `entrada` é
+ * qualquer outra coisa — quase sempre um microfone. A lista mostra as duas
+ * quando nenhum monitor aparece, e a UI precisa deixar a diferença visível:
+ * microfone escolhido sem saber transmite a voz de quem joga, não o jogo.
+ */
+export type AudioDevice = {
+  readonly id: string;
+  readonly label: string;
+  readonly tipo: 'monitor' | 'entrada';
+};
 
 /**
  * Só existe por causa do Linux.

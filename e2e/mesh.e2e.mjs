@@ -234,6 +234,48 @@ if (conectou) {
   ok(aindaAssistindo, 'espectador continuou assistindo depois da troca de preset');
 }
 
+console.log('\n3b. Grafo de ganho em Chrome real (TELA-009)');
+{
+  const grafo = await host.evaluate(async () => {
+    const { makeBrowserAudioGain } = await import('/src/adapters/browser-audio-gain.ts');
+    const fonte = () => {
+      const c = new AudioContext();
+      const d = c.createMediaStreamDestination();
+      c.createOscillator().connect(d);
+      return d.stream.getAudioTracks()[0];
+    };
+    const g = makeBrowserAudioGain();
+    const estados = [];
+    g.onEstado((e) => estados.push(e));
+    const saida = g.attach(fonte());
+    await new Promise((r) => setTimeout(r, 300));
+    const inicial = g.estado;
+    // Religar fecha o anterior: um grafo por vez.
+    const primeiraSaida = saida;
+    g.attach(fonte());
+    const anteriorParou = primeiraSaida.readyState === 'ended';
+    g.close();
+    const fechado = g.estado;
+
+    // Fallback sem Web Audio: o mudo continua valendo na trilha crua.
+    const original = window.AudioContext;
+    const crua = fonte();
+    window.AudioContext = undefined;
+    const f = makeBrowserAudioGain();
+    const devolvida = f.attach(crua);
+    f.set(0);
+    const mudoNoFallback = devolvida === crua && crua.enabled === false;
+    f.set(0.5);
+    const voltou = crua.enabled === true;
+    window.AudioContext = original;
+    return { inicial, anteriorParou, fechado, estados, mudoNoFallback, voltou, ativoFallback: f.ativo };
+  });
+  ok(grafo.inicial === 'ativo', `grafo nasce ativo dentro da página (${JSON.stringify(grafo)})`);
+  ok(grafo.anteriorParou, 'religar o grafo para a saída do anterior');
+  ok(grafo.fechado === 'indisponivel', 'fechar deixa o grafo indisponível');
+  ok(grafo.mudoNoFallback && grafo.voltou && !grafo.ativoFallback, 'sem Web Audio, o mudo desliga a trilha crua');
+}
+
 console.log('\n4. Teto de espectadores é aplicado de verdade');
 /**
  * Um espectador já está assistindo; os outros enchem o canal.

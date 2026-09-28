@@ -1,7 +1,7 @@
 import type { EncodingPreset, IceServerConfig } from '@tela/shared';
 import { Emitter } from '../emitter.js';
 import type { AudioCapture } from '../ports/audio-capture.js';
-import type { AudioGain } from '../ports/audio-gain.js';
+import type { AudioGain, EstadoGrafo } from '../ports/audio-gain.js';
 import type {
   MediaStats,
   MediaTransport,
@@ -215,7 +215,7 @@ export class FakeAudioCapture implements AudioCapture {
     return this.permitido;
   }
   async listMonitors() {
-    return [{ id: 'monitor-1', label: 'TelaCapture Monitor' }];
+    return [{ id: 'monitor-1', label: 'TelaCapture Monitor', tipo: 'monitor' as const }];
   }
   async capture() {
     if (this.fails) throw new Error('sem permissão');
@@ -474,6 +474,26 @@ export class FakeAudioGain implements AudioGain {
   readonly anexadas: MediaStreamTrack[] = [];
   fechado = false;
   ativo = true;
+  estado: EstadoGrafo = 'ativo';
+  /** O que `retomar()` consegue: simula gesto aceito ou recusado. */
+  retomaPara: EstadoGrafo = 'ativo';
+  private readonly ouvintes = new Set<(estado: EstadoGrafo) => void>();
+
+  onEstado(listener: (estado: EstadoGrafo) => void): () => void {
+    this.ouvintes.add(listener);
+    return () => this.ouvintes.delete(listener);
+  }
+
+  /** Simula o `statechange` do `AudioContext`. */
+  mudarEstado(estado: EstadoGrafo): void {
+    this.estado = estado;
+    for (const ouvinte of this.ouvintes) ouvinte(estado);
+  }
+
+  async retomar(): Promise<EstadoGrafo> {
+    this.estado = this.retomaPara;
+    return this.estado;
+  }
 
   attach(track: MediaStreamTrack): MediaStreamTrack {
     this.anexadas.push(track);

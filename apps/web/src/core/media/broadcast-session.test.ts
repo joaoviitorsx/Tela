@@ -1429,3 +1429,90 @@ describe('BroadcastSession — estado do áudio (TELA-007)', () => {
     expect(audioDe(ctx.session)).toBe('encerrada');
   });
 });
+
+describe('BroadcastSession — grafo e ciclo da captura de áudio (TELA-009)', () => {
+  function comGanho() {
+    const transport = new FakeMediaTransport();
+    const screen = new FakeScreenCapture();
+    screen.withAudio = true;
+    const gain = new FakeAudioGain();
+    const scheduler = new FakeScheduler();
+    const session = new BroadcastSession({
+      transport, screen, audio: new FakeAudioCapture(), gain, scheduler,
+      shareUrlFor, createStream, statsIntervalMs: 1_000,
+    });
+    return { transport, screen, gain, scheduler, session };
+  }
+  const live = (s: BroadcastSession) => {
+    const st = s.getState();
+    if (st.status !== 'live') throw new Error(`não está ao vivo: ${st.status}`);
+    return st;
+  };
+  const comAudio = {
+    fps: 60, bitrateBps: 8_000_000, rttMs: 20, limitation: 'none' as const,
+    width: 1920, height: 1080, availableBps: null, piorAvailableBps: null,
+    paresMedidos: 1, availablePorPeer: {}, bpp: 0.1, encoderImplementation: null,
+    qp: null, msPorQuadro: null, recepcao: null,
+    audio: {
+      fluxos: 1, bitrateBps: 128_000, nivel: 0, perda: null, jitterMs: null,
+      jitterBufferMs: null, ocultacao: null, eventosOcultacao: null, codec: null,
+      configuracao: null,
+    },
+  };
+
+  it('contexto suspenso não aparece como áudio ativo', async () => {
+    const ctx = comGanho();
+    await ctx.session.start(SLUG, TOKEN);
+    expect(live(ctx.session).grafoAudio).toBe('ativo');
+
+    ctx.gain.mudarEstado('suspenso');
+    expect(live(ctx.session).grafoAudio).toBe('suspenso');
+    ctx.transport.stats = comAudio;
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+    expect(live(ctx.session).audio).toBe('bloqueado');
+  });
+
+  it('o gesto retoma o grafo, e recusa fica visível', async () => {
+    const ctx = comGanho();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.gain.mudarEstado('suspenso');
+
+    ctx.gain.retomaPara = 'suspenso';
+    await ctx.session.retomarAudio();
+    expect(live(ctx.session).grafoAudio).toBe('suspenso');
+
+    ctx.gain.retomaPara = 'ativo';
+    await ctx.session.retomarAudio();
+    expect(live(ctx.session).grafoAudio).toBe('ativo');
+    const codigos = ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo);
+    expect(codigos).toEqual(expect.arrayContaining(['AUDIO_GRAPH_SUSPENDED', 'AUDIO_GRAPH_ACTIVE']));
+  });
+
+  it('fim da fonte de som é observado na hora, sem esperar amostra', async () => {
+    const ctx = comGanho();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.screen.audio.fireEnded();
+    expect(live(ctx.session).audio).toBe('encerrada');
+    const codigos = ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo);
+    expect(codigos).toContain('AUDIO_SOURCE_ENDED');
+  });
+
+  it('registra fonte e processamento efetivos; campo ausente é desconhecido', async () => {
+    const ctx = comGanho();
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.session.diagnostico('Chrome/130')?.capturaAudio).toEqual({
+      fonte: 'sistema', echoCancellation: null, noiseSuppression: null,
+      autoGainControl: null, canais: null, sampleRate: null,
+    });
+  });
+
+  it('encerrar fecha o grafo e para de ouvir o estado dele', async () => {
+    const ctx = comGanho();
+    await ctx.session.start(SLUG, TOKEN);
+    await ctx.session.stop('USER_STOPPED');
+    expect(ctx.gain.fechado).toBe(true);
+    ctx.gain.mudarEstado('suspenso'); // não pode lançar nem ressuscitar estado
+    expect(ctx.session.getState().status).toBe('ended');
+  });
+});

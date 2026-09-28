@@ -70,3 +70,16 @@ modelo pode estar errado; `--clamp-duro` usa a leitura estrita do libwebrtc.
 Os dois juntos já pegaram uma regressão que 275 testes verdes não pegavam: a
 semente da sessão anterior calava as duas malhas de controle ao mesmo tempo, e
 a transmissão passava 300 segundos a 0,0068 bit por pixel (ADR 0019).
+
+## Custo da interface — o que fica rodando sem ninguém ver
+
+```bash
+pnpm dev                              # num terminal
+node e2e/custo-interface.e2e.mjs      # CPU por tela parada, animações, sessões
+```
+
+Mede o `TaskDuration` do CDP em cada tela parada, lista as animações infinitas
+(separando as que estão numa camada invisível) e confere que TRANSMITIR pede a
+captura uma vez só e que cada página tem no máximo um socket de sinalização
+(TELA-026). WebGL é SwiftShader: o número da TV 3D não é custo real, a
+comparação visível × oculta é.

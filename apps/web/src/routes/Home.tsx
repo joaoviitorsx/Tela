@@ -1,57 +1,78 @@
 import { P2P_LIMITS, PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
 import { useCallback, useMemo, useState } from 'react';
-import { Vitrine } from '../components/Vitrine.js';
 import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
-import { BigButton } from '../components/BigButton.js';
-import { IconPlay } from '../components/Icon.js';
-import { Masthead } from '../components/Masthead.js';
-import { QualityPicker } from '../components/QualityPicker.js';
-import { SignalChain } from '../components/SignalChain.js';
-import { SlugPicker } from '../components/SlugPicker.js';
-import { audioCue, identity, platform, preferences, presetSustentavel } from '../container.js';
+import { BarraAjuda } from '../components/BarraAjuda.js';
+import { Botao, LinkTecla } from '../components/Botao.js';
+import { Cabecalho } from '../components/Cabecalho.js';
+import { CampoCanal } from '../components/CampoCanal.js';
+import { CanalFlash, EstaticaTroca, VidroCrt } from '../components/EfeitosTv.js';
+import { Aviso } from '../components/Aviso.js';
+import { Medidor } from '../components/Medidor.js';
+import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
+import { PainelOsd } from '../components/PainelOsd.js';
+import { Passos, type Passo } from '../components/Passos.js';
+import { TiposDeFonte } from '../components/TiposDeFonte.js';
+import { Vitrine } from '../components/Vitrine.js';
+import {
+  audioCue,
+  identity,
+  platform,
+  preferences,
+  presetSustentavel,
+  volumeTransmissaoPreference,
+} from '../container.js';
 import { isPresetId } from '../core/media/presets.js';
 import { useAudioSources } from '../react/use-audio-sources.js';
+import { useMenuOsd } from '../react/use-menu-osd.js';
 import { useSlugCheck } from '../react/use-slug-check.js';
+import { useTrocaDeCanal } from '../react/use-troca-de-canal.js';
 import { useVitrine } from '../react/use-vitrine.js';
+import { useVolumeTransmissao } from '../react/use-volume-transmissao.js';
 
 type Props = {
   readonly onStart: (slug: string, presetId: PresetId, audioDeviceId: string | null) => void;
 };
 
+type NumeroDoPasso = 1 | 2 | 3;
+
+const NOMES = { 1: 'CANAL', 2: 'TELA OU JOGO', 3: 'ÁUDIO' } as const;
+
+/** "576p60 econômico" cabe mal numa linha de menu. */
+const rotuloDoPreset = (id: PresetId): string => PRESETS[id].label.replace(' econômico', ' eco');
+
+const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
+  1: [],
+  2: ['resolucao'],
+  3: ['volume'],
+};
+
 /**
- * A chapa frontal do produto.
+ * A chapa frontal do produto e os três passos que ficam antes do ar.
  *
- * # O que mudou, e por quê
+ * # O fluxo
  *
- * A versão anterior punha a página inteira dentro de UM cartão arredondado com
- * a palavra "tela" em minúsculas no canto. Três problemas, e nenhum é gosto:
+ * `01 canal → 02 tela ou jogo → 03 áudio → 04 no ar`. Os quatro passos do
+ * protótipo, com um atalho que o protótipo não tinha: o canal já vem com o
+ * último nome usado, e o TRANSMITIR AGORA do primeiro passo vai direto ao ar
+ * com as preferências salvas. Os passos 02 e 03 são AJUSTE, pelo stepper ou
+ * pelo botão ao lado — quem quer só ir ao ar não passa por eles.
  *
- * 1. **O cartão.** Uma chapa flutuando sobre o vazio faz o produto parecer um
- *    formulário hospedado numa página. Agora as faixas atravessam a janela de
- *    ponta a ponta e o que as separa são filetes de 1px; quem respeita a coluna
- *    de 1180px é o conteúdo, não a moldura. A referência declarada é painel de
- *    aparelho de vídeo — painel não tem canto arredondado flutuando no ar.
+ * O passo 04 é a rota `/transmitir` (`Broadcast`): é lá que o navegador abre o
+ * seletor de tela, que exige o gesto do clique. Por isso ele aparece na trilha
+ * como destino e não como lugar onde se possa estar daqui.
  *
- * 2. **A coluna da direita.** "Por que isto existe" ocupava 380px permanentes
- *    para explicar o produto a quem já clicou no link dele. Os dois fatos que
- *    valiam foram para onde são úteis: "a aba precisa ficar aberta" ficou
- *    embaixo do botão, que é onde a decisão acontece, e "até 5 ao mesmo tempo"
- *    virou DESENHO no caminho do vídeo, em vez de frase.
+ * # O que NÃO existe aqui
  *
- * 3. **O eixo.** Campo, botão, qualidade, áudio e caminho começam todos no
- *    mesmo x. Um eixo esquerdo único é o que faz cinco regiões diferentes
- *    lerem como um aparelho só — e é o que a versão centralizada não tinha.
+ * Uma lista de janelas (a web não enumera; ver `TiposDeFonte`), uma escolha
+ * "sem áudio" no Windows (a caixa do Chrome decide), uma linha de 30 fps (só
+ * existe dentro do modo NITIDEZ, que se liga ao vivo — R5) e a prioridade
+ * fluidez/nitidez no passo 02, porque a sessão só a aceita depois de ao vivo.
  *
- * # A ordem no DOM
+ * # Continua sem reserva de slug
  *
- * Campo, depois botão. Antes o botão vinha primeiro, então quem navega por
- * teclado tabulava para um botão desabilitado antes de chegar no campo que o
- * habilita.
- *
- * Continua sem reserva de slug: sem API HTTP, quem decide se o nome está livre
- * é o servidor de sinalização, no `host`. O usuário descobre ao apertar
- * TRANSMITIR. Em troca, digitar não faz uma requisição por tecla e não existe
- * endpoint que sirva para varrer quem existe.
+ * Sem API HTTP, quem decide se o nome está livre é o servidor de sinalização, no
+ * `host`. O usuário descobre ao apertar TRANSMITIR. Em troca, digitar não faz uma
+ * requisição por tecla e não existe endpoint que sirva para varrer quem existe.
  */
 export function Home({ onStart }: Props) {
   const [slug, setSlug] = useState(() => identity.savedSlug() ?? '');
@@ -59,40 +80,42 @@ export function Home({ onStart }: Props) {
     const saved = preferences.read();
     return isPresetId(saved) ? saved : 'p1080p60';
   });
-
   const [audioDeviceId, setAudioDeviceId] = useState<string | null>(null);
+
   const check = useSlugCheck(slug);
-  const presets = useMemo(() => PRESET_ORDER.map((id) => PRESETS[id]), []);
+  const troca = useTrocaDeCanal<NumeroDoPasso>(1);
+  const som = useVolumeTransmissao(volumeTransmissaoPreference);
+  const fontes = useAudioSources();
+  const os = platform.osName();
+  const modoAudio = platform.systemAudio();
   /*
     O que o link da última transmissão sustentou — lido uma vez, porque é
     preferência gravada e não muda enquanto a página está aberta.
   */
   const sustentavel = useMemo(() => presetSustentavel(), []);
-  const fontes = useAudioSources();
-  const os = platform.osName();
-  const modoAudio = platform.systemAudio();
 
-  const choosePreset = useCallback((id: PresetId) => {
+  const valido = check.status === 'ok';
+  const passo = troca.passo;
+
+  const escolherPreset = useCallback((id: PresetId) => {
     setPresetId(id);
     preferences.write(id);
   }, []);
 
-  const handleStart = useCallback(() => {
+  const iniciar = useCallback(() => {
     const wanted = slug.trim().toLowerCase();
-    if (check.status !== 'ok') return;
+    if (!valido) return;
     // §10 da coreografia: a abertura é muda, e o chiado entra como recompensa
     // do primeiro gesto. Este é o gesto.
     audioCue.estouro();
     identity.rememberSlug(wanted);
     onStart(wanted, presetId, audioDeviceId);
-  }, [slug, check, presetId, audioDeviceId, onStart]);
+  }, [slug, valido, presetId, audioDeviceId, onStart]);
 
   /**
-   * O que o tubo da vitrine mostra.
-   *
-   * É o MESMO dado do campo, traduzido para o vocabulário do aparelho: o
-   * endereço na tela e o estado numa lâmpada. Não há segunda fonte de verdade —
-   * se o campo mudar de regra, o tubo muda junto, porque ele lê daqui.
+   * O que o tubo da vitrine mostra: o MESMO dado do campo, traduzido para o
+   * vocabulário do aparelho. Não há segunda fonte de verdade — se o campo mudar
+   * de regra, o tubo muda junto, porque ele lê daqui.
    */
   const noTubo = useMemo(
     () => ({
@@ -108,220 +131,300 @@ export function Home({ onStart }: Props) {
     }),
     [slug, check.status],
   );
-
-  const focaOCampo = useCallback(() => {
-    document.getElementById('slug')?.focus();
-  }, []);
-
+  const focaOCampo = useCallback(() => document.getElementById('slug')?.focus(), []);
   const vitrine = useVitrine(noTubo, focaOCampo);
 
-  const preset = PRESETS[presetId];
-  const maiorCamada = preset;
-  const teto = P2P_LIMITS.maxViewersBrowser;
+  /* ─────────────── o menu do passo atual ─────────────── */
 
-  /**
-   * O caminho do vídeo com os números do preset SELECIONADO.
-   *
-   * Tudo aqui já existe em `@tela/shared` e nada é medido nem estimado: a
-   * resolução e o framerate vêm da camada principal do preset, o Mbps vem de
-   * `main.maxBitrate`, o teto vem de `P2P_LIMITS`. Trocar de 1080p60 para
-   * 720p60 muda estes números na hora — é a única forma honesta de responder
-   * "o que muda se eu mexer aqui" antes de a transmissão existir.
-   *
-   * O último nó não tem valor escrito: tem o leque. Ver `SignalChain`.
-   */
-  const caminho = useMemo(
-    () => [
-      {
-        rotulo: 'sua tela',
-        valor: `${maiorCamada.width}×${maiorCamada.height}`,
-        nota: 'a janela ou a tela que você escolher no seletor',
-      },
-      {
-        rotulo: 'seu PC codifica',
-        valor: `h264 · ${preset.main.maxFramerate}fps`,
-        nota: 'na sua placa de vídeo, com a qualidade escolhida ali em cima',
-      },
-      {
-        rotulo: 'sobe direto',
-        valor: `${(preset.main.maxBitrate / 1_000_000).toFixed(1)} Mbps`,
-        nota: 'por espectador — não passa por servidor de vídeo nenhum',
-      },
-      {
-        rotulo: 'chega nos amigos',
-        valor: `até ${teto}`,
-        nota: `uma cópia inteira do vídeo para cada um, saindo da sua máquina. O que limita é a sua subida, não um servidor.`,
-      },
-    ],
-    [maiorCamada, preset, teto],
+  const indice = PRESET_ORDER.indexOf(presetId);
+  const preset = PRESETS[presetId];
+  const limite = sustentavel === null ? -1 : PRESET_ORDER.indexOf(sustentavel);
+
+  const ajudaResolucao = [
+    `${preset.width}×${preset.height} a ${preset.main.maxFramerate} quadros. ~${(preset.main.maxBitrate / 1_000_000).toFixed(1).replace('.', ',')} Mbps de subida por espectador.`,
+    sustentavel !== null ? `Sua última transmissão sustentou ${PRESETS[sustentavel].label}.` : '',
+    limite > 0 && indice < limite
+      ? 'Acima disso a imagem desce sozinha para o que couber: o rótulo muda, a nitidez não melhora.'
+      : '',
+  ]
+    .filter((t) => t !== '')
+    .join(' ');
+
+  const linhas: readonly LinhaMenu[] =
+    passo === 2
+      ? [
+          {
+            id: 'resolucao',
+            tipo: 'ciclo',
+            rotulo: 'RESOLUÇÃO',
+            valor: rotuloDoPreset(presetId),
+            indice,
+            total: PRESET_ORDER.length,
+            ajuda: ajudaResolucao,
+          },
+        ]
+      : passo === 3
+        ? [
+            {
+              id: 'volume',
+              tipo: 'barra',
+              rotulo: 'VOLUME QUE OS AMIGOS OUVEM',
+              valor: Math.round(som.volume * 100),
+              ajuda: 'Só muda o que chega para eles. O seu som continua igual.',
+            },
+          ]
+        : [];
+
+  const ajustar = useCallback(
+    (id: string, direcao: -1 | 1) => {
+      if (id === 'resolucao') {
+        // Sem dar a volta: de 1080p, "←" não pode cair em 360p por acidente.
+        const proximo = PRESET_ORDER[Math.min(PRESET_ORDER.length - 1, Math.max(0, indice + direcao))];
+        if (proximo !== undefined) escolherPreset(proximo);
+      } else if (id === 'volume') {
+        som.definir(Math.round((som.volume + direcao * 0.1) * 10) / 10);
+      }
+    },
+    [indice, escolherPreset, som],
   );
 
+  const irParaPasso = useCallback(
+    (proximo: NumeroDoPasso) => {
+      if (proximo > 1 && !valido) return;
+      troca.irPara(proximo);
+    },
+    [valido, troca],
+  );
+
+  const confirmar = useCallback(() => {
+    if (passo === 2) irParaPasso(3);
+    else if (passo === 3) iniciar();
+  }, [passo, irParaPasso, iniciar]);
+
+  const menu = useMenuOsd({
+    ids: IDS_POR_PASSO[passo],
+    aoAjustar: ajustar,
+    aoConfirmar: confirmar,
+    global: passo !== 1 && !troca.estatica,
+  });
+
+  /* ─────────────── a trilha ─────────────── */
+
+  const passos: readonly Passo[] = [1, 2, 3].map((n): Passo => {
+    const numero = n as NumeroDoPasso;
+    const alcancavel = numero === 1 || valido;
+    return {
+      n: `0${n}`,
+      rotulo: NOMES[numero],
+      estado: numero === passo ? 'atual' : numero < passo ? 'feito' : alcancavel ? 'pendente' : 'bloqueado',
+      ...(alcancavel && numero !== passo ? { aoIr: () => irParaPasso(numero) } : {}),
+    };
+  });
+  const trilha: readonly Passo[] = [...passos, { n: '04', rotulo: 'NO AR', estado: 'pendente' }];
+
+  const resumoAudio =
+    modoAudio === 'display-media'
+      ? 'SISTEMA'
+      : modoAudio === 'monitor-device'
+        ? audioDeviceId === null
+          ? 'SEM ÁUDIO'
+          : 'ENTRADA'
+        : 'MUDO';
+
   return (
-    <div className="flex min-h-dvh flex-col">
-      <Masthead tamanho="grande">
-        <a
-          href="/recuperar"
-          className="inline-flex min-h-11 items-center rounded-sm px-2 text-[13px] text-muted underline decoration-line underline-offset-4 transition-colors duration-150 hover:text-text hover:decoration-text"
-        >
-          código de recuperação
-        </a>
-      </Masthead>
+    <div className="flex min-h-dvh flex-col bg-void">
+      <VidroCrt />
+      <Cabecalho marcaHref="/">
+        <LinkTecla href="/recuperar">CÓDIGO DE RECUPERAÇÃO</LinkTecla>
+      </Cabecalho>
 
-      <main className="flex flex-1 flex-col">
-        {/*
-          O canal. A folga vertical toda vive aqui — `flex-1` com o conteúdo
-          centrado verticalmente. A sobra vira respiro em volta do TRANSMITIR,
-          que é onde ela vale alguma coisa, em vez de virar um vazio pendurado
-          embaixo do último filete.
+      <main className="flex flex-1 flex-col bg-[radial-gradient(ellipse_80%_70%_at_50%_40%,#15161a_0%,#0b0c0e_70%)]">
+        {/* A troca de passo é anunciada; o chiado e o número são só pintura. */}
+        <p className="sr-only" role="status">
+          Passo {passo} de 4: {NOMES[passo]}
+        </p>
 
-          MEDIDO, e a medida mudou os números. Em 1024×900 a faixa tinha 453px
-          para 340px de conteúdo: os 113px de diferença eram `py-14` puro, e não
-          o `flex-1` esticando. Em 1920×1080 aí sim o `flex-1` acrescentava mais
-          62px por cima do padding.
+        <div className="mx-auto w-full max-w-[1180px] px-4 pt-6 sm:px-6 sm:pt-7">
+          <Passos passos={trilha} />
+        </div>
 
-          Duas correções, e as duas medidas. A folga de `sm` cai de 56 para
-          40px, que continua sendo respiro e para de ler como buraco entre o
-          botão e o filete de QUALIDADE. E `max-h` limita o quanto a faixa pode
-          crescer: acima disso a sobra desce para o resto da página, onde vira
-          conteúdo acima da dobra em vez de vazio no meio dela.
-        */}
-        <section className="flex max-h-[560px] flex-1 items-center border-b border-line py-10 sm:py-10 lg:py-12">
-          {/*
-            Campo à esquerda, aparelho à direita.
+        {passo === 1 && (
+          <section
+            aria-labelledby="titulo-canal"
+            className="mx-auto my-auto grid w-full max-w-[1180px] items-center gap-10 px-4 py-9 sm:px-6 sm:py-12 lg:grid-cols-[minmax(0,1fr)_auto]"
+          >
+            <div className="flex min-w-0 max-w-[860px] flex-col gap-6">
+              <div className="flex flex-col gap-2">
+                <h1 id="titulo-canal" data-vidro="texto" className="rotulo m-0 !text-[13px] !text-muted">
+                  DÊ UM NOME AO SEU CANAL
+                </h1>
+                <p data-vidro="texto" className="m-0 text-[12px] leading-relaxed text-muted">
+                  Vira o endereço que seus amigos vão abrir. Letras, números e hífen.
+                </p>
+              </div>
 
-            A metade direita da faixa estava vazia desde que a coluna de texto
-            saiu (ADR 0012), e o que entrou nela não é enfeite: é o monitor do
-            canal que está sendo criado. O que a pessoa digita aparece no tubo,
-            e as lâmpadas da lateral são o estado do nome. Campo vazio, o tubo
-            mostra chiado e SEM SINAL — que é exatamente o que o canal é antes
-            de ter nome.
-
-            `items-center` e não `items-start`: o aparelho tem centro óptico e
-            alinhá-lo pelo topo do rótulo o deixa pendurado.
-          */}
-          <div className="mx-auto flex w-full max-w-[1180px] items-center gap-10 px-4 sm:px-6">
-            <div className="flex w-full min-w-0 max-w-[860px] flex-1 flex-col gap-6">
-              <h1 data-vidro="texto" className="serigrafia">
-                seu canal
-              </h1>
-
-              <SlugPicker
+              <CampoCanal
                 value={slug}
                 onChange={setSlug}
-                tamanho="heroi"
-                status={
-                  check.status === 'ok' ? 'free' : check.status === 'invalid' ? 'invalid' : 'idle'
-                }
+                onEnter={iniciar}
+                status={check.status === 'ok' ? 'free' : check.status === 'invalid' ? 'invalid' : 'idle'}
                 error={check.status === 'invalid' ? check.message : null}
               />
 
-              {/*
-                Botão e aviso na mesma linha, e não empilhados.
-
-                Empilhado e ocupando a coluna inteira, o TRANSMITIR virava uma
-                barra de 860×56 de verde puro — o acento é o recurso mais escasso
-                da paleta (ADR 0008) e ali ele era a maior área de cor da tela,
-                com a metade direita da faixa vazia do lado. Em 300px ele continua
-                sendo o único elemento verde, o maior alvo e o mais alto contraste
-                da página, e o espaço que sobrava passa a explicar o que acontece
-                depois de apertá-lo.
-
-                No celular volta a empilhar: 300px de botão ao lado de um texto
-                de 13px não cabem em 360px de largura.
-              */}
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
-                <div data-vidro="acento" className="w-full sm:w-[300px] sm:shrink-0">
-                  <BigButton
-                    onClick={handleStart}
-                    disabled={check.status !== 'ok'}
+              <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-5">
+                <div data-vidro="acento" className="w-full sm:w-auto">
+                  <Botao
+                    tom="primaria"
+                    grande
                     bloco
-                    icon={<IconPlay className="h-4 w-4" />}
+                    onClick={iniciar}
+                    disabled={!valido}
+                    icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
                   >
-                    TRANSMITIR
-                  </BigButton>
+                    TRANSMITIR AGORA
+                  </Botao>
                 </div>
-
-                {/*
-                  Um dos dois fatos que a coluna da direita carregava. Ele mora
-                  aqui porque é o único que muda o comportamento de quem está
-                  prestes a apertar o botão — fechar a aba encerra a transmissão,
-                  e ninguém deduz isso sozinho.
-                */}
-                <p data-vidro="texto" className="text-[13px] leading-snug text-muted">
-                  A aba precisa ficar aberta enquanto você joga. Ela não precisa estar
-                  visível — pode ficar atrás do jogo.
-                </p>
+                <Botao onClick={() => irParaPasso(2)} disabled={!valido}>
+                  AJUSTAR IMAGEM E ÁUDIO
+                </Botao>
               </div>
+
+              {/*
+                Um dos dois fatos que a página carrega. Mora aqui porque é o
+                único que muda o comportamento de quem está prestes a apertar o
+                botão — fechar a aba encerra a transmissão, e ninguém deduz isso.
+              */}
+              <p data-vidro="texto" className="m-0 max-w-[62ch] text-[11.5px] leading-relaxed text-dim [text-wrap:pretty]">
+                Vai ao ar em {rotuloDoPreset(presetId)}, com as preferências que você já salvou. A aba
+                precisa ficar aberta enquanto você joga, mas não precisa estar visível: pode ficar
+                atrás do jogo.
+              </p>
             </div>
 
             <Vitrine canvasRef={vitrine.canvasRef} montado={vitrine.disponivel} />
-          </div>
-        </section>
+          </section>
+        )}
 
-        {/* O console: os dois ajustes, lado a lado. Nenhum deles decide nada sozinho. */}
-        <section className="border-b border-line">
-          <div className="mx-auto grid w-full max-w-[1180px] px-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <div className="py-5 lg:pr-6">
-              <h2 data-vidro="texto" className="serigrafia mb-3">
-                qualidade
-              </h2>
-              <QualityPicker
-                presets={presets}
-                value={presetId}
-                onChange={choosePreset}
-                {...(sustentavel === null ? {} : { sustentavel })}
+        {passo === 2 && (
+          <section
+            aria-label="Tela ou jogo"
+            className="mx-auto my-auto grid w-full max-w-[1180px] items-start gap-6 px-4 py-8 sm:px-6 lg:grid-cols-2"
+          >
+            <TiposDeFonte />
+
+            <PainelOsd titulo="MENU ▸ IMAGEM" direita={menu.posicao}>
+              <MenuOsd
+                rotulo="Ajustes da imagem"
+                linhas={linhas}
+                ativo={menu.ativo}
+                propsContainer={menu.propsContainer}
+                propsLinha={menu.propsLinha}
+                aoAjustar={ajustar}
+                aoDefinirBarra={() => undefined}
+                aoSelecionar={menu.selecionar}
               />
-            </div>
+              <div className="px-3 pb-3">
+                <Aviso>
+                  Todos os degraus mantêm 60 quadros por segundo. Ao vivo você escolhe o que ceder
+                  se a rede apertar: fluidez ou nitidez, que também troca para 30 quadros.
+                </Aviso>
+              </div>
+              <RodapeDoPasso>
+                <Botao onClick={() => irParaPasso(1)}>VOLTAR</Botao>
+                <Botao tom="primaria" bloco onClick={() => irParaPasso(3)}>
+                  CONTINUAR ▸ ÁUDIO
+                </Botao>
+              </RodapeDoPasso>
+            </PainelOsd>
+          </section>
+        )}
 
-            <div className="border-t border-line py-5 lg:border-l lg:border-t-0 lg:pl-6">
-              <h2 data-vidro="texto" className="serigrafia mb-3">
-                áudio do jogo
-              </h2>
-              <AudioSourcePicker
-                os={os}
-                mode={modoAudio}
-                devices={fontes.devices}
-                value={audioDeviceId}
-                onChange={setAudioDeviceId}
-                onRequestDevices={fontes.procurar}
-                buscando={fontes.buscando}
+        {passo === 3 && (
+          <section
+            aria-label="Áudio"
+            className="mx-auto my-auto grid w-full max-w-[1180px] items-start gap-6 px-4 py-8 sm:px-6 lg:grid-cols-2"
+          >
+            <AudioSourcePicker
+              os={os}
+              mode={modoAudio}
+              devices={fontes.devices}
+              value={audioDeviceId}
+              onChange={setAudioDeviceId}
+              onRequestDevices={fontes.procurar}
+              buscando={fontes.buscando}
+            />
+
+            <PainelOsd titulo="MENU ▸ SOM" direita={menu.posicao}>
+              <MenuOsd
+                rotulo="Ajustes do som"
+                linhas={linhas}
+                ativo={menu.ativo}
+                propsContainer={menu.propsContainer}
+                propsLinha={menu.propsLinha}
+                aoAjustar={ajustar}
+                aoDefinirBarra={(_, pct) => som.definir(pct / 100)}
+                aoSelecionar={menu.selecionar}
               />
-            </div>
-          </div>
-        </section>
-
-        {/*
-          Região `surface`: só leitura, zero controle. É a regra de contraste da
-          ADR 0008 — `edge` mede 2,92:1 sobre `surface` e 3,13:1 sobre `void`,
-          então nada que se aperte senta aqui.
-        */}
-        <section data-vidro="preenchido" className="bg-surface">
-          <div className="mx-auto w-full max-w-[1180px] px-4 py-7 sm:px-6">
-            <SignalChain rotulo="caminho do vídeo" nodes={caminho} saidas={{ total: teto }} />
-          </div>
-        </section>
+              <Medidor
+                rotulo="Resumo do que vai ao ar"
+                colunas={3}
+                tamanho="p"
+                medidas={[
+                  { rotulo: 'IMAGEM', valor: rotuloDoPreset(presetId) },
+                  { rotulo: 'ÁUDIO', valor: resumoAudio },
+                  { rotulo: 'VOLUME', valor: resumoAudio === 'MUDO' ? '—' : `${Math.round(som.volume * 100)}%` },
+                ]}
+              />
+              <RodapeDoPasso>
+                <Botao onClick={() => irParaPasso(2)}>VOLTAR</Botao>
+                <Botao
+                  tom="primaria"
+                  bloco
+                  onClick={iniciar}
+                  icone={<span aria-hidden="true" className="h-2.5 w-2.5 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
+                >
+                  IR AO AR E GERAR LINK
+                </Botao>
+              </RodapeDoPasso>
+            </PainelOsd>
+          </section>
+        )}
       </main>
 
-      {/*
-        A última linha da página, e a única que fala de contexto.
-        
-        Era uma coluna de 380px com dois parágrafos. O que sobrou é o que
-        ninguém consegue deduzir olhando a tela: por que este produto apareceu
-        agora, e o que substitui a senha que ele não pede.
-      */}
-      <footer className="border-t border-line py-4">
-        <p
-          data-vidro="texto"
-          className="mx-auto w-full max-w-[1180px] px-4 text-[12.5px] leading-relaxed text-muted sm:px-6"
-        >
-          <span className="block max-w-[78ch]">
-            Desde 17 de agosto de 2026 o Discord não compartilha tela no Brasil, por ordem
-            da ANPD — texto e voz continuam funcionando. Tela entrega só o que faltou: o
-            vídeo. Sem cadastro e sem senha: quem prova que o link é seu é um código
-            guardado neste navegador.
-          </span>
-        </p>
-      </footer>
+      {passo === 1 ? (
+        /*
+          A última linha da página, e a única que fala de contexto: por que este
+          produto apareceu agora, e o que substitui a senha que ele não pede.
+        */
+        <footer className="border-t-2 border-line bg-bar py-3.5">
+          <p
+            data-vidro="texto"
+            className="mx-auto m-0 w-full max-w-[1180px] px-4 text-[11px] leading-relaxed text-dim sm:px-6"
+          >
+            <span className="block max-w-[80ch] [text-wrap:pretty]">
+              Desde 17 de agosto de 2026 o Discord não compartilha tela no Brasil, por ordem da ANPD:
+              texto e voz continuam funcionando. Tela entrega só o que faltou, o vídeo. Sem cadastro
+              e sem senha: quem prova que o link é seu é um código guardado neste navegador. Até{' '}
+              {P2P_LIMITS.maxViewersBrowser} amigos ao mesmo tempo.
+            </span>
+          </p>
+        </footer>
+      ) : (
+        <BarraAjuda
+          dicas={[
+            { tecla: '↑↓', texto: 'SELECIONAR' },
+            { tecla: '←→', texto: 'AJUSTAR' },
+            { tecla: 'ENTER', texto: passo === 3 ? 'IR AO AR' : 'CONTINUAR' },
+          ]}
+        />
+      )}
+
+      <EstaticaTroca ativa={troca.estatica} />
+      <CanalFlash visivel={troca.flash} numero={`0${passo}`} nome={NOMES[passo]} />
     </div>
   );
+}
+
+function RodapeDoPasso({ children }: { readonly children: React.ReactNode }) {
+  return <div className="flex gap-2 border-t-2 border-line p-3.5">{children}</div>;
 }

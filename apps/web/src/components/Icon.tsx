@@ -1,110 +1,121 @@
-/**
- * Ícones em SVG inline, nunca emoji.
- *
- * Emoji muda de forma por sistema operacional, não herda `currentColor` e não
- * tem tamanho previsível. Aqui são cinco traços, e todos herdam a cor do texto.
- */
 type IconProps = { readonly className?: string };
 
+/**
+ * Ícones em pixel: grade de 16×16, só retângulos, `crispEdges`.
+ *
+ * Herdam a cor do texto (`currentColor`). Todos são decorativos — o rótulo
+ * acessível mora no botão que os contém, nunca no desenho.
+ */
 const base = 'h-4 w-4 shrink-0';
 
-export function IconCopy({ className = base }: IconProps) {
+function Pixel({
+  className = base,
+  children,
+}: IconProps & { readonly children: React.ReactNode }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <rect x="9" y="9" width="11" height="11" rx="2" strokeLinejoin="round" />
-      <path d="M5 15V5a2 2 0 0 1 2-2h10" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      viewBox="0 0 16 16"
+      className={className}
+      fill="currentColor"
+      shapeRendering="crispEdges"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {children}
     </svg>
   );
 }
 
-export function IconCheck({ className = base }: IconProps) {
+export function IconOlho({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className} aria-hidden="true">
-      <path d="m5 13 4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M5 3h6v2h3v2h2v2h-2v2h-3v2H5v-2H2V9H0V7h2V5h3z M6 6h4v4H6z" fillRule="evenodd" />
+    </Pixel>
   );
 }
 
-export function IconViewers({ className = base }: IconProps) {
+export function IconOlhoRisco({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" strokeLinejoin="round" />
-      <circle cx="12" cy="12" r="2.75" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M5 3h6v2h3v2h2v2h-2v2h-3v2H5v-2H2V9H0V7h2V5h3z M6 6h4v4H6z" fillRule="evenodd" opacity="0.55" />
+      <path d="M1 1h2v2h2v2h2v2h2v2h2v2h2v2h2v2h-2v-2h-2v-2h-2v-2H8V7H6V5H4V3H2V2H1z" fill="var(--color-live-hi)" />
+    </Pixel>
   );
 }
 
-export function IconFullscreen({ className = base }: IconProps) {
+export function IconTelaCheia({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M1 1h5v2H3v3H1z M10 1h5v5h-2V3h-3z M1 10h2v3h3v2H1z M13 10h2v5h-5v-2h3z" />
+    </Pixel>
   );
 }
 
-export function IconMuted({ className = base }: IconProps) {
+export function IconSairTelaCheia({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
-      <path d="m16.5 9.5 5 5m0-5-5 5" strokeLinecap="round" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M4 1h2v5H1V4h3z M10 1h2v3h3v2h-5z M1 10h5v5H4v-3H1z M10 10h5v2h-3v3h-2z" />
+    </Pixel>
   );
 }
 
-export function IconPlay({ className = base }: IconProps) {
+export function IconPip({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
-      <path d="M8 5.14v13.72a1 1 0 0 0 1.54.84l10.1-6.86a1 1 0 0 0 0-1.68L9.54 4.3A1 1 0 0 0 8 5.14Z" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M0 2h16v12H0z M2 4v8h12V4z" fillRule="evenodd" />
+      <path d="M8 8h6v4H8z" fill="var(--color-accent)" />
+    </Pixel>
   );
 }
 
-export function IconStop({ className = base }: IconProps) {
+export function IconMudo({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
-      <rect x="6" y="6" width="12" height="12" rx="1.5" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M2 6h3l3-3h2v10H8l-3-3H2z" />
+      <path d="M11 6h2v1h1V6h2v2h-1v1h1v2h-2v-1h-1v1h-2V9h1V8h-1z" />
+    </Pixel>
   );
 }
 
-export function IconWarning({ className = base }: IconProps) {
+export function IconSom({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <path d="M12 4.5 2.8 20h18.4L12 4.5Z" strokeLinejoin="round" />
-      <path d="M12 10v4.5M12 17.5v.01" strokeLinecap="round" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M2 6h3l3-3h2v10H8l-3-3H2z" />
+      <path d="M12 5h2v6h-2z M14 3h2v10h-2z" />
+    </Pixel>
   );
 }
 
-/**
- * Volume em dois níveis. A quantidade de ondas reflete o volume real — num
- * HUD pequeno é o que dá para ler de relance, sem parar o jogo para conferir.
- * O corpo do alto-falante é o mesmo de `IconMuted`, de propósito: o ícone
- * troca de estado, não de identidade.
- */
-export function IconVolumeLow({ className = base }: IconProps) {
+export function IconCopiar({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
-      <path d="M15.5 9.8a3.4 3.4 0 0 1 0 4.4" strokeLinecap="round" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M5 1h9v10h-2V3H5z M2 4h9v11H2z M4 6v7h5V6z" fillRule="evenodd" />
+    </Pixel>
   );
 }
 
-export function IconVolumeHigh({ className = base }: IconProps) {
+export function IconOk({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <path d="M4 9.5h3.5L12 5.5v13L7.5 14.5H4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
-      <path d="M15.5 9.8a3.4 3.4 0 0 1 0 4.4" strokeLinecap="round" />
-      <path d="M18.4 7.2a7 7 0 0 1 0 9.6" strokeLinecap="round" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M13 3h2v2h-2v2h-2v2H9v2H7v2H5v-2H3V9H1V7h2v2h2v2h2V9h2V7h2V5h2z" />
+    </Pixel>
   );
 }
 
-export function IconExitFullscreen({ className = base }: IconProps) {
+/** Um quadrado: o LED de "parar"/"gravando" do aparelho. */
+export function IconQuadrado({ className }: IconProps) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" className={className} aria-hidden="true">
-      <path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M3 3h10v10H3z" />
+    </Pixel>
+  );
+}
+
+/** Barras de sinal: o ícone do botão de diagnóstico. */
+export function IconSinal({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M1 11h3v4H1z M6 8h3v7H6z M11 4h3v11h-3z" fill="var(--color-ok)" />
+    </Pixel>
   );
 }

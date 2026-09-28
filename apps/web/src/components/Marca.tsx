@@ -1,53 +1,38 @@
 type Props = {
-  /** `grande` na tela inicial. `padrao` nas outras páginas e no console. */
-  readonly tamanho?: 'padrao' | 'grande';
+  /** Sem `href` a marca não é link — e no console ao vivo ela NÃO pode ser. */
+  readonly href?: string;
+  readonly tamanho?: 'normal' | 'pequeno';
 };
 
 /**
- * A marca: quatro letras dentro de um vidro.
+ * A plaqueta: TELA em numeral de placar, sobre âmbar, com relevo.
  *
- * O nome estava em 15px de Geist semibold — o mesmo desenho do nome de
- * qualquer aplicativo, e a única coisa que identificava o produto na tela. O
- * que dá entonação aqui não é o corpo da letra: é o VIDRO em volta dela.
- *
- * A plaqueta é a mesma pilha de camadas da abertura em escala de nameplate —
- * scanline de 3px, roll bar lenta, vinheta nos cantos, fundo `void` sobre a
- * faixa `surface`. Quem viu o tubo se abrir reconhece o tubo aqui, e a mesma
- * ideia reaparece em três tamanhos: plaqueta, abertura e tela de espera.
- *
- * Caixa alta em condensada, não caixa baixa em Geist. "tela" em minúsculas era
- * literal demais para um nome de quatro letras: sobrava a palavra e faltava a
- * marca. Em caixa alta e estreita ela vira o que está serigrafado na chapa —
- * que é como aparelho de vídeo se identifica.
- *
- * A borda é `line`, não `edge`: a plaqueta não é um controle, e `edge` tem um
- * papel escrito na ADR 0008. O que desenha o retângulo é o degrau de `void`
- * sobre `surface` mais as scanlines; a borda só impede que ele pareça um
- * recorte solto.
+ * Ao vivo ela é só um desenho. Um link para a tela inicial ali derrubaria a
+ * transmissão com um clique perdido — a página fecha a sessão ao sair.
  */
-export function Marca({ tamanho = 'padrao' }: Props) {
-  const grande = tamanho === 'grande';
-
-  return (
+export function Marca({ href, tamanho = 'normal' }: Props) {
+  const placa = (
     <span
-      data-vidro="contorno"
       className={[
-        'vidro inline-flex select-none items-center rounded-sm border border-line',
-        grande ? 'px-3 py-1.5' : 'px-2.5 py-1',
+        'numeral inline-flex items-center border-2 border-accent-lit border-b-accent-lo border-r-accent-lo bg-accent text-ink',
+        tamanho === 'normal'
+          ? 'h-8 px-2.5 text-[28px] tracking-[0.12em]'
+          : 'h-[22px] px-1.5 text-[17px] tracking-[0.1em]',
       ].join(' ')}
     >
-      <span
-        className="font-etiqueta font-bold uppercase leading-none text-text"
-        style={{
-          fontSize: grande ? 26 : 19,
-          letterSpacing: '0.1em',
-          // A entreletra abre o texto para a direita e o deixa visualmente
-          // descentrado dentro da plaqueta. O recuo devolve o espaço da última.
-          paddingRight: '0.1em',
-        }}
-      >
-        tela
-      </span>
+      TELA
     </span>
+  );
+
+  if (href === undefined) return <span className="inline-flex">{placa}</span>;
+
+  return (
+    <a
+      href={href}
+      aria-label="Tela, ir para o início"
+      className="inline-flex min-h-11 items-center hover:opacity-90"
+    >
+      {placa}
+    </a>
   );
 }

@@ -1,21 +1,24 @@
 import { P2P_LIMITS } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AudioUnlock } from '../components/AudioUnlock.js';
-import { IconExitFullscreen, IconFullscreen, IconViewers } from '../components/Icon.js';
-import { LiveDot } from '../components/LiveDot.js';
+import { BarraEspectador } from '../components/BarraEspectador.js';
+import { VidroCrt } from '../components/EfeitosTv.js';
+import { IconOlho } from '../components/Icon.js';
 import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
-import { VolumeControl } from '../components/VolumeControl.js';
 import { createViewerSession, volumePreference } from '../container.js';
 import { conviteDoFragmento } from '../core/domain/convite.js';
 import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { ViewerState } from '../core/media/viewer-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
+import { useCopia } from '../react/use-copia.js';
 import { useMediaStats } from '../react/use-media-stats.js';
 import { useHotkeys, useTabTitle } from '../react/use-page-effects.js';
 import { useFrameLatency } from '../react/use-frame-latency.js';
+import { usePictureInPicture } from '../react/use-picture-in-picture.js';
 import { useViewer } from '../react/use-viewer.js';
 import { PASSO_VOLUME, useVolume } from '../react/use-volume.js';
+import { useZoomPan } from '../react/use-zoom-pan.js';
 
 type Props = { readonly slug: string };
 
@@ -112,8 +115,8 @@ export function Viewer({ slug }: Props) {
    * então não é preciso um segundo mecanismo de trava.
    */
   const [somAtivo, setSomAtivo] = useState(false);
-  const [copiouDiag, setCopiouDiag] = useState(false);
-
+  const diagCopia = useCopia(2_000);
+  const copiarDiag = diagCopia.copiar;
 
   /**
    * Copia a série temporal para o usuário MANDAR em vez de descrever.
@@ -125,14 +128,13 @@ export function Viewer({ slug }: Props) {
   const copiarDiagnostico = useCallback(() => {
     const relatorio = session.diagnostico(navigator.userAgent);
     if (relatorio === null) return;
-    void navigator.clipboard
-      .writeText(JSON.stringify(relatorio, null, 2))
-      .then(() => {
-        setCopiouDiag(true);
-        setTimeout(() => setCopiouDiag(false), 2_000);
-      })
-      .catch(() => undefined);
-  }, [session]);
+    copiarDiag(JSON.stringify(relatorio, null, 2));
+  }, [session, copiarDiag]);
+  /** O corpo da página: é ELE que entra em tela cheia, para a barra ir junto. */
+  const paginaRef = useRef<HTMLElement>(null);
+  const [escondida, setEscondida] = useState(false);
+  const zoom = useZoomPan();
+  const pip = usePictureInPicture(videoEl);
   const [emTelaCheia, setEmTelaCheia] = useState(false);
 
   const watching = state.status === 'watching';
@@ -247,7 +249,7 @@ export function Viewer({ slug }: Props) {
    */
   const toggleFullscreen = useCallback(() => {
     const video = videoRef.current;
-    const palco = video?.parentElement;
+    const palco = paginaRef.current;
 
     /**
      * `!= null` e um `typeof`, e a versão estrita quebrava o celular inteiro.
@@ -311,12 +313,17 @@ export function Viewer({ slug }: Props) {
     useMemo(
       () => ({
         f: toggleFullscreen,
+        h: () => setEscondida((v) => !v),
+        p: pip.alternar,
+        '+': zoom.aumentar,
+        '=': zoom.aumentar,
+        '-': zoom.diminuir,
         m: som.alternarMudo,
         ' ': som.alternarMudo,
         arrowup: () => som.empurrar(PASSO_VOLUME),
         arrowdown: () => som.empurrar(-PASSO_VOLUME),
       }),
-      [toggleFullscreen, som],
+      [toggleFullscreen, som, pip.alternar, zoom.aumentar, zoom.diminuir],
     ),
     comImagem,
   );
@@ -334,10 +341,16 @@ export function Viewer({ slug }: Props) {
     const relatorio = session.diagnostico(navigator.userAgent);
     return (
       <main>
+        {/* Scanlines só na sala de espera: com imagem, o jogo é o conteúdo. */}
+        <VidroCrt />
         <OfflineState
           slug={slug}
           motivo={motivo}
           maxPeers={P2P_LIMITS.maxViewersBrowser}
+          // Onde a conexão está de verdade: a sessão sabe se ainda procura o
+          // canal ou já negocia. Os blocos do "sintonizando" seguem isso, não
+          // um relógio.
+          etapa={state.status === 'connecting' ? 'negociando' : 'procurando'}
           {...(PEDE_ACAO.has(motivo)
             ? {
                 onTentarNovamente:
@@ -346,49 +359,76 @@ export function Viewer({ slug }: Props) {
                     : () => void session.retryNow(),
               }
             : {})}
-          diagnostico={relatorio !== null && PEDE_ACAO.has(motivo) ? (
-            <details className="px-6 pb-6 text-[13px] text-muted">
-              <summary className="cursor-pointer">ver diagnóstico da tentativa</summary>
-              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-void p-3 text-[11px]">
-                {JSON.stringify(relatorio, null, 2)}
-              </pre>
-              <button type="button" onClick={copiarDiagnostico} className="mt-2 underline">
-                {copiouDiag ? 'copiado' : 'copiar diagnóstico'}
-              </button>
-            </details>
-          ) : null}
+          diagnostico={
+            relatorio !== null && PEDE_ACAO.has(motivo) ? (
+              <details className="border-t-2 border-line px-5 pb-5 text-[12px] text-muted">
+                <summary className="flex min-h-11 cursor-pointer items-center">
+                  ver diagnóstico da tentativa
+                </summary>
+                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all border-2 border-line bg-deep p-3 text-[11px]">
+                  {JSON.stringify(relatorio, null, 2)}
+                </pre>
+                <button type="button" onClick={copiarDiagnostico} className="tecla mt-2">
+                  {diagCopia.copiado ? 'COPIADO' : 'COPIAR DIAGNÓSTICO'}
+                </button>
+              </details>
+            ) : null
+          }
         />
       </main>
     );
   }
 
-  const avisoAudio = watching ? AVISO_AUDIO[state.audio] : undefined;
+  const avisoAudio = watching ? (AVISO_AUDIO[state.audio] ?? null) : null;
+  const barraVisivel = !escondida && controls.visible;
 
   return (
     <main
+      ref={paginaRef}
       /*
-        `h-dvh` e não `h-screen`: `100vh` é a viewport GRANDE no celular, com
-        a barra de URL recolhida — maior que a área visível. O `<main>` ficava
-        mais alto que a tela e a barra do HUD, ancorada em `bottom-0`, caía
-        inteira fora da dobra: sem contagem, sem latência, sem volume, sem
-        botão de tela cheia. `OfflineState` já usava `min-h-dvh` com um
-        comentário explicando exatamente isto; o Viewer tinha ficado de fora.
+        `h-dvh` e não `h-screen`: `100vh` é a viewport GRANDE no celular, com a
+        barra de URL recolhida — maior que a área visível. O `<main>` ficava
+        mais alto que a tela e a barra, ancorada em `bottom-0`, caía inteira
+        fora da dobra: sem contagem, sem latência, sem volume, sem botão de
+        tela cheia.
       */
-      className="relative h-dvh w-full overflow-hidden bg-void"
+      className="relative h-dvh w-full overflow-hidden bg-black"
       onMouseMove={controls.show}
       onDoubleClick={toggleFullscreen}
     >
       {/*
+        O palco do vídeo: recebe a roda (zoom) e o arrasto (pan). O vídeo do
+        jogo NUNCA leva scanline — o vidro do CRT nem é montado nesta rota.
+
         `muted` obrigatório no primeiro play: sem isso o browser bloqueia o
         autoplay inteiro e o espectador vê tela preta em vez de vídeo.
       */}
-      <video
-        ref={montarVideo}
-        autoPlay
-        playsInline
-        muted={som.mudo}
-        className="h-full w-full bg-void object-contain"
-      />
+      <div
+        ref={zoom.palcoRef}
+        onWheel={zoom.aoRodar}
+        onPointerDown={zoom.aoPressionar}
+        onPointerMove={zoom.aoMover}
+        onPointerUp={zoom.aoSoltar}
+        onPointerCancel={zoom.aoSoltar}
+        className={[
+          'absolute inset-0 overflow-hidden',
+          zoom.zoom > 1 ? (zoom.arrastando ? 'cursor-grabbing' : 'cursor-grab') : '',
+          zoom.zoom > 1 ? 'touch-none' : '',
+        ].join(' ')}
+      >
+        <div
+          className={`h-full w-full origin-center ${zoom.arrastando ? '' : 'transition-transform duration-200 motion-reduce:transition-none'}`}
+          style={{ transform: `translate(${zoom.pan.x}px, ${zoom.pan.y}px) scale(${zoom.zoom})` }}
+        >
+          <video
+            ref={montarVideo}
+            autoPlay
+            playsInline
+            muted={som.mudo}
+            className="h-full w-full bg-black object-contain"
+          />
+        </div>
+      </div>
 
       {/*
         `!som.liberado` é o que separa "o browser bloqueou" de "eu silenciei".
@@ -397,116 +437,79 @@ export function Viewer({ slug }: Props) {
       */}
       {bloqueado && <AudioUnlock onUnlock={liberarSom} />}
 
+      {/*
+        A barra é a última coisa a sumir e a primeira a voltar (movimento do
+        mouse, toque ou foco). Some com opacidade, não com `display`: nenhum
+        reflow no meio do jogo. Escondida ela continua focável de propósito —
+        é o `focusin` que a traz de volta para quem navega por teclado.
+      */}
       <div
         className={[
-          'pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-center gap-4 p-4',
-          'bg-gradient-to-t from-void/80 to-transparent transition-opacity duration-300',
-          controls.visible ? 'opacity-100' : 'opacity-0',
+          'transition-opacity duration-300',
+          barraVisivel ? 'opacity-100' : 'pointer-events-none opacity-0',
         ].join(' ')}
       >
-        <LiveDot />
-
-        {/*
-          Quantos estão vendo junto. Contagem, não lista: dá o senso de
-          companhia sem entregar o identificador de ninguém, e responde a
-          pergunta que quem chega cedo faz — "sou só eu?".
-        */}
-        <span
-          className="tabular ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted"
-          aria-label={
-            watching
-              ? `${state.viewers} ${state.viewers === 1 ? 'pessoa assistindo' : 'pessoas assistindo'}`
-              : 'reconectando'
-          }
-        >
-          <IconViewers className="h-3.5 w-3.5 shrink-0" />
-          {watching ? state.viewers : '—'}
-        </span>
-
-        {/*
-          A latência que o espectador SENTE, não o RTT.
-
-          Isto mostrava `stats.rtt` e chamava de latência. RTT é a ida e volta
-          da rede — não inclui encoder, jitter buffer, decoder nem render. Um
-          usuário relatou "1 segundo de atraso" com esta linha marcando 58ms, e
-          os dois números estavam certos: eram grandezas diferentes, e a tela
-          mostrava a que não importa.
-        */}
-        {/*
-          Prefere a medida do QUADRO, que é a única completa. `stats.latencia`
-          entra quando `requestVideoFrameCallback` não existe ou ainda não
-          produziu amostra — ela é `rtt/2 + processamento`, que é um piso
-          honesto mas ainda perde captura, encode e render.
-        */}
-        <span
-          className={[
-            'tabular text-[12px]',
-            medida.alta ? 'text-warn' : 'text-muted',
-          ].join(' ')}
-          title={
+        <BarraEspectador
+          canal={slug}
+          viewers={watching ? state.viewers : null}
+          reconectando={reconectando}
+          latencia={medida.ms === null ? stats.latencia : `${Math.round(medida.ms)}ms`}
+          latenciaAlta={medida.alta}
+          latenciaTitulo={
             medida.ms === null
               ? `rede ${stats.rtt}`
               : `rede ${stats.rtt} · medido no quadro (${
                   medida.origem === 'captura' ? 'ponta a ponta' : 'só a recepção'
                 })`
           }
-        >
-          {medida.ms === null ? stats.latencia : `${Math.round(medida.ms)}ms`}
-        </span>
-
-        {/* Só aparece quando travou de verdade. Silêncio é boa notícia. */}
-        {stats.travou && (
-          <span
-            className="tabular text-[12px] text-warn"
-            title="tempo total de imagem congelada nesta sessão"
-          >
-            {stats.congelado} travado
-          </span>
-        )}
-
-        {avisoAudio !== undefined && (
-          <span className="text-[12px] text-warn" title={avisoAudio.titulo}>
-            {avisoAudio.rotulo}
-          </span>
-        )}
-
-        {hasAudio && (
-          <VolumeControl
-            volume={som.volume}
-            mudo={som.mudo}
-            ajustavel={som.ajustavel}
-            ativo={somAtivo}
-            onVolume={som.ajustar}
-            onAlternar={som.alternarMudo}
-            passo={PASSO_VOLUME}
-            onAtivo={setSomAtivo}
-          />
-        )}
-
-        {/*
-          Só aparece quando há o que mandar. Um botão que não faz nada é pior
-          que botão nenhum.
-        */}
-        <button
-          type="button"
-          onClick={copiarDiagnostico}
-          aria-label="Copiar diagnóstico técnico desta sessão"
-          className="pointer-events-auto inline-flex h-11 shrink-0 items-center rounded-sm px-2.5 text-[12px] text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
-        >
-          {copiouDiag ? 'copiado' : 'diagnóstico'}
-        </button>
-
-        <button
-          type="button"
-          onClick={toggleFullscreen}
-          aria-label={emTelaCheia ? 'Sair da tela cheia' : 'Tela cheia'}
-          // `shrink-0`: numa linha flex apertada o botão era espremido para 16×44 em
-          // 320/360/390px — declarado 44 quadrado, entregue como um risco.
-          className="pointer-events-auto inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-surface hover:text-text"
-        >
-          {emTelaCheia ? <IconExitFullscreen /> : <IconFullscreen />}
-        </button>
+          imagem={stats.resolution}
+          travado={stats.travou ? stats.congelado : null}
+          avisoAudio={avisoAudio}
+          temAudio={hasAudio}
+          volume={{
+            valor: som.volume,
+            mudo: som.mudo,
+            ajustavel: som.ajustavel,
+            passo: PASSO_VOLUME,
+            aoAjustar: som.ajustar,
+            aoAlternar: som.alternarMudo,
+            aoAtivar: setSomAtivo,
+          }}
+          zoom={{
+            porcento: `${Math.round(zoom.zoom * 100)}%`,
+            ampliado: zoom.zoom > 1,
+            aoAumentar: zoom.aumentar,
+            aoDiminuir: zoom.diminuir,
+            aoResetar: zoom.resetar,
+          }}
+          aoEsconder={() => setEscondida(true)}
+          pip={pip.disponivel ? { ativo: pip.ativo, aoAlternar: pip.alternar } : null}
+          emTelaCheia={emTelaCheia}
+          aoTelaCheia={toggleFullscreen}
+          copiouDiagnostico={diagCopia.copiado}
+          aoCopiarDiagnostico={copiarDiagnostico}
+        />
       </div>
+
+      {/*
+        Controles escondidos (H ou o botão): sobra um fantasma no canto, quase
+        apagado, que volta ao mover o mouse. Sem ele quem escondeu por engano
+        no celular não teria como trazer a barra de volta.
+      */}
+      {escondida && (
+        <button
+          type="button"
+          onClick={() => setEscondida(false)}
+          title="Mostrar controles (H)"
+          aria-label="Mostrar controles (H)"
+          className={[
+            'absolute bottom-5 right-5 z-40 flex h-11 w-11 items-center justify-center border-2 border-edge bg-[rgb(10_10_12_/_0.85)] transition-opacity duration-300 hover:opacity-100 focus-visible:opacity-100',
+            controls.visible ? 'opacity-100' : 'opacity-20',
+          ].join(' ')}
+        >
+          <IconOlho className="h-[18px] w-[18px] text-accent" />
+        </button>
+      )}
     </main>
   );
 }

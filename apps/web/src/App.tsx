@@ -1,6 +1,7 @@
 import { type PresetId } from '@tela/shared';
 import { useState } from 'react';
 import { Abertura } from './components/Abertura.js';
+import { useAbaVisivel } from './react/use-aba-visivel.js';
 import { useAbertura } from './react/use-abertura.js';
 import { Broadcast } from './routes/Broadcast.js';
 import { Home } from './routes/Home.js';
@@ -11,6 +12,9 @@ import { useRoute } from './router.js';
 
 export function App() {
   const { route, navigate } = useRoute();
+  // Pausa as animações CSS com a aba escondida: quem transmite deixa a página
+  // atrás do jogo durante horas.
+  useAbaVisivel();
   const [pending, setPending] = useState<{
     slug: string;
     presetId: PresetId;

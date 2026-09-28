@@ -1,4 +1,7 @@
 import type { ReactNode } from 'react';
+import { Botao } from './Botao.js';
+import { Led } from './Led.js';
+import { Marca } from './Marca.js';
 
 export type Motivo =
   | 'conectando'
@@ -20,70 +23,103 @@ type Props = {
   readonly motivo?: Motivo;
   /** Vem da rota: o componente não inventa o limite da transmissão. */
   readonly maxPeers: number;
-  /** Só chega nos dois motivos que pedem ação humana. */
+  /**
+   * Onde a conexão está, só para `conectando`. A rota traduz o estado real da
+   * sessão (`checking`, `connecting`) — os blocos não avançam por relógio.
+   */
+  readonly etapa?: 'procurando' | 'negociando';
+  /** Só chega nos motivos que pedem ação humana. */
   readonly onTentarNovamente?: () => void;
   readonly diagnostico?: ReactNode;
 };
 
+const ETAPAS = {
+  procurando: { texto: 'procurando o canal…', blocos: 3 },
+  negociando: { texto: 'negociando a conexão direta…', blocos: 8 },
+} as const;
+
 /**
- * A sala de espera do espectador. Estado, não erro.
+ * A sala de espera do espectador, como a tela de um televisor sem sinal.
  *
  * Esta é a primeira tela — muitas vezes a única por vários minutos — que o
- * amigo vê depois de clicar no link. Ela precisa responder três perguntas em
- * ordem, e a hierarquia visual é essa ordem: em que canal eu caí, o que está
- * acontecendo, e o que eu faço agora.
+ * amigo vê depois de clicar no link. Ela responde três perguntas em ordem, e a
+ * hierarquia é essa ordem: em que canal eu caí (o slug, em numeral grande e em
+ * monoespaçada: quem abriu o link errado precisa comparar letra a letra), o que
+ * está acontecendo, e o que eu faço agora.
  *
- * O slug é o herói porque é a resposta da primeira pergunta. Em monoespaçada
- * porque é um identificador: quem abriu o link errado precisa comparar
- * caractere por caractere, e mono é a única escolha que torna isso possível.
+ * # Estado, não erro
  *
- * Nada aqui é verde. O acento é do AO VIVO, e reusá-lo apagaria a única
- * diferença visual entre "esperando" e "no ar" — que é exatamente a
- * informação que esta tela existe para dar.
+ * Cor e glifo dizem a mesma coisa que o texto: o "!" e o âmbar marcam o que
+ * depende de alguém; o LED piscando marca o que se resolve sozinho. Nada é só
+ * cor. O chiado é estático, salvo em `conectando`, que dura segundos — uma tela
+ * de espera que fica horas aberta não pode animar a tela inteira.
  */
 export function OfflineState({
   slug,
   motivo = 'conectando',
   maxPeers,
+  etapa = 'procurando',
   onTentarNovamente,
   diagnostico,
 }: Props) {
-  const { rotulo, corpo, tom, varrendo } = TEXTO[motivo](maxPeers);
-  const cor = tom === 'warn' ? 'text-warn' : 'text-muted';
+  const { rotulo, corpo, tom, espera } = TEXTO[motivo](maxPeers);
+  const sintonizando = motivo === 'conectando';
 
   return (
-    <div className="flex min-h-dvh items-center justify-center px-5 py-10">
-      {/*
-        `min-h-dvh` e não `min-h-full`: altura percentual resolve contra a
-        altura do pai, e um pai com `min-height` e altura automática vale
-        zero — o centro colapsa para o topo. Contra a viewport não colapsa.
-      */}
+    <div
+      className={[
+        'relative flex min-h-dvh items-center justify-center px-4 py-10',
+        sintonizando ? 'chiado-suave chiado-anda' : 'chiado-suave',
+      ].join(' ')}
+    >
+      <div className="absolute left-4 top-4 sm:left-6 sm:top-5">
+        <Marca tamanho="pequeno" />
+      </div>
+
       <section
         role="status"
         aria-live="polite"
-        className="animate-enter w-full max-w-[660px] overflow-hidden rounded-md border border-line bg-surface"
+        className="acima-do-crt entra w-full max-w-[680px] overflow-hidden border-2 border-edge bg-[rgb(8_8_10_/_0.94)] shadow-[0_0_0_2px_#000]"
       >
-        <Varredura ativa={varrendo} />
-
-        <div className="flex min-h-[min(46vh,300px)] flex-col items-center justify-center gap-5 px-6 py-12 text-center">
-          <p className={`text-[11px] font-semibold uppercase tracking-[0.16em] ${cor}`}>
-            {rotulo}
+        <div className="flex flex-col items-center gap-5 px-5 py-9 text-center sm:px-8 sm:py-11">
+          <p
+            className={[
+              'flex items-center gap-2.5 font-[family-name:var(--font-pixel)] text-[13px]',
+              tom === 'alerta' ? 'text-accent-hi' : 'text-muted',
+            ].join(' ')}
+          >
+            {tom === 'alerta' ? <span aria-hidden="true">!</span> : espera ? <Led cor="ok" pisca /> : null}
+            <span>{sintonizando ? `sintonizando` : rotulo}</span>
           </p>
 
-          <h1 className="tabular max-w-full truncate text-[clamp(26px,6.5vw,42px)] font-medium leading-none text-text">
+          <h1 className="numeral m-0 max-w-full truncate text-[clamp(38px,9vw,64px)] text-accent-hi [text-shadow:0_0_18px_rgb(242_169_59_/_0.4)]">
+            <span className="text-dim">tela.gg/</span>
             {slug}
           </h1>
 
-          <p className="max-w-[46ch] text-[13.5px] leading-relaxed text-muted">{corpo}</p>
+          {sintonizando ? (
+            <>
+              <div aria-hidden="true" className="flex gap-1">
+                {Array.from({ length: 12 }, (_, i) => (
+                  <span
+                    key={i}
+                    className={`h-3.5 w-3.5 bg-accent ${i < ETAPAS[etapa].blocos ? 'opacity-100' : 'opacity-15'}`}
+                  />
+                ))}
+              </div>
+              <p className="m-0 text-[12px] text-muted">{ETAPAS[etapa].texto}</p>
+              <p className="sr-only">{rotulo}</p>
+            </>
+          ) : (
+            <p className="m-0 max-w-[46ch] text-[12.5px] leading-relaxed text-muted [text-wrap:pretty]">
+              {corpo}
+            </p>
+          )}
 
           {onTentarNovamente && (
-            <button
-              type="button"
-              onClick={onTentarNovamente}
-              className="mt-1 inline-flex h-11 items-center rounded-sm border border-edge px-5 text-[13px] font-medium text-text transition-colors duration-150 hover:bg-void"
-            >
-              Tentar novamente
-            </button>
+            <Botao tom="primaria" onClick={onTentarNovamente}>
+              TENTAR NOVAMENTE
+            </Botao>
           )}
         </div>
         {diagnostico}
@@ -92,38 +128,12 @@ export function OfflineState({
   );
 }
 
-/**
- * A faixa é o único movimento desta tela, e ele carrega informação.
- *
- * Varrendo: o canal continua escutando sozinho e não há nada a fazer.
- * Parada e âmbar: a tentativa travou e depende de alguém.
- *
- * Um spinner comunicaria "está demorando demais", que é a leitura errada para
- * quem simplesmente chegou antes do jogo começar.
- *
- * Sob `prefers-reduced-motion` a faixa congela. Nenhuma informação se perde:
- * o rótulo e a cor já dizem o mesmo em texto.
- */
-function Varredura({ ativa }: { readonly ativa: boolean }) {
-  if (!ativa) return <div className="h-[2px] w-full bg-warn/60" aria-hidden="true" />;
-
-  return (
-    <div className="relative h-[2px] w-full overflow-hidden bg-line" aria-hidden="true">
-      {/*
-        Segmento curto e claro, não largo e apagado: numa faixa de 2px por 660
-        de largura um degradê suave sobre um terço vira borrão de canto — lido
-        como falha de renderização, não como intenção.
-      */}
-      <span className="animate-scan absolute inset-y-0 w-1/5 bg-gradient-to-r from-transparent via-text to-transparent" />
-    </div>
-  );
-}
-
 type Conteudo = {
   readonly rotulo: string;
   readonly corpo: string;
-  readonly tom: 'muted' | 'warn';
-  readonly varrendo: boolean;
+  readonly tom: 'muted' | 'alerta';
+  /** Se resolve sozinho: mostra o LED piscando, "estou escutando". */
+  readonly espera: boolean;
 };
 
 /**
@@ -132,93 +142,97 @@ type Conteudo = {
  * Quem lê "aguardando" não faz nada; quem lê "sem servidor" mexe no navegador.
  * Fundir os dois num "não deu" mandaria a pessoa agir quando ela só precisa
  * esperar — ou esperar quando nada vai acontecer sozinho.
+ *
+ * Os `rotulo` de `offline`, `conectando`, `cheio`, `convite-*` são os que o E2E
+ * (`e2e/mesh.e2e.mjs`) procura no texto da página. Não mude sem mudar lá.
  */
 const TEXTO: Record<Motivo, (maxPeers: number) => Conteudo> = {
   conectando: () => ({
     rotulo: 'conectando',
     corpo: 'Procurando a transmissão e negociando a conexão direta.',
     tom: 'muted',
-    varrendo: true,
+    espera: true,
   }),
   offline: () => ({
     rotulo: 'aguardando sinal',
     corpo: 'Deixe esta aba aberta. O vídeo começa sozinho, sem precisar atualizar.',
     tom: 'muted',
-    varrendo: true,
+    espera: true,
   }),
   reconectando: () => ({
     rotulo: 'reconectando',
     corpo: 'O vídeo parou de chegar. Retomamos sozinhos assim que o sinal voltar.',
-    tom: 'warn',
-    varrendo: true,
+    tom: 'alerta',
+    espera: true,
   }),
   cheio: (maxPeers) => ({
     rotulo: `sem vaga · ${maxPeers}/${maxPeers}`,
     corpo: `Esta transmissão comporta ${maxPeers} pessoas ao mesmo tempo. Você entra sozinho quando alguém sair.`,
     tom: 'muted',
-    varrendo: true,
+    espera: true,
   }),
   /*
-    Os dois textos abaixo seguem a §5.9 do plano: afirmam só o que foi
-    comprovado. "Sem rota" dizia saber a causa quando só se sabia o efeito.
+    Os dois textos abaixo afirmam só o que foi comprovado. "Sem rota" dizia
+    saber a causa quando só se sabia o efeito.
   */
   'sem-conexao': () => ({
     rotulo: 'sem conexão',
     corpo:
       'Não conseguimos receber a transmissão nesta rede. Ela está no ar, e seguimos tentando.',
-    tom: 'warn',
-    varrendo: false,
+    tom: 'alerta',
+    espera: false,
   }),
   'sem-video': () => ({
     rotulo: 'conectado, sem vídeo',
     corpo:
       'Conectamos, mas o vídeo ainda não chegou. A rede não é o problema aqui; seguimos tentando.',
-    tom: 'warn',
-    varrendo: false,
+    tom: 'alerta',
+    espera: false,
   }),
   'relay-indisponivel': () => ({
     rotulo: 'rota alternativa indisponível',
-    corpo: 'O serviço que ajuda a conectar redes restritas está indisponível agora. A conexão direta também não fechou. Vamos tentar novamente.',
-    tom: 'warn',
-    varrendo: false,
+    corpo:
+      'O serviço que ajuda a conectar redes restritas está indisponível agora. A conexão direta também não fechou. Vamos tentar novamente.',
+    tom: 'alerta',
+    espera: false,
   }),
   'relay-nao-configurado': () => ({
     rotulo: 'sem rota alternativa',
-    corpo: 'Esta transmissão não tem uma rota alternativa configurada, e a conexão direta não fechou. Vamos tentar novamente.',
-    tom: 'warn',
-    varrendo: false,
+    corpo:
+      'Esta transmissão não tem uma rota alternativa configurada, e a conexão direta não fechou. Vamos tentar novamente.',
+    tom: 'alerta',
+    espera: false,
   }),
   'convite-ausente': () => ({
     rotulo: 'link incompleto',
     corpo:
       'Este link não traz o convite da transmissão. Peça o link de novo a quem está transmitindo e cole ele inteiro, com a parte depois do #.',
-    tom: 'warn',
-    varrendo: false,
+    tom: 'alerta',
+    espera: false,
   }),
   'convite-invalido': () => ({
     rotulo: 'convite renovado',
-    corpo:
-      'Quem transmite renovou o convite, e este link não abre mais a sala. Peça o link novo.',
-    tom: 'warn',
-    varrendo: false,
+    corpo: 'Quem transmite renovou o convite, e este link não abre mais a sala. Peça o link novo.',
+    tom: 'alerta',
+    espera: false,
   }),
   removido: () => ({
     rotulo: 'desconectado',
     corpo: 'Quem está transmitindo encerrou seu acesso a esta transmissão.',
-    tom: 'warn',
-    varrendo: false,
+    tom: 'alerta',
+    espera: false,
   }),
   desatualizado: () => ({
     rotulo: 'página desatualizada',
     corpo: 'O Tela foi atualizado desde que esta página abriu. Recarregue para entrar.',
-    tom: 'warn',
-    varrendo: false,
+    tom: 'alerta',
+    espera: false,
   }),
   'sem-servidor': () => ({
     rotulo: 'sem servidor',
     corpo:
       'Não foi possível abrir a conexão. No Brave, desligue os escudos para este site: eles bloqueiam o endereço da transmissão. Extensão de privacidade e proxy de rede também derrubam.',
-    tom: 'warn',
-    varrendo: false,
+    tom: 'alerta',
+    espera: false,
   }),
 };

@@ -1,4 +1,7 @@
-import { Panel, PanelSection } from '../components/Panel.js';
+import { Botao } from '../components/Botao.js';
+import { Cabecalho } from '../components/Cabecalho.js';
+import { VidroCrt } from '../components/EfeitosTv.js';
+import { PainelOsd } from '../components/PainelOsd.js';
 
 type Props = { readonly onHome: () => void };
 
@@ -17,34 +20,35 @@ type Props = { readonly onHome: () => void };
  */
 export function NotFound({ onHome }: Props) {
   return (
-    <main className="flex min-h-dvh items-center justify-center px-4 py-8 sm:px-6">
-      <Panel className="w-full max-w-[560px]">
-        <PanelSection rotulo="endereço inválido">
-          <div className="flex flex-col items-start gap-4 py-3">
-            <p className="text-[17px] leading-relaxed text-text">
+    <div className="flex min-h-dvh flex-col bg-void">
+      <VidroCrt />
+      <Cabecalho marcaHref="/" />
+      <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
+        <PainelOsd titulo="ENDEREÇO INVÁLIDO" className="w-full max-w-[580px]">
+          <div className="flex flex-col items-start gap-5 p-5">
+            <p className="m-0 flex items-start gap-2.5 text-[14px] leading-relaxed text-text">
+              <span aria-hidden="true" className="font-[family-name:var(--font-pixel)] text-accent">
+                !
+              </span>
               Este endereço não tem a forma de um link de transmissão.
             </p>
 
-            <p className="tabular rounded-md border border-line bg-surface px-3 py-2.5 text-[13px] text-muted">
-              tela.gg/<span className="text-text">seunome</span>
+            <p className="numeral m-0 w-full border-2 border-line bg-deep px-4 py-3 text-[clamp(26px,6vw,38px)] text-dim">
+              tela.gg/<span className="text-accent-hi">seunome</span>
             </p>
 
-            <p className="max-w-[46ch] text-[13px] leading-relaxed text-muted">
-              O final tem de 3 a 25 caracteres, só letras minúsculas, números e hífen, e não
-              começa nem termina com hífen. Confira se o que está na barra de endereço bate com
-              o que te mandaram.
+            <p className="m-0 max-w-[52ch] text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
+              O final tem de 3 a 25 caracteres, só letras minúsculas, números e hífen, e não começa
+              nem termina com hífen. Confira se o que está na barra de endereço bate com o que te
+              mandaram.
             </p>
 
-            <button
-              type="button"
-              onClick={onHome}
-              className="inline-flex min-h-11 items-center rounded-sm border border-edge px-4 text-[13px] font-medium text-text transition-colors duration-150 hover:bg-surface"
-            >
-              ir para o início
-            </button>
+            <Botao tom="primaria" onClick={onHome}>
+              IR PARA O INÍCIO
+            </Botao>
           </div>
-        </PanelSection>
-      </Panel>
-    </main>
+        </PainelOsd>
+      </main>
+    </div>
   );
 }

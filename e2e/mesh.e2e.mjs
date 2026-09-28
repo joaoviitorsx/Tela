@@ -61,7 +61,9 @@ ok(quebrados.length === 0, `nenhum 4xx/5xx (${quebrados.join(', ') || 'limpo'})`
 console.log('\n1. O front carrega e a home renderiza');
 const home = await newPage('home');
 await home.goto(WEB, { waitUntil: 'networkidle' });
-const botao = await home.textContent('button').catch(() => null);
+// O primeiro <button> do DOM agora pode ser um passo da trilha (quando o slug
+// salvo já é válido); o principal é o que diz TRANSMITIR.
+const botao = await home.textContent('button:has-text("TRANSMITIR")').catch(() => null);
 ok(botao?.includes('TRANSMITIR'), `home mostra o botão principal (${JSON.stringify(botao)})`);
 const campo = await home.getAttribute('#slug', 'placeholder').catch(() => null);
 ok(campo === 'seunome', 'campo de slug presente');

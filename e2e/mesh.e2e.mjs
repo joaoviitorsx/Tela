@@ -82,6 +82,7 @@ const resultado = await host.evaluate(
   async ([slug, base]) => {
     const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
+    const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
     const shared = await import('/node_modules/@tela/shared/dist/index.js');
 
     const canvas = document.createElement('canvas');
@@ -113,6 +114,8 @@ const resultado = await host.evaluate(
       channel: makeWsSignaling(
         `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`,
       ),
+      // Obrigatório desde a TELA-005: é quem agenda a renovação do ICE.
+      scheduler: makeBrowserScheduler(),
     });
     window.__transport = transport;
 
@@ -205,7 +208,8 @@ if (conectou) {
   console.log('\n   Troca de qualidade ao vivo NÃO pode derrubar quem assiste');
   await host.evaluate(async () => {
     const shared = await import('/node_modules/@tela/shared/dist/index.js');
-    await window.__transport.setPreset(shared.PRESET_720P60_ECO);
+    // O `_ECO` saiu com a recalibração da escada (ADR 0010); o degrau abaixo serve.
+    await window.__transport.setPreset(shared.PRESET_480P60);
   });
   await viewer.waitForTimeout(2000);
   const aindaAssistindo = await viewer.evaluate(() => {

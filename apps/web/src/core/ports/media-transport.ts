@@ -1,7 +1,7 @@
 import type { EncodingPreset, Prioridade, RelayStatus } from '@tela/shared';
 import type { AudioStats } from '../media/audio-stats.js';
 import type { PeerInfo } from '../mesh/mesh-topology.js';
-import type { EntradaDeEspectador } from './signaling-channel.js';
+import type { EntradaDeEspectador, PedidoDeEntrada } from './signaling-channel.js';
 
 /**
  * A fronteira que sustenta a Fase 3 e que já provou o próprio valor.
@@ -225,6 +225,17 @@ export type TransportEvents = {
   'ice-conectado': void;
   /** Só no espectador: quantos estão assistindo, incluindo ele. */
   viewers: { count: number };
+  /** Só no espectador: o pedido está com o transmissor (ADR 0025). */
+  'aguardando-aprovacao': void;
+  /** Só no transmissor: alguém com o convite pede para entrar. */
+  pedido: PedidoDeEntrada;
+  /** Só no transmissor: o pedido sumiu antes da resposta. */
+  'pedido-cancelado': { peerId: string };
+  /**
+   * Só no transmissor: quem é o espectador que entrou. Vem também na
+   * reapresentação depois de um F5 do transmissor, quando a fila já se foi.
+   */
+  espectador: { peerId: string; nome: string; impressao: string };
   reconnecting: void;
   reconnected: void;
   /**
@@ -271,6 +282,8 @@ export type MediaTransport = {
    * que volta faz a malha fechar o peer. Sem `peerId`, todos.
    */
   removeViewers(peerId?: string): void;
+  /** Aceita ou recusa um pedido de entrada (ADR 0025). */
+  responderPedido(peerId: string, aceitar: boolean): void;
 
   publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void>;
   publishAudio(track: MediaStreamTrack): Promise<void>;

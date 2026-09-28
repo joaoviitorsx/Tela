@@ -2,12 +2,14 @@ import { P2P_LIMITS } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AudioUnlock } from '../components/AudioUnlock.js';
 import { BarraEspectador } from '../components/BarraEspectador.js';
+import { EntradaDeApelido } from '../components/EntradaDeApelido.js';
 import { VidroCrt } from '../components/EfeitosTv.js';
 import { IconOlho } from '../components/Icon.js';
 import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
-import { createViewerSession, volumePreference } from '../container.js';
+import { createViewerSession, espectador, volumePreference } from '../container.js';
 import { conviteDoFragmento } from '../core/domain/convite.js';
+import { apelidoValido } from '../core/identity/espectador.js';
 import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { ViewerState } from '../core/media/viewer-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
@@ -43,6 +45,8 @@ const MOTIVO: Record<Exclude<ViewerState['status'], 'watching'>, Motivo> = {
   'convite-ausente': 'convite-ausente',
   'convite-invalido': 'convite-invalido',
   removido: 'removido',
+  'aguardando-aprovacao': 'aguardando-aprovacao',
+  recusado: 'recusado',
   desatualizado: 'desatualizado',
 };
 
@@ -74,6 +78,7 @@ const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>([
   'relay-nao-configurado',
   'sem-servidor',
   'removido',
+  'recusado',
   'desatualizado',
 ]);
 
@@ -177,13 +182,24 @@ export function Viewer({ slug }: Props) {
 
   useTabTitle(watching ? `● ${slug} · Tela` : `${slug} · Tela`);
 
+  // O convite vem do fragmento, que nunca sai do navegador em HTTP.
+  const convite = useMemo(() => conviteDoFragmento(window.location.hash), []);
+  /**
+   * O apelido do pedido (ADR 0025). `null` = ainda não disse quem é: a sessão
+   * nem abre, porque não há pedido sem nome. Link sem convite não pergunta —
+   * não há pedido a fazer.
+   */
+  const [nome, setNome] = useState<string | null>(() => espectador.apelido());
+  const [rascunho, setRascunho] = useState(() => espectador.apelido() ?? '');
+  const precisaNome = convite !== null && nome === null;
+
   useEffect(() => {
-    // O convite vem do fragmento, que nunca sai do navegador em HTTP.
-    void session.open(slug, conviteDoFragmento(window.location.hash));
+    if (precisaNome) return;
+    void session.open(slug, convite, { nome: nome ?? '', chave: espectador.chave() });
     return () => {
       void session.close();
     };
-  }, [session, slug]);
+  }, [session, slug, convite, nome, precisaNome]);
 
   /**
    * `srcObject` não é atributo — precisa ser atribuído na instância.
@@ -328,6 +344,25 @@ export function Viewer({ slug }: Props) {
     comImagem,
   );
 
+  if (precisaNome) {
+    return (
+      <main>
+        <VidroCrt />
+        <EntradaDeApelido
+          slug={slug}
+          valor={rascunho}
+          aoMudar={setRascunho}
+          invalido={rascunho.trim() !== '' && apelidoValido(rascunho) === null}
+          pronto={apelidoValido(rascunho) !== null}
+          aoEnviar={() => {
+            const guardado = espectador.lembrarApelido(rascunho);
+            if (guardado !== null) setNome(guardado);
+          }}
+        />
+      </main>
+    );
+  }
+
   if (!comImagem) {
     // O relay só explica falha de REDE. Conectou e o quadro não veio: é mídia.
     const motivo: Motivo =
@@ -357,6 +392,14 @@ export function Viewer({ slug }: Props) {
                   motivo === 'desatualizado'
                     ? () => window.location.reload()
                     : () => void session.retryNow(),
+              }
+            : {})}
+          {...(motivo === 'recusado' ? { rotuloAcao: 'PEDIR DE NOVO' } : {})}
+          {...(state.status === 'aguardando-aprovacao'
+            ? {
+                nome: state.nome,
+                // Trocar o apelido refaz o pedido com o nome novo.
+                acaoSecundaria: { rotulo: 'trocar apelido', aoClicar: () => setNome(null) },
               }
             : {})}
           diagnostico={

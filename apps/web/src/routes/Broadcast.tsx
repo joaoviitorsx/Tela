@@ -8,6 +8,7 @@ import { Dialogo } from '../components/Dialogo.js';
 import { DiagnosticoConteudo } from '../components/DiagnosticoConteudo.js';
 import { VidroCrt } from '../components/EfeitosTv.js';
 import { FaixaLink } from '../components/FaixaLink.js';
+import { FilaDePedidos } from '../components/FilaDePedidos.js';
 import { BotoesDoCabecalho } from '../components/BotoesDoCabecalho.js';
 import { TesteDeRede } from '../components/TesteDeRede.js';
 import { Led } from '../components/Led.js';
@@ -20,10 +21,12 @@ import {
   identity,
   sondaDeRede,
   volumeTransmissaoPreference,
+  audioCue,
 } from '../container.js';
 import type { BroadcastFailure } from '../core/media/broadcast-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useAvisosAoVivo } from '../react/use-avisos-ao-vivo.js';
+import { useBipeDePedido } from '../react/use-bipe-de-pedido.js';
 import { useBroadcast } from '../react/use-broadcast.js';
 import { useCopia } from '../react/use-copia.js';
 import { useDiagnostico } from '../react/use-diagnostico.js';
@@ -137,6 +140,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
     retomarAudio,
     renovarConvite: renovarConviteDaSessao,
     desconectarTodos,
+    aceitarPedido,
+    recusarPedido,
     pausar,
     retomar,
   } = useBroadcast(session);
@@ -180,7 +185,16 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   const [appAberto, setAppAberto] = useState(false);
   const fecharApp = useCallback(() => setAppAberto(false), []);
 
-  useTabTitle(live ? '● No ar · Tela' : 'Tela');
+  /*
+    Pedidos para assistir (ADR 0025): quem transmite está no jogo, com esta aba
+    atrás. O bipe chama; o contador no título diz quantos esperam.
+  */
+  const pedidos = vivo?.pedidos ?? [];
+  // Os ids viram uma chave de texto dentro do hook: array novo por render não re-dispara.
+  useBipeDePedido(pedidos.map((p) => p.peerId), audioCue.bipe);
+  useTabTitle(
+    live ? `${pedidos.length > 0 ? `(${pedidos.length}) ` : ''}● No ar · Tela` : 'Tela',
+  );
   useWakeLock(live);
   useBeforeUnload(live, () => void session.stop('USER_STOPPED'));
 
@@ -376,7 +390,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
     const peer = vivo.peers[i];
     const n = String(i + 1).padStart(2, '0');
     if (peer === undefined) return { n, nome: null, estado: '—', tom: 'vazio' };
-    const nome = `ESPECTADOR ${i + 1}`;
+    // O apelido que a pessoa deu ao pedir; sem ele (cliente antigo), o número.
+    const nome = vivo.nomes[peer.id]?.toUpperCase() ?? `ESPECTADOR ${i + 1}`;
     if (peer.connectionState !== 'connected') return { n, nome, estado: 'CONECTANDO', tom: 'alerta' };
     return peer.usingRelay
       ? { n, nome, estado: 'VIA TURN', tom: 'alerta' }
@@ -457,6 +472,16 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
         <p className="m-0 text-[13px] text-muted">
           {conectados} de {vivo.maxPeers} assistindo · {stats.rtt}
         </p>
+        {/*
+          Só a contagem, nunca os nomes: esta placa é o que vai na captura se a
+          aba ficar visível. A fila com os botões aparece ao mexer o mouse.
+        */}
+        {pedidos.length > 0 && (
+          <p className="m-0 flex items-center gap-2 font-[family-name:var(--font-pixel)] text-[12px] text-accent-hi">
+            <Led cor="ok" pisca />
+            {pedidos.length === 1 ? '1 PEDIDO PARA ASSISTIR' : `${pedidos.length} PEDIDOS PARA ASSISTIR`}
+          </p>
+        )}
       </div>
 
       <div
@@ -491,6 +516,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
               total={vivo.maxPeers}
               ocupadas={vivo.peers.length}
             />
+
+            <FilaDePedidos pedidos={pedidos} aoAceitar={aceitarPedido} aoRecusar={recusarPedido} />
 
             {avisos.map((aviso) => (
               <Aviso key={aviso.chave} tom="alerta" anuncia>
@@ -622,8 +649,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             <PainelOsd titulo="SALA PRIVADA ▸ CONVITE">
               <div className="flex flex-col gap-3 p-3.5">
                 <p className="m-0 text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
-                  Só entra quem tem o link completo. Renovar gera um link novo: o antigo para de
-                  funcionar para quem chegar depois.
+                  Só entra quem tem o link completo, e cada pessoa pede para entrar. Quem você
+                  aceitou volta sem pedir. Renovar gera um link novo e zera os aceitos.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Botao onClick={() => void renovarConvite()}>

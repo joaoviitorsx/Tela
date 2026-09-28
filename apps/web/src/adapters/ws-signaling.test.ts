@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { PROTOCOL_VERSION } from '@tela/shared';
 import { makeWsSignaling } from './ws-signaling.js';
 
 class FakeSocket {
@@ -76,9 +77,9 @@ async function hostAberto() {
   return { channel, socket };
 }
 
-it('saudação v2 leva protocolo e convite (TELA-018)', async () => {
+it('saudação leva a versão atual do protocolo e o convite (TELA-018)', async () => {
   const { channel, socket } = await hostAberto();
-  expect(JSON.parse(socket.sent[0]!)).toMatchObject({ type: 'host', protocol: 2, invite: 'c'.repeat(22) });
+  expect(JSON.parse(socket.sent[0]!)).toMatchObject({ type: 'host', protocol: PROTOCOL_VERSION, invite: 'c'.repeat(22) });
   channel.close();
 });
 
@@ -113,7 +114,7 @@ it('REMOVED depois de aberto não reconecta sozinho', async () => {
     const channel = makeWsSignaling('ws://test/signal');
     const motivos: string[] = [];
     channel.on('closed', ({ reason }) => motivos.push(reason));
-    const opening = channel.watch('joao', { invite: 'c'.repeat(22) });
+    const opening = channel.watch('joao', { invite: 'c'.repeat(22), nome: 'ana', chave: 'k'.repeat(22) });
     const socket = FakeSocket.created[0]!;
     socket.emit('open');
     socket.emit('message', JSON.stringify({
@@ -128,4 +129,74 @@ it('REMOVED depois de aberto não reconecta sozinho', async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('espera de aprovação (ADR 0025): o relógio da saudação para e o watch só resolve no watching', async () => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    const channel = makeWsSignaling('ws://test/signal');
+    let esperando = 0;
+    channel.on('aguardando-aprovacao', () => { esperando += 1; });
+    let resolvido = false;
+    const opening = channel.watch('joao', { invite: 'c'.repeat(22), nome: 'ana', chave: 'k'.repeat(22) })
+      .then((v) => { resolvido = true; return v; });
+    const socket = FakeSocket.created[0]!;
+    socket.emit('open');
+    expect(JSON.parse(socket.sent[0]!)).toMatchObject({
+      type: 'watch', name: 'ana', viewerKey: 'k'.repeat(22), protocol: PROTOCOL_VERSION,
+    });
+    socket.emit('message', JSON.stringify({ type: 'awaiting-approval' }));
+    expect(esperando).toBe(1);
+    // O transmissor pode demorar minutos: nada de HELLO_TIMEOUT.
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(resolvido).toBe(false);
+    expect(socket.readyState).toBe(FakeSocket.OPEN);
+    socket.emit('message', JSON.stringify({
+      type: 'watching', peerId: 'v_1', hostId: 'h_1', iceServers: [], viewers: 1,
+    }));
+    await expect(opening).resolves.toMatchObject({ selfId: 'v_1' });
+    channel.close();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('DENIED durante a espera rejeita e não reconecta sozinho', async () => {
+  vi.useFakeTimers();
+  try {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.stubGlobal('window', { setTimeout, clearTimeout });
+    const channel = makeWsSignaling('ws://test/signal');
+    const opening = channel.watch('joao', { invite: 'c'.repeat(22), nome: 'ana', chave: 'k'.repeat(22) });
+    const socket = FakeSocket.created[0]!;
+    socket.emit('open');
+    socket.emit('message', JSON.stringify({ type: 'awaiting-approval' }));
+    socket.emit('message', JSON.stringify({ type: 'error', code: 'DENIED' }));
+    await expect(opening).rejects.toEqual({ code: 'DENIED' });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(FakeSocket.created).toHaveLength(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('transmissor recebe pedidos e responde com admit/deny', async () => {
+  const { channel, socket } = await hostAberto();
+  const pedidos: unknown[] = [];
+  const cancelados: string[] = [];
+  channel.on('pedido', (p) => pedidos.push(p));
+  channel.on('pedido-cancelado', ({ peerId }) => cancelados.push(peerId));
+  socket.emit('message', JSON.stringify({ type: 'join-request', peerId: 'v_2', name: 'ana', fingerprint: 'f'.repeat(64) }));
+  socket.emit('message', JSON.stringify({ type: 'join-cancelled', peerId: 'v_3' }));
+  expect(pedidos).toEqual([{ peerId: 'v_2', nome: 'ana', impressao: 'f'.repeat(64) }]);
+  expect(cancelados).toEqual(['v_3']);
+  channel.responderPedido('v_2', true);
+  channel.responderPedido('v_4', false);
+  expect(socket.sent.slice(-2).map((m) => JSON.parse(m))).toEqual([
+    { type: 'admit', peerId: 'v_2' },
+    { type: 'deny', peerId: 'v_4' },
+  ]);
+  channel.close();
 });

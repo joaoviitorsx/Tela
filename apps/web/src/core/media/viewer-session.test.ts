@@ -627,3 +627,52 @@ describe('ViewerSession — convite (TELA-018)', () => {
     expect(ctx.session.getState()).toEqual({ status: 'desatualizado', slug: SLUG });
   });
 });
+
+describe('ViewerSession — aprovação manual (ADR 0025)', () => {
+  const QUEM = { nome: 'ana', chave: 'k'.repeat(22) };
+
+  it('manda apelido e chave, e espera sem relógio de conexão', async () => {
+    const ctx = build((t) => { t.esperaAprovacao = true; });
+    void ctx.session.open(SLUG, CONVITE, QUEM);
+    await settle();
+    expect(ctx.session.getState()).toEqual({ status: 'aguardando-aprovacao', slug: SLUG, nome: 'ana' });
+    expect(ctx.criados[0]?.watchIdentity).toMatchObject({ nome: 'ana', chave: 'k'.repeat(22) });
+    // Minutos de espera não viram "sem conexão".
+    ctx.scheduler.advance(10 * 60_000);
+    await settle();
+    expect(ctx.session.getState().status).toBe('aguardando-aprovacao');
+  });
+
+  it('aceito: segue para conectar', async () => {
+    const ctx = build((t) => { t.esperaAprovacao = true; });
+    void ctx.session.open(SLUG, CONVITE, QUEM);
+    await settle();
+    ctx.criados[0]?.aprovarEspera();
+    await settle();
+    expect(ctx.session.getState().status).toBe('connecting');
+  });
+
+  it('recusado: estado final, sem tentar de novo sozinho', async () => {
+    const ctx = build((t) => { t.esperaAprovacao = true; });
+    void ctx.session.open(SLUG, CONVITE, QUEM);
+    await settle();
+    ctx.criados[0]?.recusarEspera();
+    await settle();
+    expect(ctx.session.getState()).toEqual({ status: 'recusado', slug: SLUG });
+    ctx.scheduler.advance(10 * 60_000);
+    await settle();
+    expect(ctx.criados).toHaveLength(1);
+  });
+
+  it('pedir de novo depois de recusado é gesto explícito', async () => {
+    const ctx = build((t) => { t.esperaAprovacao = true; });
+    void ctx.session.open(SLUG, CONVITE, QUEM);
+    await settle();
+    ctx.criados[0]?.recusarEspera();
+    await settle();
+    void ctx.session.retryNow();
+    await settle();
+    expect(ctx.criados).toHaveLength(2);
+    expect(ctx.session.getState().status).toBe('aguardando-aprovacao');
+  });
+});

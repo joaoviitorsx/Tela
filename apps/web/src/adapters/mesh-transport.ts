@@ -107,7 +107,14 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           recoveries.get(peerId)?.close();
           recoveries.delete(peerId);
         }),
-        deps.channel.on('peer-joined', ({ peerId, attemptId }) => mesh.admit(peerId, attemptId)),
+        deps.channel.on('peer-joined', ({ peerId, attemptId, nome, impressao }) => {
+          if (nome !== undefined && impressao !== undefined) {
+            emitter.emit('espectador', { peerId, nome, impressao });
+          }
+          mesh.admit(peerId, attemptId);
+        }),
+        deps.channel.on('pedido', (pedido) => emitter.emit('pedido', pedido)),
+        deps.channel.on('pedido-cancelado', ({ peerId }) => emitter.emit('pedido-cancelado', { peerId })),
         deps.channel.on('peer-left', ({ peerId }) => {
           recoveries.get(peerId)?.close();
           recoveries.delete(peerId);
@@ -155,7 +162,16 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
     },
 
     async watch(slug, entrada) {
-      const opened = await deps.channel.watch(slug, entrada);
+      // Antes do `await`: o aviso de espera chega ANTES de o `watch` resolver.
+      const semEspera = deps.channel.on('aguardando-aprovacao', () =>
+        emitter.emit('aguardando-aprovacao', undefined),
+      );
+      let opened;
+      try {
+        opened = await deps.channel.watch(slug, entrada);
+      } finally {
+        unsubscribes.push(semEspera);
+      }
       const media = mediaStream();
       let delivered = false;
       const recovery = new PeerRecovery({
@@ -344,6 +360,10 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
     removeViewers(peerId) {
       deps.channel.removeViewers(peerId);
+    },
+
+    responderPedido(peerId, aceitar) {
+      deps.channel.responderPedido(peerId, aceitar);
     },
 
     async setUplinkBudget(bps) {

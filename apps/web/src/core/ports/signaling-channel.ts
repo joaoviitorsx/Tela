@@ -27,9 +27,28 @@ export type ChannelOpened = IceCredentials & {
   readonly viewers: number;
 };
 
+/** Alguém com o convite pede para entrar (ADR 0025). Só o transmissor recebe. */
+export type PedidoDeEntrada = {
+  readonly peerId: string;
+  readonly nome: string;
+  /** sha256 da chave do navegador de quem pede, calculado pelo servidor. */
+  readonly impressao: string;
+};
+
 export type ChannelEvents = {
   /** Um espectador entrou (só o transmissor recebe). */
-  'peer-joined': { peerId: string; attemptId?: string | undefined };
+  'peer-joined': {
+    peerId: string;
+    attemptId?: string | undefined;
+    nome?: string | undefined;
+    impressao?: string | undefined;
+  };
+  /** Só o transmissor: pedido novo, ou reapresentado depois de reconectar. */
+  'pedido': PedidoDeEntrada;
+  /** Só o transmissor: quem pedia desistiu ou caiu antes da resposta. */
+  'pedido-cancelado': { peerId: string };
+  /** Só o espectador: convite aceito, o pedido está com o transmissor. */
+  'aguardando-aprovacao': void;
   'peer-left': { peerId: string };
   /** Quantos estão assistindo. Só o espectador recebe. */
   viewers: { count: number };
@@ -52,6 +71,10 @@ export type SignalingError = { readonly code: SignalingErrorCode };
 /** `invite` é o segredo do link; o servidor guarda só o hash dele. */
 export type EntradaDeEspectador = {
   readonly invite: string;
+  /** Como o transmissor vai ver quem pede (ADR 0025). */
+  readonly nome: string;
+  /** Segredo deste navegador; o transmissor só vê o hash dele. */
+  readonly chave: string;
   readonly participantId?: string;
   readonly attemptId?: string;
 };
@@ -68,6 +91,8 @@ export type SignalingChannel = {
   setInvite(invite: string): Promise<void>;
   /** Tira um espectador, ou todos sem `peerId`. Não é banimento. */
   removeViewers(peerId?: string): void;
+  /** Só o transmissor: aceita ou recusa um pedido de entrada. */
+  responderPedido(peerId: string, aceitar: boolean): void;
   /** Renova credenciais do mesmo participante sem abrir outro socket. */
   refreshIce(): Promise<IceCredentials>;
   /** Envia payload opaco. `to` omitido = para o transmissor. */

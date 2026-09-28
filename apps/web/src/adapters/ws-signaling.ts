@@ -48,6 +48,8 @@ const NAO_ADIANTA_INSISTIR: ReadonlySet<string> = new Set([
   'INVITE_INVALID',
   'REMOVED',
   'PROTOCOL_MISMATCH',
+  // Recusado pelo transmissor: pedir de novo é escolha da pessoa, não do laço.
+  'DENIED',
 ]);
 
 export function makeWsSignaling(baseUrl: string): SignalingChannel {
@@ -177,11 +179,30 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
           aoFalhar({ code: message.code });
           return;
         }
+        /*
+          O pedido está com o transmissor, que pode estar no meio de uma
+          partida: esperar é o caminho normal, não servidor mudo. O relógio de
+          saudação para aqui, e a promessa só resolve no `watching`.
+        */
+        if (message.type === 'awaiting-approval') {
+          window.clearTimeout(timer);
+          emitter.emit('aguardando-aprovacao', undefined);
+          return;
+        }
       }
 
       switch (message.type) {
         case 'peer-joined':
-          return emitter.emit('peer-joined', { peerId: message.peerId, attemptId: message.attemptId });
+          return emitter.emit('peer-joined', {
+            peerId: message.peerId, attemptId: message.attemptId,
+            nome: message.name, impressao: message.fingerprint,
+          });
+        case 'join-request':
+          return emitter.emit('pedido', {
+            peerId: message.peerId, nome: message.name, impressao: message.fingerprint,
+          });
+        case 'join-cancelled':
+          return emitter.emit('pedido-cancelado', { peerId: message.peerId });
         case 'peer-left':
           return emitter.emit('peer-left', { peerId: message.peerId });
         case 'viewers':
@@ -334,6 +355,8 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
         const hello: ClientMessage = {
           type: 'watch', protocol: PROTOCOL_VERSION, slug,
           invite: entrada.invite,
+          name: entrada.nome,
+          viewerKey: entrada.chave,
           ...(entrada.participantId === undefined ? {} : { participantId: entrada.participantId }),
           ...(entrada.attemptId === undefined ? {} : { attemptId: entrada.attemptId }),
         };
@@ -394,6 +417,11 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       const message: ClientMessage =
         peerId === undefined ? { type: 'remove-viewers' } : { type: 'remove-viewers', peerId };
       socket.send(JSON.stringify(message));
+    },
+
+    responderPedido(peerId, aceitar) {
+      if (socket === null || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: aceitar ? 'admit' : 'deny', peerId } satisfies ClientMessage));
     },
 
     send(payload, to) {

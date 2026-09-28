@@ -95,6 +95,14 @@ export type ViewerState =
   | { readonly status: 'convite-ausente'; readonly slug: string }
   | { readonly status: 'convite-invalido'; readonly slug: string }
   | { readonly status: 'removido'; readonly slug: string }
+  /**
+   * Aprovação manual (ADR 0025). O convite valeu e o pedido está com o
+   * transmissor — que pode estar no meio de uma partida. Esperar aqui é o
+   * caminho normal, então nenhum relógio de conexão corre.
+   */
+  | { readonly status: 'aguardando-aprovacao'; readonly slug: string; readonly nome: string }
+  /** O transmissor recusou. Pedir de novo é gesto da pessoa, nunca do laço. */
+  | { readonly status: 'recusado'; readonly slug: string }
   /** Página de uma versão que o servidor não fala mais: recarregar resolve. */
   | { readonly status: 'desatualizado'; readonly slug: string };
 
@@ -116,9 +124,10 @@ function audioInicial(stream: MediaStream): EstadoAudio {
 }
 
 /** Erros em que tentar de novo sozinho não muda a resposta. */
-const FIM_SEM_RETRY: Partial<Record<string, 'convite-invalido' | 'removido' | 'desatualizado'>> = {
+const FIM_SEM_RETRY: Partial<Record<string, 'convite-invalido' | 'removido' | 'recusado' | 'desatualizado'>> = {
   INVITE_INVALID: 'convite-invalido',
   REMOVED: 'removido',
+  DENIED: 'recusado',
   PROTOCOL_MISMATCH: 'desatualizado',
   BAD_MESSAGE: 'desatualizado',
 };
@@ -193,6 +202,10 @@ export class ViewerSession {
   private slug = '';
   /** Segredo do link. `null` quando o link veio sem ele. */
   private invite: string | null = null;
+  /** Como o transmissor vai ver o pedido, e a chave deste navegador. */
+  private quem: { readonly nome: string; readonly chave: string } = { nome: '', chave: '' };
+  /** O pedido está com o transmissor: o relógio de conexão não corre. */
+  private aguardando = false;
   private readonly participantId: string;
   private disposed = false;
   /** Cancela o listener de visibilidade. */
@@ -277,6 +290,12 @@ export class ViewerSession {
         case 'removido':
           this.diario.evento('session', 'REMOVED', agora);
           break;
+        case 'aguardando-aprovacao':
+          this.diario.evento('signaling', 'AWAITING_APPROVAL', agora);
+          break;
+        case 'recusado':
+          this.diario.evento('session', 'DENIED', agora);
+          break;
         case 'desatualizado':
           this.diario.evento('signaling', 'OUTDATED', agora);
           break;
@@ -290,7 +309,11 @@ export class ViewerSession {
     return this.disposed || this.epoch !== epoch;
   }
 
-  async open(slug: string, invite: string | null = null): Promise<void> {
+  async open(
+    slug: string,
+    invite: string | null = null,
+    quem: { readonly nome: string; readonly chave: string } = this.quem,
+  ): Promise<void> {
     // O epoch sobe ANTES de qualquer await. React em StrictMode monta, desmonta
     // e monta de novo, então dois `open` correm juntos — e o segundo precisa
     // invalidar o primeiro no instante em que começa, não depois do primeiro
@@ -300,6 +323,7 @@ export class ViewerSession {
 
     this.slug = slug;
     this.invite = invite;
+    this.quem = quem;
     this.disposed = false;
     this.pollMs = POLL_MIN_MS;
 
@@ -378,6 +402,7 @@ export class ViewerSession {
      */
     const transport = this.deps.transport();
     const cancels: Cancel[] = [];
+    this.aguardando = false;
 
     let delivered = false;
     let iceConectou = false;
@@ -402,6 +427,11 @@ export class ViewerSession {
     };
 
     cancels.push(
+      transport.on('aguardando-aprovacao', () => {
+        if (this.stale(epoch)) return;
+        this.aguardando = true;
+        this.setState({ status: 'aguardando-aprovacao', slug: this.slug, nome: this.quem.nome });
+      }),
       transport.on('ice-conectado', () => {
         if (this.stale(epoch)) return;
         iceConectou = true;
@@ -481,16 +511,24 @@ export class ViewerSession {
     try {
       const opened = await this.withTimeout(transport.watch(this.slug, {
         invite: this.invite ?? '',
+        nome: this.quem.nome,
+        chave: this.quem.chave,
         participantId: this.participantId,
         attemptId: (this.deps.diagnosticId ?? idLocal)(),
       }), epoch);
       relayStatus = opened.relayStatus;
+      this.aguardando = false;
+      // Aceito: daqui em diante é conexão, e é isso que a tela diz.
+      if (!this.stale(epoch) && this.state.status === 'aguardando-aprovacao') {
+        this.setState({ status: 'connecting', slug: this.slug });
+      }
       if (!this.stale(epoch) && relayStatus !== null) {
         this.diario.evento('turn', relayStatus === 'available' ? 'RELAY_AVAILABLE'
           : relayStatus === 'unavailable' ? 'RELAY_UNAVAILABLE' : 'RELAY_NOT_CONFIGURED',
         this.deps.scheduler.now());
       }
     } catch (error) {
+      this.aguardando = false;
       await abandonar();
       if (this.stale(epoch)) return;
       if (isSignalingError(error) && error.code === 'CHANNEL_FULL') {
@@ -590,11 +628,17 @@ export class ViewerSession {
   private withTimeout<T>(promise: Promise<T>, epoch: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       let settled = false;
-      const cancel = this.deps.scheduler.after(CONNECT_TIMEOUT_MS, () => {
-        if (settled || this.stale(epoch)) return;
-        settled = true;
-        reject(new Error('CONNECT_TIMEOUT'));
-      });
+      let cancel: Cancel = () => undefined;
+      const armar = (): void => {
+        cancel = this.deps.scheduler.after(CONNECT_TIMEOUT_MS, () => {
+          if (settled || this.stale(epoch)) return;
+          // Esperando o transmissor responder não é negociação travada.
+          if (this.aguardando) return armar();
+          settled = true;
+          reject(new Error('CONNECT_TIMEOUT'));
+        });
+      };
+      armar();
       promise.then(
         (value) => {
           if (settled) return;

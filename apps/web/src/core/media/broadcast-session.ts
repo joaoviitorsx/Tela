@@ -1,4 +1,5 @@
 import { Emitter } from '../emitter.js';
+import { type Aprovados, aprovadosEmMemoria } from '../identity/aprovados.js';
 import type { AudioCapture } from '../ports/audio-capture.js';
 import type { AudioGain, EstadoGrafo } from '../ports/audio-gain.js';
 import type {
@@ -68,6 +69,14 @@ export type BroadcastFailure =
  * União discriminada: estado impossível não é representável.
  * Não existe `live` sem link, nem `ended` sem motivo.
  */
+/** Alguém com o convite esperando o dono responder (ADR 0025). */
+export type PedidoPendente = {
+  readonly peerId: string;
+  readonly nome: string;
+  /** Quando o pedido chegou, no relógio do scheduler. */
+  readonly desde: number;
+};
+
 export type BroadcastState =
   | { readonly status: 'idle' }
   | { readonly status: 'requesting-capture' }
@@ -79,6 +88,10 @@ export type BroadcastState =
       readonly presetId: PresetId;
       readonly presetForced: boolean;
       readonly peers: readonly PeerInfo[];
+      /** Pedidos esperando resposta, do mais antigo ao mais novo. */
+      readonly pedidos: readonly PedidoPendente[];
+      /** Apelido de quem já entrou, por `peerId`. */
+      readonly nomes: Readonly<Record<string, string>>;
       readonly maxPeers: number;
       readonly stats: MediaStats | null;
       readonly hasAudio: boolean;
@@ -180,6 +193,11 @@ export type BroadcastSessionDeps = {
    * `renovar` troca e guarda o novo. Quem implementa é a identidade do dono.
    */
   convite: { atual(): string; renovar(): string };
+  /**
+   * Quem este aparelho já aceitou (ADR 0025): quem volta não pede de novo.
+   * Opcional só para testes e simulador; sem ele a memória dura a sessão.
+   */
+  aprovados?: Aprovados;
   /**
    * Quadro da pausa de privacidade. Opcional: sem ele a pausa desliga a
    * trilha (`enabled = false`), que manda preto — neutro, mas mudo sobre o
@@ -476,6 +494,8 @@ export class BroadcastSession {
       30 fps —, nunca só o framerate: pela R5, 30 fps sozinho não alivia nada.
     */
     this.prioridade = options.prioridade ?? 'fluidez';
+    this.pedidos.clear();
+    this.quem.clear();
     // Estado que sobrevivia entre transmissões e não devia.
     this.calmaria = 0;
     this.semImagem = 0;
@@ -605,6 +625,14 @@ export class BroadcastSession {
     if (this.stale(epoch)) return this.abandon();
 
     this.unsubscribes.push(
+      this.deps.transport.on('pedido', (pedido) => this.onPedido(pedido)),
+      this.deps.transport.on('pedido-cancelado', ({ peerId }) => {
+        if (this.pedidos.delete(peerId)) this.publicarPedidos();
+      }),
+      this.deps.transport.on('espectador', ({ peerId, nome, impressao }) => {
+        this.quem.set(peerId, { nome, impressao });
+        this.publicarPedidos();
+      }),
       this.deps.transport.on('peers', (peers) => this.onPeers(peers)),
       this.deps.transport.on('signaling-lost', () => this.onSignalingLost()),
       this.deps.transport.on('signaling-restored', () => this.onSignalingRestored()),
@@ -630,6 +658,8 @@ export class BroadcastSession {
       presetId: this.presetId,
       presetForced: false,
       peers: [],
+      pedidos: this.listaDePedidos(),
+      nomes: this.listaDeNomes(),
       maxPeers: this.maxPeers,
       stats: null,
       hasAudio: this.audioTrack !== null,
@@ -1291,6 +1321,8 @@ export class BroadcastSession {
     if (this.state.status !== 'live') return false;
     const slug = this.state.slug;
     const novo = this.deps.convite.renovar();
+    // Convite novo, lista nova: quem volta pelo link novo pede de novo.
+    this.aprovados.limpar();
     let confirmado = true;
     try {
       await this.deps.transport.setInvite(novo);
@@ -1308,7 +1340,73 @@ export class BroadcastSession {
    */
   desconectarTodos(): void {
     if (this.state.status !== 'live') return;
+    // Tirar todo mundo desfaz as aprovações: quem voltar pelo link pede de novo.
+    this.aprovados.limpar();
     this.deps.transport.removeViewers();
+  }
+
+  /* ─────────────── aprovação manual (ADR 0025) ─────────────── */
+
+  private get aprovados(): Aprovados {
+    return (this.aprovadosPadrao ??= this.deps.aprovados ?? aprovadosEmMemoria());
+  }
+  private aprovadosPadrao: Aprovados | null = null;
+
+  /** Pedidos esperando resposta, por `peerId`. Map guarda a ordem de chegada. */
+  private readonly pedidos = new Map<string, { nome: string; impressao: string; desde: number }>();
+  /** Quem já entrou: apelido e impressão, por `peerId`. */
+  private readonly quem = new Map<string, { nome: string; impressao: string }>();
+
+  private onPedido(pedido: { peerId: string; nome: string; impressao: string }): void {
+    const agora = this.deps.scheduler.now();
+    /*
+      Já aceito neste aparelho: entra sem perguntar. É o que faz uma queda de
+      rede, um F5 do amigo ou a transmissão de amanhã não virarem pedido novo.
+    */
+    if (this.aprovados.tem(pedido.impressao)) {
+      this.diario.evento('session', 'JOIN_APPROVED', agora);
+      this.deps.transport.responderPedido(pedido.peerId, true);
+      return;
+    }
+    // Reapresentado depois de reconectar: mantém a hora original.
+    const anterior = this.pedidos.get(pedido.peerId);
+    this.pedidos.set(pedido.peerId, {
+      nome: pedido.nome, impressao: pedido.impressao, desde: anterior?.desde ?? agora,
+    });
+    if (anterior === undefined) this.diario.evento('session', 'JOIN_REQUESTED', agora);
+    this.publicarPedidos();
+  }
+
+  /** Aceita e lembra: a mesma pessoa não pede de novo até renovar o convite. */
+  aceitarPedido(peerId: string): void {
+    const pedido = this.pedidos.get(peerId);
+    if (pedido === undefined) return;
+    this.pedidos.delete(peerId);
+    this.aprovados.aprovar(pedido.impressao);
+    this.diario.evento('session', 'JOIN_APPROVED', this.deps.scheduler.now());
+    this.deps.transport.responderPedido(peerId, true);
+    this.publicarPedidos();
+  }
+
+  /** Recusa só este pedido. Não é bloqueio: a pessoa pode pedir de novo. */
+  recusarPedido(peerId: string): void {
+    if (!this.pedidos.delete(peerId)) return;
+    this.diario.evento('session', 'JOIN_REFUSED', this.deps.scheduler.now());
+    this.deps.transport.responderPedido(peerId, false);
+    this.publicarPedidos();
+  }
+
+  private listaDePedidos(): readonly PedidoPendente[] {
+    return [...this.pedidos].map(([peerId, p]) => ({ peerId, nome: p.nome, desde: p.desde }));
+  }
+
+  private listaDeNomes(): Readonly<Record<string, string>> {
+    return Object.fromEntries([...this.quem].map(([peerId, q]) => [peerId, q.nome]));
+  }
+
+  private publicarPedidos(): void {
+    if (this.state.status !== 'live') return;
+    this.setState({ ...this.state, pedidos: this.listaDePedidos(), nomes: this.listaDeNomes() });
   }
 
   /** Pausa em curso. Espelha `state.pausa`, e sobrevive a trocas de estado. */

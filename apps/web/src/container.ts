@@ -16,6 +16,8 @@ import { makeWsSignaling } from './adapters/ws-signaling.js';
 import type { SlugPolicy } from './core/domain/slug.js';
 import { linkComConvite } from './core/domain/convite.js';
 import { makeIdentity } from './core/identity/owner-token.js';
+import { makeAprovados } from './core/identity/aprovados.js';
+import { makeEspectador } from './core/identity/espectador.js';
 import { BroadcastSession } from './core/media/broadcast-session.js';
 import { ViewerSession } from './core/media/viewer-session.js';
 import type { AbreVitrine } from './core/ports/crt-vitrine.js';
@@ -60,6 +62,9 @@ const SIGNAL_URL =
   `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/signal`;
 
 export const identity = makeIdentity(storage, makeCryptoRandom());
+/** Quem assiste: chave do navegador e apelido (ADR 0025). */
+export const espectador = makeEspectador(storage, makeCryptoRandom());
+const aprovados = makeAprovados(storage);
 
 export const policy: SlugPolicy = { reserved: RESERVED, offensive: OFFENSIVE };
 
@@ -127,6 +132,7 @@ export function createBroadcastSession(): BroadcastSession {
     scheduler,
     shareUrlFor,
     convite: { atual: () => identity.convite(), renovar: () => identity.renovarConvite() },
+    aprovados,
     quadroNeutro: makeCanvasQuadroNeutro(),
     createStream: (tracks) => new MediaStream([...tracks]),
     diagnosticId,

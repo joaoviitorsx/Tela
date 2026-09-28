@@ -280,10 +280,37 @@ export class FakeMediaTransport implements MediaTransport {
     this.removidos.push(peerId ?? null);
   }
 
+  /** Respostas a pedidos de entrada, em ordem (ADR 0025). */
+  readonly respostas: { peerId: string; aceitar: boolean }[] = [];
+  responderPedido(peerId: string, aceitar: boolean): void {
+    this.respostas.push({ peerId, aceitar });
+  }
+
+  /**
+   * Quando true, `watch` avisa `aguardando-aprovacao` e só resolve em
+   * `aprovarEspera()` — ou rejeita com `DENIED` em `recusarEspera()`.
+   */
+  esperaAprovacao = false;
+  private soltarEspera: ((aceito: boolean) => void) | null = null;
+  aprovarEspera(): void {
+    this.soltarEspera?.(true);
+  }
+  recusarEspera(): void {
+    this.soltarEspera?.(false);
+  }
+
   async watch(slug: string, entrada: EntradaDeEspectador): Promise<{ relayStatus: 'available' | 'not-configured' | 'unavailable' | null }> {
     this.watchIdentity = entrada;
     if (this.watchError !== null) throw this.watchError;
     if (this.hangOnWatch) return new Promise(() => undefined);
+    if (this.esperaAprovacao) {
+      this.emitter.emit('aguardando-aprovacao', undefined);
+      const aceito = await new Promise<boolean>((resolve) => {
+        this.soltarEspera = resolve;
+      });
+      this.soltarEspera = null;
+      if (!aceito) throw { code: 'DENIED' };
+    }
     this.watched = slug;
     return { relayStatus: this.relayStatus };
   }
@@ -438,6 +465,10 @@ export class FakeSignalingChannel implements SignalingChannel {
   }
   removeViewers(peerId?: string): void {
     this.removidos.push(peerId ?? null);
+  }
+  readonly respostas: { peerId: string; aceitar: boolean }[] = [];
+  responderPedido(peerId: string, aceitar: boolean): void {
+    this.respostas.push({ peerId, aceitar });
   }
 
   async refreshIce() {

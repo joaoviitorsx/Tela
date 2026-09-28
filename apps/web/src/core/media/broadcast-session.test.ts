@@ -1866,3 +1866,98 @@ describe('BroadcastSession — o áudio sai do orçamento antes do vídeo (TELA-
     expect(sem - com).toBe(141_000);
   });
 });
+
+describe('BroadcastSession — aprovação manual (ADR 0025)', () => {
+  const pedido = (peerId: string, nome = 'ana', impressao = `f-${nome}`.padEnd(64, '0')) =>
+    ({ peerId, nome, impressao });
+
+  it('pedido novo entra na fila do estado, sem resposta automática', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    const s = ctx.session.getState();
+    expect(s.status === 'live' && s.pedidos.map((p) => p.nome)).toEqual(['ana']);
+    expect(ctx.transport.respostas).toEqual([]);
+  });
+
+  it('aceitar responde, tira da fila e lembra: a mesma pessoa volta sem pedir', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    ctx.session.aceitarPedido('v_1');
+    expect(ctx.transport.respostas).toEqual([{ peerId: 'v_1', aceitar: true }]);
+    const s = ctx.session.getState();
+    expect(s.status === 'live' && s.pedidos).toEqual([]);
+
+    // Caiu e voltou com outro peerId, mesmo navegador: aceita sozinho.
+    ctx.transport.emit('pedido', pedido('v_9'));
+    expect(ctx.transport.respostas.at(-1)).toEqual({ peerId: 'v_9', aceitar: true });
+    const depois = ctx.session.getState();
+    expect(depois.status === 'live' && depois.pedidos).toEqual([]);
+  });
+
+  it('recusar responde e não lembra: o próximo pedido volta para a fila', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    ctx.session.recusarPedido('v_1');
+    expect(ctx.transport.respostas).toEqual([{ peerId: 'v_1', aceitar: false }]);
+    ctx.transport.emit('pedido', pedido('v_2'));
+    const s = ctx.session.getState();
+    expect(s.status === 'live' && s.pedidos.map((p) => p.peerId)).toEqual(['v_2']);
+  });
+
+  it('pedido cancelado sai da fila; responder depois é silêncio', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    ctx.transport.emit('pedido-cancelado', { peerId: 'v_1' });
+    ctx.session.aceitarPedido('v_1');
+    expect(ctx.transport.respostas).toEqual([]);
+    const s = ctx.session.getState();
+    expect(s.status === 'live' && s.pedidos).toEqual([]);
+  });
+
+  it('renovar o convite zera os aprovados', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    ctx.session.aceitarPedido('v_1');
+    await ctx.session.renovarConvite();
+    ctx.transport.emit('pedido', pedido('v_2'));
+    const s = ctx.session.getState();
+    expect(s.status === 'live' && s.pedidos.map((p) => p.peerId)).toEqual(['v_2']);
+  });
+
+  it('desconectar todos zera os aprovados', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    ctx.session.aceitarPedido('v_1');
+    ctx.session.desconectarTodos();
+    ctx.transport.emit('pedido', pedido('v_2'));
+    const s = ctx.session.getState();
+    expect(s.status === 'live' && s.pedidos.map((p) => p.peerId)).toEqual(['v_2']);
+  });
+
+  it('pedido reapresentado depois de reconectar não duplica nem perde a hora', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    const antes = ctx.session.getState();
+    ctx.scheduler.advance(5_000);
+    ctx.transport.emit('pedido', pedido('v_1'));
+    const depois = ctx.session.getState();
+    expect(depois.status === 'live' && depois.pedidos).toHaveLength(1);
+    expect(depois.status === 'live' && depois.pedidos[0]?.desde)
+      .toBe(antes.status === 'live' ? antes.pedidos[0]?.desde : -1);
+  });
+
+  it('quem entrou ganha nome no estado', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.emit('espectador', { peerId: 'v_1', nome: 'ana', impressao: 'f'.repeat(64) });
+    const s = ctx.session.getState();
+    expect(s.status === 'live' && s.nomes).toEqual({ v_1: 'ana' });
+  });
+});

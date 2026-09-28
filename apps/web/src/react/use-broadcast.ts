@@ -24,6 +24,9 @@ export type BroadcastControls = {
   /** Troca o convite; `true` quando o servidor confirmou. */
   renovarConvite: () => Promise<boolean>;
   desconectarTodos: () => void;
+  /** Aprovação manual (ADR 0025). */
+  aceitarPedido: (peerId: string) => void;
+  recusarPedido: (peerId: string) => void;
   /** Pausa de privacidade: quadro neutro no lugar da tela; som só se pedido. */
   pausar: (opcoes?: { readonly manterSom?: boolean }) => Promise<void>;
   retomar: () => Promise<void>;
@@ -82,6 +85,8 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
   const retomarAudio = useCallback(() => session.retomarAudio(), [session]);
   const renovarConvite = useCallback(() => session.renovarConvite(), [session]);
   const desconectarTodos = useCallback(() => session.desconectarTodos(), [session]);
+  const aceitarPedido = useCallback((peerId: string) => session.aceitarPedido(peerId), [session]);
+  const recusarPedido = useCallback((peerId: string) => session.recusarPedido(peerId), [session]);
   const pausar = useCallback(
     (opcoes?: { readonly manterSom?: boolean }) => session.pausar(opcoes),
     [session],
@@ -99,6 +104,8 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
     retomarAudio,
     renovarConvite,
     desconectarTodos,
+    aceitarPedido,
+    recusarPedido,
     pausar,
     retomar,
   };

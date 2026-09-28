@@ -16,6 +16,8 @@ export type Motivo =
   | 'convite-ausente'
   | 'convite-invalido'
   | 'removido'
+  | 'aguardando-aprovacao'
+  | 'recusado'
   | 'desatualizado';
 
 type Props = {
@@ -30,6 +32,12 @@ type Props = {
   readonly etapa?: 'procurando' | 'negociando';
   /** Só chega nos motivos que pedem ação humana. */
   readonly onTentarNovamente?: () => void;
+  /** O texto do botão de ação, quando "tentar novamente" não é o que se faz. */
+  readonly rotuloAcao?: string;
+  /** Ação menor, abaixo da principal (ex.: trocar o apelido do pedido). */
+  readonly acaoSecundaria?: { readonly rotulo: string; readonly aoClicar: () => void };
+  /** Como o pedido aparece para quem transmite (ADR 0025). */
+  readonly nome?: string;
   readonly diagnostico?: ReactNode;
 };
 
@@ -60,9 +68,12 @@ export function OfflineState({
   maxPeers,
   etapa = 'procurando',
   onTentarNovamente,
+  rotuloAcao = 'TENTAR NOVAMENTE',
+  acaoSecundaria,
+  nome = '',
   diagnostico,
 }: Props) {
-  const { rotulo, corpo, tom, espera } = TEXTO[motivo](maxPeers);
+  const { rotulo, corpo, tom, espera } = TEXTO[motivo](maxPeers, nome);
   const sintonizando = motivo === 'conectando';
 
   return (
@@ -118,8 +129,17 @@ export function OfflineState({
 
           {onTentarNovamente && (
             <Botao tom="primaria" onClick={onTentarNovamente}>
-              TENTAR NOVAMENTE
+              {rotuloAcao}
             </Botao>
+          )}
+          {acaoSecundaria && (
+            <button
+              type="button"
+              onClick={acaoSecundaria.aoClicar}
+              className="min-h-11 px-3 font-[family-name:var(--font-pixel)] text-[11px] text-muted underline decoration-dotted underline-offset-4 hover:text-accent-hi"
+            >
+              {acaoSecundaria.rotulo}
+            </button>
           )}
         </div>
         {diagnostico}
@@ -146,7 +166,7 @@ type Conteudo = {
  * Os `rotulo` de `offline`, `conectando`, `cheio`, `convite-*` são os que o E2E
  * (`e2e/mesh.e2e.mjs`) procura no texto da página. Não mude sem mudar lá.
  */
-const TEXTO: Record<Motivo, (maxPeers: number) => Conteudo> = {
+const TEXTO: Record<Motivo, (maxPeers: number, nome: string) => Conteudo> = {
   conectando: () => ({
     rotulo: 'conectando',
     corpo: 'Procurando a transmissão e negociando a conexão direta.',
@@ -213,6 +233,18 @@ const TEXTO: Record<Motivo, (maxPeers: number) => Conteudo> = {
   'convite-invalido': () => ({
     rotulo: 'convite renovado',
     corpo: 'Quem transmite renovou o convite, e este link não abre mais a sala. Peça o link novo.',
+    tom: 'alerta',
+    espera: false,
+  }),
+  'aguardando-aprovacao': (_maxPeers, nome) => ({
+    rotulo: 'pedido enviado',
+    corpo: `Quem transmite precisa aceitar você. O pedido aparece como “${nome}”. Deixe esta aba aberta: o vídeo começa sozinho assim que for aceito.`,
+    tom: 'muted',
+    espera: true,
+  }),
+  recusado: () => ({
+    rotulo: 'pedido recusado',
+    corpo: 'Quem transmite não aceitou o pedido agora. Se foi engano, avise na call e peça de novo.',
     tom: 'alerta',
     espera: false,
   }),

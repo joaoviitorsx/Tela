@@ -69,6 +69,33 @@ export function makeWebAudioCue(storage: Storage): AudioCue {
       };
     },
 
+    bipe() {
+      if (mudo) return;
+      const ctx = abre();
+      if (ctx === null) return;
+      void ctx.resume();
+      // Subida de quinta, 90 ms cada: pergunta, não alarme. Triangular é
+      // mais redonda que quadrada e não briga com o som do jogo.
+      const agora = ctx.currentTime;
+      [880, 1320].forEach((frequencia, i) => {
+        const osc = ctx.createOscillator();
+        osc.type = 'triangle';
+        osc.frequency.value = frequencia;
+        const ganho = ctx.createGain();
+        const inicio = agora + i * 0.11;
+        ganho.gain.setValueAtTime(0, inicio);
+        ganho.gain.linearRampToValueAtTime(0.09, inicio + 0.01);
+        ganho.gain.linearRampToValueAtTime(0, inicio + 0.09);
+        osc.connect(ganho).connect(ctx.destination);
+        osc.start(inicio);
+        osc.stop(inicio + 0.1);
+        osc.onended = () => {
+          osc.disconnect();
+          ganho.disconnect();
+        };
+      });
+    },
+
     estaMudo: () => mudo,
 
     alternaMudo() {

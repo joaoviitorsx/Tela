@@ -232,6 +232,16 @@ export class UplinkGovernor {
   }
 
   /**
+   * Assume um orçamento acima do que a estimativa sustenta, para SONDAR
+   * (TELA-015). Quem decide quando é a sessão; aqui só se grava, para a
+   * próxima leitura comparar contra o valor que de fato está no ar.
+   */
+  sondar(bps: number): void {
+    if (!Number.isFinite(bps) || bps <= 0) return;
+    this.aplicado = Math.round(bps);
+  }
+
+  /**
    * Recebe uma leitura de banda disponível e devolve o orçamento por
    * espectador quando ele mudou o bastante para valer reconfigurar o encoder.
    *

@@ -993,18 +993,13 @@ describe('BroadcastSession — colapso de link não pode calar as duas malhas', 
   }
 
   /**
-   * DEFEITO CONHECIDO, e este teste existe para não deixar esquecer.
-   *
-   * `it.fails` afirma que ele REPROVA hoje. No dia em que alguém consertar o
-   * caso, este teste passa a passar e o vitest acusa — que é exatamente o
-   * lembrete que se quer. Apagá-lo esconderia o defeito; deixá-lo verde
-   * mentiria; deixá-lo vermelho ensinaria a ignorar o vermelho.
-   *
-   * Ver o bloco em `broadcast-session.ts` sobre as duas guardas: três consertos
-   * foram tentados e MEDIDOS, e os três pioraram de uma a duas ordens de
-   * grandeza o que o simulador consegue medir.
+   * Era `it.fails`: o defeito estava registrado e aberto. A TELA-015 o fechou
+   * com o sinal que faltava — `qualityLimitationReason: 'bandwidth'`
+   * sustentado —, e o colapso abaixo reporta o que o Chrome reporta nele.
+   * Sem esse campo (navegador que não o expõe) as guardas voltam a segurar, e
+   * o teste seguinte mostra que o soluço isolado continua não derrubando.
    */
-  it.fails('o link despencando DERRUBA o orçamento, mesmo com o envio caindo junto', async () => {
+  it('o link despencando DERRUBA o orçamento, mesmo com o envio caindo junto', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
 
@@ -1030,6 +1025,7 @@ describe('BroadcastSession — colapso de link não pode calar as duas malhas', 
     ctx.transport.stats = amostra({
       availableBps: 2_700_000,
       bitrateBps: 2_000_000,
+      limitation: 'bandwidth',
       availablePorPeer: { v_1: 2_700_000 },
     });
     await tique(ctx, 60);
@@ -1039,6 +1035,73 @@ describe('BroadcastSession — colapso de link não pode calar as duas malhas', 
 
     const state = ctx.session.getState();
     expect(state.status === 'live' && state.presetId).not.toBe('p1080p60');
+    // E a tela diz por quê.
+    expect(state.status === 'live' && state.motivoDegradacao).toBe('bandwidth');
+  });
+
+  it('rajada isolada de `bandwidth` não derruba: precisa de três leituras seguidas', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({
+      availableBps: 27_000_000, bitrateBps: 20_000_000, availablePorPeer: { v_1: 27_000_000 },
+    });
+    await tique(ctx, 30);
+    const antes = ctx.transport.ceilings.at(-1) ?? 0;
+
+    for (let i = 0; i < 10; i += 1) {
+      ctx.transport.stats = amostra({
+        availableBps: 2_700_000, bitrateBps: 2_000_000,
+        limitation: i % 3 === 2 ? 'none' : 'bandwidth',
+        availablePorPeer: { v_1: 2_700_000 },
+      });
+      await tique(ctx, 1);
+    }
+    expect(ctx.transport.ceilings.at(-1) ?? 0).toBe(antes);
+  });
+
+  it('depois do colapso, a rede voltando faz a sonda subir o degrau (sem estado absorvente)', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = amostra({
+      availableBps: 27_000_000, bitrateBps: 20_000_000, availablePorPeer: { v_1: 27_000_000 },
+    });
+    await tique(ctx, 30);
+    ctx.transport.stats = amostra({
+      availableBps: 2_700_000, bitrateBps: 2_000_000, limitation: 'bandwidth',
+      availablePorPeer: { v_1: 2_700_000 },
+    });
+    await tique(ctx, 40);
+    const embaixo = ctx.session.getState();
+    const presetBaixo = embaixo.status === 'live' ? embaixo.presetId : null;
+
+    /*
+      O link voltou, mas o degrau baixo prende o `acked` no teto de pixel dele:
+      a estimativa fica colada em 1,5×acked, e o orçamento que sai disso não
+      chega no degrau de cima. Só a sonda abre.
+    */
+    const acked = 2_400_000;
+    ctx.transport.stats = amostra({
+      availableBps: acked * 1.5, bitrateBps: acked, availablePorPeer: { v_1: acked * 1.5 },
+    });
+    // A malha ainda sobe em passos de 6% enquanto a média assenta; a espera
+    // da sonda conta a partir da última decisão.
+    await tique(ctx, 60);
+    const depois = ctx.session.getState();
+    expect(depois.status === 'live' && depois.presetId).not.toBe(presetBaixo);
+  });
+
+  it('link legitimamente pequeno, alcançado sem colapso, não é sondado', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const acked = 2_400_000;
+    ctx.transport.stats = amostra({
+      availableBps: acked * 1.5, bitrateBps: acked, availablePorPeer: { v_1: acked * 1.5 },
+    });
+    await tique(ctx, 30);
+    const tetos = ctx.transport.ceilings.length;
+    await tique(ctx, 120);
+    // Nenhuma reconfiguração nova: sem colapso não há o que sondar.
+    expect(ctx.transport.ceilings.length).toBe(tetos);
   });
 
   it('cena parada de VERDADE ainda não derruba o orçamento', async () => {

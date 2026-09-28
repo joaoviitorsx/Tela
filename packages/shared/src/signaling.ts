@@ -19,6 +19,22 @@ import { z } from 'zod';
  */
 
 export const PeerIdSchema = z.string().min(1).max(64);
+
+/**
+ * Versão do protocolo (TELA-018). Cliente sem o campo é da versão 1, que não
+ * conhece convite — e é recusado com `BAD_MESSAGE`, um código que ele entende.
+ * Nunca se converte uma sala privada em aberta para aceitar cliente antigo.
+ */
+export const PROTOCOL_VERSION = 2;
+
+/**
+ * Segredo de convite: pelo menos 128 bits em base64url (16 bytes = 22 chars).
+ *
+ * Independente do `ownerToken`: o convite vai no link do espectador, o token
+ * do dono nunca. O servidor guarda só o hash, e o compara antes de reservar
+ * vaga ou emitir credencial TURN.
+ */
+export const InviteSchema = z.string().regex(/^[A-Za-z0-9_-]{22,128}$/);
 export type PeerId = z.infer<typeof PeerIdSchema>;
 
 export const SignalingErrorCodeSchema = z.enum([
@@ -29,6 +45,12 @@ export const SignalingErrorCodeSchema = z.enum([
   'RATE_LIMITED',
   'OWNER_INVALID',
   'BAD_MESSAGE',
+  /** Convite ausente, errado ou renovado. Só é dito quando há transmissão. */
+  'INVITE_INVALID',
+  /** Cliente e servidor falam versões diferentes: recarregar resolve. */
+  'PROTOCOL_MISMATCH',
+  /** O transmissor tirou este espectador. Não tentar de novo sozinho. */
+  'REMOVED',
   'HELLO_TIMEOUT', // conectou e não se apresentou
   /**
    * O canal nem chegou a abrir.
@@ -58,17 +80,34 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   /** Reivindica o canal. O ownerToken é comparado, nunca logado nem devolvido. */
   z.object({
     type: z.literal('host'),
+    /** Ausente = cliente da versão 1. */
+    protocol: z.number().int().min(1).max(1000).optional(),
     slug: z.string().min(1).max(64),
     ownerToken: z.string().min(43).max(256),
+    /** Obrigatório a partir da versão 2; a validação é do servidor, não do schema. */
+    invite: InviteSchema.optional(),
   }),
   z.object({
     type: z.literal('watch'), slug: z.string().min(1).max(64),
+    protocol: z.number().int().min(1).max(1000).optional(),
+    invite: InviteSchema.optional(),
     /** Identidade efêmera de alta entropia; quem a conhece pode retomar a vaga. */
     participantId: z.string().min(16).max(128).optional(),
     /** Nova PC = nova tentativa; reconexão apenas do socket preserva este ID. */
     attemptId: z.string().min(16).max(128).optional(),
   }),
   z.object({ type: z.literal('refresh-ice'), requestId: z.string().min(1).max(64) }),
+  /**
+   * Só o transmissor: troca o convite. Quem já está assistindo fica; só
+   * entradas NOVAS passam a exigir o convite novo (decisão do dono do produto).
+   */
+  z.object({ type: z.literal('set-invite'), invite: InviteSchema }),
+  /**
+   * Só o transmissor: tira um espectador, ou todos sem `peerId`. Ação separada
+   * de renovar. Convite é token compartilhado: quem sai pode voltar com o
+   * mesmo link até ele ser renovado — não é banimento.
+   */
+  z.object({ type: z.literal('remove-viewers'), peerId: PeerIdSchema.optional() }),
   /** `to` opcional: espectador só tem um destino possível, o transmissor. */
   z.object({
     type: z.literal('signal'),
@@ -123,6 +162,8 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     issuedAt: z.number().int().nonnegative().optional(),
     expiresAt: z.number().int().nonnegative().optional(),
   }),
+  /** Resposta a `set-invite`: o convite novo já vale para entradas novas. */
+  z.object({ type: z.literal('invite-set') }),
   z.object({ type: z.literal('peer-joined'), peerId: PeerIdSchema, attemptId: z.string().optional() }),
   z.object({ type: z.literal('peer-left'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('signal'), from: PeerIdSchema, payload: z.unknown() }),

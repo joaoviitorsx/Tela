@@ -2,6 +2,7 @@ import {
   type ClientMessage,
   ClientMessageSchema,
   HELLO_TIMEOUT_MS,
+  PROTOCOL_VERSION,
   type ServerMessage,
   type SignalingErrorCode,
 } from '@tela/shared';
@@ -41,6 +42,11 @@ type Channel = {
   readonly viewers: Map<string, Peer>;
   /** sha256 do ownerToken de quem reivindicou o canal. */
   ownerHash: string;
+  /**
+   * sha256 do convite vigente (TELA-018). O segredo em si nunca fica aqui:
+   * existe em memória só no instante em que é verificado.
+   */
+  inviteHash: string;
   /** Momento em que o canal ficou sem transmissor. `null` enquanto há um. */
   emptySince: number | null;
 };
@@ -137,7 +143,22 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         socket.close();
       }
 
-      function claimChannel(slug: string, ownerToken: string): void {
+      /**
+       * Versão do cliente, antes de qualquer outra coisa. Sem o campo é v1,
+       * que não conhece convite: recusado com um código que ele entende.
+       */
+      function versaoRecusada(protocol: number | undefined): SignalingErrorCode | null {
+        if (protocol === undefined) return 'BAD_MESSAGE';
+        return protocol === PROTOCOL_VERSION ? null : 'PROTOCOL_MISMATCH';
+      }
+
+      function claimChannel(
+        slug: string, ownerToken: string, protocol: number | undefined, invite: string | undefined,
+      ): void {
+        const versao = versaoRecusada(protocol);
+        if (versao !== null) return fail(versao);
+        // Sala sem convite não existe na v2: nunca abrir por omissão.
+        if (invite === undefined) return fail('BAD_MESSAGE');
         if (!deps.isValidSlug(slug)) return fail('SLUG_INVALID');
         if (!hostAttempts.take(`host:${remoteAddress}`, deps.limits.hostLimit, deps.limits.hostWindowMs)) {
           return fail('RATE_LIMITED');
@@ -154,12 +175,15 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           peer = { id: deps.newPeerId('h'), role: 'host', socket };
           existing.host = peer;
           existing.emptySince = null;
+          // O dono é a autoridade do convite: o que ele traz ao reconectar vale.
+          existing.inviteHash = deps.hash(invite);
         } else {
           peer = { id: deps.newPeerId('h'), role: 'host', socket };
           channels.set(slug, {
             host: peer,
             viewers: new Map(),
             ownerHash,
+            inviteHash: deps.hash(invite),
             emptySince: null,
           });
         }
@@ -207,7 +231,12 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         }
       }
 
-      function joinChannel(slug: string, participantId?: string, attemptId?: string): void {
+      function joinChannel(
+        slug: string, protocol: number | undefined, invite: string | undefined,
+        participantId?: string, attemptId?: string,
+      ): void {
+        const versao = versaoRecusada(protocol);
+        if (versao !== null) return fail(versao);
         if (!deps.isValidSlug(slug)) return fail('SLUG_INVALID');
 
         const channel = channels.get(slug);
@@ -215,6 +244,16 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         // Slug inválido, inexistente e offline devolvem o MESMO erro: quem
         // varre nomes não distingue "não existe" de "existe e está fora do ar".
         if (channel === undefined || host == null) return fail('NOT_HOSTING');
+        /**
+         * Convite ANTES de vaga e de credencial TURN (TELA-018, §9.1).
+         *
+         * Diz `INVITE_INVALID` só quando há transmissão: quem tem o link antigo
+         * precisa saber que o convite mudou, e quem varre nomes descobre no
+         * máximo que alguém está no ar — não que o slug existe fora do ar.
+         */
+        if (invite === undefined || !deps.equals(channel.inviteHash, deps.hash(invite))) {
+          return fail('INVITE_INVALID');
+        }
         const previous = participantId === undefined ? undefined : [...channel.viewers.values()]
           .find((viewer) => viewer.participantId === participantId);
         if (previous === undefined && channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
@@ -243,6 +282,35 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         // O transmissor é quem oferece — ele tem a mídia.
         host.socket.send({ type: 'peer-joined', peerId: peer.id, ...(attemptId === undefined ? {} : { attemptId }) });
         anunciarPlateia(channel);
+      }
+
+      /** Só o transmissor atual troca o convite. Quem está dentro fica. */
+      function setInvite(invite: string): void {
+        if (peer === null || channelName === null || peer.role !== 'host') return fail('BAD_MESSAGE');
+        const channel = channels.get(channelName);
+        if (channel === undefined || channel.host !== peer) return;
+        channel.inviteHash = deps.hash(invite);
+        socket.send({ type: 'invite-set' });
+      }
+
+      /**
+       * Só o transmissor atual tira espectadores: a sinalização fecha aqui, e o
+       * `peer-left` faz o transmissor fechar o peer do lado dele.
+       */
+      function removeViewers(peerId: string | undefined): void {
+        if (peer === null || channelName === null || peer.role !== 'host') return fail('BAD_MESSAGE');
+        const channel = channels.get(channelName);
+        if (channel === undefined || channel.host !== peer) return;
+        const alvo = peerId === undefined
+          ? [...channel.viewers.values()]
+          : [channel.viewers.get(peerId)].filter((v): v is Peer => v !== undefined);
+        for (const viewer of alvo) {
+          channel.viewers.delete(viewer.id);
+          viewer.socket.send({ type: 'error', code: 'REMOVED' });
+          viewer.socket.close();
+          socket.send({ type: 'peer-left', peerId: viewer.id });
+        }
+        if (alvo.length > 0) anunciarPlateia(channel);
       }
 
       /** Espectador só fala com o transmissor; transmissor endereça por `to`. */
@@ -290,10 +358,17 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           switch (message.type) {
             case 'host':
               if (peer !== null) return;
-              return claimChannel(message.slug, message.ownerToken);
+              return claimChannel(message.slug, message.ownerToken, message.protocol, message.invite);
             case 'watch':
               if (peer !== null) return;
-              return joinChannel(message.slug, message.participantId, message.attemptId);
+              return joinChannel(
+                message.slug, message.protocol, message.invite,
+                message.participantId, message.attemptId,
+              );
+            case 'set-invite':
+              return setInvite(message.invite);
+            case 'remove-viewers':
+              return removeViewers(message.peerId);
             case 'refresh-ice': {
               if (peer === null || channelName === null) return fail('BAD_MESSAGE');
               const current = channels.get(channelName);

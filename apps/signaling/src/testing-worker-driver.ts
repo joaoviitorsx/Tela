@@ -1,6 +1,6 @@
 import { webcrypto } from 'node:crypto';
 import type { ServerMessage } from '@tela/shared';
-import type { ConformanceClient, ConformanceDriver } from './conformance.js';
+import { type ConformanceClient, type ConformanceDriver, saudar } from './conformance.js';
 import type { IceProvisionResult } from './ice-provision.js';
 import {
   ChannelRoom,
@@ -150,11 +150,17 @@ export function makeWorkerDriver(
   }
 
   return {
-    async host(id, slug, ownerToken) {
-      return await open(id, slug, { type: 'host', slug, ownerToken });
+    async host(id, slug, ownerToken, saudacao) {
+      return await open(id, slug, saudar({ type: 'host', slug, ownerToken }, saudacao));
     },
-    async watch(id, slug, identity) {
-      return await open(id, slug, { type: 'watch', slug, ...identity });
+    async watch(id, slug, identity, saudacao) {
+      return await open(id, slug, saudar({ type: 'watch', slug, ...identity }, saudacao));
+    },
+    async send(id, message) {
+      const socket = sockets.get(id);
+      const slug = slugOf.get(id);
+      if (socket === undefined || slug === undefined) return;
+      await roomFor(slug).room.handleMessage(socket, slug, JSON.stringify(message));
     },
     async refreshIce(id, requestId) {
       const socket = sockets.get(id);

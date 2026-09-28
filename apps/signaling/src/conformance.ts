@@ -1,4 +1,4 @@
-import type { ServerMessage } from '@tela/shared';
+import { PROTOCOL_VERSION, type ServerMessage } from '@tela/shared';
 
 /**
  * Contrato de comportamento do servidor de sinalização, independente de onde
@@ -20,11 +20,26 @@ export type ConformanceClient = {
   closed(): boolean;
 };
 
+/**
+ * O que acompanha a saudação. Padrão: versão atual e o `CONVITE` da suíte.
+ * `null` OMITE o campo — é assim que se simula cliente antigo ou link sem
+ * convite.
+ */
+export type Saudacao = {
+  readonly invite?: string | null;
+  readonly protocol?: number | null;
+};
+
 export type ConformanceDriver = {
   /** Abre uma conexão e envia `host`. */
-  host(id: string, slug: string, ownerToken: string): Promise<ConformanceClient>;
+  host(id: string, slug: string, ownerToken: string, saudacao?: Saudacao): Promise<ConformanceClient>;
   /** Abre uma conexão e envia `watch`. */
-  watch(id: string, slug: string, identity?: { participantId: string; attemptId: string }): Promise<ConformanceClient>;
+  watch(
+    id: string, slug: string, identity?: { participantId: string; attemptId: string },
+    saudacao?: Saudacao,
+  ): Promise<ConformanceClient>;
+  /** Envia uma mensagem qualquer por uma conexão já aberta. */
+  send(id: string, message: unknown): Promise<void>;
   refreshIce(id: string, requestId: string): Promise<void>;
   /** Envia `signal` por uma conexão já aberta. */
   signal(id: string, payload: unknown, to?: string): Promise<void>;
@@ -51,6 +66,22 @@ export type ConformanceDriver = {
 export const OWNER = 'o'.repeat(43);
 export const OUTRO = 'z'.repeat(43);
 export const SLUG = 'joao';
+export const CONVITE = 'c'.repeat(22);
+export const OUTRO_CONVITE = 'd'.repeat(22);
+
+/** Monta `host`/`watch` com os campos da versão atual, salvo omissão explícita. */
+export function saudar(
+  base: Record<string, unknown>,
+  saudacao: Saudacao = {},
+): Record<string, unknown> {
+  const invite = saudacao.invite === undefined ? CONVITE : saudacao.invite;
+  const protocol = saudacao.protocol === undefined ? PROTOCOL_VERSION : saudacao.protocol;
+  return {
+    ...base,
+    ...(invite === null ? {} : { invite }),
+    ...(protocol === null ? {} : { protocol }),
+  };
+}
 
 export function peerIdOf(client: ConformanceClient): string {
   const first = client.received()[0];

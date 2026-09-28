@@ -1,6 +1,6 @@
 import type { ServerMessage } from '@tela/shared';
 import { type Connection, makeChannelRegistry } from './channel-registry.js';
-import type { ConformanceClient, ConformanceDriver } from './conformance.js';
+import { type ConformanceClient, type ConformanceDriver, saudar } from './conformance.js';
 import { SpySocket, TestClock, testDeps } from './testing.js';
 
 /** Driver de conformidade sobre o registro em memória (Node + `ws`). */
@@ -29,11 +29,14 @@ export function makeNodeDriver(): ConformanceDriver {
   }
 
   return {
-    async host(id, slug, ownerToken) {
-      return open(id, { type: 'host', slug, ownerToken }, '10.0.0');
+    async host(id, slug, ownerToken, saudacao) {
+      return open(id, saudar({ type: 'host', slug, ownerToken }, saudacao), '10.0.0');
     },
-    async watch(id, slug, identity) {
-      return open(id, { type: 'watch', slug, ...identity }, '10.0.1');
+    async watch(id, slug, identity, saudacao) {
+      return open(id, saudar({ type: 'watch', slug, ...identity }, saudacao), '10.0.1');
+    },
+    async send(id, message) {
+      conns.get(id)?.receive(JSON.stringify(message));
     },
     async refreshIce(id, requestId) {
       conns.get(id)?.receive(JSON.stringify({ type: 'refresh-ice', requestId }));

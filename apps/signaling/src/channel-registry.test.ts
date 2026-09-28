@@ -6,6 +6,7 @@ import { SpySocket, TestClock, testDeps } from './testing.js';
 const SLUG = 'joao';
 const OWNER = 'o'.repeat(43);
 const OUTRO = 'z'.repeat(43);
+const CONVITE = 'c'.repeat(22);
 
 describe('registro de canais', () => {
   let clock: TestClock;
@@ -19,14 +20,14 @@ describe('registro de canais', () => {
   function host(slug = SLUG, ownerToken = OWNER, ip = '1.1.1.1') {
     const socket = new SpySocket();
     const conn = registry.accept(socket, ip);
-    conn.receive(JSON.stringify({ type: 'host', slug, ownerToken }));
+    conn.receive(JSON.stringify({ type: 'host', slug, ownerToken, protocol: 2, invite: CONVITE }));
     return { socket, conn };
   }
 
   function watch(slug = SLUG, ip = '2.2.2.2') {
     const socket = new SpySocket();
     const conn = registry.accept(socket, ip);
-    conn.receive(JSON.stringify({ type: 'watch', slug }));
+    conn.receive(JSON.stringify({ type: 'watch', slug, protocol: 2, invite: CONVITE }));
     return { socket, conn };
   }
 
@@ -322,5 +323,32 @@ describe('registro de canais', () => {
       h.conn.receive(JSON.stringify({ type: 'leave' }));
       expect(h.socket.closed).toBe(true);
     });
+  });
+});
+
+describe('convite (TELA-018)', () => {
+  it('convite inválido não gasta credencial TURN nem vaga', () => {
+    const clock = new TestClock();
+    const pedidos: string[] = [];
+    const base = testDeps(clock, { maxPeers: 1 });
+    const registry = makeChannelRegistry({
+      ...base,
+      iceServersFor: (peerId) => {
+        pedidos.push(peerId);
+        return base.iceServersFor(peerId);
+      },
+    });
+    const hostSock = new SpySocket();
+    registry.accept(hostSock, '1.1.1.1').receive(JSON.stringify({
+      type: 'host', slug: SLUG, ownerToken: OWNER, protocol: 2, invite: CONVITE,
+    }));
+    const antes = pedidos.length;
+    const intruso = new SpySocket();
+    registry.accept(intruso, '2.2.2.2').receive(JSON.stringify({
+      type: 'watch', slug: SLUG, protocol: 2, invite: 'x'.repeat(22),
+    }));
+    expect(intruso.last()).toEqual({ type: 'error', code: 'INVITE_INVALID' });
+    expect(pedidos.length).toBe(antes);
+    expect(registry.viewerCount(SLUG)).toBe(0);
   });
 });

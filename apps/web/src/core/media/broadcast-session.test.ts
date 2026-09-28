@@ -1817,3 +1817,29 @@ describe('BroadcastSession — pausa de privacidade (TELA-022)', () => {
     expect(ctx.quadro.fechamentos).toBe(1);
   });
 });
+
+describe('BroadcastSession — o áudio sai do orçamento antes do vídeo (TELA-017)', () => {
+  async function tetoCom(comAudio: boolean): Promise<number> {
+    const ctx = build();
+    ctx.screen.withAudio = comAudio;
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.stats = {
+      fps: 60, bitrateBps: 5_000_000, rttMs: 20, limitation: 'none', width: 1920, height: 1080,
+      availableBps: 8_000_000, piorAvailableBps: 8_000_000, paresMedidos: 1,
+      availablePorPeer: { v_1: 8_000_000 }, bpp: 0.1, encoderImplementation: null, qp: null,
+      msPorQuadro: null, recepcao: null, audio: null,
+    };
+    for (let i = 0; i < 12; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+    return ctx.transport.ceilings.at(-1) ?? 0;
+  }
+
+  it('com som, o vídeo recebe o orçamento menos a reserva do áudio', async () => {
+    const sem = await tetoCom(false);
+    const com = await tetoCom(true);
+    expect(sem).toBeGreaterThan(0);
+    expect(sem - com).toBe(141_000);
+  });
+});

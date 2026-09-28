@@ -204,6 +204,10 @@ export type BroadcastSessionDeps = {
 const STATS_INTERVAL_MS = 1_000;
 /** Quantas leituras seguidas de `bandwidth` provam colapso, e não soluço. */
 const AMOSTRAS_DE_COLAPSO = 3;
+/** 128 kbps do Opus + ~10% de cabeçalhos. Ver `reservaDeAudio`. */
+const RESERVA_AUDIO_BPS = 141_000;
+/** Mesmo piso do governador: abaixo disso não há vídeo que preste. */
+const ORCAMENTO_VIDEO_MINIMO = 300_000;
 /** Espera entre sondas de subida, em amostras (1 s). Dobra a cada falha. */
 const SONDA_ESPERA_INICIAL = 15;
 const SONDA_ESPERA_MAX = 240;
@@ -820,7 +824,8 @@ export class BroadcastSession {
       this.sondaDesde = null;
     }
     this.ultimaDecisaoEm = this.amostras;
-    void this.deps.transport.setUplinkBudget(decisao.bps).catch(() => undefined);
+    const paraVideo = this.orcamentoDeVideo(decisao.bps);
+    void this.deps.transport.setUplinkBudget(paraVideo).catch(() => undefined);
 
     /**
      * E AQUI está a correção que a ADR 0015 existe para registrar.
@@ -840,8 +845,25 @@ export class BroadcastSession {
      * honestos. Os mesmos 3 Mbps em 854×480@60 são 0,10 bpp — nítido de
      * verdade, num rótulo menor.
      */
-    this.presetPorBanda = presetParaOrcamento(decisao.bps, this.prioridade);
+    this.presetPorBanda = presetParaOrcamento(paraVideo, this.prioridade);
     this.aplicarDegrau();
+  }
+
+  /**
+   * O que o áudio ocupa em cada caminho, e sai do orçamento antes do vídeo
+   * (TELA-017, §7.3: `soma(vídeo) + R ≤ total`).
+   *
+   * A estimativa do WebRTC é do CAMINHO — áudio e vídeo dividem o mesmo
+   * cano —, e o orçamento inteiro ia para o `maxBitrate` do vídeo. Com som,
+   * o vídeo sempre pedia 128 kbps a mais do que cabia. O teto do Opus mais
+   * ~10% de cabeçalhos RTP/SRTP/UDP a 50 pacotes por segundo.
+   */
+  private reservaDeAudio(): number {
+    return this.audioTrack === null ? 0 : RESERVA_AUDIO_BPS;
+  }
+
+  private orcamentoDeVideo(total: number): number {
+    return Math.max(ORCAMENTO_VIDEO_MINIMO, total - this.reservaDeAudio());
   }
 
   /**
@@ -901,7 +923,8 @@ export class BroadcastSession {
       bps = Math.ceil(alvo.main.maxBitrate);
     }
 
-    this.governor.sondar(bps);
+    // O governador conta o caminho inteiro; o degrau é só do vídeo.
+    this.governor.sondar(bps + this.reservaDeAudio());
     void this.deps.transport.setUplinkBudget(bps).catch(() => undefined);
     this.presetPorBanda = presetParaOrcamento(bps, this.prioridade);
     this.sondaDesde = this.amostras;

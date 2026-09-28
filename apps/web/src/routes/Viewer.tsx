@@ -286,7 +286,7 @@ export function Viewer({ slug }: Props) {
           slug={slug}
           motivo={motivo}
           maxPeers={P2P_LIMITS.maxViewersBrowser}
-          {...(PEDE_ACAO.has(motivo) ? { onRecarregar: () => window.location.reload() } : {})}
+          {...(PEDE_ACAO.has(motivo) ? { onTentarNovamente: () => void session.retryNow() } : {})}
           diagnostico={relatorio !== null && PEDE_ACAO.has(motivo) ? (
             <details className="px-6 pb-6 text-[13px] text-muted">
               <summary className="cursor-pointer">ver diagnóstico da tentativa</summary>

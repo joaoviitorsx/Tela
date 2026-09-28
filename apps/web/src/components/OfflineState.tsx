@@ -16,7 +16,7 @@ type Props = {
   /** Vem da rota: o componente não inventa o limite da transmissão. */
   readonly maxPeers: number;
   /** Só chega nos dois motivos que pedem ação humana. */
-  readonly onRecarregar?: () => void;
+  readonly onTentarNovamente?: () => void;
   readonly diagnostico?: ReactNode;
 };
 
@@ -40,7 +40,7 @@ export function OfflineState({
   slug,
   motivo = 'conectando',
   maxPeers,
-  onRecarregar,
+  onTentarNovamente,
   diagnostico,
 }: Props) {
   const { rotulo, corpo, tom, varrendo } = TEXTO[motivo](maxPeers);
@@ -71,13 +71,13 @@ export function OfflineState({
 
           <p className="max-w-[46ch] text-[13.5px] leading-relaxed text-muted">{corpo}</p>
 
-          {onRecarregar && (
+          {onTentarNovamente && (
             <button
               type="button"
-              onClick={onRecarregar}
+              onClick={onTentarNovamente}
               className="mt-1 inline-flex h-11 items-center rounded-sm border border-edge px-5 text-[13px] font-medium text-text transition-colors duration-150 hover:bg-void"
             >
-              Recarregar a página
+              Tentar novamente
             </button>
           )}
         </div>

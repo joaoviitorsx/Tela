@@ -249,6 +249,47 @@ describe('ViewerSession', () => {
     expect(ctx.scheduler.pending).toBeGreaterThan(0);
   });
 
+  it('reusa participante e troca tentativa ao reconectar', async () => {
+    let offline = true;
+    const ctx = build((t) => { if (offline) t.watchError = { code: 'NOT_HOSTING' }; });
+    await ctx.session.open(SLUG);
+    const first = ctx.ultimo().watchIdentity;
+    offline = false;
+    ctx.scheduler.advance(5_000);
+    await settle();
+    const second = ctx.ultimo().watchIdentity;
+    expect(second?.participantId).toBe(first?.participantId);
+    expect(second?.attemptId).not.toBe(first?.attemptId);
+  });
+
+  it('tentativa manual não recarrega a sessão nem deixa o timer antigo disparar', async () => {
+    let offline = true;
+    const ctx = build((t) => { if (offline) t.watchError = { code: 'NOT_HOSTING' }; });
+    await ctx.session.open(SLUG);
+    const first = ctx.ultimo().watchIdentity;
+    offline = false;
+    await ctx.session.retryNow();
+    const second = ctx.ultimo().watchIdentity;
+    ctx.scheduler.advance(5_000);
+    await settle();
+    expect(ctx.criados).toHaveLength(2);
+    expect(second?.participantId).toBe(first?.participantId);
+    expect(second?.attemptId).not.toBe(first?.attemptId);
+  });
+
+  it('não corta o restart ICE inicial pelo vigia normal de 15 segundos', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.scheduler.advance(5_000);
+    ctx.ultimo().emit('reconnecting', undefined);
+    ctx.scheduler.advance(10_000);
+    await settle();
+    expect(ctx.session.getState().status).toBe('connecting');
+    ctx.scheduler.advance(20_000);
+    await settle();
+    expect(ctx.session.getState().status).toBe('sem-conexao');
+  });
+
   it('preserva indisponibilidade do relay quando a mídia não chega', async () => {
     const ctx = build((t) => { t.relayStatus = 'unavailable'; });
     await ctx.session.open(SLUG);

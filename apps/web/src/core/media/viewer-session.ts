@@ -77,6 +77,7 @@ export type ViewerSessionDeps = {
   transport: () => MediaTransport;
   scheduler: Scheduler;
   statsIntervalMs?: number;
+  recoveryTimeoutMs?: number;
   diagnosticId?: () => string;
   appVersion?: string | null;
 };
@@ -142,13 +143,16 @@ export class ViewerSession {
   private plateia = 1;
   private pollMs = POLL_MIN_MS;
   private slug = '';
+  private readonly participantId: string;
   private disposed = false;
   /** Cancela o listener de visibilidade. */
   private unwatchVisibility: Cancel | null = null;
   /** `true` quando a próxima tentativa foi adiada por a aba estar escondida. */
   private adiadoPorVisibilidade = false;
 
-  constructor(private readonly deps: ViewerSessionDeps) {}
+  constructor(private readonly deps: ViewerSessionDeps) {
+    this.participantId = (deps.diagnosticId ?? idLocal)();
+  }
 
   getState(): ViewerState {
     return this.state;
@@ -309,6 +313,8 @@ export class ViewerSession {
      * transmissor no ar do outro lado.
      */
     let vigiaMidia: Cancel | null = null;
+    let recoveryStarted = false;
+    let extendVigia: (() => void) | null = null;
     const desarmarVigia = (): void => {
       vigiaMidia?.();
       vigiaMidia = null;
@@ -339,6 +345,8 @@ export class ViewerSession {
         this.setState({ ...this.state, viewers: this.plateia });
       }),
       transport.on('reconnecting', () => {
+        recoveryStarted = true;
+        extendVigia?.();
         if (this.state.status === 'watching') {
           this.setState({ status: 'reconnecting', slug: this.slug, stream: this.stream });
         }
@@ -370,7 +378,10 @@ export class ViewerSession {
     };
 
     try {
-      const opened = await this.withTimeout(transport.watch(this.slug), epoch);
+      const opened = await this.withTimeout(transport.watch(this.slug, {
+        participantId: this.participantId,
+        attemptId: (this.deps.diagnosticId ?? idLocal)(),
+      }), epoch);
       relayStatus = opened.relayStatus;
       if (!this.stale(epoch) && relayStatus !== null) {
         this.diario.evento('turn', relayStatus === 'available' ? 'RELAY_AVAILABLE'
@@ -414,7 +425,7 @@ export class ViewerSession {
      * dois, mas só um deles se resolve sozinho.
      */
     if (!delivered) {
-      vigiaMidia = this.deps.scheduler.after(CONNECT_TIMEOUT_MS, () => {
+      const timeout = () => {
         if (this.stale(epoch) || delivered) return;
         vigiaMidia = null;
         void (async () => {
@@ -424,7 +435,19 @@ export class ViewerSession {
           this.advanceBackoff();
           this.scheduleRetry(epoch);
         })();
-      });
+      };
+      const arm = (delay: number): void => {
+        desarmarVigia();
+        vigiaMidia = this.deps.scheduler.after(delay, timeout);
+      };
+      arm(recoveryStarted ? (this.deps.recoveryTimeoutMs ?? 30_000) : CONNECT_TIMEOUT_MS);
+      if (!recoveryStarted) {
+        extendVigia = () => {
+          if (delivered) return;
+          arm(this.deps.recoveryTimeoutMs ?? 30_000);
+          extendVigia = null;
+        };
+      }
       cancels.push(desarmarVigia);
     }
 
@@ -597,6 +620,18 @@ export class ViewerSession {
     this.pollMs = POLL_MIN_MS;
     this.goOffline();
     this.scheduleRetry(epoch);
+  }
+
+  /** Ação manual preserva a sessão e a vaga; não recarrega a página. */
+  async retryNow(): Promise<void> {
+    if (this.disposed || this.slug === '') return;
+    this.epoch += 1;
+    const epoch = this.epoch;
+    this.cancelRetry();
+    await this.dropTransport();
+    if (this.stale(epoch)) return;
+    this.pollMs = POLL_MIN_MS;
+    await this.attempt(epoch);
   }
 
   private goOffline(): void {

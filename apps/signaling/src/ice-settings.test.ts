@@ -48,6 +48,15 @@ describe('configuração ICE', () => {
     if ('problems' in parsed) expect(parsed.problems.join(' ')).toContain('credencial estática');
   });
 
+  it('Node exige ALLOWED_ORIGINS em produção, e aceita quando há lista (TELA-019)', () => {
+    const sem = parseConfig({ NODE_ENV: 'production' });
+    expect('problems' in sem && sem.problems.join(' ')).toContain('ALLOWED_ORIGINS');
+    const com = parseConfig({ NODE_ENV: 'production', ALLOWED_ORIGINS: 'https://tela.gg' });
+    expect('config' in com && com.config.allowedOrigins).toEqual(['https://tela.gg']);
+    // Desenvolvimento continua sem regra.
+    expect('config' in parseConfig({})).toBe(true);
+  });
+
   it('Node não aceita Cloudflare configurada sem adaptador assíncrono', () => {
     const parsed = parseConfig({ TURN_KEY_ID: 'id', TURN_KEY_API_TOKEN: 'token' });
     expect('problems' in parsed && parsed.problems).toContain('CLOUDFLARE_UNSUPPORTED_ON_NODE');

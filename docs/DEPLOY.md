@@ -169,7 +169,9 @@ do lado do front é `VITE_SIGNAL_URL`.
 | Variável | Para quê |
 |---|---|
 | `PORT` / `HOST` | onde escutar (padrão `3333` / `0.0.0.0`) |
-| `MAX_PEERS` | espectadores por canal (padrão 3) |
+| `MAX_PEERS` | espectadores por canal (padrão 5, máximo 8) |
+| `ALLOWED_ORIGINS` | origens que podem abrir o WebSocket, separadas por vírgula. **Obrigatória em produção no Node** (o servidor não sobe sem ela). No Worker, a origem dele mesmo já passa; liste só as extras |
+| `NODE_ENV` | `production` liga as recusas de configuração insegura (TURN estático, origem aberta) |
 | `STUN_URLS` | lista separada por vírgula |
 | `ICE_PROVIDER` | `auto` (padrão) ou `coturn` no Node; Worker também aceita `cloudflare` |
 | `TURN_URLS` | URLs TURN separadas por vírgula; `TURN_URL` singular é legado |

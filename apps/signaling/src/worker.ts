@@ -1,6 +1,7 @@
 import {
   type ClientMessage,
   ClientMessageSchema,
+  HELLO_TIMEOUT_MS,
   MAX_FRAME_BYTES,
   PROTOCOL_VERSION,
   SLUG_RE,
@@ -114,6 +115,23 @@ export type Env = {
    */
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
+  /**
+   * Origens extras que podem abrir o WebSocket, separadas por vírgula. A
+   * origem do próprio Worker, que serve o front, já passa (TELA-019).
+   */
+  ALLOWED_ORIGINS?: string;
+};
+
+/**
+ * Socket que ainda não se apresentou. Vive no attachment pelo mesmo motivo de
+ * tudo aqui: timer de instância não sobrevive à hibernação, e um socket que
+ * abre e nunca fala seguraria recurso para sempre.
+ */
+type PreAttachment = {
+  /** Quando abriu. O alarme derruba quem passar do prazo sem saudação. */
+  readonly aguardandoDesde?: number;
+  /** Já mandou `host`/`watch` e está no meio do `await`. */
+  readonly apresentando?: true;
 };
 
 /* ─────────────────────────── tipos mínimos da plataforma ─────────────────────────── */
@@ -150,6 +168,9 @@ export type DurableContext = {
     get<T>(key: string): Promise<T | undefined>;
     put<T>(key: string, value: T): Promise<void>;
     delete(key: string): Promise<boolean>;
+    /** Alarme do objeto: o único relógio que sobrevive à hibernação. */
+    getAlarm?(): Promise<number | null>;
+    setAlarm?(quando: number): Promise<void>;
   };
 };
 
@@ -262,11 +283,53 @@ export class ChannelRoom {
 
   accept(socket: HibernatableSocket): void {
     this.ctx.acceptWebSocket(socket);
+    socket.serializeAttachment({ aguardandoDesde: Date.now() } satisfies PreAttachment);
+    void this.agendarExpiracao(Date.now() + HELLO_TIMEOUT_MS);
+  }
+
+  private preAttachmentOf(socket: HibernatableSocket): PreAttachment | null {
+    if (this.attachmentOf(socket) !== null) return null;
+    const raw = socket.deserializeAttachment();
+    return typeof raw === 'object' && raw !== null ? (raw as PreAttachment) : {};
+  }
+
+  /** Mantém o alarme no mais cedo que falta vencer. */
+  private async agendarExpiracao(quando: number): Promise<void> {
+    const storage = this.ctx.storage;
+    if (storage?.setAlarm === undefined) return;
+    const atual = (await storage.getAlarm?.()) ?? null;
+    if (atual === null || atual > quando) await storage.setAlarm(quando);
+  }
+
+  /**
+   * Chamado pelo `alarm()` do objeto (TELA-019, §9.2): derruba quem abriu e
+   * não se apresentou no prazo — o equivalente ao `HELLO_TIMEOUT` do Node, que
+   * lá é um `setTimeout` e aqui não pode ser.
+   *
+   * Só expira quem NÃO mandou saudação. Quem está no meio de um `host` ou
+   * `watch` tem o próprio limite: o `await` da emissão TURN, que tem prazo.
+   */
+  async expirarPendentes(agora: number = Date.now()): Promise<void> {
+    let proximo: number | null = null;
+    for (const socket of this.ctx.getWebSockets()) {
+      const pre = this.preAttachmentOf(socket);
+      if (pre === null || pre.apresentando === true || pre.aguardandoDesde === undefined) continue;
+      const vence = pre.aguardandoDesde + HELLO_TIMEOUT_MS;
+      if (vence <= agora) this.fail(socket, 'HELLO_TIMEOUT');
+      else proximo = proximo === null ? vence : Math.min(proximo, vence);
+    }
+    if (proximo !== null) await this.agendarExpiracao(proximo);
   }
 
   /** Chamado por `webSocketMessage`. `slug` vem da URL, não do cliente. */
   async handleMessage(socket: HibernatableSocket, slug: string, raw: string): Promise<void> {
-    if (raw.length > MAX_FRAME_BYTES) {
+    /*
+      O teto é em BYTES, como no Node (`maxPayload`). `raw.length` conta
+      unidades UTF-16: 40 mil "€" passavam como 40 mil e eram 120 KB. Só mede
+      quando o comprimento não prova sozinho que cabe — cada unidade vira no
+      máximo 3 bytes.
+    */
+    if (raw.length * 3 > MAX_FRAME_BYTES && tamanhoEmBytes(raw) > MAX_FRAME_BYTES) {
       return this.fail(socket, 'BAD_MESSAGE');
     }
     if (!this.dentroDoLimite(socket)) return this.fail(socket, 'RATE_LIMITED');
@@ -283,6 +346,16 @@ export class ChannelRoom {
 
     const message = parsed.data;
     const at = this.attachmentOf(socket);
+
+    /*
+      Uma saudação por socket, também durante o `await`. Sem isto, três
+      `host` seguidos no mesmo socket rodavam três `claim` em paralelo — três
+      chamadas pagas à API de TURN antes de qualquer um terminar.
+    */
+    if ((message.type === 'host' || message.type === 'watch') && at === null) {
+      if (this.preAttachmentOf(socket)?.apresentando === true) return this.fail(socket, 'BAD_MESSAGE');
+      socket.serializeAttachment({ apresentando: true } satisfies PreAttachment);
+    }
 
     switch (message.type) {
       case 'host': {
@@ -406,6 +479,16 @@ export class ChannelRoom {
     const hash = await this.deps.hash(ownerToken);
     const inviteHash = await this.deps.hash(invite);
     const peerId = this.deps.newPeerId('h');
+
+    /*
+      Dono errado sai ANTES da emissão TURN (§9.2: não chamar a API paga antes
+      de uma autorização viável). A seção crítica abaixo confere de novo — isto
+      só evita o gasto no caso óbvio, não substitui a garantia.
+    */
+    const donoPrevio = await this.donoAtual();
+    if (donoPrevio !== null && !this.deps.equals(donoPrevio, hash)) {
+      return this.fail(socket, 'SLUG_TAKEN');
+    }
 
     /**
      * As credenciais são buscadas ANTES de assumir o canal, e o motivo é a
@@ -703,6 +786,12 @@ export class ChannelRoom {
   }
 }
 
+
+const codificador = new TextEncoder();
+
+function tamanhoEmBytes(texto: string): number {
+  return codificador.encode(texto).byteLength;
+}
 
 /* ─────────────────────────── criptografia do Worker ─────────────────────────── */
 

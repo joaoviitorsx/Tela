@@ -11,6 +11,13 @@ export type Limits = {
   /** Tentativas de `host` por IP, por janela. Barra squatting em massa. */
   readonly hostLimit: number;
   readonly hostWindowMs: number;
+  /**
+   * Aberturas de WebSocket por IP, por janela (TELA-019). Generoso de
+   * propósito: um grupo inteiro atrás do mesmo CGNAT, com reconexões, cabe
+   * folgado. O que ele barra é um cliente abrindo sockets em laço.
+   */
+  readonly openLimit: number;
+  readonly openWindowMs: number;
 };
 
 export const DEFAULT_LIMITS: Limits = {
@@ -44,6 +51,9 @@ export const DEFAULT_LIMITS: Limits = {
    */
   hostLimit: 20,
   hostWindowMs: 60_000,
+
+  openLimit: 120,
+  openWindowMs: 60_000,
 };
 
 /**

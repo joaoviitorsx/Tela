@@ -3,7 +3,10 @@ import { createServer } from 'node:http';
 import { SLUG_RE, isBlockedSlug } from '@tela/shared';
 import { MAX_FRAME_BYTES, SIGNAL_PING_INTERVAL_MS } from '@tela/shared';
 import { WebSocketServer, type WebSocket } from 'ws';
+import type { IncomingMessage } from 'node:http';
 import { makeChannelRegistry } from './channel-registry.js';
+import { RateBuckets } from './limits.js';
+import { origemPermitida } from './origem.js';
 import { loadConfig } from './config.js';
 import { makeIceProvider, makePeerIdGenerator } from './ice.js';
 import { describeIceSettings } from './ice-settings.js';
@@ -39,15 +42,42 @@ const http = createServer((req, res) => {
   res.writeHead(404).end();
 });
 
-const wss = new WebSocketServer({ server: http, maxPayload: MAX_FRAME_BYTES });
-
-wss.on('connection', (socket: WebSocket, req) => {
-  // Atrás de um proxy o IP real vem no cabeçalho; sem proxy, o socket basta.
+/** Atrás de um proxy o IP real vem no cabeçalho; sem proxy, o socket basta. */
+function ipDe(req: IncomingMessage): string {
   const forwarded = req.headers['x-forwarded-for'];
-  const remote =
+  return (
     (typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : undefined) ??
     req.socket.remoteAddress ??
-    'desconhecido';
+    'desconhecido'
+  );
+}
+
+const aberturas = new RateBuckets(() => Date.now());
+
+const wss = new WebSocketServer({
+  server: http,
+  maxPayload: MAX_FRAME_BYTES,
+  /**
+   * Antes do upgrade, e nada depois dele: recusar aqui não aloca registro,
+   * timer nem socket (TELA-019). `ALLOWED_ORIGINS` era lido do ambiente e
+   * nunca aplicado — a regra existia só no config.
+   */
+  verifyClient: (info, done) => {
+    if (!origemPermitida(info.origin, config.allowedOrigins)) {
+      done(false, 403, 'origem não permitida');
+      return;
+    }
+    const ip = ipDe(info.req);
+    if (!aberturas.take(`open:${ip}`, config.limits.openLimit, config.limits.openWindowMs)) {
+      done(false, 429, 'muitas conexões');
+      return;
+    }
+    done(true);
+  },
+});
+
+wss.on('connection', (socket: WebSocket, req) => {
+  const remote = ipDe(req);
 
   const connection = registry.accept(
     {

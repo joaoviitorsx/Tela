@@ -55,6 +55,16 @@ export function parseConfig(env: NodeJS.ProcessEnv): { config: Config } | { prob
     problems.push('CLOUDFLARE_UNSUPPORTED_ON_NODE');
   }
 
+  /*
+    Em produção a lista é obrigatória. Ela era lida e nunca aplicada; agora
+    que é, "vazio = qualquer uma" em produção seria uma regra que não barra
+    nada escrita como se barrasse.
+  */
+  if (raw.NODE_ENV === 'production' && raw.ALLOWED_ORIGINS.trim() === '') {
+    problems.push(
+      'ALLOWED_ORIGINS vazio em produção: qualquer página poderia abrir sinalização e gastar TURN. Liste a origem do front (ex.: https://tela.gg).',
+    );
+  }
   if (raw.NODE_ENV === 'production' && (raw.TURN_USERNAME !== undefined || raw.TURN_PASSWORD !== undefined)) {
     problems.push(
       'TURN com credencial estática em produção: qualquer espectador que abrir o DevTools ganha um relay permanente. Use TURN_SECRET.',

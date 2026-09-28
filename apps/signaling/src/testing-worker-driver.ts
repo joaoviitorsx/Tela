@@ -15,7 +15,7 @@ import {
  * Socket com a semântica do runtime da Cloudflare: o que sobrevive à
  * hibernação é só o que foi para `serializeAttachment`.
  */
-class FakeHibernatableSocket implements HibernatableSocket {
+export class FakeHibernatableSocket implements HibernatableSocket {
   readonly sent: ServerMessage[] = [];
   closed = false;
   private attachment: unknown = null;
@@ -48,7 +48,7 @@ class FakeHibernatableSocket implements HibernatableSocket {
   }
 }
 
-class FakeDurableContext implements DurableContext {
+export class FakeDurableContext implements DurableContext {
   private readonly sockets: FakeHibernatableSocket[] = [];
   private readonly dados = new Map<string, unknown>();
 
@@ -85,7 +85,14 @@ class FakeDurableContext implements DurableContext {
       this.dados.set(key, JSON.parse(JSON.stringify(value)));
     },
     delete: async (key: string): Promise<boolean> => this.dados.delete(key),
+    getAlarm: async (): Promise<number | null> => this.alarme,
+    setAlarm: async (quando: number): Promise<void> => {
+      this.alarme = quando;
+    },
   };
+
+  /** O alarme agendado, para o teste afirmar. */
+  alarme: number | null = null;
 }
 
 /**

@@ -1,6 +1,7 @@
-import { SLUG_RE } from '@tela/shared';
+import { MAX_FRAME_BYTES, SLUG_RE } from '@tela/shared';
 import { ChannelRoom, type Env, type HibernatableSocket, type WebCryptoLike, makeChannelDeps } from './worker.js';
 import { describeIceSettings, parseIceSettings } from './ice-settings.js';
+import { listaDeOrigens, origemPermitida } from './origem.js';
 
 /**
  * Ponto de entrada do Cloudflare Worker.
@@ -33,6 +34,8 @@ type DurableState = {
     get<T>(key: string): Promise<T | undefined>;
     put<T>(key: string, value: T): Promise<void>;
     delete(key: string): Promise<boolean>;
+    getAlarm(): Promise<number | null>;
+    setAlarm(quando: number): Promise<void>;
   };
 };
 
@@ -60,7 +63,17 @@ export class ChannelDurableObject {
     return new Response(null, { status: 101, webSocket: client } as ResponseInit);
   }
 
+  /** Único relógio que sobrevive à hibernação: expira quem não se apresentou. */
+  async alarm(): Promise<void> {
+    await this.room.expirarPendentes();
+  }
+
   async webSocketMessage(socket: HibernatableSocket, message: string | ArrayBuffer): Promise<void> {
+    // Binário grande sai antes de decodificar: o teto é em bytes.
+    if (typeof message !== 'string' && message.byteLength > MAX_FRAME_BYTES) {
+      socket.close(1009, 'BAD_MESSAGE');
+      return;
+    }
     const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
     await this.room.handleMessage(socket, this.slug, text);
   }
@@ -99,6 +112,16 @@ export default {
     if (url.pathname === '/signal' || url.pathname.startsWith('/signal/')) {
       if (request.headers.get('Upgrade') !== 'websocket') {
         return new Response('esperado WebSocket', { status: 426 });
+      }
+
+      /*
+        Origem no upgrade, antes de acordar o Durable Object (TELA-019). A do
+        próprio Worker sempre passa — ele serve o front —; outras só pela
+        lista. Não é autenticação: é o que impede uma página de terceiros de
+        abrir sinalização em nome de quem a visita.
+      */
+      if (!origemPermitida(request.headers.get('Origin'), listaDeOrigens(env.ALLOWED_ORIGINS), url.origin)) {
+        return new Response('origem não permitida', { status: 403 });
       }
 
       // O slug decide QUAL Durable Object atende, então todos os peers de um

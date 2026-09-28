@@ -59,6 +59,7 @@ export type MeshTopologyDeps = {
   readonly createConnection: (config: RTCConfiguration) => RTCPeerConnection;
   readonly maxPeers: number;
   readonly onIssue?: (peerId: string, code: PeerLinkIssueCode | PeerLinkFatalCode) => void;
+  readonly onPeerStateChange?: (peerId: string, state: RTCPeerConnectionState) => void;
 };
 
 /**
@@ -151,6 +152,8 @@ export class MeshTopology {
    * credenciais de TURN novas e quem entrar depois precisa das novas.
    */
   private iceServers: readonly IceServerConfig[];
+  private readonly attempts = new Map<string, string>();
+  private readonly configurationFailed = new Set<string>();
 
   constructor(private readonly deps: MeshTopologyDeps) {
     this.iceServers = deps.iceServers;
@@ -159,6 +162,26 @@ export class MeshTopology {
   /** Chamado quando o canal de sinalização reabre com credenciais novas. */
   setIceServers(iceServers: readonly IceServerConfig[]): void {
     this.iceServers = iceServers;
+    for (const link of this.links.values()) {
+      if (link.updateIceServers(iceServers)) this.configurationFailed.delete(link.peerId);
+      else this.configurationFailed.add(link.peerId);
+    }
+  }
+
+  restart(peerId: string): boolean {
+    if (this.configurationFailed.has(peerId)) return false;
+    return this.links.get(peerId)?.restartIce() ?? false;
+  }
+  mediaBytes(peerId: string): Promise<number | null> {
+    return this.links.get(peerId)?.mediaBytes('outbound') ?? Promise.resolve(null);
+  }
+
+  rebuild(peerId: string): void {
+    if (!this.links.has(peerId)) return;
+    const attemptId = this.attempts.get(peerId);
+    this.drop(peerId, false);
+    if (attemptId !== undefined) this.attempts.set(peerId, attemptId);
+    this.attach(peerId);
   }
 
   on<K extends keyof TopologyEvents>(
@@ -181,9 +204,16 @@ export class MeshTopology {
   }
 
   /** Chamado quando o servidor de sinalização anuncia um espectador. */
-  admit(peerId: string): void {
+  admit(peerId: string, attemptId?: string): void {
     const existente = this.links.get(peerId);
     if (existente !== undefined) {
+      if (attemptId !== undefined && this.attempts.get(peerId) !== attemptId) {
+        this.attempts.set(peerId, attemptId);
+        this.rebuild(peerId);
+        return;
+      }
+      // A recuperação coordenada já cuida de um link falho da MESMA tentativa.
+      if (this.deps.onPeerStateChange !== undefined) return;
       /**
        * Link saudável com este peer JÁ existe — não derrube.
        *
@@ -205,6 +235,7 @@ export class MeshTopology {
       this.drop(peerId);
     }
     if (this.links.size >= this.deps.maxPeers) return;
+    if (attemptId !== undefined) this.attempts.set(peerId, attemptId);
 
     if (this.stream === null || this.preset === null) {
       this.waiting.add(peerId);
@@ -234,8 +265,9 @@ export class MeshTopology {
        */
       startBitrateBps: () => this.bitrateInicial(),
       onStateChange: (state) => {
-        if (state === 'failed' || state === 'closed') this.drop(peerId);
-        else this.announce();
+        if (this.deps.onPeerStateChange !== undefined) this.deps.onPeerStateChange(peerId, state);
+        else if (state === 'failed' || state === 'closed') this.drop(peerId);
+        this.announce();
       },
       onIssue: (code) => this.deps.onIssue?.(peerId, code),
       onFatal: (code) => {
@@ -269,9 +301,11 @@ export class MeshTopology {
     this.announce();
   }
 
-  drop(peerId: string): void {
+  drop(peerId: string, notify = true): void {
     const link = this.links.get(peerId);
     this.waiting.delete(peerId);
+    this.attempts.delete(peerId);
+    this.configurationFailed.delete(peerId);
     if (link === undefined) return;
     link.close();
     this.links.delete(peerId);
@@ -294,7 +328,7 @@ export class MeshTopology {
     }
     this.senders.delete(peerId);
     this.relayed.delete(peerId);
-    this.emitter.emit('dropped', { peerId });
+    if (notify) this.emitter.emit('dropped', { peerId });
     this.announce();
   }
 

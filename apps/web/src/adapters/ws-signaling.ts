@@ -8,6 +8,7 @@ import { Emitter } from '../core/emitter.js';
 import type {
   ChannelEvents,
   ChannelOpened,
+  IceCredentials,
   SignalingChannel,
   SignalingError,
 } from '../core/ports/signaling-channel.js';
@@ -54,6 +55,21 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
   let slugAtual = '';
   let tentativa = 0;
   let religar: number | null = null;
+  let pendingRefresh: {
+    requestId: string;
+    promise: Promise<IceCredentials>;
+    resolve: (value: IceCredentials) => void;
+    reject: (reason: SignalingError) => void;
+    timer: number;
+  } | null = null;
+
+  function failRefresh(): void {
+    const pending = pendingRefresh;
+    if (pending === null) return;
+    pendingRefresh = null;
+    window.clearTimeout(pending.timer);
+    pending.reject({ code: 'SIGNAL_UNREACHABLE' });
+  }
 
   /**
    * O slug vai NA URL, além de ir na primeira mensagem.
@@ -92,9 +108,12 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       aoFalhar({ code: 'HELLO_TIMEOUT' });
     }, HELLO_TIMEOUT_MS * 2);
 
-    ws.addEventListener('open', () => ws.send(JSON.stringify(hello)));
+    ws.addEventListener('open', () => {
+      if (socket === ws) ws.send(JSON.stringify(hello));
+    });
 
     ws.addEventListener('message', (event) => {
+      if (socket !== ws) return;
       let json: unknown;
       try {
         json = JSON.parse(typeof event.data === 'string' ? event.data : '');
@@ -115,6 +134,8 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
             selfId: message.peerId,
             hostId: null,
             iceServers: message.iceServers,
+            issuedAt: message.issuedAt,
+            expiresAt: message.expiresAt,
             ...(message.relayStatus === undefined ? {} : { relayStatus: message.relayStatus }),
             maxPeers: message.maxPeers,
             viewers: 0,
@@ -130,6 +151,8 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
             selfId: message.peerId,
             hostId: message.hostId,
             iceServers: message.iceServers,
+            issuedAt: message.issuedAt,
+            expiresAt: message.expiresAt,
             ...(message.relayStatus === undefined ? {} : { relayStatus: message.relayStatus }),
             maxPeers: 0,
             viewers: message.viewers,
@@ -147,13 +170,21 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
 
       switch (message.type) {
         case 'peer-joined':
-          return emitter.emit('peer-joined', { peerId: message.peerId });
+          return emitter.emit('peer-joined', { peerId: message.peerId, attemptId: message.attemptId });
         case 'peer-left':
           return emitter.emit('peer-left', { peerId: message.peerId });
         case 'viewers':
           return emitter.emit('viewers', { count: message.count });
         case 'signal':
           return emitter.emit('signal', { from: message.from, payload: message.payload });
+        case 'ice-servers': {
+          const pending = pendingRefresh;
+          if (pending === null || pending.requestId !== message.requestId) return;
+          pendingRefresh = null;
+          window.clearTimeout(pending.timer);
+          pending.resolve(message);
+          return;
+        }
         case 'error':
           return emitter.emit('closed', { reason: message.code });
         default:
@@ -172,6 +203,8 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
      */
     ws.addEventListener('close', () => {
       window.clearTimeout(timer);
+      if (socket !== ws) return;
+      failRefresh();
       if (!settled) {
         settled = true;
         aoFalhar({ code: 'SIGNAL_UNREACHABLE' });
@@ -184,6 +217,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
     });
 
     ws.addEventListener('error', () => {
+      if (socket !== ws) return;
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
@@ -265,9 +299,9 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       });
     },
 
-    watch(slug) {
+    watch(slug, identity) {
       return new Promise<ChannelOpened>((resolve, reject) => {
-        const hello: ClientMessage = { type: 'watch', slug };
+        const hello: ClientMessage = { type: 'watch', slug, ...identity };
         closedByUs = false;
         encerrado = false;
         saudacao = hello;
@@ -278,6 +312,24 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
           reject(erro);
         });
       });
+    },
+
+    refreshIce() {
+      if (pendingRefresh !== null) return pendingRefresh.promise;
+      if (socket === null || socket.readyState !== WebSocket.OPEN) {
+        return Promise.reject({ code: 'SIGNAL_UNREACHABLE' } satisfies SignalingError);
+      }
+      const requestId = crypto.randomUUID();
+      let resolveRefresh!: (value: IceCredentials) => void;
+      let rejectRefresh!: (reason: SignalingError) => void;
+      const promise = new Promise<IceCredentials>((resolve, reject) => {
+        resolveRefresh = resolve;
+        rejectRefresh = reject;
+      });
+      const timer = window.setTimeout(failRefresh, HELLO_TIMEOUT_MS * 2);
+      pendingRefresh = { requestId, promise, resolve: resolveRefresh, reject: rejectRefresh, timer };
+      socket.send(JSON.stringify({ type: 'refresh-ice', requestId } satisfies ClientMessage));
+      return promise;
     },
 
     send(payload, to) {
@@ -294,6 +346,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
     },
 
     close() {
+      failRefresh();
       closedByUs = true;
       encerrado = true;
       saudacao = null;

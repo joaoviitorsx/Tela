@@ -52,7 +52,8 @@ export type SignalPayload = {
 
 export type PeerLinkIssueCode =
   | 'SIGNAL_INVALID' | 'CANDIDATE_REJECTED' | 'CANDIDATE_STALE'
-  | 'CANDIDATE_QUEUE_FULL' | 'CANDIDATE_EXPIRED' | 'CANDIDATE_AMBIGUOUS';
+  | 'CANDIDATE_QUEUE_FULL' | 'CANDIDATE_EXPIRED' | 'CANDIDATE_AMBIGUOUS'
+  | 'ICE_CONFIGURATION_FAILED' | 'ICE_RESTART_UNAVAILABLE';
 export type PeerLinkFatalCode = 'LOCAL_DESCRIPTION_FAILED' | 'REMOTE_DESCRIPTION_FAILED' | 'NEGOTIATION_QUEUE_FULL';
 
 export class PeerLinkError extends Error {
@@ -463,6 +464,37 @@ export class PeerLink {
     }
   }
 
+  /** Troca só os servidores; opções imutáveis da PC permanecem intactas. */
+  updateIceServers(servers: readonly IceServerConfig[]): boolean {
+    if (this.closed) return false;
+    try {
+      this.pc.setConfiguration({
+        ...this.pc.getConfiguration(),
+        iceServers: rtcConfiguration(servers).iceServers ?? [],
+      });
+      return true;
+    } catch {
+      this.onIssue('ICE_CONFIGURATION_FAILED');
+      return false;
+    }
+  }
+
+  /** Entra na mesma fila de ofertas; nunca cria uma negociação paralela. */
+  restartIce(): boolean {
+    if (this.closed || typeof this.pc.restartIce !== 'function') {
+      if (!this.closed) this.onIssue('ICE_RESTART_UNAVAILABLE');
+      return false;
+    }
+    try {
+      this.pc.restartIce();
+      this.requestNegotiation();
+      return true;
+    } catch {
+      this.onIssue('ICE_RESTART_UNAVAILABLE');
+      return false;
+    }
+  }
+
   /**
    * Ajusta o SDP recebido antes de aplicá-lo. Ver `sdp-tuning.ts`.
    *
@@ -484,6 +516,24 @@ export class PeerLink {
 
   async stats(): Promise<RTCStatsReport> {
     return await this.pc.getStats();
+  }
+
+  async mediaBytes(direction: 'inbound' | 'outbound'): Promise<number | null> {
+    if (this.closed) return null;
+    try {
+      const report = await this.pc.getStats();
+      let total = 0;
+      let found = false;
+      report.forEach((entry) => {
+        const row = entry as { type?: string; kind?: string; bytesReceived?: number; bytesSent?: number };
+        if (row.type !== `${direction}-rtp` || row.kind !== 'video') return;
+        const bytes = direction === 'inbound' ? row.bytesReceived : row.bytesSent;
+        if (typeof bytes !== 'number') return;
+        total += bytes;
+        found = true;
+      });
+      return found ? total : null;
+    } catch { return null; }
   }
 
   close(): void {

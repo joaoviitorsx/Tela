@@ -9,14 +9,18 @@ import type { IceServerConfig, RelayStatus, ServerMessage, SignalingErrorCode } 
  */
 export type ChannelRole = 'host' | 'viewer';
 
-export type ChannelOpened = {
+export type IceCredentials = {
+  readonly iceServers: readonly IceServerConfig[];
+  readonly relayStatus?: RelayStatus;
+  readonly issuedAt?: number | undefined;
+  readonly expiresAt?: number | undefined;
+};
+
+export type ChannelOpened = IceCredentials & {
   readonly role: ChannelRole;
   readonly selfId: string;
   /** Só existe para espectador: quem tem a mídia. */
   readonly hostId: string | null;
-  readonly iceServers: readonly IceServerConfig[];
-  /** Servidores antigos podem omitir este campo. */
-  readonly relayStatus?: RelayStatus;
   /** Só existe para transmissor. */
   readonly maxPeers: number;
   /** Quantos já estavam assistindo quando entramos. Zero para o transmissor. */
@@ -25,7 +29,7 @@ export type ChannelOpened = {
 
 export type ChannelEvents = {
   /** Um espectador entrou (só o transmissor recebe). */
-  'peer-joined': { peerId: string };
+  'peer-joined': { peerId: string; attemptId?: string | undefined };
   'peer-left': { peerId: string };
   /** Quantos estão assistindo. Só o espectador recebe. */
   viewers: { count: number };
@@ -49,7 +53,9 @@ export type SignalingChannel = {
   /** Reivindica o canal como transmissor. Rejeita com `SignalingError`. */
   host(slug: string, ownerToken: string): Promise<ChannelOpened>;
   /** Entra como espectador. Rejeita com `SignalingError`. */
-  watch(slug: string): Promise<ChannelOpened>;
+  watch(slug: string, identity?: { readonly participantId: string; readonly attemptId: string }): Promise<ChannelOpened>;
+  /** Renova credenciais do mesmo participante sem abrir outro socket. */
+  refreshIce(): Promise<IceCredentials>;
   /** Envia payload opaco. `to` omitido = para o transmissor. */
   send(payload: unknown, to?: string): void;
   on<K extends keyof ChannelEvents>(

@@ -2,14 +2,17 @@ import type { EncodingPreset } from '@tela/shared';
 import { Emitter } from '../core/emitter.js';
 import { StatsSampler } from '../core/media/stats-sampler.js';
 import { isRelayed } from '../core/mesh/ice-config.js';
+import { IceLifecycle } from '../core/mesh/ice-lifecycle.js';
 import { MeshTopology, type PeerInfo } from '../core/mesh/mesh-topology.js';
 import { JITTER_INICIAL_MS, PeerLink } from '../core/mesh/peer-link.js';
+import { PeerRecovery } from '../core/mesh/peer-recovery.js';
 import type {
   MediaStats,
   MediaTransport,
   TransportEvents,
 } from '../core/ports/media-transport.js';
 import type { SignalingChannel } from '../core/ports/signaling-channel.js';
+import type { Scheduler } from '../core/ports/scheduler.js';
 
 /**
  * `MediaTransport` sobre mesh P2P — a implementação viva do produto.
@@ -21,6 +24,7 @@ import type { SignalingChannel } from '../core/ports/signaling-channel.js';
  */
 export type MeshTransportDeps = {
   readonly channel: SignalingChannel;
+  readonly scheduler: Scheduler;
   /** Injetada para `core/` rodar sem DOM no teste e trocar de stack na Fase 3. */
   readonly createConnection?: (config: RTCConfiguration) => RTCPeerConnection;
 };
@@ -50,6 +54,9 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   let stream: MediaStream | null = null;
   /** Por instância. Módulo-global seria compartilhado entre transmissões. */
   let preset: EncodingPreset | null = null;
+  let iceLifecycle: IceLifecycle | null = null;
+  let viewerNeedsRebuild = false;
+  const recoveries = new Map<string, PeerRecovery>();
 
   const mediaStream = (): MediaStream => (stream ??= new MediaStream());
 
@@ -63,19 +70,49 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
     async host(slug, ownerToken) {
       const opened = await deps.channel.host(slug, ownerToken);
 
+      const recoveryFor = (peerId: string): PeerRecovery => {
+        const existing = recoveries.get(peerId);
+        if (existing !== undefined) return existing;
+        const recovery = new PeerRecovery({
+          scheduler: deps.scheduler,
+          beforeRestart: () => iceLifecycle?.beforeRestart() ?? Promise.resolve(),
+          mediaBytes: () => mesh.mediaBytes(peerId),
+          restart: () => mesh.restart(peerId),
+          rebuild: () => mesh.rebuild(peerId),
+          onRecovering: () => undefined,
+          onRecovered: () => undefined,
+          onExhausted: () => { mesh.drop(peerId); recoveries.delete(peerId); },
+        });
+        recoveries.set(peerId, recovery);
+        return recovery;
+      };
+
       const mesh = new MeshTopology({
         iceServers: opened.iceServers,
         send: (payload, to) => deps.channel.send(payload, to),
         createConnection,
         maxPeers: opened.maxPeers,
         onIssue: (_peerId, code) => console.warn('[peer-link]', code),
+        onPeerStateChange: (peerId, state) => recoveryFor(peerId).observe(state),
       });
       topology = mesh;
+      iceLifecycle = new IceLifecycle(deps.channel, deps.scheduler, (lease) => {
+        mesh.setIceServers(lease.iceServers);
+      });
+      iceLifecycle.use(opened);
 
       unsubscribes.push(
         mesh.on('peers', (peers) => emitter.emit('peers', peers)),
-        deps.channel.on('peer-joined', ({ peerId }) => mesh.admit(peerId)),
-        deps.channel.on('peer-left', ({ peerId }) => mesh.drop(peerId)),
+        mesh.on('dropped', ({ peerId }) => {
+          recoveries.get(peerId)?.close();
+          recoveries.delete(peerId);
+        }),
+        deps.channel.on('peer-joined', ({ peerId, attemptId }) => mesh.admit(peerId, attemptId)),
+        deps.channel.on('peer-left', ({ peerId }) => {
+          recoveries.get(peerId)?.close();
+          recoveries.delete(peerId);
+          mesh.drop(peerId);
+        }),
         deps.channel.on('signal', ({ from, payload }) => void mesh.handleSignal(from, payload)),
         /**
          * Queda do canal NÃO é queda da transmissão.
@@ -109,7 +146,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
          * idempotente para link saudável — quem sobreviveu à queda continua.
          */
         deps.channel.on('reopened', (aberto) => {
-          mesh.setIceServers(aberto.iceServers);
+          iceLifecycle?.use(aberto);
           emitter.emit('signaling-restored', undefined);
         }),
       );
@@ -117,10 +154,25 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       return { maxPeers: opened.maxPeers };
     },
 
-    async watch(slug) {
-      const opened = await deps.channel.watch(slug);
+    async watch(slug, identity) {
+      const opened = await deps.channel.watch(slug, identity);
       const media = mediaStream();
       let delivered = false;
+      const recovery = new PeerRecovery({
+        scheduler: deps.scheduler,
+        beforeRestart: () => iceLifecycle?.beforeRestart() ?? Promise.resolve(),
+        mediaBytes: () => viewerLink?.mediaBytes('inbound') ?? Promise.resolve(null),
+        restart: () => !viewerNeedsRebuild && (viewerLink?.restartIce() ?? false),
+        rebuild: () => emitter.emit('closed', { reason: 'ICE_REBUILD' }),
+        onRecovering: () => emitter.emit('reconnecting', undefined),
+        onRecovered: () => {
+          if (delivered && media.getVideoTracks().some((track) => !track.muted)) {
+            emitter.emit('reconnected', undefined);
+          }
+        },
+        onExhausted: () => emitter.emit('closed', { reason: 'ICE_FAILED' }),
+      });
+      recoveries.set('viewer', recovery);
       // Chega no `watching`, não como evento: quem acabou de entrar precisa do
       // número agora, e não só quando o próximo espectador mexer na contagem.
       queueMicrotask(() => emitter.emit('viewers', { count: opened.viewers }));
@@ -135,7 +187,6 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         send: (payload) => deps.channel.send(payload),
         createConnection,
         onTrack: (track) => {
-          media.addTrack(track);
           link.setJitterAlvo(JITTER_INICIAL_MS);
 
           /**
@@ -154,8 +205,11 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
            * vez de deixar a pessoa olhando para o preto.
            */
           const anunciar = () => {
+            for (const old of media.getTracks()) {
+              if (old !== track && old.kind === track.kind) media.removeTrack(old);
+            }
+            if (!media.getTracks().includes(track)) media.addTrack(track);
             if (track.kind === 'video') {
-              if (delivered) return;
               delivered = true;
             }
             emitter.emit('track', { stream: media });
@@ -179,28 +233,29 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
            * pausa curta acontece em toda reconexão de rede, então há uma
            * carência antes de declarar o fim.
            */
-          track.addEventListener('ended', () => emitter.emit('closed', { reason: 'HOST_LEFT' }));
+          track.addEventListener('ended', () => {
+            if (media.getTracks().includes(track)) emitter.emit('closed', { reason: 'HOST_LEFT' });
+          });
 
           let silencio: ReturnType<typeof setTimeout> | null = null;
           track.addEventListener('mute', () => {
-            emitter.emit('reconnecting', undefined);
+            if (!media.getTracks().includes(track)) return;
+            recovery.observe('disconnected');
             silencio ??= setTimeout(() => {
-              if (track.muted) emitter.emit('closed', { reason: 'MEDIA_STOPPED' });
+              if (track.muted && media.getTracks().includes(track)) recovery.observe('failed');
             }, MEDIA_GRACE_MS);
           });
           track.addEventListener('unmute', () => {
+            if (!media.getTracks().includes(track)) return;
             if (silencio !== null) {
               clearTimeout(silencio);
               silencio = null;
             }
-            if (delivered) emitter.emit('reconnected', undefined);
+            recovery.observe('connected');
           });
         },
         onStateChange: (state) => {
-          if (state === 'disconnected') emitter.emit('reconnecting', undefined);
-          if (state === 'connected' && delivered) emitter.emit('reconnected', undefined);
-          // Sem TURN, um par atrás de NAT simétrico chega exatamente aqui.
-          if (state === 'failed') emitter.emit('closed', { reason: 'ICE_FAILED' });
+          recovery.observe(state);
         },
         onIssue: (code) => console.warn('[peer-link]', code),
         onFatal: (code) => {
@@ -209,6 +264,10 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         },
       });
       viewerLink = link;
+      iceLifecycle = new IceLifecycle(deps.channel, deps.scheduler, (lease) => {
+        viewerNeedsRebuild = viewerLink?.updateIceServers(lease.iceServers) === false;
+      });
+      iceLifecycle.use(opened);
 
       unsubscribes.push(
         deps.channel.on('signal', ({ payload }) => {
@@ -219,7 +278,10 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         deps.channel.on('peer-left', () => emitter.emit('closed', { reason: 'HOST_LEFT' })),
         // Idem no espectador: perder o canal não é perder o vídeo.
         deps.channel.on('closed', () => emitter.emit('signaling-lost', undefined)),
-        deps.channel.on('reopened', () => emitter.emit('signaling-restored', undefined)),
+        deps.channel.on('reopened', (aberto) => {
+          iceLifecycle?.use(aberto);
+          emitter.emit('signaling-restored', undefined);
+        }),
         deps.channel.on('viewers', ({ count }) => emitter.emit('viewers', { count })),
       );
       return { relayStatus: opened.relayStatus ?? null };
@@ -284,12 +346,17 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
     },
 
     async disconnect() {
+      iceLifecycle?.close();
+      iceLifecycle = null;
+      for (const recovery of recoveries.values()) recovery.close();
+      recoveries.clear();
       for (const off of unsubscribes) off();
       unsubscribes.length = 0;
       topology?.close();
       topology = null;
       viewerLink?.close();
       viewerLink = null;
+      viewerNeedsRebuild = false;
       stream = null;
       preset = null;
       deps.channel.close();

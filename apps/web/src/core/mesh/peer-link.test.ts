@@ -80,6 +80,19 @@ describe('PeerLink — perfect negotiation', () => {
     expect(ctx.sent[0]?.candidate).toEqual({ candidate: 'candidate:1 1 udp' });
   });
 
+  it('troca credenciais na PC existente sem reiniciar ICE saudável', async () => {
+    const ctx = build(false);
+    const original = ctx.pc.currentConfig;
+    expect(ctx.link.updateIceServers([{ urls: 'turn:new.test', username: 'new', credential: 'secret' }])).toBe(true);
+    expect(ctx.pc.currentConfig.iceServers?.[0]).toMatchObject({ username: 'new' });
+    expect(ctx.pc.currentConfig.bundlePolicy).toBe(original.bundlePolicy);
+    expect(ctx.pc.restartCount).toBe(0);
+    expect(ctx.link.restartIce()).toBe(true);
+    await settle();
+    expect(ctx.pc.restartCount).toBe(1);
+    expect(ctx.sent.some((payload) => payload.description?.type === 'offer')).toBe(true);
+  });
+
   it('usa a geração do SDP quando o candidato chega antes da promessa local resolver', async () => {
     const sender = build(false);
     const receiver = build(true);

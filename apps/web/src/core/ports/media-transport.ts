@@ -247,7 +247,7 @@ export type MediaTransport = {
    */
   host(slug: string, ownerToken: string): Promise<{ readonly maxPeers: number }>;
   /** Entra num canal como espectador. */
-  watch(slug: string): Promise<{ readonly relayStatus: RelayStatus | null }>;
+  watch(slug: string, identity?: { readonly participantId: string; readonly attemptId: string }): Promise<{ readonly relayStatus: RelayStatus | null }>;
 
   publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void>;
   publishAudio(track: MediaStreamTrack): Promise<void>;

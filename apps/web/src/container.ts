@@ -109,7 +109,7 @@ export const shareUrlFor = (slug: string): string =>
 
 /** Cada sessão recebe um transporte novo: canal reaberto não é canal reusado. */
 function createTransport(): MediaTransport {
-  return makeMeshTransport({ channel: makeWsSignaling(SIGNAL_URL) });
+  return makeMeshTransport({ channel: makeWsSignaling(SIGNAL_URL), scheduler });
 }
 
 export function createBroadcastSession(): BroadcastSession {

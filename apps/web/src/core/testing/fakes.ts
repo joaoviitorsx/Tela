@@ -228,6 +228,7 @@ export class FakeMediaTransport implements MediaTransport {
 
   hosted: { slug: string; ownerToken: string } | null = null;
   watched: string | null = null;
+  watchIdentity: { readonly participantId: string; readonly attemptId: string } | undefined;
   readonly videos: { track: MediaStreamTrack; preset: EncodingPreset }[] = [];
   readonly audios: MediaStreamTrack[] = [];
   readonly presets: EncodingPreset[] = [];
@@ -251,7 +252,8 @@ export class FakeMediaTransport implements MediaTransport {
     return { maxPeers: this.maxPeersDoServidor };
   }
 
-  async watch(slug: string): Promise<{ relayStatus: 'available' | 'not-configured' | 'unavailable' | null }> {
+  async watch(slug: string, identity?: { readonly participantId: string; readonly attemptId: string }): Promise<{ relayStatus: 'available' | 'not-configured' | 'unavailable' | null }> {
+    this.watchIdentity = identity;
     if (this.watchError !== null) throw this.watchError;
     if (this.hangOnWatch) return new Promise(() => undefined);
     this.watched = slug;
@@ -361,6 +363,7 @@ export class FakeSignalingChannel implements SignalingChannel {
   closed = false;
   hostError: unknown = null;
   watchError: unknown = null;
+  refreshCalls = 0;
 
   constructor(
     readonly selfId: string,
@@ -393,6 +396,11 @@ export class FakeSignalingChannel implements SignalingChannel {
       iceServers: TEST_ICE,
       maxPeers: 0,
     };
+  }
+
+  async refreshIce() {
+    this.refreshCalls += 1;
+    return { iceServers: TEST_ICE, relayStatus: 'available' as const };
   }
 
   send(payload: unknown, to?: string): void {

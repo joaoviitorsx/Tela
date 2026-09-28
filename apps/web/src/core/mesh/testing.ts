@@ -25,6 +25,8 @@ export class FakePeerConnection {
   localDescription: RTCSessionDescriptionInit | null = null;
   remoteDescription: RTCSessionDescriptionInit | null = null;
   closed = false;
+  currentConfig: RTCConfiguration;
+  restartCount = 0;
 
   readonly senders: FakeSender[] = [];
   readonly candidatesAdded: RTCIceCandidateInit[] = [];
@@ -38,7 +40,14 @@ export class FakePeerConnection {
   /** Faz `setLocalDescription` lançar, para exercitar falha de negociação. */
   failLocalDescription = false;
 
-  constructor(readonly config: RTCConfiguration) {}
+  constructor(readonly config: RTCConfiguration) { this.currentConfig = config; }
+
+  getConfiguration(): RTCConfiguration { return this.currentConfig; }
+  setConfiguration(config: RTCConfiguration): void { this.currentConfig = config; }
+  restartIce(): void {
+    this.restartCount += 1;
+    queueMicrotask(() => this.onnegotiationneeded?.());
+  }
 
   addTrack(track: MediaStreamTrack): FakeSender {
     const sender = new FakeSender(track);

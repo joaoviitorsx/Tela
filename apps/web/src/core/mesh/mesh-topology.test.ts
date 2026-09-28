@@ -9,7 +9,7 @@ const settle = async (times = 10) => {
   for (let i = 0; i < times; i += 1) await Promise.resolve();
 };
 
-function build(maxPeers = 3) {
+function build(maxPeers = 3, onPeerStateChange?: (peerId: string, state: RTCPeerConnectionState) => void) {
   const factory = fakeConnectionFactory();
   const sent: { payload: unknown; to: string }[] = [];
   const mesh = new MeshTopology({
@@ -17,6 +17,7 @@ function build(maxPeers = 3) {
     send: (payload, to) => sent.push({ payload, to }),
     createConnection: factory.create,
     maxPeers,
+    ...(onPeerStateChange === undefined ? {} : { onPeerStateChange }),
   });
   const video = fakeTrack('video');
   const stream = fakeStream([video]);
@@ -64,6 +65,60 @@ describe('MeshTopology — admissão', () => {
     await settle();
 
     expect(ctx.mesh.size).toBe(0);
+  });
+
+  it('reapresentação da mesma tentativa preserva a PC; nova tentativa reconstrói uma só vaga', async () => {
+    const ctx = build(1);
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1', 'attempt-1');
+    await settle();
+    const first = ctx.factory.created[0] as FakePeerConnection;
+    ctx.mesh.admit('v_1', 'attempt-1');
+    expect(ctx.factory.created).toHaveLength(1);
+    ctx.mesh.admit('v_1', 'attempt-2');
+    await settle();
+    expect(first.closed).toBe(true);
+    expect(ctx.factory.created).toHaveLength(2);
+    expect(ctx.mesh.size).toBe(1);
+  });
+
+  it('renova as configurações de todas as PCs abertas sem interromper a mídia', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    ctx.mesh.admit('v_2');
+    await settle();
+    ctx.mesh.setIceServers([{ urls: 'turn:relay.test', username: 'renewed', credential: 'secret' }]);
+    expect(ctx.factory.created.map((pc) => pc.currentConfig.iceServers?.[0]?.username))
+      .toEqual(['renewed', 'renewed']);
+    expect(ctx.factory.created.map((pc) => pc.restartCount)).toEqual([0, 0]);
+    expect(ctx.mesh.size).toBe(2);
+  });
+
+  it('reapresentação no signaling não antecipa reconstrução de um peer em recuperação', async () => {
+    const ctx = build(1, () => undefined);
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1', 'attempt-1');
+    await settle();
+    (ctx.factory.created[0] as FakePeerConnection).emitState('failed');
+    ctx.mesh.admit('v_1', 'attempt-1');
+    expect(ctx.factory.created).toHaveLength(1);
+    expect(ctx.mesh.size).toBe(1);
+  });
+
+  it('falha de setConfiguration adia a reconstrução até a recuperação ser necessária', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+    const old = ctx.factory.created[0] as FakePeerConnection;
+    old.setConfiguration = () => { throw new Error('InvalidModificationError'); };
+    ctx.mesh.setIceServers([{ urls: 'turn:relay.test', username: 'new', credential: 'secret' }]);
+    expect(old.closed).toBe(false);
+    expect(ctx.mesh.restart('v_1')).toBe(false);
+    ctx.mesh.rebuild('v_1');
+    expect(old.closed).toBe(true);
+    expect(ctx.factory.created[1]?.config.iceServers?.[0]?.username).toBe('new');
   });
 
   it('falha na oferta local remove só o peer afetado', async () => {

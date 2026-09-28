@@ -38,27 +38,62 @@ export function rtcConfiguration(iceServers: readonly IceServerConfig[]): RTCCon
  * de terceiro sendo consumida. Esconder transforma uma limitação conhecida
  * em "às vezes fica ruim".
  */
-export function isRelayed(report: RTCStatsReport): boolean {
-  let relayed = false;
-  const candidates = new Map<string, string>();
+export type SelectedIcePath = {
+  readonly source: 'transport' | 'legacy-selected' | 'unique-nominated';
+  readonly localType: string | null;
+  readonly remoteType: string | null;
+  /** Acesso cliente–TURN; candidate.protocol descreve outra coisa. */
+  readonly relayProtocol: 'udp' | 'tcp' | 'tls' | null;
+  readonly iceState: string | null;
+  readonly dtlsState: string | null;
+};
 
+function field(stat: Record<string, unknown> | undefined, key: string): string | null {
+  const value = stat?.[key];
+  return typeof value === 'string' ? value : null;
+}
+
+/** Somente o par em uso, nunca qualquer par histórico `succeeded`. */
+export function selectedIcePath(report: RTCStatsReport): SelectedIcePath | null {
+  const stats = new Map<string, Record<string, unknown>>();
   report.forEach((entry) => {
     const stat = entry as Record<string, unknown>;
-    if (stat['type'] === 'local-candidate' || stat['type'] === 'remote-candidate') {
-      const id = stat['id'];
-      const kind = stat['candidateType'];
-      if (typeof id === 'string' && typeof kind === 'string') candidates.set(id, kind);
+    if (typeof stat['id'] === 'string') stats.set(stat['id'], stat);
+  });
+
+  const transports = [...stats.values()].filter((stat) => stat['type'] === 'transport');
+  const transport = transports.find((stat) => field(stat, 'selectedCandidatePairId') !== null);
+  let source: SelectedIcePath['source'] = 'transport';
+  let pair = transport === undefined ? undefined : stats.get(field(transport, 'selectedCandidatePairId') ?? '');
+  if (transport === undefined) {
+    const pairs = [...stats.values()].filter((stat) => stat['type'] === 'candidate-pair');
+    const selected = pairs.filter((stat) => stat['selected'] === true);
+    if (selected.length === 1) {
+      pair = selected[0];
+      source = 'legacy-selected';
+    } else if (selected.length === 0) {
+      const nominated = pairs.filter((stat) => stat['state'] === 'succeeded' && stat['nominated'] === true);
+      if (nominated.length === 1) {
+        pair = nominated[0];
+        source = 'unique-nominated';
+      }
     }
-  });
+  }
+  if (pair?.['type'] !== 'candidate-pair') return null;
+  const local = stats.get(field(pair, 'localCandidateId') ?? '');
+  const remote = stats.get(field(pair, 'remoteCandidateId') ?? '');
+  const protocol = field(local, 'relayProtocol');
+  return {
+    source,
+    localType: field(local, 'candidateType'),
+    remoteType: field(remote, 'candidateType'),
+    relayProtocol: protocol === 'udp' || protocol === 'tcp' || protocol === 'tls' ? protocol : null,
+    iceState: field(transport, 'iceState'),
+    dtlsState: field(transport, 'dtlsState'),
+  };
+}
 
-  report.forEach((entry) => {
-    const stat = entry as Record<string, unknown>;
-    if (stat['type'] !== 'candidate-pair' || stat['state'] !== 'succeeded') return;
-    const local = stat['localCandidateId'];
-    const remote = stat['remoteCandidateId'];
-    if (typeof local === 'string' && candidates.get(local) === 'relay') relayed = true;
-    if (typeof remote === 'string' && candidates.get(remote) === 'relay') relayed = true;
-  });
-
-  return relayed;
+export function isRelayed(report: RTCStatsReport): boolean {
+  const path = selectedIcePath(report);
+  return path?.localType === 'relay' || path?.remoteType === 'relay';
 }

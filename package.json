@@ -15,6 +15,7 @@
     "check": "turbo lint typecheck test build",
     "depcruise": "depcruise apps packages --config .dependency-cruiser.cjs",
     "e2e": "node e2e/mesh.e2e.mjs",
+    "e2e:relay": "node e2e/relay.e2e.mjs",
     "prod": "node scripts/check-prod.mjs",
     "cf:build": "pnpm --filter @tela/shared build && pnpm --filter @tela/web build && pnpm --filter @tela/signaling build",
     "cf:deploy": "pnpm --filter @tela/signaling exec wrangler deploy",

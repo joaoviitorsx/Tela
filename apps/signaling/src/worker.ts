@@ -9,6 +9,7 @@ import {
   isBlockedSlug,
 } from '@tela/shared';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
+import { fetchCloudflareIceServers } from './cloudflare-turn.js';
 
 /**
  * Servidor de sinalização em Cloudflare Workers + Durable Objects.
@@ -652,10 +653,20 @@ export function makeChannelDeps(env: Env, crypto: WebCryptoLike): ChannelDeps {
     async iceServersFor(peerId) {
       const servers: IceServerConfig[] = [{ urls: stun }];
 
-      const cloudflare = await cloudflareTurn(env, ttlSegundos(env));
-      if (cloudflare !== null) {
-        servers.push(cloudflare);
-        return servers;
+      if (env.TURN_KEY_ID !== undefined && env.TURN_KEY_API_TOKEN !== undefined) {
+        const cloudflare = await fetchCloudflareIceServers(
+          env.TURN_KEY_ID,
+          env.TURN_KEY_API_TOKEN,
+          ttlSegundos(env),
+        );
+        if (cloudflare.ok) {
+          servers.push(...cloudflare.servers);
+          if (cloudflare.hasRelay) return servers;
+          console.warn('TURN_RELAY_ABSENT');
+        } else {
+          // Código fixo e não sensível: nunca registrar resposta, token ou credencial.
+          console.warn(cloudflare.code);
+        }
       }
 
       if (env.TURN_URL === undefined || env.TURN_SECRET === undefined) return servers;
@@ -690,39 +701,4 @@ export function makeChannelDeps(env: Env, crypto: WebCryptoLike): ChannelDeps {
 function ttlSegundos(env: Env): number {
   const bruto = Number(env.TURN_TTL_SECONDS ?? 600);
   return Number.isFinite(bruto) && bruto > 0 ? bruto : 600;
-}
-
-/**
- * Credenciais efêmeras do Cloudflare Realtime TURN.
- *
- * Uma requisição por peer que entra — barata e cacheável, mas mesmo sem cache
- * é uma chamada por espectador, não por pacote. Falha em silêncio: se o TURN
- * não puder ser obtido, a conexão ainda pode fechar direto, e derrubar a
- * entrada por causa disso seria trocar uma degradação por uma falha.
- */
-async function cloudflareTurn(env: Env, ttl: number): Promise<IceServerConfig | null> {
-  const { TURN_KEY_ID: id, TURN_KEY_API_TOKEN: token } = env;
-  if (id === undefined || token === undefined) return null;
-
-  try {
-    const resposta = await fetch(
-      `https://rtc.live.cloudflare.com/v1/turn/keys/${id}/credentials/generate`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ ttl }),
-      },
-    );
-    if (!resposta.ok) return null;
-
-    const corpo = (await resposta.json()) as { iceServers?: IceServerConfig };
-    const servidores = corpo.iceServers;
-    if (servidores === undefined || servidores.urls === undefined) return null;
-    return servidores;
-  } catch {
-    return null;
-  }
 }

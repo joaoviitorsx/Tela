@@ -183,11 +183,11 @@ divergem de verdade.
 | Sistema | Como funciona | O que você faz |
 |---|---|---|
 | **Windows** | O Chrome entrega o áudio junto com a tela | No picker: escolha **"Tela inteira"** e marque **"Compartilhar áudio do sistema"** |
-| **Linux** | O Chrome **não** entrega áudio do sistema, só de aba | `bash scripts/audio-linux.sh`, mande o jogo para "TelaCapture" no pavucontrol, e escolha o monitor na tela inicial |
+| **Linux** | O Chrome **não** entrega áudio do sistema, só de aba | `bash scripts/audio-linux.sh setup` (repetir não duplica; `status` confere; `cleanup` remove só o que ele criou), mande **só** o jogo para "TelaCapture" no pavucontrol, e escolha o monitor na tela inicial |
 | **macOS** | Exige driver de terceiro (BlackHole, Loopback) | Fora do escopo — a tela inicial avisa em vez de prometer |
 
-A tela inicial detecta o sistema e mostra a instrução certa, com o comando
-pronto para copiar no Linux. Áudio de jogo vai a 128 kbps, e DTX e RED ficam
+A tela inicial detecta o sistema e mostra a instrução certa; no Linux ela
+oferece o mesmo script para baixar. Áudio de jogo vai a 128 kbps, e DTX e RED ficam
 desligados de propósito: DTX corta o que ele acha que é silêncio e vira
 gaguejo; RED manda redundância, e redundância custa latência.
 

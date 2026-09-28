@@ -1,4 +1,11 @@
 import type { ReactNode } from 'react';
+/*
+  O script vem do repositório, não de uma cópia: a página oferece exatamente o
+  que `scripts/audio-linux.test.sh` testa.
+*/
+import SCRIPT_LINUX from '../../../../scripts/audio-linux.sh?raw';
+
+const SCRIPT_HREF = `data:text/x-shellscript;charset=utf-8,${encodeURIComponent(SCRIPT_LINUX)}`;
 
 export type AudioDeviceOption = {
   readonly id: string;
@@ -66,11 +73,23 @@ export function AudioSourcePicker({
         <div className="flex flex-col gap-2">
           <Nota>{TEXTO_LINUX}</Nota>
 
+          {/*
+            Eram dois `pactl load-module` soltos. Colados duas vezes, criavam
+            dois retornos para o fone — som dobrado e eco —, e a instrução de
+            desfazer descarregava o loopback de QUALQUER programa. O script
+            marca o que cria, não duplica e só remove o que é dele.
+          */}
+          <a
+            href={SCRIPT_HREF}
+            download="tela-audio-linux.sh"
+            className="inline-flex min-h-11 items-center self-start rounded-sm px-2 text-[13px] text-text underline decoration-line underline-offset-4 hover:decoration-text"
+          >
+            baixar tela-audio-linux.sh
+          </a>
           <pre className="tabular overflow-x-auto rounded-md border border-line bg-surface p-3 text-[12px] leading-relaxed text-muted">
-{`pactl load-module module-null-sink sink_name=tela_cap \\
-  sink_properties=device.description=TelaCapture
-pactl load-module module-loopback source=tela_cap.monitor \\
-  sink="$(pactl get-default-sink)" latency_msec=1`}
+{`bash ~/Downloads/tela-audio-linux.sh setup     # cria (repetir não duplica)
+bash ~/Downloads/tela-audio-linux.sh status    # confere
+bash ~/Downloads/tela-audio-linux.sh cleanup   # remove só o que ele criou`}
           </pre>
 
           {devices.length === 0 ? (
@@ -158,7 +177,7 @@ const TEXTO_WINDOWS =
   'O seletor já abre em "Tela inteira". Só falta marcar "Compartilhar áudio do sistema" antes de confirmar — se esquecer, a transmissão vai muda e o HUD avisa.';
 
 const TEXTO_LINUX =
-  'O Chrome no Linux não entrega áudio do sistema, só de aba. Para o som do jogo chegar aos seus amigos, crie um sink virtual, mande o jogo para ele no pavucontrol e escolha o monitor abaixo:';
+  'O Chrome no Linux não entrega áudio do sistema, só de aba. Para o som do jogo chegar aos seus amigos, rode o script abaixo, mande SÓ o jogo para "TelaCapture" no pavucontrol (a chamada de voz fica onde está) e escolha o monitor:';
 
 function textoSemSuporte(os: Props['os']): string {
   return os === 'macos'

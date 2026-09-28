@@ -7,12 +7,11 @@ import { BotoesDoCabecalho } from '../components/BotoesDoCabecalho.js';
 import { Cabecalho } from '../components/Cabecalho.js';
 import { CampoCanal } from '../components/CampoCanal.js';
 import { CanalFlash, EstaticaTroca, VidroCrt } from '../components/EfeitosTv.js';
-import { Aviso } from '../components/Aviso.js';
 import { Medidor } from '../components/Medidor.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
 import { PainelOsd } from '../components/PainelOsd.js';
 import { Passos, type Passo } from '../components/Passos.js';
-import { TiposDeFonte } from '../components/TiposDeFonte.js';
+import { SeletorDeResolucao, type OpcaoDeResolucao } from '../components/SeletorDeResolucao.js';
 import { Vitrine } from '../components/Vitrine.js';
 import {
   audioCue,
@@ -45,6 +44,7 @@ const rotuloDoPreset = (id: PresetId): string => PRESETS[id].label.replace(' eco
 
 const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
   1: [],
+  // O seletor de resolução usa o mesmo menu: ←→ troca, Enter continua.
   2: ['resolucao'],
   3: ['volume'],
 };
@@ -66,7 +66,7 @@ const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
  *
  * # O que NÃO existe aqui
  *
- * Uma lista de janelas (a web não enumera; ver `TiposDeFonte`), uma escolha
+ * Uma lista de janelas ou tipos de captura (quem escolhe é o seletor do navegador), uma escolha
  * "sem áudio" no Windows (a caixa do Chrome decide), uma linha de 30 fps (só
  * existe dentro do modo NITIDEZ, que se liga ao vivo — R5) e a prioridade
  * fluidez/nitidez no passo 02, porque a sessão só a aceita depois de ao vivo.
@@ -85,6 +85,8 @@ export function Home({ onStart }: Props) {
   });
   const [audioDeviceId, setAudioDeviceId] = useState<string | null>(null);
   const [modal, setModal] = useState<'diagnostico' | 'app' | null>(null);
+  /** As instruções de áudio do sistema ficam fechadas até alguém pedir. */
+  const [comoAudio, setComoAudio] = useState(false);
   const fecharModal = useCallback(() => setModal(null), []);
 
   const check = useSlugCheck(slug);
@@ -155,20 +157,21 @@ export function Home({ onStart }: Props) {
     .filter((t) => t !== '')
     .join(' ');
 
+  const opcoesDeResolucao = useMemo(
+    (): readonly OpcaoDeResolucao[] =>
+      PRESET_ORDER.map((id) => ({
+        id,
+        rotulo: rotuloDoPreset(id),
+        largura: PRESETS[id].width,
+        altura: PRESETS[id].height,
+        fps: PRESETS[id].main.maxFramerate,
+        mbps: (PRESETS[id].main.maxBitrate / 1_000_000).toFixed(1).replace('.', ','),
+      })),
+    [],
+  );
+
   const linhas: readonly LinhaMenu[] =
-    passo === 2
-      ? [
-          {
-            id: 'resolucao',
-            tipo: 'ciclo',
-            rotulo: 'RESOLUÇÃO',
-            valor: rotuloDoPreset(presetId),
-            indice,
-            total: PRESET_ORDER.length,
-            ajuda: ajudaResolucao,
-          },
-        ]
-      : passo === 3
+    passo === 3
         ? [
             {
               id: 'volume',
@@ -301,29 +304,25 @@ export function Home({ onStart }: Props) {
           </section>
         )}
 
+        {/*
+          Passo 02: só a resolução, num card centralizado. A escolha entre tela,
+          janela e aba é do seletor do próprio navegador, que abre ao ir ao ar —
+          repetir as três opções aqui era pedir a mesma decisão duas vezes.
+        */}
         {passo === 2 && (
-          <section
-            aria-label="Tela ou jogo"
-            className="mx-auto my-auto grid w-full max-w-[1180px] items-start gap-6 px-4 py-8 sm:px-6 lg:grid-cols-2"
-          >
-            <TiposDeFonte />
-
-            <PainelOsd titulo="MENU ▸ IMAGEM" direita={menu.posicao}>
-              <MenuOsd
-                rotulo="Ajustes da imagem"
-                linhas={linhas}
-                ativo={menu.ativo}
-                propsContainer={menu.propsContainer}
-                propsLinha={menu.propsLinha}
-                aoAjustar={ajustar}
-                aoDefinirBarra={() => undefined}
-                aoSelecionar={menu.selecionar}
-              />
-              <div className="px-3 pb-3">
-                <Aviso>
-                  Todos os degraus mantêm 60 quadros por segundo. Ao vivo você escolhe o que ceder
-                  se a rede apertar: fluidez ou nitidez, que também troca para 30 quadros.
-                </Aviso>
+          <section aria-label="Tela ou jogo" className="mx-auto my-auto w-full max-w-[760px] px-4 py-8 sm:px-6">
+            <PainelOsd titulo="MENU ▸ IMAGEM" direita={`${indice + 1}/${PRESET_ORDER.length}`}>
+              <div {...menu.propsContainer}>
+                <SeletorDeResolucao
+                  opcoes={opcoesDeResolucao}
+                  escolhido={presetId}
+                  sustentavel={sustentavel}
+                  ajuda={ajudaResolucao}
+                  aoEscolher={(id) => {
+                    if (isPresetId(id)) escolherPreset(id);
+                  }}
+                  propsGrupo={menu.propsLinha('resolucao')}
+                />
               </div>
               <RodapeDoPasso>
                 <Botao onClick={() => irParaPasso(1)}>VOLTAR</Botao>
@@ -335,21 +334,13 @@ export function Home({ onStart }: Props) {
           </section>
         )}
 
+        {/*
+          Passo 03: o card do som no centro. As instruções do sistema (script do
+          Linux, lista de entradas, aviso do Windows) ficam atrás de um botão,
+          abaixo do card: quem já configurou uma vez não precisa relê-las.
+        */}
         {passo === 3 && (
-          <section
-            aria-label="Áudio"
-            className="mx-auto my-auto grid w-full max-w-[1180px] items-start gap-6 px-4 py-8 sm:px-6 lg:grid-cols-2"
-          >
-            <AudioSourcePicker
-              os={os}
-              mode={modoAudio}
-              devices={fontes.devices}
-              value={audioDeviceId}
-              onChange={setAudioDeviceId}
-              onRequestDevices={fontes.procurar}
-              buscando={fontes.buscando}
-            />
-
+          <section aria-label="Áudio" className="mx-auto my-auto flex w-full max-w-[760px] flex-col gap-4 px-4 py-8 sm:px-6">
             <PainelOsd titulo="MENU ▸ SOM" direita={menu.posicao}>
               <MenuOsd
                 rotulo="Ajustes do som"
@@ -371,6 +362,22 @@ export function Home({ onStart }: Props) {
                   { rotulo: 'VOLUME', valor: resumoAudio === 'MUDO' ? '—' : `${Math.round(som.volume * 100)}%` },
                 ]}
               />
+              <div className="border-t-2 border-line px-3.5 py-3">
+                <button
+                  type="button"
+                  aria-expanded={comoAudio}
+                  aria-controls="como-audio"
+                  onClick={() => setComoAudio((v) => !v)}
+                  className="tecla w-full justify-between"
+                >
+                  <span>
+                    {modoAudio === 'monitor-device' ? 'ESCOLHER O SOM DO JOGO (LINUX)' : 'COMO O SOM DO JOGO VAI JUNTO'}
+                  </span>
+                  <span aria-hidden="true" className={`transition-transform duration-200 ${comoAudio ? 'rotate-180' : ''}`}>
+                    ▾
+                  </span>
+                </button>
+              </div>
               <RodapeDoPasso>
                 <Botao onClick={() => irParaPasso(2)}>VOLTAR</Botao>
                 <Botao
@@ -383,6 +390,20 @@ export function Home({ onStart }: Props) {
                 </Botao>
               </RodapeDoPasso>
             </PainelOsd>
+
+            {comoAudio && (
+              <div id="como-audio" className="entra border-2 border-line bg-surface p-4 sm:p-5">
+                <AudioSourcePicker
+                  os={os}
+                  mode={modoAudio}
+                  devices={fontes.devices}
+                  value={audioDeviceId}
+                  onChange={setAudioDeviceId}
+                  onRequestDevices={fontes.procurar}
+                  buscando={fontes.buscando}
+                />
+              </div>
+            )}
           </section>
         )}
       </main>

@@ -7,6 +7,8 @@ type Props = {
   readonly semSinal: boolean;
   /** "00:12:34": o tempo no ar, calculado pela rota. */
   readonly tempoNoAr: string;
+  /** Pausa de privacidade em curso: a prévia diz o que os amigos veem. */
+  readonly oculto?: boolean;
 };
 
 /**
@@ -26,7 +28,7 @@ type Props = {
  * A imagem fica acima das scanlines (`acima-do-crt`): a prévia é o jogo, e o
  * jogo nunca leva listras.
  */
-export function CapturePreview({ stream, aberto, onToggle, semSinal, tempoNoAr }: Props) {
+export function CapturePreview({ stream, aberto, onToggle, semSinal, tempoNoAr, oculto = false }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -37,8 +39,7 @@ export function CapturePreview({ stream, aberto, onToggle, semSinal, tempoNoAr }
   }, [stream, aberto]);
 
   return (
-    <div className="flex min-w-0 flex-col gap-2.5">
-      <div className="acima-do-crt relative mx-auto aspect-video max-h-[42dvh] w-full overflow-hidden border-2 border-line bg-black">
+    <div className="acima-do-crt relative h-full min-h-[240px] w-full min-w-0 overflow-hidden border-2 border-line bg-black">
         {aberto ? (
           <video ref={videoRef} autoPlay playsInline muted className="block h-full w-full bg-black object-contain" />
         ) : (
@@ -53,6 +54,9 @@ export function CapturePreview({ stream, aberto, onToggle, semSinal, tempoNoAr }
             <span className="font-[family-name:var(--font-pixel)] text-[12px] font-bold text-white">NO AR</span>
             <span className="numeral text-[20px] text-white">{tempoNoAr}</span>
           </span>
+          <span className="bg-black/70 px-2 py-0.5 font-[family-name:var(--font-pixel)] text-[11px] text-text">
+            {oculto ? 'OCULTA · SEUS AMIGOS VEEM "TRANSMISSÃO PAUSADA"' : 'O QUE SEUS AMIGOS ESTÃO VENDO'}
+          </span>
         </div>
 
         {aberto && semSinal && (
@@ -64,15 +68,14 @@ export function CapturePreview({ stream, aberto, onToggle, semSinal, tempoNoAr }
             A captura não está produzindo imagem. Pare e escolha a tela de novo.
           </p>
         )}
-      </div>
-
+      {/* Desligar a prévia poupa a máquina do jogo; a transmissão segue. */}
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={aberto}
-        className="tecla self-start"
+        className="tecla absolute bottom-3 right-3 bg-black/70"
       >
-        {aberto ? 'OCULTAR A PRÉVIA' : 'MOSTRAR A PRÉVIA'}
+        {aberto ? 'DESLIGAR PRÉVIA' : 'LIGAR PRÉVIA'}
       </button>
     </div>
   );

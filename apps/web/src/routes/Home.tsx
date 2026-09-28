@@ -1,8 +1,9 @@
-import { P2P_LIMITS, PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
+import { PRESETS, PRESET_ORDER, type PresetId } from '@tela/shared';
 import { useCallback, useMemo, useState } from 'react';
 import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
 import { BarraAjuda } from '../components/BarraAjuda.js';
 import { Botao, LinkTecla } from '../components/Botao.js';
+import { BotoesDoCabecalho } from '../components/BotoesDoCabecalho.js';
 import { Cabecalho } from '../components/Cabecalho.js';
 import { CampoCanal } from '../components/CampoCanal.js';
 import { CanalFlash, EstaticaTroca, VidroCrt } from '../components/EfeitosTv.js';
@@ -28,6 +29,8 @@ import { useSlugCheck } from '../react/use-slug-check.js';
 import { useTrocaDeCanal } from '../react/use-troca-de-canal.js';
 import { useVitrine } from '../react/use-vitrine.js';
 import { useVolumeTransmissao } from '../react/use-volume-transmissao.js';
+import { ModalApp } from './ModalApp.js';
+import { ModalDiagnosticoPreAr } from './ModalDiagnosticoPreAr.js';
 
 type Props = {
   readonly onStart: (slug: string, presetId: PresetId, audioDeviceId: string | null) => void;
@@ -51,11 +54,11 @@ const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
  *
  * # O fluxo
  *
- * `01 canal → 02 tela ou jogo → 03 áudio → 04 no ar`. Os quatro passos do
- * protótipo, com um atalho que o protótipo não tinha: o canal já vem com o
- * último nome usado, e o TRANSMITIR AGORA do primeiro passo vai direto ao ar
- * com as preferências salvas. Os passos 02 e 03 são AJUSTE, pelo stepper ou
- * pelo botão ao lado — quem quer só ir ao ar não passa por eles.
+ * `01 canal → 02 tela ou jogo → 03 áudio → 04 no ar`, os quatro passos do
+ * protótipo, em sequência: TRANSMITIR (ou Enter no campo) leva ao 02, o 02
+ * ao 03, e só o IR AO AR E GERAR LINK do 03 abre o seletor de tela. O canal
+ * já vem com o último nome usado. (Houve um atalho direto ao ar no passo 01;
+ * saiu a pedido do dono do produto: o fluxo passa pelos três.)
  *
  * O passo 04 é a rota `/transmitir` (`Broadcast`): é lá que o navegador abre o
  * seletor de tela, que exige o gesto do clique. Por isso ele aparece na trilha
@@ -81,6 +84,8 @@ export function Home({ onStart }: Props) {
     return isPresetId(saved) ? saved : 'p1080p60';
   });
   const [audioDeviceId, setAudioDeviceId] = useState<string | null>(null);
+  const [modal, setModal] = useState<'diagnostico' | 'app' | null>(null);
+  const fecharModal = useCallback(() => setModal(null), []);
 
   const check = useSlugCheck(slug);
   const troca = useTrocaDeCanal<NumeroDoPasso>(1);
@@ -235,7 +240,14 @@ export function Home({ onStart }: Props) {
     <div className="flex min-h-dvh flex-col bg-void">
       <VidroCrt />
       <Cabecalho marcaHref="/">
-        <LinkTecla href="/recuperar">CÓDIGO DE RECUPERAÇÃO</LinkTecla>
+        <BotoesDoCabecalho
+          aoDiagnostico={() => setModal('diagnostico')}
+          aoBaixarApp={() => setModal('app')}
+        />
+        <LinkTecla href="/recuperar">
+          <span className="hidden lg:inline">CÓDIGO DE RECUPERAÇÃO</span>
+          <span className="lg:hidden">RECUPERAR</span>
+        </LinkTecla>
       </Cabecalho>
 
       <main className="flex flex-1 flex-col bg-[radial-gradient(ellipse_80%_70%_at_50%_40%,#15161a_0%,#0b0c0e_70%)]">
@@ -266,39 +278,23 @@ export function Home({ onStart }: Props) {
               <CampoCanal
                 value={slug}
                 onChange={setSlug}
-                onEnter={iniciar}
+                onEnter={() => irParaPasso(2)}
                 status={check.status === 'ok' ? 'free' : check.status === 'invalid' ? 'invalid' : 'idle'}
                 error={check.status === 'invalid' ? check.message : null}
               />
 
-              <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-5">
-                <div data-vidro="acento" className="w-full sm:w-auto">
-                  <Botao
-                    tom="primaria"
-                    grande
-                    bloco
-                    onClick={iniciar}
-                    disabled={!valido}
-                    icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
-                  >
-                    TRANSMITIR AGORA
-                  </Botao>
-                </div>
-                <Botao onClick={() => irParaPasso(2)} disabled={!valido}>
-                  AJUSTAR IMAGEM E ÁUDIO
+              <div data-vidro="acento" className="w-full sm:w-auto sm:self-start">
+                <Botao
+                  tom="primaria"
+                  grande
+                  bloco
+                  onClick={() => irParaPasso(2)}
+                  disabled={!valido}
+                  icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
+                >
+                  TRANSMITIR
                 </Botao>
               </div>
-
-              {/*
-                Um dos dois fatos que a página carrega. Mora aqui porque é o
-                único que muda o comportamento de quem está prestes a apertar o
-                botão — fechar a aba encerra a transmissão, e ninguém deduz isso.
-              */}
-              <p data-vidro="texto" className="m-0 max-w-[62ch] text-[11.5px] leading-relaxed text-dim [text-wrap:pretty]">
-                Vai ao ar em {rotuloDoPreset(presetId)}, com as preferências que você já salvou. A aba
-                precisa ficar aberta enquanto você joga, mas não precisa estar visível: pode ficar
-                atrás do jogo.
-              </p>
             </div>
 
             <Vitrine canvasRef={vitrine.canvasRef} montado={vitrine.disponivel} />
@@ -391,33 +387,16 @@ export function Home({ onStart }: Props) {
         )}
       </main>
 
-      {passo === 1 ? (
-        /*
-          A última linha da página, e a única que fala de contexto: por que este
-          produto apareceu agora, e o que substitui a senha que ele não pede.
-        */
-        <footer className="border-t-2 border-line bg-bar py-3.5">
-          <p
-            data-vidro="texto"
-            className="mx-auto m-0 w-full max-w-[1180px] px-4 text-[11px] leading-relaxed text-dim sm:px-6"
-          >
-            <span className="block max-w-[80ch] [text-wrap:pretty]">
-              Desde 17 de agosto de 2026 o Discord não compartilha tela no Brasil, por ordem da ANPD:
-              texto e voz continuam funcionando. Tela entrega só o que faltou, o vídeo. Sem cadastro
-              e sem senha: quem prova que o link é seu é um código guardado neste navegador. Até{' '}
-              {P2P_LIMITS.maxViewersBrowser} amigos ao mesmo tempo.
-            </span>
-          </p>
-        </footer>
-      ) : (
-        <BarraAjuda
-          dicas={[
-            { tecla: '↑↓', texto: 'SELECIONAR' },
-            { tecla: '←→', texto: 'AJUSTAR' },
-            { tecla: 'ENTER', texto: passo === 3 ? 'IR AO AR' : 'CONTINUAR' },
-          ]}
-        />
-      )}
+      <BarraAjuda
+        dicas={[
+          { tecla: '↑↓', texto: 'SELECIONAR' },
+          { tecla: '←→', texto: 'AJUSTAR' },
+          { tecla: 'ENTER', texto: passo === 3 ? 'IR AO AR' : 'CONTINUAR' },
+        ]}
+      />
+
+      <ModalDiagnosticoPreAr aberto={modal === 'diagnostico'} aoFechar={fecharModal} />
+      <ModalApp aberto={modal === 'app'} aoFechar={fecharModal} />
 
       <EstaticaTroca ativa={troca.estatica} />
       <CanalFlash visivel={troca.flash} numero={`0${passo}`} nome={NOMES[passo]} />

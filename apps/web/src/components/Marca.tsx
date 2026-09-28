@@ -24,7 +24,22 @@ export function Marca({ href, tamanho = 'normal' }: Props) {
     </span>
   );
 
-  if (href === undefined) return <span className="inline-flex">{placa}</span>;
+  /*
+    A TV do ícone ao lado da plaqueta, só no tamanho normal: na janelinha
+    compacta do app o espaço é da plaqueta. `alt` vazio — o nome já está na
+    plaqueta, e o leitor de tela não precisa ouvir "Tela" duas vezes.
+  */
+  const conteudo =
+    tamanho === 'normal' ? (
+      <span className="inline-flex items-center gap-2">
+        <img src="/tela-tv.svg" alt="" width={32} height={32} className="h-8 w-8" />
+        {placa}
+      </span>
+    ) : (
+      placa
+    );
+
+  if (href === undefined) return <span className="inline-flex">{conteudo}</span>;
 
   return (
     <a
@@ -32,7 +47,7 @@ export function Marca({ href, tamanho = 'normal' }: Props) {
       aria-label="Tela, ir para o início"
       className="inline-flex min-h-11 items-center hover:opacity-90"
     >
-      {placa}
+      {conteudo}
     </a>
   );
 }

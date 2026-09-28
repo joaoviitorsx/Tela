@@ -8,7 +8,8 @@ import { Dialogo } from '../components/Dialogo.js';
 import { DiagnosticoConteudo } from '../components/DiagnosticoConteudo.js';
 import { VidroCrt } from '../components/EfeitosTv.js';
 import { FaixaLink } from '../components/FaixaLink.js';
-import { IconSinal } from '../components/Icon.js';
+import { BotoesDoCabecalho } from '../components/BotoesDoCabecalho.js';
+import { TesteDeRede } from '../components/TesteDeRede.js';
 import { Led } from '../components/Led.js';
 import { Medidor } from '../components/Medidor.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
@@ -17,6 +18,7 @@ import type { Vaga } from '../components/SalaVagas.js';
 import {
   createBroadcastSession,
   identity,
+  sondaDeRede,
   volumeTransmissaoPreference,
 } from '../container.js';
 import type { BroadcastFailure } from '../core/media/broadcast-session.js';
@@ -26,6 +28,8 @@ import { useBroadcast } from '../react/use-broadcast.js';
 import { useCopia } from '../react/use-copia.js';
 import { useDiagnostico } from '../react/use-diagnostico.js';
 import { useDialogo } from '../react/use-dialogo.js';
+import { BLOCOS_DO_TESTE, medidaDaConexaoDireta, useTesteDeRede } from '../react/use-teste-de-rede.js';
+import { ModalApp } from './ModalApp.js';
 import { useMediaStats } from '../react/use-media-stats.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
 import { useBeforeUnload, useTabTitle, useWakeLock } from '../react/use-page-effects.js';
@@ -162,8 +166,11 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const link = useCopia(1_500);
   const diagCopia = useCopia(2_000);
   const dialogo = useDialogo(diagAberto, useCallback(() => setDiagAberto(false), []));
+  const teste = useTesteDeRede(sondaDeRede);
+  const [appAberto, setAppAberto] = useState(false);
+  const fecharApp = useCallback(() => setAppAberto(false), []);
 
-  useTabTitle(live ? `● tela.gg/${slug}` : 'tela');
+  useTabTitle(live ? '● No ar · Tela' : 'Tela');
   useWakeLock(live);
   useBeforeUnload(live, () => void session.stop('USER_STOPPED'));
 
@@ -369,7 +376,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
 
   return (
     <div
-      className="relative flex min-h-dvh flex-col bg-void"
+      className="relative flex min-h-dvh flex-col bg-void lg:h-dvh lg:overflow-hidden"
       onMouseMove={hud.show}
       onFocusCapture={(event) => {
         /**
@@ -411,7 +418,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
 
       <div
         className={[
-          'flex flex-1 flex-col transition-opacity duration-300',
+          'flex min-h-0 flex-1 flex-col transition-opacity duration-300',
           hud.visible ? 'opacity-100' : 'opacity-0',
         ].join(' ')}
       >
@@ -421,14 +428,17 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
             NO AR
             <span className="tabular hidden sm:inline">{tempo}</span>
           </span>
-          <button type="button" onClick={() => setDiagAberto(true)} className="tecla">
-            <IconSinal className="h-3 w-3" />
-            DIAGNÓSTICO
-          </button>
+          <BotoesDoCabecalho aoDiagnostico={() => setDiagAberto(true)} aoBaixarApp={() => setAppAberto(true)} />
         </Cabecalho>
 
-        <main className="mx-auto grid w-full max-w-[1400px] flex-1 items-start gap-4 p-3 sm:p-5 lg:grid-cols-[minmax(0,1fr)_380px]">
-          <div className="flex min-w-0 flex-col gap-3">
+        {/*
+          Tela inteira, como no protótipo: a coluna da esquerda é link + prévia
+          ocupando toda a altura; a da direita é o painel de ajuste de cima a
+          baixo, com as ações presas embaixo. Sem largura máxima — numa tela
+          larga o que cresce é a prévia, que é o que importa ver.
+        */}
+        <main className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_400px]">
+          <div className="flex min-h-0 min-w-0 flex-col gap-3 p-3 sm:p-4">
             <FaixaLink
               link={vivo.shareUrl}
               novo={link.copiado}
@@ -450,21 +460,23 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
               vídeo — medido, 30 quadros por segundo continuavam sendo
               entregues a um elemento invisível, na máquina que roda o jogo.
             */}
-            <CapturePreview
-              stream={vivo.preview}
-              aberto={previewAberto && hud.visible}
-              onToggle={() => setPreviewAberto((v) => !v)}
-              semSinal={vivo.capturaSemImagem}
-              tempoNoAr={tempo}
-            />
+            <div className="min-h-[240px] flex-1">
+              <CapturePreview
+                stream={vivo.preview}
+                aberto={previewAberto && hud.visible}
+                onToggle={() => setPreviewAberto((v) => !v)}
+                semSinal={vivo.capturaSemImagem}
+                tempoNoAr={tempo}
+                oculto={vivo.pausa !== null}
+              />
+            </div>
             <p className="m-0 text-[11px] leading-relaxed text-dim">
-              É o que seus amigos estão vendo. Fechar esta aba encerra a transmissão; deixá-la atrás
-              do jogo, não.
+              Fechar esta aba encerra a transmissão; deixá-la atrás do jogo, não.
             </p>
           </div>
 
-          <div className="flex min-w-0 flex-col gap-4">
-            <PainelOsd titulo="AJUSTE RÁPIDO" direita={menu.posicao}>
+          <aside className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto border-t-2 border-line p-3 sm:p-4 lg:border-l-2 lg:border-t-0">
+            <PainelOsd titulo="AJUSTE RÁPIDO" direita={menu.posicao} className="flex-1">
               <MenuOsd
                 rotulo="Ajustes ao vivo"
                 linhas={linhas}
@@ -514,16 +526,9 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
                 ]}
               />
 
-              <div className="flex flex-col gap-2 p-3.5">
-                <a
-                  href={vivo.shareUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="tecla"
-                  title="Abre o link numa nova aba, como um amigo. Ocupa uma vaga enquanto estiver aberta."
-                >
-                  ABRIR COMO AMIGO ↗
-                </a>
+              {/* Ações presas embaixo, como no protótipo. */}
+              <div className="flex-1" />
+              <div className="flex flex-col gap-2 border-t-2 border-line p-3.5">
                 {/*
                   Pausa de privacidade (TELA-022): os amigos veem o quadro
                   "transmissão pausada" no lugar da tela, sem perder a sala.
@@ -598,7 +603,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
                 )}
               </div>
             </PainelOsd>
-          </div>
+          </aside>
         </main>
       </div>
 
@@ -610,14 +615,23 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
       >
         {diagnostico !== null && (
           <DiagnosticoConteudo
-            resumo={diagnostico.resumo}
+            resumo={[...diagnostico.resumo, medidaDaConexaoDireta(teste)]}
             espectadores={diagnostico.espectadores}
             audio={diagnostico.audio}
             copiado={diagCopia.copiado}
             aoCopiar={copiarDiagnostico}
+            teste={
+              <TesteDeRede
+                testando={teste.fase === 'testando'}
+                blocos={teste.blocos}
+                total={BLOCOS_DO_TESTE}
+                aoTestar={teste.testar}
+              />
+            }
           />
         )}
       </Dialogo>
+      <ModalApp aberto={appAberto} aoFechar={fecharApp} />
     </div>
   );
 }

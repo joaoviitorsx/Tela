@@ -175,7 +175,7 @@ export function Viewer({ slug }: Props) {
   );
   useFrameLatency(videoEl, comImagem, registrar);
 
-  useTabTitle(watching ? `● tela.gg/${slug}` : `${slug} · tela`);
+  useTabTitle(watching ? `● ${slug} · Tela` : `${slug} · Tela`);
 
   useEffect(() => {
     // O convite vem do fragmento, que nunca sai do navegador em HTTP.

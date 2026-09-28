@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Botao } from './Botao.js';
 import { Medidor, type Medida, type Tom } from './Medidor.js';
 
@@ -15,6 +16,8 @@ type Props = {
   readonly audio: { readonly texto: string; readonly tom: Tom };
   readonly copiado: boolean;
   readonly aoCopiar: () => void;
+  /** O teste de rede, montado por quem tem o estado. */
+  readonly teste?: ReactNode;
 };
 
 const COR: Record<Tom, string> = {
@@ -33,7 +36,7 @@ const COR: Record<Tom, string> = {
  * estão aqui. Por espectador há o que o `PeerInfo` carrega: o estado da
  * conexão e se o caminho é direto ou passa pelo TURN.
  */
-export function DiagnosticoConteudo({ resumo, espectadores, audio, copiado, aoCopiar }: Props) {
+export function DiagnosticoConteudo({ resumo, espectadores, audio, copiado, aoCopiar, teste }: Props) {
   return (
     <div className="flex flex-col gap-5 p-4 sm:p-5">
       <div className="border-2 border-line bg-surface">
@@ -90,6 +93,8 @@ export function DiagnosticoConteudo({ resumo, espectadores, audio, copiado, aoCo
         <span className="rotulo text-current">ÁUDIO</span>
         <span>{audio.texto}</span>
       </p>
+
+      {teste}
 
       <div className="flex flex-wrap items-center gap-3">
         <Botao tom="primaria" onClick={aoCopiar}>

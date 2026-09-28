@@ -54,7 +54,5 @@ não o convite: o aparelho novo gera outro, e o link muda.
 
 ## Fica para depois
 
-Aprovação manual de cada espectador ("aceitar solicitação para assistir"),
-pedida pelo dono para depois da refatoração do front. O ponto de encaixe é o
-mesmo onde o convite é validado — antes de vaga e de credencial —, com um
-estado de espera novo no protocolo.
+~~Aprovação manual de cada espectador.~~ Feita na ADR 0025, no ponto de encaixe
+previsto aqui — antes de vaga e de credencial —, com o protocolo na versão 3.

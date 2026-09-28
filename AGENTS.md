@@ -9,7 +9,7 @@ Commite este arquivo na raiz. Ele vale para toda sessão, de todo agente.
 
 **Tela** — plataforma de transmissão de gameplay em 1080p60 com latência sub-segundo, self-hosted, sem cadastro.
 
-O usuário aperta um botão, ganha um link permanente (`tela.gg/jv#k=<convite>`), manda pros amigos. Sem o convite do link, ninguém entra (ADR 0021). Eles abrem e veem o jogo com ~150ms de atraso. Nada mais.
+O usuário aperta um botão, ganha um link permanente (`tela.gg/jv#k=<convite>`), manda pros amigos. Sem o convite do link, ninguém entra (ADR 0021), e quem tem o link pede para entrar — o dono aceita cada pessoa (ADR 0025). Eles abrem e veem o jogo com ~150ms de atraso. Nada mais.
 
 Contexto: desde 17/08/2026 o Discord suspendeu compartilhamento de tela no Brasil por ordem da ANPD. O Discord **continua funcionando** para texto e voz — por isso este produto **não** implementa chat, voz ou social. Os usuários já estão numa call conversando; nós entregamos só o cano de vídeo.
 

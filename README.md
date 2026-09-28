@@ -8,7 +8,9 @@ jogo. Nada mais.
 
 O link é privado: `tela.gg/<seu-canal>#k=<convite>`. Sem o convite, ninguém
 entra — adivinhar o nome do canal não basta (ADR 0021). O convite fica o mesmo
-entre transmissões até você renovar.
+entre transmissões até você renovar. E cada pessoa pede para entrar: você aceita no
+console, e quem já foi aceito volta sem pedir até você renovar o convite
+(ADR 0025).
 
 ---
 
@@ -280,6 +282,7 @@ trade-off consciente, com página de exportação em `/recuperar`.
 | [`docs/adr/0022`](docs/adr/0022-identidade-crt-ambar.md) | A identidade CRT âmbar da interface |
 | [`docs/adr/0023`](docs/adr/0023-colapso-de-link-e-sonda.md) | Colapso de link e a sonda de subida |
 | [`docs/adr/0024`](docs/adr/0024-politica-opus.md) | Estéreo que chega em estéreo, e o que falta decidir no áudio |
+| [`docs/adr/0025`](docs/adr/0025-aprovacao-manual-de-espectador.md) | Aprovação manual de cada espectador e protocolo v3 |
 | [`docs/qa/`](docs/qa/) | O que foi executado e o que depende de gente, por tarefa |
 
 Comece pela [ADR 0005](docs/adr/0005-mesh-p2p.md) se quiser entender a

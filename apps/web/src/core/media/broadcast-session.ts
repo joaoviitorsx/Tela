@@ -8,7 +8,7 @@ import type {
   QualityLimitation,
 } from '../ports/media-transport.js';
 import type { Scheduler } from '../ports/scheduler.js';
-import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
+import type { CaptureError, CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
 import {
   CONTENT_HINT_POR_PRIORIDADE,
@@ -51,6 +51,7 @@ import {
  */
 export type BroadcastFailure =
   | 'CAPTURE_DENIED'
+  | 'CAPTURE_FAILED'
   | 'CAPTURE_UNSUPPORTED'
   | 'SLUG_TAKEN'
   | 'SLUG_INVALID'
@@ -177,6 +178,12 @@ export type BroadcastSessionDeps = {
 };
 
 const STATS_INTERVAL_MS = 1_000;
+
+const FALHA_DE_CAPTURA: Readonly<Record<CaptureError, BroadcastFailure>> = {
+  DENIED: 'CAPTURE_DENIED',
+  UNSUPPORTED: 'CAPTURE_UNSUPPORTED',
+  FAILED: 'CAPTURE_FAILED',
+};
 /** Quantas leituras seguidas com o mesmo limitador antes de cair de preset. */
 const PRESSURE_SAMPLES = 5;
 
@@ -434,18 +441,17 @@ export class BroadcastSession {
 
     if (!this.deps.screen.isSupported()) return this.fail('CAPTURE_UNSUPPORTED');
 
-    let capture;
-    try {
-      capture = await this.deps.screen.request({
-        width: preset.width,
-        height: preset.height,
-        frameRate: preset.main.maxFramerate,
-        systemAudio: true,
-      });
-    } catch (error) {
+    const pedido = await this.deps.screen.request({
+      width: preset.width,
+      height: preset.height,
+      frameRate: preset.main.maxFramerate,
+      systemAudio: true,
+    });
+    if (!pedido.ok) {
       if (this.stale(epoch)) return;
-      return this.fail(error === 'UNSUPPORTED' ? 'CAPTURE_UNSUPPORTED' : 'CAPTURE_DENIED');
+      return this.fail(FALHA_DE_CAPTURA[pedido.error]);
     }
+    const capture = pedido.value;
 
     // O usuário pode ter desistido durante o picker do sistema.
     if (this.stale(epoch)) {
@@ -1190,18 +1196,16 @@ export class BroadcastSession {
     // um teto permanente, porque a resolução da trilha não volta a subir.
     const preset = presetById(this.presetEscolhido);
 
-    let capture;
-    try {
-      capture = await this.deps.screen.request({
-        width: preset.width,
-        height: preset.height,
-        frameRate: preset.main.maxFramerate,
-        systemAudio: true,
-      });
-    } catch {
-      // Cancelar o seletor é desistir da troca, não da transmissão.
-      return;
-    }
+    const pedido = await this.deps.screen.request({
+      width: preset.width,
+      height: preset.height,
+      frameRate: preset.main.maxFramerate,
+      systemAudio: true,
+    });
+    // Cancelar o seletor — ou ele falhar — é desistir da troca, não da
+    // transmissão: a fonte antiga continua no ar.
+    if (!pedido.ok) return;
+    const capture = pedido.value;
     if (this.stale(epoch)) {
       capture.video.stop();
       capture.audio?.stop();

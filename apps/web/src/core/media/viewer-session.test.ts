@@ -299,6 +299,7 @@ describe('ViewerSession', () => {
       status: 'sem-conexao',
       slug: SLUG,
       relayStatus: 'unavailable',
+      etapa: 'rede',
     });
     expect(ctx.session.diagnostico('Chrome/130')?.eventos.map((evento) => evento.codigo)).toContain('RELAY_UNAVAILABLE');
   });
@@ -533,5 +534,49 @@ describe('ViewerSession — estado do áudio (TELA-007)', () => {
       audioKbps: 128, audioNivelDb: -20, audioPerdaPct: 8, audioOcultacaoPct: 12,
       audioJitterMs: 12, audioBufferMs: 60,
     });
+  });
+});
+
+describe('ViewerSession — primeiro quadro e etapa da falha (TELA-013)', () => {
+  it('áudio chegando antes do vídeo NÃO declara watching nem desarma o vigia', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().deliver(fakeStream([fakeTrack('audio')]));
+    expect(ctx.session.getState().status).toBe('connecting');
+
+    ctx.scheduler.advance(15_000);
+    await settle(30);
+    expect(ctx.session.getState()).toMatchObject({ status: 'sem-conexao' });
+  });
+
+  it('áudio antes, vídeo depois: entra assistindo, com áudio', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().deliver(fakeStream([fakeTrack('audio')]));
+    ctx.ultimo().deliver(fakeStream([fakeTrack('video'), fakeTrack('audio')]));
+    const st = ctx.session.getState();
+    expect(st.status).toBe('watching');
+    expect(st.status === 'watching' && st.hasAudio).toBe(true);
+  });
+
+  it('conexão nunca fechou: etapa rede, evento NO_ROUTE', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.scheduler.advance(15_000);
+    await settle(30);
+    expect(ctx.session.getState()).toMatchObject({ status: 'sem-conexao', etapa: 'rede' });
+    expect(ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo)).toContain('NO_ROUTE');
+  });
+
+  it('conectou e o quadro não veio: etapa mídia, sem culpar a rede', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG);
+    ctx.ultimo().emit('ice-conectado', undefined);
+    ctx.scheduler.advance(15_000);
+    await settle(30);
+    expect(ctx.session.getState()).toMatchObject({ status: 'sem-conexao', etapa: 'midia' });
+    const codigos = ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo);
+    expect(codigos).toContain('MEDIA_TIMEOUT');
+    expect(codigos).not.toContain('NO_ROUTE');
   });
 });

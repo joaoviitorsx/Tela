@@ -1,8 +1,5 @@
-import type {
-  CaptureError,
-  CaptureSurface,
-  ScreenCapture,
-} from '../core/ports/screen-capture.js';
+import { err, ok } from '../core/domain/result.js';
+import type { CaptureSurface, ScreenCapture } from '../core/ports/screen-capture.js';
 
 /**
  * `getDisplayMedia` com as opções que importam.
@@ -21,7 +18,7 @@ export function makeBrowserScreenCapture(): ScreenCapture {
     },
 
     async request(options) {
-      if (!this.isSupported()) throw 'UNSUPPORTED' satisfies CaptureError;
+      if (!this.isSupported()) return err('UNSUPPORTED');
 
       let stream: MediaStream;
       try {
@@ -93,22 +90,31 @@ export function makeBrowserScreenCapture(): ScreenCapture {
           selfBrowserSurface: 'exclude',
           systemAudio: options.systemAudio ? 'include' : 'exclude',
         } as DisplayMediaStreamOptions);
-      } catch {
-        // O usuário fechar o picker cai aqui. É fluxo normal, não bug.
-        throw 'DENIED' satisfies CaptureError;
+      } catch (error) {
+        /*
+          `NotAllowedError` é a pessoa: fechou o seletor ou negou a permissão.
+          O resto é técnico — `NotReadableError` (outro programa segurando a
+          tela, portal do Wayland), `AbortError`, `NotFoundError`. Tratar tudo
+          como cancelamento mandava quem não cancelou nada tentar de novo sem
+          saber que o problema não era ele.
+        */
+        const nome = error instanceof Error ? error.name : '';
+        if (nome === 'NotAllowedError') return err('DENIED');
+        if (nome === 'NotSupportedError') return err('UNSUPPORTED');
+        return err('FAILED');
       }
 
       const video = stream.getVideoTracks()[0];
       if (!video) {
         for (const track of stream.getTracks()) track.stop();
-        throw 'NO_TRACK' satisfies CaptureError;
+        return err('FAILED');
       }
 
-      return {
+      return ok({
         video,
         audio: stream.getAudioTracks()[0] ?? null,
         surface: surfaceOf(video),
-      };
+      });
     },
   };
 }

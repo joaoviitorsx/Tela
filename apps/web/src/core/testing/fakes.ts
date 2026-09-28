@@ -1,4 +1,5 @@
 import type { EncodingPreset, IceServerConfig } from '@tela/shared';
+import { err, ok, type Result } from '../domain/result.js';
 import { Emitter } from '../emitter.js';
 import type { AudioCapture } from '../ports/audio-capture.js';
 import type { AudioGain, EstadoGrafo } from '../ports/audio-gain.js';
@@ -10,7 +11,13 @@ import type {
 } from '../ports/media-transport.js';
 import type { Random } from '../ports/random.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
-import type { CaptureSurface, ScreenCapture } from '../ports/screen-capture.js';
+import type {
+  CaptureError,
+  CaptureRequest,
+  CaptureResult,
+  CaptureSurface,
+  ScreenCapture,
+} from '../ports/screen-capture.js';
 import type {
   ChannelEvents,
   ChannelOpened,
@@ -164,6 +171,8 @@ export function fakeStream(tracks: MediaStreamTrack[] = []): MediaStream {
 export class FakeScreenCapture implements ScreenCapture {
   supported = true;
   denied = false;
+  /** Falha técnica: o navegador não entregou captura, e ninguém cancelou. */
+  falha = false;
   withAudio = false;
   surface: CaptureSurface = 'monitor';
   lastRequest: unknown = null;
@@ -189,10 +198,11 @@ export class FakeScreenCapture implements ScreenCapture {
     return this.supported;
   }
 
-  async request(options: unknown) {
+  async request(options: CaptureRequest): Promise<Result<CaptureResult, CaptureError>> {
     this.lastRequest = options;
-    if (!this.supported) throw 'UNSUPPORTED';
-    if (this.denied) throw 'DENIED';
+    if (!this.supported) return err('UNSUPPORTED');
+    if (this.denied) return err('DENIED');
+    if (this.falha) return err('FAILED');
 
     this.video = fakeTrack('video');
     this.videos.push(this.video);
@@ -200,11 +210,11 @@ export class FakeScreenCapture implements ScreenCapture {
       this.audio = fakeTrack('audio');
       this.audios.push(this.audio);
     }
-    return {
+    return ok({
       video: this.video,
       audio: this.withAudio ? this.audio : null,
       surface: this.surface,
-    };
+    });
   }
 }
 

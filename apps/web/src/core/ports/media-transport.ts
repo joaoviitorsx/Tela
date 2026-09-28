@@ -215,6 +215,13 @@ export type TransportEvents = {
   peers: readonly PeerInfo[];
   /** Só no espectador: a mídia chegou. */
   track: { stream: MediaStream };
+  /**
+   * Só no espectador: a conexão com o transmissor FECHOU (ICE + DTLS).
+   *
+   * Separa "a rede não deixou passar" de "a rede deixou e o vídeo não veio"
+   * (TELA-013). Os dois terminavam em "sem rota", e só o primeiro é rota.
+   */
+  'ice-conectado': void;
   /** Só no espectador: quantos estão assistindo, incluindo ele. */
   viewers: { count: number };
   reconnecting: void;

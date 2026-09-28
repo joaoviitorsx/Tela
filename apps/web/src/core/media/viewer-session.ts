@@ -63,7 +63,17 @@ export type ViewerState =
    * monta tudo, e nenhum pacote atravessa. Merece estado próprio porque a
    * ação do usuário é diferente de "offline" — não adianta esperar.
    */
-  | { readonly status: 'sem-conexao'; readonly slug: string; readonly relayStatus?: RelayStatus | null }
+  | {
+      readonly status: 'sem-conexao';
+      readonly slug: string;
+      readonly relayStatus?: RelayStatus | null;
+      /**
+       * Onde parou (TELA-013). `rede`: a conexão nunca fechou — aí sim é rota,
+       * e o relay importa. `midia`: conectou e o primeiro quadro não veio;
+       * culpar o NAT mandaria a pessoa mexer no roteador à toa.
+       */
+      readonly etapa: 'rede' | 'midia';
+    }
   /**
    * Não conseguimos nem falar com o servidor.
    *
@@ -227,7 +237,8 @@ export class ViewerSession {
           this.diario.evento('signaling', 'FULL', agora);
           break;
         case 'sem-conexao':
-          this.diario.evento('video', 'MEDIA_TIMEOUT', agora);
+          if (next.etapa === 'midia') this.diario.evento('video', 'MEDIA_TIMEOUT', agora);
+          else this.diario.evento('ice', 'NO_ROUTE', agora);
           break;
         case 'sem-servidor':
           this.diario.evento('signaling', 'SIGNALING_UNAVAILABLE', agora);
@@ -325,6 +336,7 @@ export class ViewerSession {
     const cancels: Cancel[] = [];
 
     let delivered = false;
+    let iceConectou = false;
     let relayStatus: RelayStatus | null = null;
     /**
      * Relógio da MÍDIA, separado do relógio da negociação.
@@ -346,8 +358,27 @@ export class ViewerSession {
     };
 
     cancels.push(
+      transport.on('ice-conectado', () => {
+        if (this.stale(epoch)) return;
+        iceConectou = true;
+      }),
       transport.on('track', ({ stream }) => {
         if (this.stale(epoch)) return;
+        /**
+         * Só VÍDEO entrega a transmissão (TELA-013, §8.2).
+         *
+         * O `unmute` do áudio também emite `track`, e costuma chegar primeiro.
+         * Tratá-lo como entrega desarmava o vigia do vídeo e declarava
+         * `watching` numa tela preta — exatamente o "está tudo bem" mentiroso
+         * que o vigia existe para impedir. O áudio entra no stream e espera.
+         */
+        if (stream.getVideoTracks().length === 0) {
+          this.stream = stream;
+          if (this.state.status === 'watching') {
+            this.setState({ ...this.state, hasAudio: stream.getAudioTracks().length > 0 });
+          }
+          return;
+        }
         delivered = true;
         desarmarVigia();
         this.pollMs = POLL_MIN_MS;
@@ -436,7 +467,10 @@ export class ViewerSession {
       } else if (error instanceof Error && error.message === 'CONNECT_TIMEOUT') {
         // O canal abriu, o SDP foi trocado, e a mídia não veio. Isso não é
         // "ninguém transmitindo" — é a rede entre os dois não fechando.
-        this.setState({ status: 'sem-conexao', slug: this.slug, relayStatus });
+        this.setState({
+          status: 'sem-conexao', slug: this.slug, relayStatus,
+          etapa: iceConectou ? 'midia' : 'rede',
+        });
         this.advanceBackoff();
       } else {
         this.goOffline();
@@ -457,7 +491,10 @@ export class ViewerSession {
         void (async () => {
           await abandonar();
           if (this.stale(epoch)) return;
-          this.setState({ status: 'sem-conexao', slug: this.slug, relayStatus });
+          this.setState({
+            status: 'sem-conexao', slug: this.slug, relayStatus,
+            etapa: iceConectou ? 'midia' : 'rede',
+          });
           this.advanceBackoff();
           this.scheduleRetry(epoch);
         })();

@@ -1516,3 +1516,35 @@ describe('BroadcastSession — grafo e ciclo da captura de áudio (TELA-009)', (
     expect(ctx.session.getState().status).toBe('ended');
   });
 });
+
+describe('BroadcastSession — recusa não é falha técnica (TELA-013)', () => {
+  it('captura que falha sem ninguém cancelar termina em CAPTURE_FAILED', async () => {
+    const ctx = build();
+    ctx.screen.falha = true;
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.session.getState()).toEqual({ status: 'ended', reason: 'CAPTURE_FAILED' });
+    expect(ctx.session.diagnostico('Chrome/130')?.eventos.at(-1)).toMatchObject({
+      etapa: 'capture', codigo: 'CAPTURE_FAILED',
+    });
+    expect(ctx.transport.hosted).toBeNull();
+  });
+
+  it('tentar de novo depois da falha funciona sem recriar a sessão', async () => {
+    const ctx = build();
+    ctx.screen.falha = true;
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.screen.falha = false;
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.session.getState().status).toBe('live');
+  });
+
+  it('seletor que falha na troca de fonte mantém a transmissão no ar', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const antes = ctx.screen.video;
+    ctx.screen.falha = true;
+    await ctx.session.switchSource();
+    expect(ctx.session.getState().status).toBe('live');
+    expect(antes.stopped).toBe(false);
+  });
+});

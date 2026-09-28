@@ -66,10 +66,10 @@ bug e falha de infra. `AppError` é união de literais para que qualquer
 `Record<AppError, …>` seja exaustivo por construção: acrescentar um erro quebra
 a compilação até alguém decidir o que mostrar ao usuário.
 
-Ponto conhecido em aberto: a captura de tela ainda rejeita com `CaptureError`
-cru em vez de devolver `Result` (`core/ports/screen-capture.ts`). Consequência
-real — `NO_TRACK` chega ao usuário como "você cancelou". Está registrado, não
-esquecido.
+A captura de tela devolve `Result` desde a TELA-013
+(`core/ports/screen-capture.ts`): `DENIED` é escolha da pessoa, `FAILED` é o
+navegador ou o sistema, e cada um tem a própria mensagem. Antes, uma falha
+técnica chegava ao usuário como "você cancelou".
 
 ### R5 — Quatro configurações de mídia nunca mudam sem ADR
 

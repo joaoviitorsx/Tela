@@ -258,6 +258,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           });
         },
         onStateChange: (state) => {
+          if (state === 'connected') emitter.emit('ice-conectado', undefined);
           recovery.observe(state);
         },
         onIssue: (code) => console.warn('[peer-link]', code),

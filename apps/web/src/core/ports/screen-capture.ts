@@ -1,3 +1,5 @@
+import type { Result } from '../domain/result.js';
+
 export type CaptureRequest = {
   readonly width: number;
   readonly height: number;
@@ -21,10 +23,22 @@ export type CaptureResult = {
   readonly surface: CaptureSurface;
 };
 
-export type CaptureError = 'DENIED' | 'UNSUPPORTED' | 'NO_TRACK';
+/**
+ * Por que não veio captura — e a diferença muda o que a pessoa lê.
+ *
+ * `DENIED` é escolha dela: cancelou o seletor ou negou a permissão. `FAILED`
+ * não é: o navegador ou o sistema não conseguiu entregar (outro programa
+ * segurando a tela, portal do Wayland que caiu, captura sem trilha de vídeo).
+ * Antes as duas viravam "você cancelou", e quem não tinha cancelado nada
+ * ficava sem saber o que fazer.
+ */
+export type CaptureError = 'DENIED' | 'UNSUPPORTED' | 'FAILED';
 
 export type ScreenCapture = {
   isSupported(): boolean;
-  /** Rejeita com `CaptureError`; o usuário cancelar o seletor é `DENIED`, não bug. */
-  request(options: CaptureRequest): Promise<CaptureResult>;
+  /**
+   * Erro esperado é `Result`, não exceção (R4). Cancelar o seletor é fluxo
+   * normal; `throw` fica para bug.
+   */
+  request(options: CaptureRequest): Promise<Result<CaptureResult, CaptureError>>;
 };

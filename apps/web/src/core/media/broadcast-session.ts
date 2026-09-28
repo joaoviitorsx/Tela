@@ -18,8 +18,6 @@ import {
   NITIDEZ_FPS_MINIMO,
   P2P_LIMITS,
   type Prioridade,
-  pisoDeBitrate,
-  tetoDeBitrate,
 } from '@tela/shared';
 import { descreverCaptura, fonteDaSuperficie, type TipoFonteAudio } from './audio-fonte.js';
 import { ClassificadorDeAudio, type EstadoAudio } from './audio-state.js';
@@ -30,7 +28,7 @@ import {
   Diario,
   idLocal,
 } from './diagnostico.js';
-import { UplinkGovernor } from './uplink-governor.js';
+import { MalhaDeBanda } from './malha-de-banda.js';
 import {
   DEFAULT_PRESET_ID,
   type PresetId,
@@ -219,22 +217,8 @@ export type BroadcastSessionDeps = {
 };
 
 const STATS_INTERVAL_MS = 1_000;
-/** Quantas leituras seguidas de `bandwidth` provam colapso, e não soluço. */
-const AMOSTRAS_DE_COLAPSO = 3;
 /** 128 kbps do Opus + ~10% de cabeçalhos. Ver `reservaDeAudio`. */
 const RESERVA_AUDIO_BPS = 141_000;
-/** Mesmo piso do governador: abaixo disso não há vídeo que preste. */
-const ORCAMENTO_VIDEO_MINIMO = 300_000;
-/** Espera entre sondas de subida, em amostras (1 s). Dobra a cada falha. */
-const SONDA_ESPERA_INICIAL = 15;
-const SONDA_ESPERA_MAX = 240;
-/** Quanto tempo uma sonda precisa aguentar sem colapso para valer. */
-const SONDA_JANELA = 10;
-/**
- * Estimativa acima de `1,3×` o que sai: perto do teto `1,5×acked` do
- * libwebrtc, ou seja, é a nossa atuação que limita, não a rede.
- */
-const SONDA_FOLGA = 1.3;
 
 const FALHA_DE_CAPTURA: Readonly<Record<CaptureError, BroadcastFailure>> = {
   DENIED: 'CAPTURE_DENIED',
@@ -374,15 +358,8 @@ export class BroadcastSession {
    * trilhas já paradas.
    */
   private epoch = 0;
-  private readonly governor = new UplinkGovernor();
-  /** Amostras seguidas com a banda amarrando o encoder. Ver `applyUplinkCeiling`. */
-  private amostrasDeBanda = 0;
-  /** Amostra da última mudança de orçamento, pela malha ou pela sonda. */
-  private ultimaDecisaoEm = 0;
-  /** Sonda de subida. Ver `talvezSondar`. */
-  private sondaEspera = SONDA_ESPERA_INICIAL;
-  private sondaDesde: number | null = null;
-  private desceuPorColapso = false;
+  /** Governador, evidência de colapso e sonda de subida. Ver `malha-de-banda.ts`. */
+  private readonly malha = new MalhaDeBanda();
   /** A série temporal do lado de quem transmite. Ver `core/media/diagnostico.ts`. */
   private readonly diario = new Diario('transmissor');
   private amostras = 0;
@@ -480,12 +457,7 @@ export class BroadcastSession {
     this.pressure = 0;
     this.pressureKind = 'none';
     this.capturaOciosa = false;
-    this.governor.reset();
-    this.amostrasDeBanda = 0;
-    this.ultimaDecisaoEm = 0;
-    this.sondaEspera = SONDA_ESPERA_INICIAL;
-    this.sondaDesde = null;
-    this.desceuPorColapso = false;
+    this.malha.reiniciar();
     this.amostras = 0;
     this.ociosoDesde = null;
     /*
@@ -510,7 +482,7 @@ export class BroadcastSession {
      * Exatamente o buraco que a semente existe para fechar.
      */
     const lembrado = Number(this.deps.uplinkMemory?.read() ?? '');
-    if (Number.isFinite(lembrado) && lembrado > 0) this.governor.seed(lembrado);
+    if (Number.isFinite(lembrado) && lembrado > 0) this.malha.semear(lembrado);
     this.setState({ status: 'requesting-capture' });
 
     /**
@@ -737,151 +709,27 @@ export class BroadcastSession {
   }
 
   /**
-   * Impede o encoder de encher o cano do usuário.
+   * A malha de banda decide; a sessão aplica (TELA-026).
    *
-   * O WebRTC estima quanto cabe no link e sobe até lá. "Até lá" é exatamente
-   * onde a fila do roteador enche e o ping do jogo dispara — e quando o
-   * controle de congestionamento percebe, o jogador já sentiu. Então o teto é
-   * aplicado ANTES: o vídeo nunca pede mais do que uma fração do estimado.
+   * Quanto o link paga, a evidência de colapso e a sonda de subida moram em
+   * `malha-de-banda.ts`. Aqui fica só o que é da sessão: gravar o orçamento no
+   * transporte e compor o degrau da banda com o do usuário e o da CPU.
    */
   private applyUplinkCeiling(stats: MediaStats): void {
-    /**
-     * A estimativa chega SOMADA entre os peers; o teto sai POR sender.
-     *
-     * `stats-sampler` soma `availableOutgoingBitrate` de todas as conexões,
-     * porque para o HUD o que interessa é o total que sai do link de casa. Mas
-     * `setBitrateCeiling` grava o número como `maxBitrate` de CADA sender — e
-     * em mesh cada espectador recebe uma cópia inteira do vídeo.
-     *
-     * Sem esta divisão o erro era proporcional ao número de espectadores e
-     * sempre na direção de ENCHER o cano, que é precisamente o que esta malha
-     * existe para impedir: com 3 espectadores num link de 12 Mbps o teto
-     * liberava 8 Mbps por sender, ou seja, 24 Mbps de demanda num cano de 12.
-     *
-     * É a mesma conta que `suggestPreset` e `p2pViewerBudget` já faziam em
-     * `@tela/shared` — a malha de controle é que estava fora de compasso.
-     */
-    /**
-     * O MÍNIMO, não a média — e o divisor conta quem de fato mediu.
-     *
-     * Pela R5 todos os senders recebem o mesmo `maxBitrate`, então o que cabe é
-     * o que o PIOR caminho aguenta. Somar e dividir por N deixava um amigo em
-     * ADSL de 5 Mbps recebendo 24 Mbps porque o outro estava em fibra: ~80% de
-     * perda contínua para ele, quadriculado permanente, e o transmissor sem
-     * ver nada, porque o HUD mostra a soma. A ADR 0017 declarava a intenção
-     * certa e o código fazia o oposto.
-     *
-     * E o divisor era `peers.length`, que conta quem ainda está em
-     * `connecting` — quem conecta não tem par ICE nominado e não contribui
-     * para a soma. Numerador e denominador fora de fase: cinco amigos entrando
-     * de uma vez subestimavam o orçamento em até 5× no pior instante, e pela
-     * catraca da ADR 0018 a transmissão morava lá o resto da sessão.
-     */
-    /**
-     * A queda só vale quando a leitura fala do LINK.
-     *
-     * Duas condições em que ela não fala, e o simulador mediu as duas:
-     *
-     * - o teto do sender está sendo definido pelo limite de bits por pixel do
-     *   degrau, e não pelo orçamento — então `acked` reflete a nossa escolha
-     *   de resolução, não a capacidade da rede;
-     * - o encoder não está consumindo o que lhe foi dado, porque a cena está
-     *   parada — `acked` desaba sem a rede ter mudado, e o teto de
-     *   `1,5 × acked` desce atrás.
-     *
-     * Nos dois casos, deixar o governador cortar transforma uma condição
-     * transitória em perda permanente de orçamento.
-     */
-    const preset = presetById(this.presetId);
-    const tetoDePixel = tetoDeBitrate(
-      preset.width,
-      preset.height,
-      Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]),
-    );
-    const orcamento = this.governor.orcamento;
-
-    /**
-     * Colapso de link: o sinal que faltava às duas guardas (TELA-015).
-     *
-     * As guardas abaixo existem por bons motivos e nenhuma distingue a própria
-     * causa de um colapso de rede. Num colapso o WebRTC entrega
-     * `min(BWE, maxBitrate)` ao encoder, então o envio cai junto — como na
-     * cena parada — e a estimativa cai junto com o envio — como quando somos
-     * nós o limitador. Medido, com o `BroadcastSession` real: link por
-     * espectador de 27 para 2,7 Mbps sustentado deixava o orçamento congelado
-     * em 20,25 Mbps, o degrau em 1080p60 e a tela calada, a 0,0217 bpp. No
-     * simulador, a sub-matriz de queda (link a 15% por 30 s) não reagia em
-     * NENHUM dos 24 cenários.
-     *
-     * O que separa os três casos é `qualityLimitationReason`. Ele diz
-     * `bandwidth` quando é a ESTIMATIVA DE BANDA que está amarrando o encoder.
-     * Na cena parada o encoder não quer mais bits, e o motivo fica `none`;
-     * quando o limitador é o nosso teto de pixel (`scaleResolutionDownBy`),
-     * também. Só o colapso produz `bandwidth` sustentado com orçamento acima
-     * do que o link entrega.
-     *
-     * Três amostras seguidas, e não uma: `bandwidth` isolado aparece em toda
-     * rajada de perda, e a histerese é o que impede um soluço de Wi-Fi de
-     * derrubar a qualidade. As tentativas anteriores (guardas que expiram,
-     * desempate pela leitura crua ou suavizada) mexiam nas guardas; esta não
-     * mexe — acrescenta a evidência que elas não tinham.
-     */
-    this.amostrasDeBanda = stats.limitation === 'bandwidth' ? this.amostrasDeBanda + 1 : 0;
-    const colapso = this.amostrasDeBanda >= AMOSTRAS_DE_COLAPSO;
-
-    const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;
-    const enviado = stats.bitrateBps / Math.max(1, stats.paresMedidos);
-    const encoderOcioso = orcamento !== null && enviado > 0 && enviado < orcamento * 0.7;
-
-    // O pior caminho medido nesta amostra, para comparar com o orçamento em
-    // vigor: é ele que distingue cena parada de link que encolheu.
-    const decisao = this.governor.observe(stats.availablePorPeer, {
-      permitirQueda: colapso || (!limitadosPorPixel && !encoderOcioso),
+    const decisao = this.malha.observar({
+      stats,
+      presetEfetivo: this.presetId,
+      presetEscolhido: this.presetEscolhido,
+      presetPorBanda: this.presetPorBanda,
+      prioridade: this.prioridade,
+      reservaAudio: this.reservaDeAudio(),
+      amostra: this.amostras,
     });
-    // `null` na maioria das leituras: o governador só fala quando a mudança
+    // `null` na maioria das leituras: a malha só fala quando a mudança
     // compensa reconfigurar o encoder.
-    if (decisao === null) {
-      this.talvezSondar(stats.bitrateBps / Math.max(1, stats.paresMedidos));
-      return;
-    }
-    /*
-      Descida que só aconteceu por causa da evidência de colapso — as guardas
-      teriam segurado. É depois DESTA descida que o degrau baixo pode virar
-      armadilha, e é só aí que a sonda de subida tem trabalho a fazer. Link
-      legitimamente pequeno, alcançado pelo caminho normal, não é sondado:
-      sondar ali só troca estabilidade por reconfiguração.
-    */
-    if (colapso && (limitadosPorPixel || encoderOcioso) && decisao.bps < (orcamento ?? Infinity)) {
-      this.desceuPorColapso = true;
-    }
-    // Queda dentro da janela de uma sonda: ela falhou, e a próxima espera dobra.
-    if (this.sondaDesde !== null && decisao.bps < (orcamento ?? Infinity)) {
-      this.sondaEspera = Math.min(this.sondaEspera * 2, SONDA_ESPERA_MAX);
-      this.sondaDesde = null;
-    }
-    this.ultimaDecisaoEm = this.amostras;
-    const paraVideo = this.orcamentoDeVideo(decisao.bps);
-    void this.deps.transport.setUplinkBudget(paraVideo).catch(() => undefined);
-
-    /**
-     * E AQUI está a correção que a ADR 0015 existe para registrar.
-     *
-     * O teto sempre foi aplicado como `maxBitrate`, e `maxBitrate` sozinho não
-     * tira um único pixel do encoder — só aperta o QP. Com um orçamento de
-     * 3 Mbps e o degrau parado em 1080p60, o encoder recebia 1920×1080@60 para
-     * caber em 0,024 bit por pixel, quando movimento alto pede 0,10. A saída
-     * dele era subir o QP até o talo e, logo depois, deixar o *quality scaler*
-     * do Chromium derrubar a resolução por conta própria — uma queda que
-     * COMPÕE com a nossa e que ninguém mede.
-     *
-     * A imagem resultante não era quadriculada, era BORRADA: 360p esticado
-     * para a tela do espectador, com o produto anunciando 1080p60.
-     *
-     * Traduzir o orçamento em degrau é o que mantém os bits por pixel
-     * honestos. Os mesmos 3 Mbps em 854×480@60 são 0,10 bpp — nítido de
-     * verdade, num rótulo menor.
-     */
-    this.presetPorBanda = presetParaOrcamento(paraVideo, this.prioridade);
+    if (decisao === null) return;
+    void this.deps.transport.setUplinkBudget(decisao.orcamentoVideo).catch(() => undefined);
+    this.presetPorBanda = decisao.presetPorBanda;
     this.aplicarDegrau();
   }
 
@@ -896,76 +744,6 @@ export class BroadcastSession {
    */
   private reservaDeAudio(): number {
     return this.audioTrack === null ? 0 : RESERVA_AUDIO_BPS;
-  }
-
-  private orcamentoDeVideo(total: number): number {
-    return Math.max(ORCAMENTO_VIDEO_MINIMO, total - this.reservaDeAudio());
-  }
-
-  /**
-   * Sonda de subida depois de uma descida por banda (TELA-015).
-   *
-   * O problema que ela resolve é estrutural, e a ADR 0018 o descreve do outro
-   * lado: no degrau baixo o `maxBitrate` fica no teto de pixel DAQUELE degrau,
-   * o `acked` não passa dele, o libwebrtc tampa a estimativa em `1,5×acked`,
-   * e o orçamento que sai disso (`0,75 ×`) não alcança o limiar do degrau de
-   * cima. Descer por um colapso virava estado absorvente: o link voltava e a
-   * transmissão ficava em 360p para sempre.
-   *
-   * A sonda sobe UM degrau quando duas coisas são verdade ao mesmo tempo:
-   * `sondaEspera` amostras sem decisão nenhuma, e estimativa colada no teto
-   * `1,5×acked` — sinal de que o limitador somos nós, não a rede (num
-   * colapso de verdade a estimativa fica rente ao `acked`). Se a malha
-   * descer dentro da janela, a sonda falhou e a próxima espera DOBRA
-   * (15 → 240 s). Não é um relógio
-   * cego: sem evidência de folga ela não dispara, e cada falha a afasta.
-   */
-  private talvezSondar(enviadoPorPeer: number): void {
-    const estimativa = this.governor.estimativa;
-    const porBanda = this.presetPorBanda;
-    if (!this.desceuPorColapso) return;
-    if (estimativa === null || porBanda === null || this.governor.orcamento === null) return;
-    // De volta ao que a pessoa escolheu: não há o que sondar, e a marca sai.
-    if (menorPreset(porBanda, this.presetEscolhido) === this.presetEscolhido) {
-      this.desceuPorColapso = false;
-      return;
-    }
-
-    if (this.sondaDesde !== null) {
-      // Sobreviveu à janela: a subida valeu, e a espera volta ao começo.
-      if (this.amostras - this.sondaDesde >= SONDA_JANELA) {
-        this.sondaEspera = SONDA_ESPERA_INICIAL;
-        this.sondaDesde = null;
-      }
-      return;
-    }
-    /*
-      Espera contada desde a última decisão, e NÃO desde a última leitura de
-      `bandwidth`: medido em Chrome real, o `qualityLimitationReason` fica em
-      `bandwidth` continuamente com link farto quando o conteúdo é pesado (é o
-      quality scaler, que o libwebrtc atribui a banda). Esperar "sem banda"
-      travaria a sonda justamente em gameplay.
-    */
-    if (this.amostras - this.ultimaDecisaoEm < this.sondaEspera) return;
-    if (enviadoPorPeer <= 0 || estimativa < enviadoPorPeer * SONDA_FOLGA) return;
-
-    const acima = previousPresetOnRecovery(porBanda, this.presetEscolhido);
-    if (acima === null) return;
-    const alvo = presetById(acima);
-    const fps = Math.min(alvo.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]);
-    // O piso do degrau de cima é o menor orçamento que a escada traduz nele.
-    let bps = Math.ceil(pisoDeBitrate(alvo.width, alvo.height, fps) * 1.02);
-    if (menorPreset(presetParaOrcamento(bps, this.prioridade), acima) !== acima) {
-      bps = Math.ceil(alvo.main.maxBitrate);
-    }
-
-    // O governador conta o caminho inteiro; o degrau é só do vídeo.
-    this.governor.sondar(bps + this.reservaDeAudio());
-    void this.deps.transport.setUplinkBudget(bps).catch(() => undefined);
-    this.presetPorBanda = presetParaOrcamento(bps, this.prioridade);
-    this.sondaDesde = this.amostras;
-    this.ultimaDecisaoEm = this.amostras;
-    this.aplicarDegrau();
   }
 
   /**
@@ -1068,7 +846,7 @@ export class BroadcastSession {
      * `availableOutgoingBitrate`: ali o governador não tem estimativa, não
      * aplica teto nenhum, e esta escada é a única defesa que sobra.
      */
-    if (limitation === 'bandwidth' && this.governor.estimativa !== null) {
+    if (limitation === 'bandwidth' && this.malha.estimativa !== null) {
       this.pressure = 0;
       this.pressureKind = 'none';
       /**
@@ -1157,7 +935,7 @@ export class BroadcastSession {
     this.desdeGravacao += 1;
     if (this.desdeGravacao < GRAVAR_BANDA_A_CADA) return;
     this.desdeGravacao = 0;
-    const estimativa = this.governor.estimativa;
+    const estimativa = this.malha.estimativa;
     if (estimativa === null) return;
     this.deps.uplinkMemory?.write(String(Math.round(estimativa)));
   }
@@ -1570,7 +1348,7 @@ export class BroadcastSession {
      * resolução maior. É assim que `nitidez` entrega 1280×720@30 onde
      * `fluidez` entrega 854×480@60 — pelos mesmos bits, sem pedir um a mais.
      */
-    const orcamento = this.governor.orcamento;
+    const orcamento = this.malha.orcamento;
     this.presetPorBanda =
       orcamento === null ? null : presetParaOrcamento(orcamento, prioridade);
     this.aplicarDegrau();
@@ -1689,7 +1467,7 @@ export class BroadcastSession {
      * a escolha manual faz é recalcular o degrau que aquele orçamento paga sob
      * a nova intenção, e a UI mostra `presetForced` quando os dois divergem.
      */
-    const orcamento = this.governor.orcamento;
+    const orcamento = this.malha.orcamento;
     this.presetPorBanda =
       orcamento === null ? null : presetParaOrcamento(orcamento, this.prioridade);
 
@@ -1865,12 +1643,7 @@ export class BroadcastSession {
     this.classificadorAudio.reiniciar();
     this.grafoAudio = 'indisponivel';
     this.preview = null;
-    this.governor.reset();
-    this.amostrasDeBanda = 0;
-    this.ultimaDecisaoEm = 0;
-    this.sondaEspera = SONDA_ESPERA_INICIAL;
-    this.sondaDesde = null;
-    this.desceuPorColapso = false;
+    this.malha.reiniciar();
     this.amostras = 0;
     this.ociosoDesde = null;
     this.capturaOciosa = false;

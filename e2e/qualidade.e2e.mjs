@@ -998,7 +998,7 @@ const serie = [];
 for (let s = 0; s < SEG_ORCAMENTO; s += 1) {
   await esperar(1000);
   const passo = await host.evaluate(async () => {
-    // Reproduz `broadcast-session.applyUplinkCeiling` sem a UI: mesma leitura,
+    // Reproduz `MalhaDeBanda.observar` (malha-de-banda.ts) sem a UI: mesma leitura,
     // mesmo governador, mesma tradução de orçamento em degrau.
     const stats = await window.__transport.getAggregateStats();
     if (stats === null) return null;

@@ -152,6 +152,39 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
   });
 
+  it('uma nova tentativa do mesmo participante substitui a vaga sem expulsar outros', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const participantId = 'p'.repeat(32);
+    const first = await d.watch('v1', SLUG, { participantId, attemptId: 'a'.repeat(32) });
+    await d.watch('v2', SLUG);
+    await d.watch('v3', SLUG);
+    d.hibernar?.();
+    const replacement = await d.watch('v1-next', SLUG, { participantId, attemptId: 'b'.repeat(32) });
+    expect(first.closed()).toBe(true);
+    expect(peerIdOf(replacement)).toBe(peerIdOf(first));
+    expect(ofType(host, 'peer-left')).toEqual([]);
+    expect(ofType(host, 'peer-joined').at(-1)).toEqual({
+      type: 'peer-joined', peerId: peerIdOf(first), attemptId: 'b'.repeat(32),
+    });
+    expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
+  });
+
+  it('renova ICE para a própria conexão sem criar participante ou repassar sinal', async () => {
+    const d = criar();
+    const host = await d.host('h', SLUG, OWNER);
+    const viewer = await d.watch('v', SLUG);
+    d.hibernar?.();
+    await d.refreshIce('v', 'request-1');
+    const initial = ofType(viewer, 'watching')[0];
+    expect(ofType(viewer, 'ice-servers')).toEqual([{
+      type: 'ice-servers', requestId: 'request-1',
+      iceServers: initial?.iceServers, relayStatus: 'not-configured',
+    }]);
+    expect(ofType(host, 'signal')).toEqual([]);
+    expect(ofType(host, 'peer-joined')).toHaveLength(1);
+  });
+
   it('saída de espectador avisa o transmissor e libera a vaga', async () => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER);
@@ -301,3 +334,43 @@ describe.each(implementacoes.filter(([, criar]) => criar().hibernar !== undefine
     });
   },
 );
+
+it('Worker libera reserva e não envia watching depois do socket fechar durante TURN', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let viewersIssued = 0;
+  const d = makeWorkerDriver(async (peerId) => {
+    if (peerId.startsWith('v') && ++viewersIssued === 1) await gate;
+    return { servers: [{ urls: ['stun:test'] }], relayStatus: 'not-configured' };
+  });
+  const host = await d.host('h', SLUG, OWNER);
+  const pending = d.watch('v1', SLUG);
+  await d.watch('v2', SLUG);
+  await d.watch('v3', SLUG);
+  expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
+  d.disconnect('v1');
+  release();
+  const abandoned = await pending;
+  expect(ofType(abandoned, 'watching')).toEqual([]);
+  expect(errorOf(await d.watch('v4-next', SLUG))).toBeUndefined();
+  expect(ofType(host, 'peer-joined')).toHaveLength(3);
+});
+
+it('Worker espera TURN antes de reapresentar a reserva ao host reconectado', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const d = makeWorkerDriver(async (peerId) => {
+    if (peerId.startsWith('v')) await gate;
+    return { servers: [{ urls: ['stun:test'] }], relayStatus: 'not-configured' };
+  });
+  await d.host('h1', SLUG, OWNER);
+  const pending = d.watch('v', SLUG);
+  const newHost = await d.host('h2', SLUG, OWNER);
+  expect(ofType(newHost, 'peer-joined')).toEqual([]);
+  release();
+  const viewer = await pending;
+  expect(ofType(viewer, 'watching')[0]?.hostId).toBe(peerIdOf(newHost));
+  expect(ofType(newHost, 'peer-joined')).toEqual([
+    { type: 'peer-joined', peerId: peerIdOf(viewer) },
+  ]);
+});

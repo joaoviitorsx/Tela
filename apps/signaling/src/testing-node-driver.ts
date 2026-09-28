@@ -32,8 +32,11 @@ export function makeNodeDriver(): ConformanceDriver {
     async host(id, slug, ownerToken) {
       return open(id, { type: 'host', slug, ownerToken }, '10.0.0');
     },
-    async watch(id, slug) {
-      return open(id, { type: 'watch', slug }, '10.0.1');
+    async watch(id, slug, identity) {
+      return open(id, { type: 'watch', slug, ...identity }, '10.0.1');
+    },
+    async refreshIce(id, requestId) {
+      conns.get(id)?.receive(JSON.stringify({ type: 'refresh-ice', requestId }));
     },
     async signal(id, payload, to) {
       conns.get(id)?.receive(

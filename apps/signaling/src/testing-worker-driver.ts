@@ -1,6 +1,7 @@
 import { webcrypto } from 'node:crypto';
 import type { ServerMessage } from '@tela/shared';
 import type { ConformanceClient, ConformanceDriver } from './conformance.js';
+import type { IceProvisionResult } from './ice-provision.js';
 import {
   ChannelRoom,
   type DurableContext,
@@ -92,9 +93,12 @@ class FakeDurableContext implements DurableContext {
  *
  * Um DO por slug, como em produção: `rooms` é o `idFromName` do teste.
  */
-export function makeWorkerDriver(): ConformanceDriver {
+export function makeWorkerDriver(
+  iceServersFor?: (peerId: string) => Promise<IceProvisionResult>,
+): ConformanceDriver {
   const env: Env = { CHANNELS: null as never, MAX_PEERS: '3' };
-  const deps = makeChannelDeps(env, webcrypto as unknown as WebCryptoLike);
+  const deps = { ...makeChannelDeps(env, webcrypto as unknown as WebCryptoLike),
+    ...(iceServersFor === undefined ? {} : { iceServersFor }) };
 
   const rooms = new Map<string, { room: ChannelRoom; ctx: FakeDurableContext }>();
   const sockets = new Map<string, FakeHibernatableSocket>();
@@ -149,8 +153,14 @@ export function makeWorkerDriver(): ConformanceDriver {
     async host(id, slug, ownerToken) {
       return await open(id, slug, { type: 'host', slug, ownerToken });
     },
-    async watch(id, slug) {
-      return await open(id, slug, { type: 'watch', slug });
+    async watch(id, slug, identity) {
+      return await open(id, slug, { type: 'watch', slug, ...identity });
+    },
+    async refreshIce(id, requestId) {
+      const socket = sockets.get(id);
+      const slug = slugOf.get(id);
+      if (socket === undefined || slug === undefined) return;
+      await roomFor(slug).room.handleMessage(socket, slug, JSON.stringify({ type: 'refresh-ice', requestId }));
     },
     async signal(id, payload, to) {
       const socket = sockets.get(id);

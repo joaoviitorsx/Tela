@@ -61,7 +61,14 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     slug: z.string().min(1).max(64),
     ownerToken: z.string().min(43).max(256),
   }),
-  z.object({ type: z.literal('watch'), slug: z.string().min(1).max(64) }),
+  z.object({
+    type: z.literal('watch'), slug: z.string().min(1).max(64),
+    /** Identidade efêmera de alta entropia; quem a conhece pode retomar a vaga. */
+    participantId: z.string().min(16).max(128).optional(),
+    /** Nova PC = nova tentativa; reconexão apenas do socket preserva este ID. */
+    attemptId: z.string().min(16).max(128).optional(),
+  }),
+  z.object({ type: z.literal('refresh-ice'), requestId: z.string().min(1).max(64) }),
   /** `to` opcional: espectador só tem um destino possível, o transmissor. */
   z.object({
     type: z.literal('signal'),
@@ -86,6 +93,8 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     iceServers: z.array(IceServerSchema),
     /** Estado público; a causa detalhada permanece apenas no servidor. */
     relayStatus: RelayStatusSchema.optional(),
+    issuedAt: z.number().int().nonnegative().optional(),
+    expiresAt: z.number().int().nonnegative().optional(),
     maxPeers: z.number().int().min(1),
   }),
   z.object({
@@ -94,6 +103,8 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     hostId: PeerIdSchema,
     iceServers: z.array(IceServerSchema),
     relayStatus: RelayStatusSchema.optional(),
+    issuedAt: z.number().int().nonnegative().optional(),
+    expiresAt: z.number().int().nonnegative().optional(),
     /** Valor inicial; depois disso, mensagens `viewers` mantêm atualizado. */
     viewers: z.number().int().min(1),
   }),
@@ -106,7 +117,13 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
    * precisa dos ids para negociar mídia com cada um.
    */
   z.object({ type: z.literal('viewers'), count: z.number().int().min(0) }),
-  z.object({ type: z.literal('peer-joined'), peerId: PeerIdSchema }),
+  z.object({
+    type: z.literal('ice-servers'), requestId: z.string().min(1).max(64),
+    iceServers: z.array(IceServerSchema), relayStatus: RelayStatusSchema,
+    issuedAt: z.number().int().nonnegative().optional(),
+    expiresAt: z.number().int().nonnegative().optional(),
+  }),
+  z.object({ type: z.literal('peer-joined'), peerId: PeerIdSchema, attemptId: z.string().optional() }),
   z.object({ type: z.literal('peer-left'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('signal'), from: PeerIdSchema, payload: z.unknown() }),
   z.object({ type: z.literal('error'), code: SignalingErrorCodeSchema }),

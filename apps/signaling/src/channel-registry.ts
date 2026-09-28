@@ -32,6 +32,8 @@ type Peer = {
   readonly id: string;
   readonly role: 'host' | 'viewer';
   readonly socket: Socket;
+  readonly participantId?: string;
+  readonly attemptId?: string;
 };
 
 type Channel = {
@@ -170,6 +172,8 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           peerId: peer.id,
           iceServers: [...ice.servers],
           relayStatus: ice.relayStatus,
+          ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
+          ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
           maxPeers: deps.limits.maxPeers,
         });
 
@@ -203,7 +207,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         }
       }
 
-      function joinChannel(slug: string): void {
+      function joinChannel(slug: string, participantId?: string, attemptId?: string): void {
         if (!deps.isValidSlug(slug)) return fail('SLUG_INVALID');
 
         const channel = channels.get(slug);
@@ -211,10 +215,17 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         // Slug inválido, inexistente e offline devolvem o MESMO erro: quem
         // varre nomes não distingue "não existe" de "existe e está fora do ar".
         if (channel === undefined || host == null) return fail('NOT_HOSTING');
-        if (channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
+        const previous = participantId === undefined ? undefined : [...channel.viewers.values()]
+          .find((viewer) => viewer.participantId === participantId);
+        if (previous === undefined && channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
 
-        peer = { id: deps.newPeerId('v'), role: 'viewer', socket };
+        peer = {
+          id: previous?.id ?? deps.newPeerId('v'), role: 'viewer', socket,
+          ...(participantId === undefined ? {} : { participantId }),
+          ...(attemptId === undefined ? {} : { attemptId }),
+        };
         channel.viewers.set(peer.id, peer);
+        previous?.socket.close();
         channelName = slug;
         cancelHelloTimer();
         const ice = deps.iceServersFor(peer.id);
@@ -225,10 +236,12 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           hostId: host.id,
           iceServers: [...ice.servers],
           relayStatus: ice.relayStatus,
+          ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
+          ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
           viewers: channel.viewers.size,
         });
         // O transmissor é quem oferece — ele tem a mídia.
-        host.socket.send({ type: 'peer-joined', peerId: peer.id });
+        host.socket.send({ type: 'peer-joined', peerId: peer.id, ...(attemptId === undefined ? {} : { attemptId }) });
         anunciarPlateia(channel);
       }
 
@@ -280,7 +293,20 @@ export function makeChannelRegistry(deps: RegistryDeps) {
               return claimChannel(message.slug, message.ownerToken);
             case 'watch':
               if (peer !== null) return;
-              return joinChannel(message.slug);
+              return joinChannel(message.slug, message.participantId, message.attemptId);
+            case 'refresh-ice': {
+              if (peer === null || channelName === null) return fail('BAD_MESSAGE');
+              const current = channels.get(channelName);
+              if (current === undefined || peerIn(current, peer.id) !== peer) return;
+              const ice = deps.iceServersFor(peer.id);
+              socket.send({
+                type: 'ice-servers', requestId: message.requestId,
+                iceServers: [...ice.servers], relayStatus: ice.relayStatus,
+                ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
+                ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
+              });
+              return;
+            }
             case 'signal':
               if (peer === null) return fail('BAD_MESSAGE');
               return relay(message);

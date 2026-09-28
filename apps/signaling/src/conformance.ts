@@ -24,7 +24,8 @@ export type ConformanceDriver = {
   /** Abre uma conexão e envia `host`. */
   host(id: string, slug: string, ownerToken: string): Promise<ConformanceClient>;
   /** Abre uma conexão e envia `watch`. */
-  watch(id: string, slug: string): Promise<ConformanceClient>;
+  watch(id: string, slug: string, identity?: { participantId: string; attemptId: string }): Promise<ConformanceClient>;
+  refreshIce(id: string, requestId: string): Promise<void>;
   /** Envia `signal` por uma conexão já aberta. */
   signal(id: string, payload: unknown, to?: string): Promise<void>;
   /**

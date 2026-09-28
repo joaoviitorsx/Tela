@@ -22,13 +22,14 @@ export function makeIceProvider(config: Config): (peerId: string) => IceProvisio
     const servers: IceServerConfig[] = [stun];
 
     if (config.ice.turnUrls.length > 0 && config.ice.turnSecret) {
-      const expiry = Math.floor(Date.now() / 1000) + config.ice.ttlSeconds;
+      const issuedAt = Date.now();
+      const expiry = Math.floor(issuedAt / 1000) + config.ice.ttlSeconds;
       const username = `${expiry}:${peerId}`;
       const credential = createHmac('sha1', config.ice.turnSecret)
         .update(username)
         .digest('base64');
       servers.push({ urls: [...config.ice.turnUrls], username, credential });
-      return { servers, relayStatus: 'available', expiresAt: expiry * 1000 };
+      return { servers, relayStatus: 'available', issuedAt, expiresAt: expiry * 1000 };
     }
     if (config.NODE_ENV !== 'production' && config.ice.staticUsername && config.ice.staticPassword) {
       servers.push({

@@ -61,6 +61,10 @@ import { makeCloudflareProvider, type IceProvisionResult } from './ice-provision
 type Attachment = {
   readonly peerId: string;
   readonly role: 'host' | 'viewer';
+  readonly participantId?: string;
+  readonly attemptId?: string;
+  /** Reserva de vaga durante a emissão TURN; oferta só depois de `watching`. */
+  readonly ready?: boolean;
   /** Só no socket do host: sha256 do ownerToken de quem reivindicou. */
   readonly ownerHash?: string;
   /** Janela de rate limit desta conexão, também à prova de hibernação. */
@@ -271,10 +275,13 @@ export class ChannelRoom {
         return await this.claim(socket, slug, message.slug, message.ownerToken);
       case 'watch':
         if (at !== null) return;
-        return await this.join(socket, slug, message.slug);
+        return await this.join(socket, slug, message.slug, message.participantId, message.attemptId);
+      case 'refresh-ice':
+        if (at === null || at.ready === false) return this.fail(socket, 'BAD_MESSAGE');
+        return await this.refreshIce(socket, at, message.requestId);
       case 'signal':
         if (at === null) return this.fail(socket, 'BAD_MESSAGE');
-        return this.relay(at, message);
+        return this.relay(socket, at, message);
       case 'leave':
         // Marca ANTES de fechar: separa "eu parei" de "meu socket caiu".
         if (at !== null) socket.serializeAttachment({ ...at, saiuDeProposito: true });
@@ -380,6 +387,7 @@ export class ChannelRoom {
      * violações de protocolo que só não quebravam porque se cancelavam.
      */
     const ice = await this.deps.iceServersFor(peerId);
+    if (!this.ctx.getWebSockets().includes(socket)) return;
 
     /**
      * Seção crítica: ler a posse, decidir e gravar sem ceder o loop no meio.
@@ -392,6 +400,7 @@ export class ChannelRoom {
      */
     const assumido = await this.ctx.blockConcurrencyWhile(async () => {
       const dono = await this.donoAtual();
+      if (!this.ctx.getWebSockets().includes(socket)) return null;
       // Existe dono e não é você: o canal é de outra pessoa, com ou sem
       // alguém conectado neste instante.
       if (dono !== null && !this.deps.equals(dono, hash)) return null;
@@ -415,6 +424,7 @@ export class ChannelRoom {
       return { anterior };
     });
 
+    if (!this.ctx.getWebSockets().includes(socket)) return;
     if (assumido === null) return this.fail(socket, 'SLUG_TAKEN');
 
     // Mesmo dono reconectando (refresh, troca de rede): derruba o antigo.
@@ -425,6 +435,8 @@ export class ChannelRoom {
       peerId,
       iceServers: [...ice.servers],
       relayStatus: ice.relayStatus,
+      ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
+      ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
       maxPeers: this.deps.limits.maxPeers,
     });
 
@@ -437,11 +449,18 @@ export class ChannelRoom {
      * tela explicava por quê.
      */
     for (const viewer of this.viewers()) {
-      this.send(socket, { type: 'peer-joined', peerId: viewer.at.peerId });
+      if (viewer.at.ready === false) continue;
+      this.send(socket, {
+        type: 'peer-joined', peerId: viewer.at.peerId,
+        ...(viewer.at.attemptId === undefined ? {} : { attemptId: viewer.at.attemptId }),
+      });
     }
   }
 
-  private async join(socket: HibernatableSocket, slug: string, wanted: string): Promise<void> {
+  private async join(
+    socket: HibernatableSocket, slug: string, wanted: string,
+    participantId?: string, attemptId?: string,
+  ): Promise<void> {
     // `isBlockedSlug` também aqui: sem ele o Node responde `SLUG_INVALID` e o
     // Worker responde `NOT_HOSTING` para o mesmo pedido, e a diferença deixa
     // quem varre nomes distinguir "bloqueado" de "inexistente" — exatamente o
@@ -454,30 +473,61 @@ export class ChannelRoom {
     // Slug inválido, inexistente e offline devolvem o MESMO erro: quem varre
     // nomes não distingue "não existe" de "existe e está fora do ar".
     if (host === null) return this.fail(socket, 'NOT_HOSTING');
-    if (this.viewers().length >= this.deps.limits.maxPeers) {
+    const previous = participantId === undefined ? undefined : this.viewers()
+      .find((viewer) => viewer.at.participantId === participantId);
+    if (previous === undefined && this.viewers().length >= this.deps.limits.maxPeers) {
       return this.fail(socket, 'CHANNEL_FULL');
     }
 
-    const peerId = this.deps.newPeerId('v');
+    const peerId = previous?.at.peerId ?? this.deps.newPeerId('v');
     socket.serializeAttachment({
       peerId,
       role: 'viewer',
+      ...(participantId === undefined ? {} : { participantId }),
+      ...(attemptId === undefined ? {} : { attemptId }),
+      ready: false,
       janelaInicio: Date.now(),
       janelaContagem: 0,
     } satisfies Attachment);
+    previous?.socket.close(1000, 'substituido');
 
     const ice = await this.deps.iceServersFor(peerId);
+    const current = this.attachmentOf(socket);
+    if (!this.ctx.getWebSockets().includes(socket) || current?.peerId !== peerId ||
+      current.attemptId !== attemptId) return;
+    const currentHost = this.host();
+    if (currentHost === null) return this.fail(socket, 'NOT_HOSTING');
+    socket.serializeAttachment({ ...current, ready: true } satisfies Attachment);
     this.send(socket, {
       type: 'watching',
       peerId,
-      hostId: host.at.peerId,
+      hostId: currentHost.at.peerId,
       iceServers: [...ice.servers],
       relayStatus: ice.relayStatus,
+      ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
+      ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
       viewers: this.viewers().length,
     });
     // O transmissor é quem oferece — ele tem a mídia.
-    this.send(host.socket, { type: 'peer-joined', peerId });
+    this.send(currentHost.socket, {
+      type: 'peer-joined', peerId,
+      ...(attemptId === undefined ? {} : { attemptId }),
+    });
     this.anunciarPlateia();
+  }
+
+  private async refreshIce(socket: HibernatableSocket, at: Attachment, requestId: string): Promise<void> {
+    const ice = await this.deps.iceServersFor(at.peerId);
+    if (!this.ctx.getWebSockets().includes(socket)) return;
+    const current = this.attachmentOf(socket);
+    if (current?.peerId !== at.peerId || current.role !== at.role) return;
+    if (at.role === 'host' ? this.host()?.socket !== socket :
+      !this.viewers().some((viewer) => viewer.socket === socket)) return;
+    this.send(socket, {
+      type: 'ice-servers', requestId, iceServers: [...ice.servers], relayStatus: ice.relayStatus,
+      ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
+      ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
+    });
   }
 
   /**
@@ -490,15 +540,20 @@ export class ChannelRoom {
   private anunciarPlateia(): void {
     const espectadores = this.viewers();
     const count = espectadores.length;
-    for (const v of espectadores) this.send(v.socket, { type: 'viewers', count });
+    for (const v of espectadores) {
+      if (v.at.ready !== false) this.send(v.socket, { type: 'viewers', count });
+    }
   }
 
-  private relay(from: Attachment, message: Extract<ClientMessage, { type: 'signal' }>): void {
+  private relay(socket: HibernatableSocket, from: Attachment, message: Extract<ClientMessage, { type: 'signal' }>): void {
+    if (from.ready === false) return;
+    if (from.role === 'host' ? this.host()?.socket !== socket :
+      !this.viewers().some((viewer) => viewer.socket === socket)) return;
     // Espectador só fala com o transmissor; transmissor endereça por `to`.
     const target =
       from.role === 'viewer'
         ? this.host()
-        : (this.viewers().find((v) => v.at.peerId === message.to) ?? null);
+        : (this.viewers().find((v) => v.at.peerId === message.to && v.at.ready !== false) ?? null);
     if (target === null) return;
 
     // `payload` atravessa sem ser lido. R8.
@@ -562,8 +617,9 @@ export class ChannelRoom {
       return;
     }
 
+    if (this.viewers().some((viewer) => viewer.at.peerId === at.peerId)) return;
     const host = this.host();
-    if (host !== null) this.send(host.socket, { type: 'peer-left', peerId: at.peerId });
+    if (at.ready !== false && host !== null) this.send(host.socket, { type: 'peer-left', peerId: at.peerId });
     // O socket que está saindo já não aparece em `getWebSockets()`.
     this.anunciarPlateia();
   }

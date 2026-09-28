@@ -16,6 +16,11 @@ verificados na [ADR 0007](adr/0007-onde-hospedar.md). O servidor portátil
 continua existindo e roda em qualquer lugar que rode Node — é a saída se a
 cota apertar ou se você preferir outro provedor.
 
+Se o front e a sinalização forem publicados separadamente, atualize a
+**sinalização primeiro**. O front atual pede `refresh-ice` antes da expiração
+das credenciais TURN; um servidor antigo rejeita essa mensagem. O `pnpm release`
+publica o Worker e os assets juntos.
+
 ---
 
 ## Caminho recomendado — Cloudflare

@@ -5,7 +5,8 @@ import type { IceSettings } from './ice-settings.js';
 export type IceProvisionResult = {
   servers: readonly IceServerConfig[];
   relayStatus: 'available' | 'not-configured' | 'unavailable';
-  /** Epoch em milissegundos. Nunca enviar ao cliente sem política de renovação. */
+  /** Epoch em milissegundos, sem expor o segredo TURN. */
+  issuedAt?: number;
   expiresAt?: number;
   /** Apenas para diagnóstico interno; o cliente recebe somente relayStatus. */
   failureCode?: 'TURN_TIMEOUT' | 'TURN_AUTH_FAILED' | 'TURN_RATE_LIMITED' |
@@ -62,10 +63,12 @@ export function makeCloudflareProvider(
     if (result.ok && result.hasRelay) {
       failures = 0;
       openUntil = 0;
+      const issuedAt = now();
       return {
         servers: [stun, ...result.servers],
         relayStatus: 'available',
-        expiresAt: now() + settings.ttlSeconds * 1000,
+        issuedAt,
+        expiresAt: issuedAt + settings.ttlSeconds * 1000,
       };
     }
 

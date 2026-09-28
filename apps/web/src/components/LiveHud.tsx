@@ -13,6 +13,8 @@ type Props = {
   readonly semSinal: boolean;
   /** Escolheu janela em vez de tela inteira, e o áudio do sistema ficou de fora. */
   readonly audioPerdidoPelaEscolha: boolean;
+  /** O som que sai acabou ou emudeceu. Texto pronto; `null` quando está tudo bem. */
+  readonly avisoAudio: string | null;
   readonly presetForced: boolean;
   /** Por que caiu: `cpu` (encode pesado) ou `bandwidth` (link). */
   readonly motivoDegradacao: 'cpu' | 'bandwidth' | 'none' | 'other' | null;
@@ -67,6 +69,7 @@ export function LiveHud({
   semSinalizacao,
   semSinal,
   audioPerdidoPelaEscolha,
+  avisoAudio,
   presetForced,
   motivoDegradacao,
   aviso,
@@ -130,6 +133,7 @@ export function LiveHud({
       texto:
         'Sem áudio: o som do sistema só acompanha a tela inteira. Pare e escolha "Tela inteira" no seletor.',
     },
+    avisoAudio !== null && { chave: 'audio', texto: avisoAudio },
     presetForced && {
       chave: 'degradado',
       texto:

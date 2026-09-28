@@ -7,6 +7,7 @@ import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
 import { VolumeControl } from '../components/VolumeControl.js';
 import { createViewerSession, volumePreference } from '../container.js';
+import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { ViewerState } from '../core/media/viewer-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useMediaStats } from '../react/use-media-stats.js';
@@ -38,6 +39,26 @@ const MOTIVO: Record<Exclude<ViewerState['status'], 'watching'>, Motivo> = {
 };
 
 /** Só estes dois dependem de alguém mexer no navegador; os outros se resolvem. */
+/**
+ * O som, quando há algo a dizer sobre ele. Rótulo curto na barra, explicação
+ * no `title`. Silêncio curto não aparece: só depois de 20s o classificador
+ * afirma `sem-sinal`, e pode ser o jogo calado mesmo — o texto não culpa ninguém.
+ */
+const AVISO_AUDIO: Partial<Record<EstadoAudio, { rotulo: string; titulo: string }>> = {
+  perda: {
+    rotulo: 'som picotando',
+    titulo: 'a conexão está perdendo pacotes de áudio e o navegador está tapando os buracos',
+  },
+  'sem-sinal': {
+    rotulo: 'sem som',
+    titulo: 'nenhum som chegando há 20 segundos — pode ser só silêncio no jogo',
+  },
+  encerrada: {
+    rotulo: 'áudio encerrado',
+    titulo: 'o transmissor parou de enviar som',
+  },
+};
+
 const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>(['sem-conexao', 'relay-indisponivel', 'relay-nao-configurado', 'sem-servidor']);
 
 /**
@@ -180,6 +201,19 @@ export function Viewer({ slug }: Props) {
     videoEl.volume = som.volume;
   }, [videoEl, comImagem, som.mudo, som.volume]);
 
+  /**
+   * Só a página vê o autoplay recusado e o mudo escolhido. A sessão precisa
+   * dos dois para não chamar de "sem som" o que é bloqueio ou escolha.
+   */
+  // Do STREAM e não do estado: `reconnecting` não carrega `hasAudio`, e sumir
+  // com o controle de volume no meio de um soluço seria a mesma desmontagem
+  // que este bloco existe para evitar, em miniatura.
+  const hasAudio = streamAtual !== null && streamAtual.getAudioTracks().length > 0;
+  const bloqueado = hasAudio && som.mudo && !som.liberado;
+  useEffect(() => {
+    session.informarReproducao({ bloqueada: bloqueado, mudo: som.mudo || som.volume === 0 });
+  }, [session, bloqueado, som.mudo, som.volume]);
+
   const liberarSom = useCallback(() => {
     som.reativar();
     const element = videoRef.current;
@@ -303,10 +337,7 @@ export function Viewer({ slug }: Props) {
     );
   }
 
-  // Do STREAM e não do estado: `reconnecting` não carrega `hasAudio`, e sumir
-  // com o controle de volume no meio de um soluço seria a mesma desmontagem
-  // que este bloco existe para evitar, em miniatura.
-  const hasAudio = streamAtual !== null && streamAtual.getAudioTracks().length > 0;
+  const avisoAudio = watching ? AVISO_AUDIO[state.audio] : undefined;
 
   return (
     <main
@@ -339,7 +370,7 @@ export function Viewer({ slug }: Props) {
         Sem essa condição, silenciar de propósito — pelo botão ou pela barra de
         espaço — cobriria o jogo inteiro com o overlay pedindo um clique.
       */}
-      {hasAudio && som.mudo && !som.liberado && <AudioUnlock onUnlock={liberarSom} />}
+      {bloqueado && <AudioUnlock onUnlock={liberarSom} />}
 
       <div
         className={[
@@ -405,6 +436,12 @@ export function Viewer({ slug }: Props) {
             title="tempo total de imagem congelada nesta sessão"
           >
             {stats.congelado} travado
+          </span>
+        )}
+
+        {avisoAudio !== undefined && (
+          <span className="text-[12px] text-warn" title={avisoAudio.titulo}>
+            {avisoAudio.rotulo}
           </span>
         )}
 

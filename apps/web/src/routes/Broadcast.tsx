@@ -14,6 +14,7 @@ import {
   identity,
   volumeTransmissaoPreference,
 } from '../container.js';
+import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { BroadcastFailure } from '../core/media/broadcast-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useBroadcast } from '../react/use-broadcast.js';
@@ -48,6 +49,21 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
 
 /** O único motivo que não é falha. Todo o resto merece o tom de alerta. */
 const ENCERRAMENTO_NORMAL: BroadcastFailure = 'USER_STOPPED';
+
+/**
+ * Só os estados do som que pedem ação de quem transmite.
+ *
+ * `mudo` foi escolha dele, `sem-fonte` já tem aviso próprio quando custou o
+ * áudio (`audioPerdidoPelaEscolha`), e perda é medida do lado de quem recebe.
+ * Trocar a fonte NÃO recaptura o som — a troca preserva a trilha de áudio de
+ * propósito —, então o texto não pode sugerir isso.
+ */
+const AVISO_AUDIO: Partial<Record<EstadoAudio, string>> = {
+  encerrada:
+    'O som da captura acabou — os amigos estão sem áudio. Pare e comece de novo para capturá-lo outra vez.',
+  'sem-sinal':
+    'Nenhum som saindo há 20 segundos. Se o jogo está tocando, confira a fonte de áudio escolhida.',
+};
 
 /**
  * O console de quem transmite.
@@ -397,6 +413,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
         semSinalizacao={state.semSinalizacao}
         semSinal={state.capturaSemImagem}
         audioPerdidoPelaEscolha={state.audioPerdidoPelaEscolha}
+        avisoAudio={AVISO_AUDIO[state.audio] ?? null}
         presetForced={state.presetForced}
         motivoDegradacao={state.motivoDegradacao}
         aviso={avisoMomentaneo}

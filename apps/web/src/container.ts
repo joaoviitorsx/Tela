@@ -29,6 +29,9 @@ import type { MediaTransport } from './core/ports/media-transport.js';
 const storage = makeLocalStorage();
 const scheduler = makeBrowserScheduler();
 const audioCapture = makeBrowserAudioCapture();
+const diagnosticId = (): string => crypto.randomUUID();
+declare const __TELA_VERSION__: string | null;
+const appVersion = __TELA_VERSION__;
 
 /** De onde vem o áudio do jogo depende do sistema. Ver `AudioSourcePicker`. */
 export const platform = makeBrowserPlatform();
@@ -121,11 +124,13 @@ export function createBroadcastSession(): BroadcastSession {
     scheduler,
     shareUrlFor,
     createStream: (tracks) => new MediaStream([...tracks]),
+    diagnosticId,
+    appVersion,
   });
 }
 
 export function createViewerSession(): ViewerSession {
-  return new ViewerSession({ transport: createTransport, scheduler });
+  return new ViewerSession({ transport: createTransport, scheduler, diagnosticId, appVersion });
 }
 
 /**

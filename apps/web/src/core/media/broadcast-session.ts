@@ -18,7 +18,7 @@ import {
   type Prioridade,
   tetoDeBitrate,
 } from '@tela/shared';
-import { type Diagnostico, Diario } from './diagnostico.js';
+import { type Diagnostico, Diario, idLocal } from './diagnostico.js';
 import { UplinkGovernor } from './uplink-governor.js';
 import {
   CONTENT_HINT,
@@ -150,6 +150,8 @@ export type BroadcastSessionDeps = {
   createStream: (tracks: readonly MediaStreamTrack[]) => MediaStream;
   maxPeers?: number;
   statsIntervalMs?: number;
+  diagnosticId?: () => string;
+  appVersion?: string | null;
 };
 
 const STATS_INTERVAL_MS = 1_000;
@@ -309,6 +311,29 @@ export class BroadcastSession {
   }
 
   private setState(next: BroadcastState): void {
+    if (next.status !== this.state.status) {
+      const agora = this.deps.scheduler.now();
+      switch (next.status) {
+        case 'requesting-capture':
+          this.diario.evento('capture', 'START', agora);
+          break;
+        case 'connecting':
+          this.diario.evento('signaling', 'CONNECTING', agora);
+          break;
+        case 'live':
+          this.diario.evento('session', 'LIVE', agora);
+          break;
+        case 'ended':
+          this.diario.evento(
+            next.reason.startsWith('CAPTURE_') ? 'capture' : 'session',
+            next.reason,
+            agora,
+          );
+          break;
+        case 'idle':
+          break;
+      }
+    }
     this.state = next;
     this.emitter.emit('state', next);
   }
@@ -326,6 +351,9 @@ export class BroadcastSession {
 
     this.epoch += 1;
     const epoch = this.epoch;
+    const novoId = this.deps.diagnosticId ?? idLocal;
+    this.diario.iniciar(novoId(), this.deps.appVersion ?? null);
+    this.diario.tentativa(novoId(), this.deps.scheduler.now());
 
     this.presetId = options.presetId ?? DEFAULT_PRESET_ID;
     this.presetEscolhido = this.presetId;
@@ -400,6 +428,7 @@ export class BroadcastSession {
     this.videoTrack = capture.video;
     this.audioTrack = capture.audio;
     this.surface = capture.surface;
+    this.diario.evento('capture', 'CAPTURE_READY', this.deps.scheduler.now());
 
     // Só vídeo: incluir o áudio faria o preview tocar o som do jogo de volta
     // nos alto-falantes, criando eco para quem transmite.
@@ -1318,13 +1347,15 @@ export class BroadcastSession {
     if (this.state.status === 'idle' || this.state.status === 'ended') return;
     this.epoch += 1;
     this.setState({ status: 'ended', reason });
+    this.diario.congelar();
     await this.teardown();
   }
 
   private fail(reason: BroadcastFailure): void {
     this.epoch += 1;
-    void this.teardown();
     this.setState({ status: 'ended', reason });
+    this.diario.congelar();
+    void this.teardown();
   }
 
   /** Sai de um `start()` que perdeu a corrida, sem tocar no estado. */
@@ -1347,7 +1378,6 @@ export class BroadcastSession {
     this.audioTrack = null;
     this.preview = null;
     this.governor.reset();
-    this.diario.limpar();
     this.amostras = 0;
     this.ociosoDesde = null;
     this.capturaOciosa = false;

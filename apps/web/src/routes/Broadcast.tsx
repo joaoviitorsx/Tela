@@ -241,6 +241,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
 
   if (state.status === 'ended') {
     const falhou = state.reason !== ENCERRAMENTO_NORMAL;
+    const relatorio = session.diagnostico(navigator.userAgent);
     return (
       <Moldura>
         <PanelSection rotulo={falhou ? 'não deu para transmitir' : 'transmissão encerrada'}>
@@ -248,6 +249,17 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
             <p className={`text-[17px] leading-relaxed ${falhou ? 'text-warn' : 'text-text'}`}>
               {MOTIVOS[state.reason] ?? 'Transmissão encerrada.'}
             </p>
+            {relatorio !== null && (
+              <details className="w-full max-w-2xl text-[13px] text-muted">
+                <summary className="cursor-pointer">ver diagnóstico da tentativa</summary>
+                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-surface p-3 text-[11px]">
+                  {JSON.stringify(relatorio, null, 2)}
+                </pre>
+                <button type="button" onClick={copiarDiagnostico} className="mt-2 underline">
+                  {copiouDiag ? 'copiado' : 'copiar diagnóstico'}
+                </button>
+              </details>
+            )}
             <BigButton onClick={onExit} tone="ghost">
               voltar para o início
             </BigButton>

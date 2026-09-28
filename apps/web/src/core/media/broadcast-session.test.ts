@@ -85,6 +85,20 @@ describe('BroadcastSession — caminho feliz', () => {
 });
 
 describe('BroadcastSession — falhas', () => {
+  it('preserva diagnóstico de falha de captura sem amostra e o reinicia na sessão seguinte', async () => {
+    const ctx = build();
+    ctx.screen.denied = true;
+    await ctx.session.start(SLUG, TOKEN);
+    const falha = ctx.session.diagnostico('Chrome/127');
+    expect(falha?.eventos.at(-1)).toMatchObject({
+      etapa: 'capture', codigo: 'CAPTURE_DENIED',
+    });
+    expect(falha?.amostras).toEqual([]);
+    ctx.screen.denied = false;
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.session.diagnostico('Chrome/127')?.sessaoId).not.toBe(falha?.sessaoId);
+  });
+
   it('captura negada termina em CAPTURE_DENIED sem tocar no canal', async () => {
     const ctx = build();
     ctx.screen.denied = true;

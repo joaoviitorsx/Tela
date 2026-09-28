@@ -275,6 +275,7 @@ export function Viewer({ slug }: Props) {
 
   if (!comImagem) {
     const motivo = MOTIVO[state.status];
+    const relatorio = session.diagnostico(navigator.userAgent);
     return (
       <main>
         <OfflineState
@@ -282,6 +283,17 @@ export function Viewer({ slug }: Props) {
           motivo={motivo}
           maxPeers={P2P_LIMITS.maxViewersBrowser}
           {...(PEDE_ACAO.has(motivo) ? { onRecarregar: () => window.location.reload() } : {})}
+          diagnostico={relatorio !== null && PEDE_ACAO.has(motivo) ? (
+            <details className="px-6 pb-6 text-[13px] text-muted">
+              <summary className="cursor-pointer">ver diagnóstico da tentativa</summary>
+              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-sm bg-void p-3 text-[11px]">
+                {JSON.stringify(relatorio, null, 2)}
+              </pre>
+              <button type="button" onClick={copiarDiagnostico} className="mt-2 underline">
+                {copiouDiag ? 'copiado' : 'copiar diagnóstico'}
+              </button>
+            </details>
+          ) : null}
         />
       </main>
     );

@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 export type Motivo =
   | 'conectando'
   | 'offline'
@@ -13,6 +15,7 @@ type Props = {
   readonly maxPeers: number;
   /** Só chega nos dois motivos que pedem ação humana. */
   readonly onRecarregar?: () => void;
+  readonly diagnostico?: ReactNode;
 };
 
 /**
@@ -36,6 +39,7 @@ export function OfflineState({
   motivo = 'conectando',
   maxPeers,
   onRecarregar,
+  diagnostico,
 }: Props) {
   const { rotulo, corpo, tom, varrendo } = TEXTO[motivo](maxPeers);
   const cor = tom === 'warn' ? 'text-warn' : 'text-muted';
@@ -75,6 +79,7 @@ export function OfflineState({
             </button>
           )}
         </div>
+        {diagnostico}
       </section>
     </div>
   );

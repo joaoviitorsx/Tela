@@ -1,8 +1,21 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { execFileSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 
+function versaoDoBuild(): string | null {
+  if (process.env['GITHUB_SHA']) return process.env['GITHUB_SHA'].slice(0, 12);
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+      cwd: new URL('../..', import.meta.url), encoding: 'utf8',
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 export default defineConfig({
+  define: { __TELA_VERSION__: JSON.stringify(versaoDoBuild()) },
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,

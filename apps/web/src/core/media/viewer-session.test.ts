@@ -24,6 +24,16 @@ function build(configure: (t: FakeMediaTransport) => void = () => undefined) {
 }
 
 describe('ViewerSession', () => {
+  it('mantém tentativa e erro de signaling após fechar o transporte', async () => {
+    const ctx = build((t) => { t.watchError = { code: 'SIGNAL_UNREACHABLE' }; });
+    await ctx.session.open(SLUG);
+    await settle();
+    await ctx.session.close();
+    const relatorio = ctx.session.diagnostico('Firefox/130');
+    expect(relatorio?.eventos.map((evento) => evento.codigo)).toContain('SIGNALING_UNAVAILABLE');
+    expect(relatorio?.eventos.at(-1)?.codigo).toBe('ENDED');
+  });
+
   it('entra no canal e mostra a mídia quando ela chega', async () => {
     const ctx = build();
     await ctx.session.open(SLUG);

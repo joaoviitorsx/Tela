@@ -1,5 +1,5 @@
 import { Emitter } from '../emitter.js';
-import { type Diagnostico, Diario } from './diagnostico.js';
+import { type Diagnostico, Diario, idLocal } from './diagnostico.js';
 import { JITTER_MINIMO_MS } from '../mesh/peer-link.js';
 import { JitterGovernor } from './jitter-governor.js';
 import { type EstadoLatencia, LatencyWatch } from './latency-watch.js';
@@ -76,6 +76,8 @@ export type ViewerSessionDeps = {
   transport: () => MediaTransport;
   scheduler: Scheduler;
   statsIntervalMs?: number;
+  diagnosticId?: () => string;
+  appVersion?: string | null;
 };
 
 /** Polling de 5s com backoff até 30s: a aba pode ficar aberta a tarde inteira. */
@@ -174,6 +176,35 @@ export class ViewerSession {
   }
 
   private setState(next: ViewerState): void {
+    if (next.status !== this.state.status) {
+      const agora = this.deps.scheduler.now();
+      switch (next.status) {
+        case 'checking':
+          this.diario.evento('session', 'START', agora);
+          break;
+        case 'connecting':
+          this.diario.evento('signaling', 'CONNECTING', agora);
+          break;
+        case 'watching':
+          this.diario.evento('session', 'WATCHING', agora);
+          break;
+        case 'reconnecting':
+          this.diario.evento('session', 'RECONNECTING', agora);
+          break;
+        case 'offline':
+          this.diario.evento('session', 'OFFLINE', agora);
+          break;
+        case 'full':
+          this.diario.evento('signaling', 'FULL', agora);
+          break;
+        case 'sem-conexao':
+          this.diario.evento('video', 'MEDIA_TIMEOUT', agora);
+          break;
+        case 'sem-servidor':
+          this.diario.evento('signaling', 'SIGNALING_UNAVAILABLE', agora);
+          break;
+      }
+    }
     this.state = next;
     this.emitter.emit('state', next);
   }
@@ -197,7 +228,8 @@ export class ViewerSession {
     this.cancelRetry();
     this.jitter.reset();
     this.latencia.reset();
-    this.diario.limpar();
+    this.diario.iniciar((this.deps.diagnosticId ?? idLocal)(), this.deps.appVersion ?? null);
+    this.diario.evento('session', 'START', this.deps.scheduler.now());
     await this.dropTransport();
     if (this.stale(epoch)) return;
 
@@ -236,6 +268,7 @@ export class ViewerSession {
       return;
     }
     this.adiadoPorVisibilidade = false;
+    this.diario.tentativa((this.deps.diagnosticId ?? idLocal)(), this.deps.scheduler.now());
 
     /*
       `connecting` não carrega stream, e a rota desmonta o `<video>` para
@@ -598,6 +631,8 @@ export class ViewerSession {
   }
 
   async close(): Promise<void> {
+    this.diario.evento('session', 'ENDED', this.deps.scheduler.now());
+    this.diario.congelar();
     this.disposed = true;
     this.epoch += 1;
     this.cancelRetry();

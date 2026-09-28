@@ -27,6 +27,8 @@ export class PeerRecovery {
 
   constructor(private readonly deps: PeerRecoveryDeps) {}
 
+  get recovering(): boolean { return this.active; }
+
   private isConnected(): boolean { return this.state === 'connected'; }
 
   private async mediaAdvanced(): Promise<boolean> {

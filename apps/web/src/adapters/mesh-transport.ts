@@ -247,11 +247,14 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           });
           track.addEventListener('unmute', () => {
             if (!media.getTracks().includes(track)) return;
+            const interrupted = silencio !== null;
             if (silencio !== null) {
               clearTimeout(silencio);
               silencio = null;
             }
+            const recovering = recovery.recovering;
             recovery.observe('connected');
+            if (interrupted && delivered && !recovering) emitter.emit('reconnected', undefined);
           });
         },
         onStateChange: (state) => {

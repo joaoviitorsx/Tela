@@ -66,6 +66,18 @@ describe('MeshTopology — admissão', () => {
     expect(ctx.mesh.size).toBe(0);
   });
 
+  it('falha na oferta local remove só o peer afetado', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_ruim');
+    const failed = ctx.factory.created[0] as FakePeerConnection;
+    failed.failLocalDescription = true;
+    ctx.mesh.admit('v_bom');
+    await settle(25);
+    expect(failed.closed).toBe(true);
+    expect(ctx.mesh.peers.map((peer) => peer.id)).toEqual(['v_bom']);
+  });
+
   it('respeita o teto de peers', async () => {
     const ctx = build(2);
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);

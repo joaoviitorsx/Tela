@@ -68,6 +68,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         send: (payload, to) => deps.channel.send(payload, to),
         createConnection,
         maxPeers: opened.maxPeers,
+        onIssue: (_peerId, code) => console.warn('[peer-link]', code),
       });
       topology = mesh;
 
@@ -200,6 +201,11 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           if (state === 'connected' && delivered) emitter.emit('reconnected', undefined);
           // Sem TURN, um par atrás de NAT simétrico chega exatamente aqui.
           if (state === 'failed') emitter.emit('closed', { reason: 'ICE_FAILED' });
+        },
+        onIssue: (code) => console.warn('[peer-link]', code),
+        onFatal: (code) => {
+          console.warn('[peer-link]', code);
+          emitter.emit('closed', { reason: 'NEGOTIATION_FAILED' });
         },
       });
       viewerLink = link;

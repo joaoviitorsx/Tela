@@ -29,6 +29,10 @@ export type PeerLinkDeps = {
   readonly createConnection: (config: RTCConfiguration) => RTCPeerConnection;
   readonly onTrack?: (track: MediaStreamTrack, streams: readonly MediaStream[]) => void;
   readonly onStateChange?: (state: RTCPeerConnectionState) => void;
+  /** Códigos fixos; SDP, IP e candidato nunca entram no diagnóstico. */
+  readonly onIssue?: (code: PeerLinkIssueCode) => void;
+  readonly onFatal?: (code: PeerLinkFatalCode) => void;
+  readonly now?: () => number;
   /**
    * Por onde o encoder deve começar, em bits/s. Consultado a cada descrição
    * recebida porque o alvo muda com o degrau e com o teto de upload.
@@ -41,7 +45,44 @@ export type PeerLinkDeps = {
 /** O que trafega no `payload` opaco. O servidor nunca olha para isto (R8). */
 export type SignalPayload = {
   readonly description?: RTCSessionDescriptionInit | null;
-  readonly candidate?: RTCIceCandidateInit;
+  readonly candidate?: RTCIceCandidateInit | null;
+  /** Ufrag da geração ICE, ou identidade local quando o SDP ainda não a expõe. */
+  readonly generation?: string;
+};
+
+export type PeerLinkIssueCode =
+  | 'SIGNAL_INVALID' | 'CANDIDATE_REJECTED' | 'CANDIDATE_STALE'
+  | 'CANDIDATE_QUEUE_FULL' | 'CANDIDATE_EXPIRED' | 'CANDIDATE_AMBIGUOUS';
+export type PeerLinkFatalCode = 'LOCAL_DESCRIPTION_FAILED' | 'REMOTE_DESCRIPTION_FAILED' | 'NEGOTIATION_QUEUE_FULL';
+
+export class PeerLinkError extends Error {
+  constructor(readonly code: PeerLinkFatalCode) { super(code); }
+}
+
+const MAX_OPERATIONS = 64;
+const MAX_CANDIDATES = 64;
+const CANDIDATE_TTL_MS = 15_000;
+let nextLinkGeneration = 0;
+
+function sdpUfrag(sdp: string | undefined): string | null {
+  return sdp === undefined ? null : (/^a=ice-ufrag:([^\s\r\n]+)/m.exec(sdp)?.[1] ?? null);
+}
+
+function sdpUfrags(sdp: string | undefined): Set<string> {
+  const values = new Set<string>();
+  if (sdp !== undefined) {
+    for (const match of sdp.matchAll(/^a=ice-ufrag:([^\s\r\n]+)/gm)) {
+      if (match[1] !== undefined) values.add(match[1]);
+    }
+  }
+  return values;
+}
+
+type PendingCandidate = {
+  candidate: RTCIceCandidateInit;
+  generation: string | null;
+  fromUfrag: boolean;
+  receivedAt: number;
 };
 
 export class PeerLink {
@@ -50,6 +91,21 @@ export class PeerLink {
   private readonly polite: boolean;
   private readonly send: (payload: unknown) => void;
   private readonly startBitrateBps: (() => number | null) | null;
+  private readonly onIssue: (code: PeerLinkIssueCode) => void;
+  private readonly onFatal: (code: PeerLinkFatalCode) => void;
+  private readonly now: () => number;
+  private readonly linkGeneration = `link-${++nextLinkGeneration}`;
+  private localGeneration = this.linkGeneration;
+  private remoteGeneration: string | null = null;
+  private remoteIceUfrags = new Set<string>();
+  private remoteGenerationsSeen = 0;
+  private readonly staleGenerations = new Set<string>();
+  private ignoredGeneration: string | null = null;
+  private readonly pendingCandidates: PendingCandidate[] = [];
+  private operationTail: Promise<void> = Promise.resolve();
+  private pendingOperations = 0;
+  private localNegotiationQueued = false;
+  private needsRenegotiation = false;
 
   private makingOffer = false;
   private ignoreOffer = false;
@@ -60,28 +116,26 @@ export class PeerLink {
     this.polite = deps.polite;
     this.send = deps.send;
     this.startBitrateBps = deps.startBitrateBps ?? null;
+    this.onIssue = deps.onIssue ?? (() => undefined);
+    this.onFatal = deps.onFatal ?? (() => undefined);
+    this.now = deps.now ?? Date.now;
     this.pc = deps.createConnection(rtcConfiguration(deps.iceServers));
 
     this.pc.onnegotiationneeded = () => {
-      void (async () => {
-        try {
-          this.makingOffer = true;
-          await this.pc.setLocalDescription();
-          if (this.closed) return;
-          this.send({ description: this.pc.localDescription } satisfies SignalPayload);
-        } catch {
-          // Falha de negociação vira estado `failed` no `connectionstatechange`,
-          // que é quem a topologia observa. Não há o que fazer aqui.
-        } finally {
-          this.makingOffer = false;
-        }
-      })();
+      this.requestNegotiation();
     };
 
     this.pc.onicecandidate = ({ candidate }) => {
-      if (candidate !== null && !this.closed) {
-        this.send({ candidate: candidate.toJSON() } satisfies SignalPayload);
-      }
+      if (this.closed) return;
+      const init: RTCIceCandidateInit = candidate?.toJSON() ?? { candidate: '' };
+      // O evento pode chegar antes de setLocalDescription() resolver. A
+      // descrição já costuma estar disponível na PC nesse instante.
+      const localUfrags = sdpUfrags(this.pc.localDescription?.sdp);
+      const candidateUfrag = init.usernameFragment;
+      const generation = candidateUfrag != null && !localUfrags.has(candidateUfrag)
+        ? candidateUfrag : sdpUfrag(this.pc.localDescription?.sdp) ?? this.localGeneration;
+      this.localGeneration = sdpUfrag(this.pc.localDescription?.sdp) ?? generation;
+      this.send({ candidate: init, generation } satisfies SignalPayload);
     };
 
     if (deps.onTrack !== undefined) {
@@ -195,47 +249,217 @@ export class PeerLink {
 
   async handleSignal(payload: unknown): Promise<void> {
     if (this.closed) return;
-    const { description, candidate } = (payload ?? {}) as SignalPayload;
-
-    if (description !== undefined && description !== null) {
-      const offerCollision =
-        description.type === 'offer' &&
-        (this.makingOffer || this.pc.signalingState !== 'stable');
-
-      // O impolite ignora a oferta colidente e segue com a sua. O polite
-      // aceita a do outro. Sem essa assimetria os dois lados recuam (ou
-      // nenhum), e a negociação nunca converge.
-      this.ignoreOffer = !this.polite && offerCollision;
-      if (this.ignoreOffer) return;
-
-      await this.pc.setRemoteDescription(this.afinar(description));
-      if (description.type === 'offer') {
-        await this.pc.setLocalDescription();
-        if (this.closed) return;
-        this.send({ description: this.pc.localDescription } satisfies SignalPayload);
-      }
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+      this.onIssue('SIGNAL_INVALID');
       return;
     }
-
-    if (candidate !== undefined) {
-      try {
-        await this.pc.addIceCandidate(candidate);
-      } catch {
-        /**
-         * Candidato que falha é ENGOLIDO, sempre. Antes ele subia.
-         *
-         * A regra era "candidato de uma oferta ignorada é lixo esperado;
-         * qualquer outra falha é real e deve subir". Mas "subir" aqui não é um
-         * log — a topologia faz `catch { this.drop(from) }` e o espectador faz
-         * `closed: NEGOTIATION_FAILED`. Ou seja: um candidato que o Chrome
-         * recusa parsear, um `sdpMid` de seção que o `max-bundle` derrubou, ou
-         * um candidato que chega fora de ordem MATA a conexão inteira.
-         *
-         * A assimetria de custo decide: perder um candidato degrada o ICE — há
-         * outros, e o par vencedor raramente é o primeiro. Derrubar o peer
-         * termina a sessão daquele espectador.
-         */
+    const signal = payload as SignalPayload;
+    const generation = typeof signal.generation === 'string' && signal.generation.length <= 128
+      ? signal.generation : null;
+    if (signal.description !== undefined && signal.description !== null) {
+      const description = signal.description;
+      if (description.type !== 'offer' && description.type !== 'answer') {
+        this.onIssue('SIGNAL_INVALID');
+        return;
       }
+      await this.enqueue(() => this.receiveDescription(description, generation));
+      return;
+    }
+    if (signal.candidate !== undefined) {
+      const candidate = signal.candidate ?? { candidate: '' };
+      if (typeof candidate !== 'object' || typeof candidate.candidate !== 'string') {
+        this.onIssue('SIGNAL_INVALID');
+        return;
+      }
+      if (this.pendingOperations >= MAX_OPERATIONS) {
+        this.onIssue('CANDIDATE_QUEUE_FULL');
+        return;
+      }
+      await this.enqueue(() => this.receiveCandidate(
+        candidate,
+        generation ?? candidate.usernameFragment ?? null,
+        generation === null && candidate.usernameFragment !== undefined,
+      ));
+    }
+  }
+
+  private enqueue(task: () => Promise<void>): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (this.pendingOperations >= MAX_OPERATIONS) {
+      return Promise.reject(new PeerLinkError('NEGOTIATION_QUEUE_FULL'));
+    }
+    this.pendingOperations += 1;
+    const run = this.operationTail.then(async () => {
+      if (!this.closed) await task();
+    });
+    this.operationTail = run.catch(() => undefined);
+    return run.finally(() => { this.pendingOperations -= 1; });
+  }
+
+  private sendLocalDescription(): void {
+    const description = this.pc.localDescription;
+    if (description === null) return;
+    this.localGeneration = sdpUfrag(description.sdp) ?? this.localGeneration;
+    this.send({ description, generation: this.localGeneration } satisfies SignalPayload);
+  }
+
+  private requestNegotiation(): void {
+    if (this.closed) return;
+    if (this.localNegotiationQueued) {
+      if (this.makingOffer) this.needsRenegotiation = true;
+      return;
+    }
+    if (this.pc.signalingState !== 'stable') {
+      this.needsRenegotiation = true;
+      return;
+    }
+    this.localNegotiationQueued = true;
+    void this.enqueue(async () => {
+      try {
+        if (this.pc.signalingState !== 'stable') {
+          this.needsRenegotiation = true;
+          return;
+        }
+        this.makingOffer = true;
+        await this.pc.setLocalDescription();
+        if (!this.closed) this.sendLocalDescription();
+      } catch {
+        if (!this.closed) this.onFatal('LOCAL_DESCRIPTION_FAILED');
+      } finally {
+        this.makingOffer = false;
+        this.localNegotiationQueued = false;
+      }
+    }).catch(() => {
+      this.localNegotiationQueued = false;
+      if (!this.closed) this.onFatal('NEGOTIATION_QUEUE_FULL');
+    });
+  }
+
+  private async receiveDescription(description: RTCSessionDescriptionInit, signaledGeneration: string | null): Promise<void> {
+    const generation = signaledGeneration ?? sdpUfrag(description.sdp);
+    // A fila serial elimina a janela entre `isSettingRemoteAnswerPending` e
+    // `setRemoteDescription` do exemplo canônico: só uma operação toca a PC.
+    const offerCollision = description.type === 'offer' &&
+      (this.makingOffer || this.pc.signalingState !== 'stable');
+    this.ignoreOffer = !this.polite && offerCollision;
+    if (this.ignoreOffer) {
+      this.ignoredGeneration = generation;
+      if (generation !== null) this.markStale(generation);
+      for (const ufrag of sdpUfrags(description.sdp)) this.markStale(ufrag);
+      return;
+    }
+    this.ignoredGeneration = null;
+    try {
+      await this.pc.setRemoteDescription(this.afinar(description));
+    } catch {
+      if (!this.closed) throw new PeerLinkError('REMOTE_DESCRIPTION_FAILED');
+      return;
+    }
+    if (this.closed) return;
+    try {
+      const newUfrags = sdpUfrags(description.sdp);
+      if (generation !== this.remoteGeneration) {
+        if (this.remoteGeneration !== null) {
+          this.markStale(this.remoteGeneration);
+        }
+        for (const ufrag of this.remoteIceUfrags) {
+          if (!newUfrags.has(ufrag)) this.markStale(ufrag);
+        }
+        this.remoteGeneration = generation;
+        this.remoteGenerationsSeen += 1;
+      } else if (this.remoteGenerationsSeen === 0) {
+        this.remoteGenerationsSeen = 1;
+      }
+      this.remoteIceUfrags = newUfrags;
+      if (generation !== null) this.staleGenerations.delete(generation);
+      for (const ufrag of newUfrags) this.staleGenerations.delete(ufrag);
+      await this.flushCandidates();
+      if (this.closed) return;
+      if (description.type === 'offer') {
+        await this.pc.setLocalDescription();
+        if (!this.closed) this.sendLocalDescription();
+      }
+      if (this.pc.signalingState === 'stable' && this.needsRenegotiation) {
+        this.needsRenegotiation = false;
+        this.requestNegotiation();
+      }
+    } catch {
+      if (!this.closed) throw new PeerLinkError('LOCAL_DESCRIPTION_FAILED');
+    }
+  }
+
+  private markStale(generation: string): void {
+    this.staleGenerations.add(generation);
+    if (this.staleGenerations.size > 4) {
+      const oldest = this.staleGenerations.values().next().value;
+      if (oldest !== undefined) this.staleGenerations.delete(oldest);
+    }
+  }
+
+  private matchesRemote(generation: string | null, fromUfrag: boolean): boolean {
+    return generation === null || generation === this.remoteGeneration ||
+      (fromUfrag && this.remoteIceUfrags.has(generation));
+  }
+
+  private async receiveCandidate(candidate: RTCIceCandidateInit, generation: string | null, fromUfrag: boolean): Promise<void> {
+    if (this.ignoreOffer && (generation === null || generation === this.ignoredGeneration)) {
+      this.onIssue('CANDIDATE_STALE');
+      return;
+    }
+    if (generation !== null && this.staleGenerations.has(generation)) {
+      this.onIssue('CANDIDATE_STALE');
+      return;
+    }
+    if (this.pc.remoteDescription === null ||
+      (this.remoteGeneration !== null && !this.matchesRemote(generation, fromUfrag))) {
+      this.queueCandidate(candidate, generation, fromUfrag);
+      return;
+    }
+    if (generation === null && this.remoteGenerationsSeen > 1) {
+      this.onIssue('CANDIDATE_AMBIGUOUS');
+      return;
+    }
+    await this.applyCandidate(candidate);
+  }
+
+  private queueCandidate(candidate: RTCIceCandidateInit, generation: string | null, fromUfrag: boolean): void {
+    this.expireCandidates();
+    if (this.pendingCandidates.length >= MAX_CANDIDATES) {
+      this.pendingCandidates.shift();
+      this.onIssue('CANDIDATE_QUEUE_FULL');
+    }
+    this.pendingCandidates.push({ candidate, generation, fromUfrag, receivedAt: this.now() });
+  }
+
+  private expireCandidates(): void {
+    const cutoff = this.now() - CANDIDATE_TTL_MS;
+    while (this.pendingCandidates[0] !== undefined && this.pendingCandidates[0].receivedAt < cutoff) {
+      this.pendingCandidates.shift();
+      this.onIssue('CANDIDATE_EXPIRED');
+    }
+  }
+
+  private async flushCandidates(): Promise<void> {
+    this.expireCandidates();
+    const pending = this.pendingCandidates.splice(0);
+    for (const item of pending) {
+      if (this.closed) return;
+      if (item.generation !== null && this.remoteGeneration !== null && !this.matchesRemote(item.generation, item.fromUfrag)) {
+        this.onIssue('CANDIDATE_STALE');
+      } else if (item.generation === null && this.remoteGenerationsSeen > 1) {
+        this.onIssue('CANDIDATE_AMBIGUOUS');
+      } else {
+        await this.applyCandidate(item.candidate);
+      }
+    }
+  }
+
+  private async applyCandidate(candidate: RTCIceCandidateInit): Promise<void> {
+    try {
+      await this.pc.addIceCandidate(candidate);
+    } catch {
+      // Um candidato isolado pode falhar sem encerrar os outros caminhos ICE.
+      if (!this.closed) this.onIssue('CANDIDATE_REJECTED');
     }
   }
 
@@ -265,6 +489,8 @@ export class PeerLink {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.needsRenegotiation = false;
+    this.pendingCandidates.length = 0;
     this.pc.onnegotiationneeded = null;
     this.pc.onicecandidate = null;
     this.pc.ontrack = null;

@@ -8,7 +8,7 @@ import {
   tetoDeBitrate,
 } from '@tela/shared';
 import { Emitter } from '../emitter.js';
-import { PeerLink } from './peer-link.js';
+import { PeerLink, PeerLinkError, type PeerLinkFatalCode, type PeerLinkIssueCode } from './peer-link.js';
 
 /**
  * A malha vista do transmissor: uma `PeerLink` por espectador.
@@ -58,6 +58,7 @@ export type MeshTopologyDeps = {
   readonly send: (payload: unknown, to: string) => void;
   readonly createConnection: (config: RTCConfiguration) => RTCPeerConnection;
   readonly maxPeers: number;
+  readonly onIssue?: (peerId: string, code: PeerLinkIssueCode | PeerLinkFatalCode) => void;
 };
 
 /**
@@ -236,6 +237,11 @@ export class MeshTopology {
         if (state === 'failed' || state === 'closed') this.drop(peerId);
         else this.announce();
       },
+      onIssue: (code) => this.deps.onIssue?.(peerId, code),
+      onFatal: (code) => {
+        this.deps.onIssue?.(peerId, code);
+        this.drop(peerId);
+      },
     });
 
     this.links.set(peerId, link);
@@ -297,7 +303,8 @@ export class MeshTopology {
     if (link === undefined) return;
     try {
       await link.handleSignal(payload);
-    } catch {
+    } catch (error) {
+      if (error instanceof PeerLinkError) this.deps.onIssue?.(from, error.code);
       this.drop(from);
     }
   }

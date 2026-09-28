@@ -12,7 +12,8 @@
  */
 import { chromium } from 'playwright';
 
-const CHROME = '/home/joaoviitosx/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome';
+// Chromium do Playwright por padrão; `CHROME=/caminho` usa outro navegador.
+const CHROME = process.env.CHROME ?? chromium.executablePath();
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const SLUG = process.env.SLUG ?? 'joao';
 // Protocolo v2 (TELA-018): a sala só abre com o convite do link.

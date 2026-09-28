@@ -2,7 +2,9 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    # `develop` é onde o trabalho acontece; checar só a `main` deixava a
+    # integração passar semanas sem portão (TELA-024).
+    branches: [main, develop]
   pull_request:
 
 concurrency:
@@ -26,6 +28,12 @@ jobs:
 
       # Ciclo de dependência não aparece em typecheck nem em teste. Só aqui.
       - run: pnpm depcruise
+
+      # O script de áudio do Linux mexe no servidor de som de quem transmite:
+      # duplicar retorno ou descarregar módulo alheio é defeito que o usuário
+      # sente. Roda contra um `pactl` falso (TELA-010).
+      - name: script de áudio do Linux é idempotente e reversível
+        run: pnpm test:audio-linux
 
       # As malhas de controle não têm defeito que teste unitário pegue: elas
       # falham por DINÂMICA — oscilação, estado absorvente, uma malha medindo a
@@ -61,6 +69,40 @@ jobs:
             exit 1
           fi
           echo "bundle limpo"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Navegador de verdade (TELA-024). Os testes com fake provam a lógica; só
+  # dois Chromium provam que ela fala com o WebRTC que existe: SDP, ICE,
+  # encoder, estéreo L/R, convite, pausa, e a malha com o link estreito.
+  # `getDisplayMedia` não existe em headless — a captura é um canvas.
+  # ─────────────────────────────────────────────────────────────────────────
+  navegador:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm --filter @tela/shared build
+      - name: sobe front e signaling
+        run: |
+          pnpm dev > dev.log 2>&1 &
+          for i in $(seq 1 120); do
+            curl -sf http://127.0.0.1:3333/health >/dev/null \
+              && curl -sf http://localhost:5173/ >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:3333/health
+      - name: malha, áudio, convite e pausa em dois Chromium
+        run: pnpm e2e
+      - name: link estreito — a sessão desce, diz o motivo e volta
+        run: node e2e/banda.e2e.mjs
+      - name: log do servidor de desenvolvimento
+        if: failure()
+        run: tail -200 dev.log
 
   signaling:
     runs-on: ubuntu-latest
@@ -101,7 +143,7 @@ jobs:
   # sugestão.
   # ─────────────────────────────────────────────────────────────────────────
   deploy:
-    needs: [check, signaling]
+    needs: [check, signaling, navegador]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Um deploy por vez. Dois `push` seguidos poderiam publicar fora de ordem e

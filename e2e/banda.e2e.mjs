@@ -19,8 +19,8 @@
  */
 import { chromium } from 'playwright';
 
-const CHROME =
-  process.env.CHROME ?? '/home/joaoviitosx/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';
+// Chromium do Playwright por padrão; `CHROME=/caminho` usa outro navegador.
+const CHROME = process.env.CHROME ?? chromium.executablePath();
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const SLUG = process.env.SLUG ?? 'banda';
 const CONVITE = 'col' + 'c'.repeat(19);

@@ -81,7 +81,22 @@ export type ViewerState =
    * aqui não se sabe, porque a pergunta não chegou. Bloqueio de navegador,
    * proxy corporativo, rede caída.
    */
-  | { readonly status: 'sem-servidor'; readonly slug: string };
+  | { readonly status: 'sem-servidor'; readonly slug: string }
+  /**
+   * Convite (TELA-018). Três estados, porque as ações são três:
+   *
+   * - `convite-ausente`: o link não trazia o segredo. Nem se tenta a rede —
+   *   não há o que mandar.
+   * - `convite-invalido`: o transmissor renovou. Só um link novo resolve,
+   *   então não se insiste sozinho.
+   * - `removido`: o transmissor tirou este espectador. Voltar sozinho seria
+   *   desfazer a escolha dele.
+   */
+  | { readonly status: 'convite-ausente'; readonly slug: string }
+  | { readonly status: 'convite-invalido'; readonly slug: string }
+  | { readonly status: 'removido'; readonly slug: string }
+  /** Página de uma versão que o servidor não fala mais: recarregar resolve. */
+  | { readonly status: 'desatualizado'; readonly slug: string };
 
 export type ViewerEventMap = { state: ViewerState };
 
@@ -99,6 +114,14 @@ export type ViewerSessionDeps = {
 function audioInicial(stream: MediaStream): EstadoAudio {
   return stream.getAudioTracks().length > 0 ? 'desconhecido' : 'sem-fonte';
 }
+
+/** Erros em que tentar de novo sozinho não muda a resposta. */
+const FIM_SEM_RETRY: Partial<Record<string, 'convite-invalido' | 'removido' | 'desatualizado'>> = {
+  INVITE_INVALID: 'convite-invalido',
+  REMOVED: 'removido',
+  PROTOCOL_MISMATCH: 'desatualizado',
+  BAD_MESSAGE: 'desatualizado',
+};
 
 /** Polling de 5s com backoff até 30s: a aba pode ficar aberta a tarde inteira. */
 const POLL_MIN_MS = 5_000;
@@ -168,6 +191,8 @@ export class ViewerSession {
   private plateia = 1;
   private pollMs = POLL_MIN_MS;
   private slug = '';
+  /** Segredo do link. `null` quando o link veio sem ele. */
+  private invite: string | null = null;
   private readonly participantId: string;
   private disposed = false;
   /** Cancela o listener de visibilidade. */
@@ -243,6 +268,18 @@ export class ViewerSession {
         case 'sem-servidor':
           this.diario.evento('signaling', 'SIGNALING_UNAVAILABLE', agora);
           break;
+        case 'convite-ausente':
+          this.diario.evento('session', 'INVITE_MISSING', agora);
+          break;
+        case 'convite-invalido':
+          this.diario.evento('signaling', 'INVITE_INVALID', agora);
+          break;
+        case 'removido':
+          this.diario.evento('session', 'REMOVED', agora);
+          break;
+        case 'desatualizado':
+          this.diario.evento('signaling', 'OUTDATED', agora);
+          break;
       }
     }
     this.state = next;
@@ -253,7 +290,7 @@ export class ViewerSession {
     return this.disposed || this.epoch !== epoch;
   }
 
-  async open(slug: string): Promise<void> {
+  async open(slug: string, invite: string | null = null): Promise<void> {
     // O epoch sobe ANTES de qualquer await. React em StrictMode monta, desmonta
     // e monta de novo, então dois `open` correm juntos — e o segundo precisa
     // invalidar o primeiro no instante em que começa, não depois do primeiro
@@ -262,6 +299,7 @@ export class ViewerSession {
     const epoch = this.epoch;
 
     this.slug = slug;
+    this.invite = invite;
     this.disposed = false;
     this.pollMs = POLL_MIN_MS;
 
@@ -273,6 +311,12 @@ export class ViewerSession {
     this.diario.evento('session', 'START', this.deps.scheduler.now());
     await this.dropTransport();
     if (this.stale(epoch)) return;
+
+    // Sem segredo no link não há o que mandar ao servidor: nem se tenta.
+    if (this.invite === null) {
+      this.setState({ status: 'convite-ausente', slug: this.slug });
+      return;
+    }
 
     this.unwatchVisibility?.();
     this.unwatchVisibility = this.deps.scheduler.onVisibilityChange(() => {
@@ -421,7 +465,7 @@ export class ViewerSession {
        */
       transport.on('signaling-lost', () => undefined),
       transport.on('signaling-restored', () => undefined),
-      transport.on('closed', () => void this.onClosed(epoch)),
+      transport.on('closed', ({ reason }) => void this.onClosed(epoch, reason)),
     );
 
     const abandonar = async (): Promise<void> => {
@@ -436,6 +480,7 @@ export class ViewerSession {
 
     try {
       const opened = await this.withTimeout(transport.watch(this.slug, {
+        invite: this.invite ?? '',
         participantId: this.participantId,
         attemptId: (this.deps.diagnosticId ?? idLocal)(),
       }), epoch);
@@ -452,6 +497,10 @@ export class ViewerSession {
         // Sala cheia não é erro permanente: alguém sai, a vaga abre.
         this.setState({ status: 'full', slug: this.slug });
         this.advanceBackoff();
+      } else if (isSignalingError(error) && FIM_SEM_RETRY[error.code] !== undefined) {
+        // Insistir com o mesmo convite, ou na mesma versão, dá o mesmo não.
+        this.setState({ status: FIM_SEM_RETRY[error.code]!, slug: this.slug });
+        return;
       } else if (
         isSignalingError(error) &&
         (error.code === 'SIGNAL_UNREACHABLE' || error.code === 'HELLO_TIMEOUT')
@@ -687,10 +736,15 @@ export class ViewerSession {
   }
 
 
-  private async onClosed(epoch: number): Promise<void> {
+  private async onClosed(epoch: number, reason: string): Promise<void> {
     if (this.stale(epoch)) return;
     await this.dropTransport();
     if (this.stale(epoch)) return;
+    if (reason === 'REMOVED') {
+      this.cancelRetry();
+      this.setState({ status: 'removido', slug: this.slug });
+      return;
+    }
     this.pollMs = POLL_MIN_MS;
     this.goOffline();
     this.scheduleRetry(epoch);

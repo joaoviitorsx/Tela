@@ -56,6 +56,8 @@ export type BroadcastFailure =
   | 'SLUG_TAKEN'
   | 'SLUG_INVALID'
   | 'RATE_LIMITED'
+  /** Cliente de outra versão do protocolo: recarregar a página resolve. */
+  | 'OUTDATED'
   | 'SIGNALING_UNAVAILABLE'
   | 'TRANSPORT_FAILED'
   | 'USER_STOPPED'
@@ -161,8 +163,16 @@ export type BroadcastSessionDeps = {
   /** Volume do que é ENVIADO. Ver `core/ports/audio-gain.ts`. */
   gain: AudioGain;
   scheduler: Scheduler;
-  /** Monta o link público a partir do slug. Sem servidor, quem sabe é o front. */
-  shareUrlFor: (slug: string) => string;
+  /**
+   * Monta o link de quem assiste. Leva o convite: sem ele o link não abre a
+   * sala (TELA-018). Sem servidor, quem sabe montar é o front.
+   */
+  shareUrlFor: (slug: string, invite: string) => string;
+  /**
+   * O segredo do link, guardado neste aparelho. `atual` é o de sempre;
+   * `renovar` troca e guarda o novo. Quem implementa é a identidade do dono.
+   */
+  convite: { atual(): string; renovar(): string };
   /**
    * O que o link deste aparelho sustentou da última vez, por espectador.
    *
@@ -528,7 +538,7 @@ export class BroadcastSession {
 
     try {
       // O servidor é a autoridade sobre o teto; o palpite local só vale até aqui.
-      const aberto = await this.deps.transport.host(slug, ownerToken);
+      const aberto = await this.deps.transport.host(slug, ownerToken, this.deps.convite.atual());
       if (Number.isFinite(aberto.maxPeers) && aberto.maxPeers > 0) {
         this.maxPeers = aberto.maxPeers;
       }
@@ -554,7 +564,7 @@ export class BroadcastSession {
     }
     if (this.stale(epoch)) return this.abandon();
 
-    const shareUrl = this.deps.shareUrlFor(slug);
+    const shareUrl = this.deps.shareUrlFor(slug, this.deps.convite.atual());
     this.setState({
       status: 'live',
       shareUrl,
@@ -1103,6 +1113,39 @@ export class BroadcastSession {
    * nos parâmetros do sender. Arrastar a barra não custa nada à transmissão.
    */
   /**
+   * Troca o convite (TELA-018). Quem já está assistindo fica; o link velho
+   * deixa de abrir a sala para quem chegar depois.
+   *
+   * A ordem importa: o novo é guardado ANTES de ir ao servidor. Se o servidor
+   * não confirmar, o link antigo continua valendo lá até o próximo `host` —
+   * que já leva o novo, porque a saudação de reconexão o carrega. Devolve se
+   * o servidor confirmou, para a UI não afirmar o que não aconteceu.
+   */
+  async renovarConvite(): Promise<boolean> {
+    if (this.state.status !== 'live') return false;
+    const slug = this.state.slug;
+    const novo = this.deps.convite.renovar();
+    let confirmado = true;
+    try {
+      await this.deps.transport.setInvite(novo);
+    } catch {
+      confirmado = false;
+    }
+    if (this.state.status !== 'live' || this.state.slug !== slug) return confirmado;
+    this.setState({ ...this.state, shareUrl: this.deps.shareUrlFor(slug, novo) });
+    return confirmado;
+  }
+
+  /**
+   * Tira todo mundo que está assistindo. Ação separada de renovar: com o
+   * convite de sempre, quem saiu pode voltar pelo mesmo link.
+   */
+  desconectarTodos(): void {
+    if (this.state.status !== 'live') return;
+    this.deps.transport.removeViewers();
+  }
+
+  /**
    * Retoma o grafo de áudio suspenso. Só funciona dentro de um GESTO: é o
    * botão "ativar áudio da transmissão" que chama isto.
    */
@@ -1498,6 +1541,11 @@ function failureFor(error: unknown): BroadcastFailure {
       return 'SLUG_INVALID';
     case 'RATE_LIMITED':
       return 'RATE_LIMITED';
+    case 'PROTOCOL_MISMATCH':
+    case 'BAD_MESSAGE':
+      // `BAD_MESSAGE` na saudação só acontece com cliente e servidor em
+      // versões diferentes: a própria página manda a mensagem.
+      return 'OUTDATED';
     case 'SIGNAL_UNREACHABLE':
       return 'SIGNALING_UNAVAILABLE';
     default:

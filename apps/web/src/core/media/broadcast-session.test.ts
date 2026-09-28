@@ -8,6 +8,7 @@ import {
   FakeScreenCapture,
   createStream,
   shareUrlFor,
+  FakeConvites,
 } from '../testing/fakes.js';
 import { BroadcastSession } from './broadcast-session.js';
 import { PRESETS, PRESET_IDS } from './presets.js';
@@ -32,6 +33,7 @@ function build() {
     gain,
     scheduler,
     shareUrlFor,
+    convite: new FakeConvites(),
     createStream,
     statsIntervalMs: 1_000,
   });
@@ -60,7 +62,7 @@ describe('BroadcastSession — caminho feliz', () => {
 
   it('reivindica o canal com o slug e o token do dono', async () => {
     await ctx.session.start(SLUG, TOKEN);
-    expect(ctx.transport.hosted).toEqual({ slug: SLUG, ownerToken: TOKEN });
+    expect(ctx.transport.hosted).toEqual({ slug: SLUG, ownerToken: TOKEN, invite: 'c'.repeat(22) });
   });
 
   it('publica o vídeo com o preset escolhido', async () => {
@@ -80,7 +82,7 @@ describe('BroadcastSession — caminho feliz', () => {
     const links: string[] = [];
     ctx.session.on('started', ({ shareUrl }) => links.push(shareUrl));
     await ctx.session.start(SLUG, TOKEN);
-    expect(links).toEqual([`https://tela.gg/${SLUG}`]);
+    expect(links).toEqual([`https://tela.gg/${SLUG}#k=${'c'.repeat(22)}`]);
   });
 });
 
@@ -1439,7 +1441,7 @@ describe('BroadcastSession — grafo e ciclo da captura de áudio (TELA-009)', (
     const scheduler = new FakeScheduler();
     const session = new BroadcastSession({
       transport, screen, audio: new FakeAudioCapture(), gain, scheduler,
-      shareUrlFor, createStream, statsIntervalMs: 1_000,
+      shareUrlFor, convite: new FakeConvites(), createStream, statsIntervalMs: 1_000,
     });
     return { transport, screen, gain, scheduler, session };
   }
@@ -1546,5 +1548,47 @@ describe('BroadcastSession — recusa não é falha técnica (TELA-013)', () => 
     await ctx.session.switchSource();
     expect(ctx.session.getState().status).toBe('live');
     expect(antes.stopped).toBe(false);
+  });
+});
+
+describe('BroadcastSession — convite (TELA-018)', () => {
+  it('reivindica com o convite, e o link leva o convite, nunca o token', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.transport.hosted?.invite).toBe('c'.repeat(22));
+    const st = ctx.session.getState();
+    expect(st.status === 'live' && st.shareUrl).toBe(`https://tela.gg/${SLUG}#k=${'c'.repeat(22)}`);
+    expect(st.status === 'live' && st.shareUrl.includes(TOKEN)).toBe(false);
+  });
+
+  it('renovar manda o convite novo e troca o link', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    expect(await ctx.session.renovarConvite()).toBe(true);
+    const novo = ctx.transport.convites.at(-1);
+    expect(novo).toBeDefined();
+    const st = ctx.session.getState();
+    expect(st.status === 'live' && st.shareUrl.endsWith(`#k=${novo}`)).toBe(true);
+  });
+
+  it('servidor que não confirma: devolve false, sem afirmar sucesso', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.transport.inviteError = { code: 'SIGNAL_UNREACHABLE' };
+    expect(await ctx.session.renovarConvite()).toBe(false);
+  });
+
+  it('desconectar todos pede ao transporte para tirar todo mundo', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.session.desconectarTodos();
+    expect(ctx.transport.removidos).toEqual([null]);
+  });
+
+  it('servidor de outra versão vira OUTDATED', async () => {
+    const ctx = build();
+    ctx.transport.hostError = { code: 'PROTOCOL_MISMATCH' };
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.session.getState()).toEqual({ status: 'ended', reason: 'OUTDATED' });
   });
 });

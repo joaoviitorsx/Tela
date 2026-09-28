@@ -49,11 +49,25 @@ export type ChannelEvents = {
 
 export type SignalingError = { readonly code: SignalingErrorCode };
 
+/** `invite` é o segredo do link; o servidor guarda só o hash dele. */
+export type EntradaDeEspectador = {
+  readonly invite: string;
+  readonly participantId?: string;
+  readonly attemptId?: string;
+};
+
 export type SignalingChannel = {
   /** Reivindica o canal como transmissor. Rejeita com `SignalingError`. */
-  host(slug: string, ownerToken: string): Promise<ChannelOpened>;
+  host(slug: string, ownerToken: string, invite: string): Promise<ChannelOpened>;
   /** Entra como espectador. Rejeita com `SignalingError`. */
-  watch(slug: string, identity?: { readonly participantId: string; readonly attemptId: string }): Promise<ChannelOpened>;
+  watch(slug: string, entrada: EntradaDeEspectador): Promise<ChannelOpened>;
+  /**
+   * Troca o convite do canal (TELA-018). Resolve quando o servidor confirmou:
+   * a partir daí só o convite novo entra. Quem já está dentro fica.
+   */
+  setInvite(invite: string): Promise<void>;
+  /** Tira um espectador, ou todos sem `peerId`. Não é banimento. */
+  removeViewers(peerId?: string): void;
   /** Renova credenciais do mesmo participante sem abrir outro socket. */
   refreshIce(): Promise<IceCredentials>;
   /** Envia payload opaco. `to` omitido = para o transmissor. */

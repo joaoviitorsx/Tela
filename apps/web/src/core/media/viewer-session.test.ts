@@ -3,6 +3,7 @@ import { FakeMediaTransport, FakeScheduler, fakeStream, fakeTrack } from '../tes
 import { ViewerSession } from './viewer-session.js';
 
 const SLUG = 'joao';
+const CONVITE = 'c'.repeat(22);
 const settle = async (times = 12) => {
   for (let i = 0; i < times; i += 1) await Promise.resolve();
 };
@@ -26,7 +27,7 @@ function build(configure: (t: FakeMediaTransport) => void = () => undefined) {
 describe('ViewerSession', () => {
   it('mantém tentativa e erro de signaling após fechar o transporte', async () => {
     const ctx = build((t) => { t.watchError = { code: 'SIGNAL_UNREACHABLE' }; });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
     await ctx.session.close();
     const relatorio = ctx.session.diagnostico('Firefox/130');
@@ -36,7 +37,7 @@ describe('ViewerSession', () => {
 
   it('entra no canal e mostra a mídia quando ela chega', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     expect(ctx.session.getState().status).toBe('connecting');
 
     ctx.ultimo().deliver();
@@ -48,7 +49,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
 
     const state = ctx.session.getState();
@@ -62,7 +63,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       if (offline) t.watchError = { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
 
     offline = false;
@@ -81,7 +82,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'SIGNAL_UNREACHABLE' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
 
     expect(ctx.session.getState().status).toBe('sem-servidor');
@@ -92,7 +93,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       if (bloqueado) t.watchError = { code: 'SIGNAL_UNREACHABLE' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
     expect(ctx.session.getState().status).toBe('sem-servidor');
 
@@ -110,7 +111,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'CHANNEL_FULL' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
 
     expect(ctx.session.getState().status).toBe('full');
@@ -122,7 +123,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = cheio ? { code: 'CHANNEL_FULL' } : { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
     expect(ctx.session.getState().status).toBe('full');
 
@@ -138,7 +139,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
 
     const vistos: number[] = [];
@@ -161,7 +162,7 @@ describe('ViewerSession', () => {
       t.watchError = { code: 'NOT_HOSTING' };
       queueMicrotask(() => t.emit('closed', { reason: 'SIGNAL_CLOSED' }));
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle(20);
 
     const porRodada: number[] = [ctx.criados.length];
@@ -178,7 +179,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
 
     for (let i = 0; i < 30; i += 1) {
       ctx.scheduler.advance(30_000);
@@ -189,7 +190,7 @@ describe('ViewerSession', () => {
 
   it('reconnecting volta para watching quando a mídia retorna', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver();
     expect(ctx.session.getState().status).toBe('watching');
 
@@ -204,7 +205,7 @@ describe('ViewerSession', () => {
 
   it('queda do SERVIDOR não tira o espectador do ar', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver();
     expect(ctx.session.getState().status).toBe('watching');
 
@@ -219,7 +220,7 @@ describe('ViewerSession', () => {
 
   it('queda do transmissor volta para offline e reconecta depois', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver();
 
     ctx.ultimo().emit('closed', { reason: 'HOST_LEFT' });
@@ -236,7 +237,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.hangOnWatch = true;
     });
-    void ctx.session.open(SLUG);
+    void ctx.session.open(SLUG, CONVITE);
     await settle(20);
     expect(ctx.session.getState().status).toBe('connecting');
 
@@ -252,7 +253,7 @@ describe('ViewerSession', () => {
   it('reusa participante e troca tentativa ao reconectar', async () => {
     let offline = true;
     const ctx = build((t) => { if (offline) t.watchError = { code: 'NOT_HOSTING' }; });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     const first = ctx.ultimo().watchIdentity;
     offline = false;
     ctx.scheduler.advance(5_000);
@@ -265,7 +266,7 @@ describe('ViewerSession', () => {
   it('tentativa manual não recarrega a sessão nem deixa o timer antigo disparar', async () => {
     let offline = true;
     const ctx = build((t) => { if (offline) t.watchError = { code: 'NOT_HOSTING' }; });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     const first = ctx.ultimo().watchIdentity;
     offline = false;
     await ctx.session.retryNow();
@@ -279,7 +280,7 @@ describe('ViewerSession', () => {
 
   it('não corta o restart ICE inicial pelo vigia normal de 15 segundos', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.scheduler.advance(5_000);
     ctx.ultimo().emit('reconnecting', undefined);
     ctx.scheduler.advance(10_000);
@@ -292,7 +293,7 @@ describe('ViewerSession', () => {
 
   it('preserva indisponibilidade do relay quando a mídia não chega', async () => {
     const ctx = build((t) => { t.relayStatus = 'unavailable'; });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.scheduler.advance(15_000);
     await settle(30);
     expect(ctx.session.getState()).toEqual({
@@ -308,7 +309,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.hangOnWatch = true;
     });
-    void ctx.session.open(SLUG);
+    void ctx.session.open(SLUG, CONVITE);
     await settle(20);
     ctx.scheduler.advance(20_000);
     await settle(40);
@@ -320,7 +321,7 @@ describe('ViewerSession', () => {
 
   it('amostra estatísticas enquanto assiste', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver();
     ctx.ultimo().stats = {
       fps: 60,
@@ -350,7 +351,7 @@ describe('ViewerSession', () => {
 
   it('detecta áudio no stream entregue', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver(fakeStream([fakeTrack('video'), fakeTrack('audio')]));
     const state = ctx.session.getState();
     expect(state.status === 'watching' && state.hasAudio).toBe(true);
@@ -360,7 +361,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await ctx.session.close();
 
     ctx.scheduler.advance(60_000);
@@ -379,8 +380,8 @@ describe('ViewerSession', () => {
       t.watchError = { code: 'CHANNEL_FULL' };
     });
 
-    const primeiro = ctx.session.open(SLUG);
-    const segundo = ctx.session.open(SLUG);
+    const primeiro = ctx.session.open(SLUG, CONVITE);
+    const segundo = ctx.session.open(SLUG, CONVITE);
     await Promise.all([primeiro, segundo]);
     await settle(30);
 
@@ -390,7 +391,7 @@ describe('ViewerSession', () => {
 
   it('dois open() concorrentes não deixam transporte órfão vivo', async () => {
     const ctx = build();
-    const primeiro = ctx.session.open(SLUG);
+    const primeiro = ctx.session.open(SLUG, CONVITE);
     const segundo = ctx.session.open('outro');
     await Promise.all([primeiro, segundo]);
     await settle(30);
@@ -406,7 +407,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
     const antes = ctx.criados.length;
 
@@ -423,7 +424,7 @@ describe('ViewerSession', () => {
     const ctx = build((t) => {
       t.watchError = { code: 'NOT_HOSTING' };
     });
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await settle();
 
     ctx.scheduler.setVisivel(false);
@@ -439,7 +440,7 @@ describe('ViewerSession', () => {
 
   it('abrir outro slug desconecta o transporte anterior', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     await ctx.session.open('outro');
     await settle();
     expect(ctx.criados[0]?.disconnected).toBe(true);
@@ -449,7 +450,7 @@ describe('ViewerSession', () => {
 describe('ViewerSession — a imagem sobrevive ao soluço (ADR 0018)', () => {
   it('reconnecting CARREGA o stream, para o <video> não ser desmontado', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver();
     await settle();
 
@@ -475,7 +476,7 @@ describe('ViewerSession — a imagem sobrevive ao soluço (ADR 0018)', () => {
 
   it('sem mídia nunca entregue, reconnecting não inventa stream', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().emit('reconnecting', undefined);
 
     const estado = ctx.session.getState();
@@ -501,14 +502,14 @@ describe('ViewerSession — estado do áudio (TELA-007)', () => {
 
   it('stream só com vídeo é sem-fonte', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver();
     expect(audioDe(ctx.session)).toBe('sem-fonte');
   });
 
   it('autoplay bloqueado informado pela página vira bloqueado na próxima amostra', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver(fakeStream([fakeTrack('video'), fakeTrack('audio')]));
     expect(audioDe(ctx.session)).toBe('desconhecido');
     ctx.session.informarReproducao({ bloqueada: true, mudo: true });
@@ -520,7 +521,7 @@ describe('ViewerSession — estado do áudio (TELA-007)', () => {
 
   it('ocultação sustentada vira perda, e a série do diagnóstico traz o áudio', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver(fakeStream([fakeTrack('video'), fakeTrack('audio')]));
     ctx.ultimo().stats = comAudio(0.12);
     for (let i = 0; i < 3; i += 1) {
@@ -540,7 +541,7 @@ describe('ViewerSession — estado do áudio (TELA-007)', () => {
 describe('ViewerSession — primeiro quadro e etapa da falha (TELA-013)', () => {
   it('áudio chegando antes do vídeo NÃO declara watching nem desarma o vigia', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver(fakeStream([fakeTrack('audio')]));
     expect(ctx.session.getState().status).toBe('connecting');
 
@@ -551,7 +552,7 @@ describe('ViewerSession — primeiro quadro e etapa da falha (TELA-013)', () => 
 
   it('áudio antes, vídeo depois: entra assistindo, com áudio', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().deliver(fakeStream([fakeTrack('audio')]));
     ctx.ultimo().deliver(fakeStream([fakeTrack('video'), fakeTrack('audio')]));
     const st = ctx.session.getState();
@@ -561,7 +562,7 @@ describe('ViewerSession — primeiro quadro e etapa da falha (TELA-013)', () => 
 
   it('conexão nunca fechou: etapa rede, evento NO_ROUTE', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.scheduler.advance(15_000);
     await settle(30);
     expect(ctx.session.getState()).toMatchObject({ status: 'sem-conexao', etapa: 'rede' });
@@ -570,7 +571,7 @@ describe('ViewerSession — primeiro quadro e etapa da falha (TELA-013)', () => 
 
   it('conectou e o quadro não veio: etapa mídia, sem culpar a rede', async () => {
     const ctx = build();
-    await ctx.session.open(SLUG);
+    await ctx.session.open(SLUG, CONVITE);
     ctx.ultimo().emit('ice-conectado', undefined);
     ctx.scheduler.advance(15_000);
     await settle(30);
@@ -578,5 +579,51 @@ describe('ViewerSession — primeiro quadro e etapa da falha (TELA-013)', () => 
     const codigos = ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo);
     expect(codigos).toContain('MEDIA_TIMEOUT');
     expect(codigos).not.toContain('NO_ROUTE');
+  });
+});
+
+describe('ViewerSession — convite (TELA-018)', () => {
+  it('link sem convite: nem tenta a rede', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG, null);
+    expect(ctx.session.getState()).toEqual({ status: 'convite-ausente', slug: SLUG });
+    expect(ctx.criados).toHaveLength(0);
+  });
+
+  it('manda o convite do link ao entrar', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG, CONVITE);
+    expect(ctx.ultimo().watchIdentity?.invite).toBe(CONVITE);
+  });
+
+  it('convite renovado: para, e não insiste sozinho', async () => {
+    const ctx = build((t) => { t.watchError = { code: 'INVITE_INVALID' }; });
+    await ctx.session.open(SLUG, CONVITE);
+    await settle(20);
+    expect(ctx.session.getState()).toEqual({ status: 'convite-invalido', slug: SLUG });
+    ctx.scheduler.advance(120_000);
+    await settle(20);
+    expect(ctx.criados).toHaveLength(1);
+  });
+
+  it('removido pelo transmissor: para, e só volta por ação manual', async () => {
+    const ctx = build();
+    await ctx.session.open(SLUG, CONVITE);
+    ctx.ultimo().deliver();
+    ctx.ultimo().emit('closed', { reason: 'REMOVED' });
+    await settle(20);
+    expect(ctx.session.getState()).toEqual({ status: 'removido', slug: SLUG });
+    ctx.scheduler.advance(120_000);
+    await settle(20);
+    expect(ctx.criados).toHaveLength(1);
+    await ctx.session.retryNow();
+    expect(ctx.criados).toHaveLength(2);
+  });
+
+  it('servidor de outra versão: página desatualizada', async () => {
+    const ctx = build((t) => { t.watchError = { code: 'PROTOCOL_MISMATCH' }; });
+    await ctx.session.open(SLUG, CONVITE);
+    await settle(20);
+    expect(ctx.session.getState()).toEqual({ status: 'desatualizado', slug: SLUG });
   });
 });

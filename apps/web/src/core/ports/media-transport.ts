@@ -1,6 +1,7 @@
 import type { EncodingPreset, Prioridade, RelayStatus } from '@tela/shared';
 import type { AudioStats } from '../media/audio-stats.js';
 import type { PeerInfo } from '../mesh/mesh-topology.js';
+import type { EntradaDeEspectador } from './signaling-channel.js';
 
 /**
  * A fronteira que sustenta a Fase 3 e que já provou o próprio valor.
@@ -260,9 +261,16 @@ export type MediaTransport = {
    * "5/3" com cinco espectadores conectados, porque o palpite era 3 e o
    * servidor aceitava 5.
    */
-  host(slug: string, ownerToken: string): Promise<{ readonly maxPeers: number }>;
+  host(slug: string, ownerToken: string, invite: string): Promise<{ readonly maxPeers: number }>;
   /** Entra num canal como espectador. */
-  watch(slug: string, identity?: { readonly participantId: string; readonly attemptId: string }): Promise<{ readonly relayStatus: RelayStatus | null }>;
+  watch(slug: string, entrada: EntradaDeEspectador): Promise<{ readonly relayStatus: RelayStatus | null }>;
+  /** Troca o convite do canal; resolve quando o servidor confirmou (TELA-018). */
+  setInvite(invite: string): Promise<void>;
+  /**
+   * Tira espectadores: o servidor fecha a sinalização deles e o `peer-left`
+   * que volta faz a malha fechar o peer. Sem `peerId`, todos.
+   */
+  removeViewers(peerId?: string): void;
 
   publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void>;
   publishAudio(track: MediaStreamTrack): Promise<void>;

@@ -1,6 +1,7 @@
 import {
   type ClientMessage,
   HELLO_TIMEOUT_MS,
+  PROTOCOL_VERSION,
   type ServerMessage,
   ServerMessageSchema,
 } from '@tela/shared';
@@ -39,7 +40,15 @@ const RECONECTAR_FATOR = 1.8;
  * Erros em que insistir não adianta: o canal não é mais nosso, ou nunca foi.
  * Ficar tentando para sempre esconderia do usuário que ele perdeu o slug.
  */
-const NAO_ADIANTA_INSISTIR: ReadonlySet<string> = new Set(['SLUG_TAKEN', 'SLUG_INVALID']);
+const NAO_ADIANTA_INSISTIR: ReadonlySet<string> = new Set([
+  'SLUG_TAKEN',
+  'SLUG_INVALID',
+  // TELA-018: convite trocado, espectador tirado, cliente de outra versão.
+  // Reconectar sozinho com a mesma saudação daria o mesmo não.
+  'INVITE_INVALID',
+  'REMOVED',
+  'PROTOCOL_MISMATCH',
+]);
 
 export function makeWsSignaling(baseUrl: string): SignalingChannel {
   const emitter = new Emitter<ChannelEvents>();
@@ -55,6 +64,8 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
   let slugAtual = '';
   let tentativa = 0;
   let religar: number | null = null;
+  let pendingInvite: { resolve: () => void; reject: (e: SignalingError) => void; timer: number } | null =
+    null;
   let pendingRefresh: {
     requestId: string;
     promise: Promise<IceCredentials>;
@@ -185,7 +196,24 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
           pending.resolve(message);
           return;
         }
+        case 'invite-set': {
+          const pending = pendingInvite;
+          if (pending === null) return;
+          pendingInvite = null;
+          window.clearTimeout(pending.timer);
+          pending.resolve();
+          return;
+        }
         case 'error':
+          /*
+            Erro depois de aberto que não se resolve insistindo (`REMOVED`):
+            marca `encerrado` ANTES do close que vem em seguida, senão o
+            listener de close agenda reconexão e a pessoa tirada volta sozinha.
+          */
+          if (NAO_ADIANTA_INSISTIR.has(message.code)) {
+            encerrado = true;
+            saudacao = null;
+          }
           return emitter.emit('closed', { reason: message.code });
         default:
           return;
@@ -274,9 +302,11 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
   }
 
   return {
-    host(slug, ownerToken) {
+    host(slug, ownerToken, invite) {
       return new Promise<ChannelOpened>((resolve, reject) => {
-        const hello: ClientMessage = { type: 'host', slug, ownerToken };
+        const hello: ClientMessage = {
+          type: 'host', protocol: PROTOCOL_VERSION, slug, ownerToken, invite,
+        };
         /**
          * Zerar aqui é obrigatório: `close()` marca `closedByUs` e nada mais
          * desmarcava. Um canal fechado uma vez ficava morto PARA SEMPRE — a
@@ -299,9 +329,14 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       });
     },
 
-    watch(slug, identity) {
+    watch(slug, entrada) {
       return new Promise<ChannelOpened>((resolve, reject) => {
-        const hello: ClientMessage = { type: 'watch', slug, ...identity };
+        const hello: ClientMessage = {
+          type: 'watch', protocol: PROTOCOL_VERSION, slug,
+          invite: entrada.invite,
+          ...(entrada.participantId === undefined ? {} : { participantId: entrada.participantId }),
+          ...(entrada.attemptId === undefined ? {} : { attemptId: entrada.attemptId }),
+        };
         closedByUs = false;
         encerrado = false;
         saudacao = hello;
@@ -330,6 +365,35 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       pendingRefresh = { requestId, promise, resolve: resolveRefresh, reject: rejectRefresh, timer };
       socket.send(JSON.stringify({ type: 'refresh-ice', requestId } satisfies ClientMessage));
       return promise;
+    },
+
+    setInvite(invite) {
+      if (socket === null || socket.readyState !== WebSocket.OPEN) {
+        return Promise.reject({ code: 'SIGNAL_UNREACHABLE' } satisfies SignalingError);
+      }
+      /*
+        A saudação guardada é o que a reconexão reenvia. Sem atualizá-la, uma
+        queda de rede depois de renovar reapresentaria o convite VELHO — e o
+        servidor, que aceita o convite que o dono traz, reabriria o link antigo.
+      */
+      if (saudacao?.type === 'host') saudacao = { ...saudacao, invite };
+      pendingInvite?.reject({ code: 'SIGNAL_UNREACHABLE' });
+      const ws = socket;
+      return new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          if (pendingInvite?.timer === timer) pendingInvite = null;
+          reject({ code: 'SIGNAL_UNREACHABLE' } satisfies SignalingError);
+        }, HELLO_TIMEOUT_MS * 2);
+        pendingInvite = { resolve, reject, timer };
+        ws.send(JSON.stringify({ type: 'set-invite', invite } satisfies ClientMessage));
+      });
+    },
+
+    removeViewers(peerId) {
+      if (socket === null || socket.readyState !== WebSocket.OPEN) return;
+      const message: ClientMessage =
+        peerId === undefined ? { type: 'remove-viewers' } : { type: 'remove-viewers', peerId };
+      socket.send(JSON.stringify(message));
     },
 
     send(payload, to) {

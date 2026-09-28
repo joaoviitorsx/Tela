@@ -39,7 +39,7 @@ it('a trilha desmutada devolve a UI a watching mesmo se ICE conectou antes', asy
   let reconnected = 0;
   transport.on('reconnecting', () => { reconnecting += 1; });
   transport.on('reconnected', () => { reconnected += 1; });
-  await transport.watch('joao');
+  await transport.watch('joao', { invite: 'c'.repeat(22) });
   const pc = factory.created[0];
   if (pc === undefined) throw new Error('PC ausente');
   const track = new TestTrack();

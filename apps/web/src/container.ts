@@ -12,6 +12,7 @@ import { makeWebAudioCue } from './adapters/web-audio-cue.js';
 import { suportaWebGL } from './adapters/webgl-probe.js';
 import { makeWsSignaling } from './adapters/ws-signaling.js';
 import type { SlugPolicy } from './core/domain/slug.js';
+import { linkComConvite } from './core/domain/convite.js';
 import { makeIdentity } from './core/identity/owner-token.js';
 import { BroadcastSession } from './core/media/broadcast-session.js';
 import { ViewerSession } from './core/media/viewer-session.js';
@@ -104,8 +105,8 @@ export function presetSustentavel(): PresetId | null {
   return suggestPreset(lembrado, 1);
 }
 
-export const shareUrlFor = (slug: string): string =>
-  `${window.location.origin}/${slug}`;
+export const shareUrlFor = (slug: string, invite: string): string =>
+  linkComConvite(window.location.origin, slug, invite);
 
 /** Cada sessão recebe um transporte novo: canal reaberto não é canal reusado. */
 function createTransport(): MediaTransport {
@@ -123,6 +124,7 @@ export function createBroadcastSession(): BroadcastSession {
     uplinkMemory,
     scheduler,
     shareUrlFor,
+    convite: { atual: () => identity.convite(), renovar: () => identity.renovarConvite() },
     createStream: (tracks) => new MediaStream([...tracks]),
     diagnosticId,
     appVersion,

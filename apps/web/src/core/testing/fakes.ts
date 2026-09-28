@@ -21,6 +21,7 @@ import type {
 import type {
   ChannelEvents,
   ChannelOpened,
+  EntradaDeEspectador,
   SignalingChannel,
 } from '../ports/signaling-channel.js';
 import type { Storage } from '../ports/storage.js';
@@ -238,9 +239,15 @@ export class FakeAudioCapture implements AudioCapture {
 export class FakeMediaTransport implements MediaTransport {
   private readonly emitter = new Emitter<TransportEvents>();
 
-  hosted: { slug: string; ownerToken: string } | null = null;
+  hosted: { slug: string; ownerToken: string; invite: string } | null = null;
   watched: string | null = null;
-  watchIdentity: { readonly participantId: string; readonly attemptId: string } | undefined;
+  watchIdentity: EntradaDeEspectador | undefined;
+  /** Convites mandados por `setInvite`, em ordem. */
+  readonly convites: string[] = [];
+  /** `setInvite` rejeita com isto quando não é `null`. */
+  inviteError: unknown = null;
+  /** Chamadas de `removeViewers`: `null` = todos. */
+  readonly removidos: (string | null)[] = [];
   readonly videos: { track: MediaStreamTrack; preset: EncodingPreset }[] = [];
   readonly audios: MediaStreamTrack[] = [];
   readonly presets: EncodingPreset[] = [];
@@ -258,14 +265,23 @@ export class FakeMediaTransport implements MediaTransport {
   /** Teto que este transporte falso reporta como se viesse do servidor. */
   maxPeersDoServidor = 5;
 
-  async host(slug: string, ownerToken: string): Promise<{ maxPeers: number }> {
+  async host(slug: string, ownerToken: string, invite: string): Promise<{ maxPeers: number }> {
     if (this.hostError !== null) throw this.hostError;
-    this.hosted = { slug, ownerToken };
+    this.hosted = { slug, ownerToken, invite };
     return { maxPeers: this.maxPeersDoServidor };
   }
 
-  async watch(slug: string, identity?: { readonly participantId: string; readonly attemptId: string }): Promise<{ relayStatus: 'available' | 'not-configured' | 'unavailable' | null }> {
-    this.watchIdentity = identity;
+  async setInvite(invite: string): Promise<void> {
+    if (this.inviteError !== null) throw this.inviteError;
+    this.convites.push(invite);
+  }
+
+  removeViewers(peerId?: string): void {
+    this.removidos.push(peerId ?? null);
+  }
+
+  async watch(slug: string, entrada: EntradaDeEspectador): Promise<{ relayStatus: 'available' | 'not-configured' | 'unavailable' | null }> {
+    this.watchIdentity = entrada;
     if (this.watchError !== null) throw this.watchError;
     if (this.hangOnWatch) return new Promise(() => undefined);
     this.watched = slug;
@@ -410,6 +426,15 @@ export class FakeSignalingChannel implements SignalingChannel {
     };
   }
 
+  readonly convites: string[] = [];
+  readonly removidos: (string | null)[] = [];
+  async setInvite(invite: string): Promise<void> {
+    this.convites.push(invite);
+  }
+  removeViewers(peerId?: string): void {
+    this.removidos.push(peerId ?? null);
+  }
+
   async refreshIce() {
     this.refreshCalls += 1;
     return { iceServers: TEST_ICE, relayStatus: 'available' as const };
@@ -460,7 +485,21 @@ export class FakeRandom implements Random {
   }
 }
 
-export const shareUrlFor = (slug: string) => `https://tela.gg/${slug}`;
+export const shareUrlFor = (slug: string, invite: string) => `https://tela.gg/${slug}#k=${invite}`;
+
+/** Convite em memória, com renovação previsível para os testes afirmarem. */
+export class FakeConvites {
+  valor = 'c'.repeat(22);
+  private n = 0;
+  atual(): string {
+    return this.valor;
+  }
+  renovar(): string {
+    this.n += 1;
+    this.valor = `${'n'.repeat(21)}${this.n}`;
+    return this.valor;
+  }
+}
 
 export const createStream = (tracks: readonly MediaStreamTrack[]): MediaStream =>
   fakeStream([...tracks]);

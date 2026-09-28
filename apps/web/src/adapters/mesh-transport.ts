@@ -67,8 +67,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   }
 
   return {
-    async host(slug, ownerToken) {
-      const opened = await deps.channel.host(slug, ownerToken);
+    async host(slug, ownerToken, invite) {
+      const opened = await deps.channel.host(slug, ownerToken, invite);
 
       const recoveryFor = (peerId: string): PeerRecovery => {
         const existing = recoveries.get(peerId);
@@ -154,8 +154,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       return { maxPeers: opened.maxPeers };
     },
 
-    async watch(slug, identity) {
-      const opened = await deps.channel.watch(slug, identity);
+    async watch(slug, entrada) {
+      const opened = await deps.channel.watch(slug, entrada);
       const media = mediaStream();
       let delivered = false;
       const recovery = new PeerRecovery({
@@ -280,8 +280,12 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           });
         }),
         deps.channel.on('peer-left', () => emitter.emit('closed', { reason: 'HOST_LEFT' })),
-        // Idem no espectador: perder o canal não é perder o vídeo.
-        deps.channel.on('closed', () => emitter.emit('signaling-lost', undefined)),
+        // Idem no espectador: perder o canal não é perder o vídeo. A exceção é
+        // ser TIRADO pelo transmissor: aí a sessão precisa saber o porquê.
+        deps.channel.on('closed', ({ reason }) => {
+          if (reason === 'REMOVED') emitter.emit('closed', { reason });
+          else emitter.emit('signaling-lost', undefined);
+        }),
         deps.channel.on('reopened', (aberto) => {
           iceLifecycle?.use(aberto);
           emitter.emit('signaling-restored', undefined);
@@ -323,6 +327,14 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
     setJitterAlvo(ms) {
       viewerLink?.setJitterAlvo(ms);
+    },
+
+    setInvite(invite) {
+      return deps.channel.setInvite(invite);
+    },
+
+    removeViewers(peerId) {
+      deps.channel.removeViewers(peerId);
     },
 
     async setUplinkBudget(bps) {

@@ -28,13 +28,16 @@ Formato da §15.4 do plano global. Resultados observados, não "build passou".
 | 024 CI | feito | YAML validado; os passos rodam local | primeira execução no GitHub |
 | Interface CRT âmbar (protótipo v3) | feito | screenshots 1440/390, fluxo ao vivo com captura simulada | `getDisplayMedia` real, leitor de tela |
 
+## Feita depois do fechamento
+
+- **026** malha de banda fora de `BroadcastSession` (só refatoração, simulador idêntico byte a byte) e custo da interface medido — ver `TELA-026-refatoracao-e-custo.md`.
+
 ## Não feitas neste ciclo
 
 - **006** homologação de relay UDP/TCP/TLS — sem ambiente de laboratório.
 - **016** benchmark de encoder com 0/1/3/5 espectadores — exige hardware e jogo.
 - **020** fluxo "transmitir agora" — coberto pela interface nova; o clipboard com fallback não foi conferido em navegador sem permissão.
 - **025** operação: canário de relay, alertas de cota — exige infraestrutura fora do repositório.
-- **026** refatoração: `broadcast-session.ts` passou de 1.700 linhas; separar governador+sonda num módulo próprio é o próximo passo, em PR só de refatoração.
 - **027–034** desktop — aguardando decisão (Electron é a direção proposta, não aprovada).
 
 ## Resultados de rede

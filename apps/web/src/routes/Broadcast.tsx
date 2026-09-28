@@ -35,7 +35,9 @@ type Props = {
  * silenciosamente num texto genérico.
  */
 const MOTIVOS: Record<BroadcastFailure, string> = {
-  CAPTURE_DENIED: 'Você cancelou o compartilhamento de tela.',
+  CAPTURE_DENIED: 'Você cancelou o compartilhamento de tela, ou o navegador não tem permissão para capturá-la.',
+  CAPTURE_FAILED:
+    'O navegador não conseguiu capturar a tela — não foi escolha sua. Tente de novo; se repetir, feche outros programas que estejam gravando ou compartilhando a tela.',
   CAPTURE_UNSUPPORTED:
     'Este navegador não permite capturar a tela. Use Chrome ou Firefox no desktop.',
   CAPTURE_ENDED: 'O compartilhamento de tela foi encerrado.',
@@ -49,6 +51,21 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
 
 /** O único motivo que não é falha. Todo o resto merece o tom de alerta. */
 const ENCERRAMENTO_NORMAL: BroadcastFailure = 'USER_STOPPED';
+
+/**
+ * Onde tentar de novo AQUI resolve (TELA-013). Nome ocupado ou inválido pede
+ * outro nome, que se escolhe no início; navegador sem captura não muda com
+ * insistência. O resto recomeça sem recarregar a página — e o clique é o
+ * gesto que o seletor de tela exige.
+ */
+const REPETIVEL: ReadonlySet<BroadcastFailure> = new Set<BroadcastFailure>([
+  'CAPTURE_DENIED',
+  'CAPTURE_FAILED',
+  'CAPTURE_ENDED',
+  'RATE_LIMITED',
+  'SIGNALING_UNAVAILABLE',
+  'TRANSPORT_FAILED',
+]);
 
 /**
  * Só os estados do som que pedem ação de quem transmite.
@@ -286,9 +303,18 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
                 </button>
               </details>
             )}
-            <BigButton onClick={onExit} tone="ghost">
-              voltar para o início
-            </BigButton>
+            <div className="flex flex-wrap gap-3">
+              {REPETIVEL.has(state.reason) && (
+                <BigButton
+                  onClick={() => void start(slug, identity.ownerToken(), presetId, audioDeviceId)}
+                >
+                  tentar de novo
+                </BigButton>
+              )}
+              <BigButton onClick={onExit} tone="ghost">
+                voltar para o início
+              </BigButton>
+            </div>
           </div>
         </PanelSection>
       </Moldura>

@@ -6,6 +6,7 @@ export type Motivo =
   | 'reconectando'
   | 'cheio'
   | 'sem-conexao'
+  | 'sem-video'
   | 'relay-indisponivel'
   | 'relay-nao-configurado'
   | 'sem-servidor';
@@ -153,10 +154,21 @@ const TEXTO: Record<Motivo, (maxPeers: number) => Conteudo> = {
     tom: 'muted',
     varrendo: true,
   }),
+  /*
+    Os dois textos abaixo seguem a §5.9 do plano: afirmam só o que foi
+    comprovado. "Sem rota" dizia saber a causa quando só se sabia o efeito.
+  */
   'sem-conexao': () => ({
-    rotulo: 'sem rota',
+    rotulo: 'sem conexão',
     corpo:
-      'A transmissão está no ar, mas o vídeo não conseguiu atravessar a rede. Vamos tentar novamente.',
+      'Não conseguimos receber a transmissão nesta rede. Ela está no ar, e seguimos tentando.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  'sem-video': () => ({
+    rotulo: 'conectado, sem vídeo',
+    corpo:
+      'Conectamos, mas o vídeo ainda não chegou. A rede não é o problema aqui; seguimos tentando.',
     tom: 'warn',
     varrendo: false,
   }),

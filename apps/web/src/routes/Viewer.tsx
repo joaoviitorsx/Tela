@@ -59,7 +59,13 @@ const AVISO_AUDIO: Partial<Record<EstadoAudio, { rotulo: string; titulo: string 
   },
 };
 
-const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>(['sem-conexao', 'relay-indisponivel', 'relay-nao-configurado', 'sem-servidor']);
+const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>([
+  'sem-conexao',
+  'sem-video',
+  'relay-indisponivel',
+  'relay-nao-configurado',
+  'sem-servidor',
+]);
 
 /**
  * A tela que decide o produto.
@@ -308,11 +314,15 @@ export function Viewer({ slug }: Props) {
   );
 
   if (!comImagem) {
-    const motivo: Motivo = state.status === 'sem-conexao' && state.relayStatus === 'unavailable'
-      ? 'relay-indisponivel'
-      : state.status === 'sem-conexao' && state.relayStatus === 'not-configured'
-        ? 'relay-nao-configurado'
-        : MOTIVO[state.status];
+    // O relay só explica falha de REDE. Conectou e o quadro não veio: é mídia.
+    const motivo: Motivo =
+      state.status === 'sem-conexao' && state.etapa === 'midia'
+        ? 'sem-video'
+        : state.status === 'sem-conexao' && state.relayStatus === 'unavailable'
+          ? 'relay-indisponivel'
+          : state.status === 'sem-conexao' && state.relayStatus === 'not-configured'
+            ? 'relay-nao-configurado'
+            : MOTIVO[state.status];
     const relatorio = session.diagnostico(navigator.userAgent);
     return (
       <main>

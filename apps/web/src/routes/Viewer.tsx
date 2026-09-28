@@ -7,6 +7,7 @@ import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
 import { VolumeControl } from '../components/VolumeControl.js';
 import { createViewerSession, volumePreference } from '../container.js';
+import { conviteDoFragmento } from '../core/domain/convite.js';
 import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { ViewerState } from '../core/media/viewer-session.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
@@ -36,6 +37,10 @@ const MOTIVO: Record<Exclude<ViewerState['status'], 'watching'>, Motivo> = {
   full: 'cheio',
   'sem-conexao': 'sem-conexao',
   'sem-servidor': 'sem-servidor',
+  'convite-ausente': 'convite-ausente',
+  'convite-invalido': 'convite-invalido',
+  removido: 'removido',
+  desatualizado: 'desatualizado',
 };
 
 /** Só estes dois dependem de alguém mexer no navegador; os outros se resolvem. */
@@ -65,6 +70,8 @@ const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>([
   'relay-indisponivel',
   'relay-nao-configurado',
   'sem-servidor',
+  'removido',
+  'desatualizado',
 ]);
 
 /**
@@ -169,7 +176,8 @@ export function Viewer({ slug }: Props) {
   useTabTitle(watching ? `● tela.gg/${slug}` : `${slug} · tela`);
 
   useEffect(() => {
-    void session.open(slug);
+    // O convite vem do fragmento, que nunca sai do navegador em HTTP.
+    void session.open(slug, conviteDoFragmento(window.location.hash));
     return () => {
       void session.close();
     };
@@ -330,7 +338,14 @@ export function Viewer({ slug }: Props) {
           slug={slug}
           motivo={motivo}
           maxPeers={P2P_LIMITS.maxViewersBrowser}
-          {...(PEDE_ACAO.has(motivo) ? { onTentarNovamente: () => void session.retryNow() } : {})}
+          {...(PEDE_ACAO.has(motivo)
+            ? {
+                onTentarNovamente:
+                  motivo === 'desatualizado'
+                    ? () => window.location.reload()
+                    : () => void session.retryNow(),
+              }
+            : {})}
           diagnostico={relatorio !== null && PEDE_ACAO.has(motivo) ? (
             <details className="px-6 pb-6 text-[13px] text-muted">
               <summary className="cursor-pointer">ver diagnóstico da tentativa</summary>

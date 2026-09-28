@@ -9,7 +9,11 @@ export type Motivo =
   | 'sem-video'
   | 'relay-indisponivel'
   | 'relay-nao-configurado'
-  | 'sem-servidor';
+  | 'sem-servidor'
+  | 'convite-ausente'
+  | 'convite-invalido'
+  | 'removido'
+  | 'desatualizado';
 
 type Props = {
   readonly slug: string;
@@ -181,6 +185,32 @@ const TEXTO: Record<Motivo, (maxPeers: number) => Conteudo> = {
   'relay-nao-configurado': () => ({
     rotulo: 'sem rota alternativa',
     corpo: 'Esta transmissão não tem uma rota alternativa configurada, e a conexão direta não fechou. Vamos tentar novamente.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  'convite-ausente': () => ({
+    rotulo: 'link incompleto',
+    corpo:
+      'Este link não traz o convite da transmissão. Peça o link de novo a quem está transmitindo e cole ele inteiro, com a parte depois do #.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  'convite-invalido': () => ({
+    rotulo: 'convite renovado',
+    corpo:
+      'Quem transmite renovou o convite, e este link não abre mais a sala. Peça o link novo.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  removido: () => ({
+    rotulo: 'desconectado',
+    corpo: 'Quem está transmitindo encerrou seu acesso a esta transmissão.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  desatualizado: () => ({
+    rotulo: 'página desatualizada',
+    corpo: 'O Tela foi atualizado desde que esta página abriu. Recarregue para entrar.',
     tom: 'warn',
     varrendo: false,
   }),

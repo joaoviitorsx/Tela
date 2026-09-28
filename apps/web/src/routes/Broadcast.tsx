@@ -44,6 +44,7 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
   SLUG_TAKEN: 'Esse link já está sendo usado por outra pessoa. Escolha outro nome.',
   SLUG_INVALID: 'Esse nome de link não é válido.',
   RATE_LIMITED: 'Muitas tentativas. Espere um minuto.',
+  OUTDATED: 'O Tela foi atualizado desde que esta página abriu. Recarregue e transmita de novo.',
   SIGNALING_UNAVAILABLE: 'Não foi possível falar com o servidor de sinalização.',
   TRANSPORT_FAILED: 'A conexão de vídeo caiu.',
   USER_STOPPED: 'Transmissão encerrada.',
@@ -126,6 +127,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
     setPrioridade,
     setVolumeTransmissao,
     retomarAudio,
+    renovarConvite: renovarConviteDaSessao,
+    desconectarTodos,
   } = useBroadcast(session);
 
   /**
@@ -222,6 +225,20 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   // Copiar o link ao iniciar remove um passo inteiro do fluxo principal: o
   // usuário sai daqui direto para o Ctrl+V no Discord.
   useEffect(() => session.on('started', ({ shareUrl }) => copy(shareUrl)), [session, copy]);
+
+  /**
+   * Renovar já copia o link novo: é a única coisa que se faz com ele em
+   * seguida. A resposta do servidor decide o texto — "renovado" só quando ele
+   * confirmou.
+   */
+  const [convite, setConvite] = useState<'parado' | 'renovado' | 'falhou'>('parado');
+  const renovarConvite = useCallback(async () => {
+    const confirmado = await renovarConviteDaSessao();
+    const atual = session.getState();
+    if (atual.status === 'live') copy(atual.shareUrl);
+    setConvite(confirmado ? 'renovado' : 'falhou');
+    window.setTimeout(() => setConvite('parado'), 3_000);
+  }, [renovarConviteDaSessao, session, copy]);
 
   /**
    * Inicia ao montar, encerra ao desmontar.
@@ -633,6 +650,35 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
                       Direto do seu PC para o deles. Fechar esta aba encerra a transmissão —
                       deixá-la atrás do jogo não.
                     </p>
+                  </div>
+                </PanelSection>
+
+                {/*
+                  Convite (TELA-018): duas ações, porque são duas decisões.
+                  Renovar barra quem tem o link velho e deixa quem já está
+                  dentro; desconectar tira quem está dentro, que pode voltar
+                  pelo mesmo link enquanto ele não for renovado.
+                */}
+                <PanelSection rotulo="convite" className="border-t border-line py-4">
+                  <div className="flex flex-col gap-3">
+                    <p className="text-[12px] leading-relaxed text-muted">
+                      Só entra quem tem o link completo. Renovar gera um link novo: o antigo
+                      para de funcionar para quem chegar depois.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <BigButton tone="ghost" onClick={() => void renovarConvite()}>
+                        {convite === 'renovado'
+                          ? 'link novo copiado'
+                          : convite === 'falhou'
+                            ? 'servidor não confirmou — tente de novo'
+                            : 'renovar convite'}
+                      </BigButton>
+                      {state.peers.length > 0 && (
+                        <BigButton tone="danger" onClick={desconectarTodos}>
+                          desconectar todos
+                        </BigButton>
+                      )}
+                    </div>
                   </div>
                 </PanelSection>
               </div>

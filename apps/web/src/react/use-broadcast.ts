@@ -20,6 +20,9 @@ export type BroadcastControls = {
   setVolumeTransmissao: (volume: number) => void;
   /** Retoma o áudio suspenso pelo navegador. Chamar dentro do clique. */
   retomarAudio: () => Promise<void>;
+  /** Troca o convite; `true` quando o servidor confirmou. */
+  renovarConvite: () => Promise<boolean>;
+  desconectarTodos: () => void;
 };
 
 /**
@@ -72,6 +75,8 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
   );
 
   const retomarAudio = useCallback(() => session.retomarAudio(), [session]);
+  const renovarConvite = useCallback(() => session.renovarConvite(), [session]);
+  const desconectarTodos = useCallback(() => session.desconectarTodos(), [session]);
 
   return {
     state,
@@ -82,5 +87,7 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
     setPrioridade,
     setVolumeTransmissao,
     retomarAudio,
+    renovarConvite,
+    desconectarTodos,
   };
 }

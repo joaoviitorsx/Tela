@@ -6,6 +6,10 @@ browser para o dos seus amigos. Sem cadastro, sem servidor de mídia, sem custo.
 Você aperta um botão, ganha um link, manda pros amigos. Eles abrem e veem seu
 jogo. Nada mais.
 
+O link é privado: `tela.gg/<seu-canal>#k=<convite>`. Sem o convite, ninguém
+entra — adivinhar o nome do canal não basta (ADR 0021). O convite fica o mesmo
+entre transmissões até você renovar.
+
 ---
 
 ## O problema
@@ -116,17 +120,25 @@ de **upload**, não de CPU.
 
 Estas são consequências da arquitetura, não bugs a corrigir depois:
 
-- **Teto de 3 espectadores.** Cada um é uma cópia do seu upload saindo de casa
-  e uma conexão a mais para negociar. Acima disso o jogo sente.
-- **Seu upload é o gargalo.** 1080p60 são ~8 Mbps por espectador. Um link
-  assimétrico de 30 Mbps comporta dois, não três.
+- **Teto de 5 espectadores (configurável até 8).** Cada um é uma cópia do seu
+  upload saindo de casa e uma conexão a mais para negociar. Cinco é o limite
+  técnico configurado, **não** uma promessa de cinco em 1080p60: quanto cabe
+  depende da sua subida, e o impacto no FPS do jogo com 3 e 5 espectadores
+  ainda não foi medido em hardware (TELA-016).
+- **Seu upload é o gargalo.** Cada espectador recebe uma cópia inteira, e a
+  qualidade desce junto para todos quando a subida não comporta. A tela diz
+  quando isso acontece e por quê.
 - **~15–20% das conexões precisam de TURN.** CGNAT simétrico não fura, e o
   remédio é um relay de terceiro com cota. É o preço honesto de "sem
   servidor" — não existe topologia que sirva 100% dos usuários com zero
   infraestrutura.
-- **O slug não é permanente.** O signaling não persiste nada. Seu link fica
-  reservado enquanto você transmite, mais 5 minutos de carência para
-  reconexão. Reiniciar o processo limpa tudo.
+- **O slug não é reservado para sempre.** O signaling não persiste nada. O nome
+  fica seu enquanto você transmite, mais 5 minutos de carência para
+  reconexão. O convite do link mora no seu navegador; recuperar a conta em
+  outro navegador leva o dono, não o convite — o link muda.
+- **Colapso de rede numa conexão já aberta** é tratado (ADR 0023) e medido no
+  simulador e em Chrome com link estreito, mas não numa rede real que despenca
+  no meio da partida. O roteiro está em `docs/qa/TELA-015-colapso.md`.
 - **Cota diária no free tier.** 100.000 requisições/dia no Worker. Uma
   transmissão gasta dezenas de mensagens de sinalização, não milhares — mas o
   teto existe, e estourar dá erro claro, não degradação silenciosa.
@@ -187,9 +199,15 @@ divergem de verdade.
 | **macOS** | Exige driver de terceiro (BlackHole, Loopback) | Fora do escopo — a tela inicial avisa em vez de prometer |
 
 A tela inicial detecta o sistema e mostra a instrução certa; no Linux ela
-oferece o mesmo script para baixar. Áudio de jogo vai a 128 kbps, e DTX e RED ficam
-desligados de propósito: DTX corta o que ele acha que é silêncio e vira
-gaguejo; RED manda redundância, e redundância custa latência.
+oferece o mesmo script para baixar. Áudio de jogo sai em **estéreo de verdade**
+(medido: um tom só na esquerda chega só na esquerda), com teto de 128 kbps e
+sem processamento de voz. DTX e RED seguem desligados até uma comparação
+perceptiva dizer o contrário (ADR 0024); a comparação ainda não foi feita.
+
+**Ocultar a transmissão** (botão no console ao vivo) troca a tela por um quadro
+"transmissão pausada" sem derrubar ninguém, e silencia o som, a menos que você
+peça para manter. Não é encerrar: voltar é instantâneo. O que já tinha saído
+antes do clique não volta.
 
 ## Rodar
 
@@ -205,9 +223,19 @@ pnpm turbo lint typecheck test build   # tem que passar antes de qualquer entreg
 pnpm depcruise                         # ciclos de dependência
 ```
 
-272 testes, todos sem browser e sem rede: a lógica de mídia vive em classes
+Mais de 650 testes sem browser e sem rede: a lógica de mídia vive em classes
 puras com `RTCPeerConnection` injetada, então a negociação inteira é
-exercitável em milissegundos.
+exercitável em milissegundos. Por cima deles, o que só navegador prova:
+
+```bash
+pnpm dev                    # num terminal
+pnpm e2e                    # malha, estéreo L/R, convite, pausa em dois Chromium
+node e2e/banda.e2e.mjs      # link estreito: a sessão desce, diz o motivo e volta
+node e2e/malhas.sim.mjs     # 1200 cenários das malhas de controle
+pnpm test:audio-linux       # script de áudio contra um pactl falso
+```
+
+A CI roda tudo isso em `develop` e `main`; o deploy só sai com tudo verde.
 
 O servidor tem duas implementações — Node portátil e Durable Object — porque
 sob hibernação o modelo de estado é genuinamente diferente. Uma bateria de
@@ -225,7 +253,8 @@ já conseguiu assumir um canal ao vivo.
 | Cookie de rastreamento, analytics | Não |
 | Gravação de vídeo ou áudio | Não |
 | Vídeo passando por servidor nosso | Não — é P2P |
-| Slug e hash do ownerToken | Em memória, enquanto o canal existe |
+| Slug, hash do ownerToken e hash do convite | Em memória, enquanto o canal existe |
+| Diagnóstico da transmissão | Só no seu navegador; sai quando você copia e manda |
 
 Não há login. Um token de 32 bytes no `localStorage` **é** a credencial —
 trade-off consciente, com página de exportação em `/recuperar`.
@@ -246,6 +275,12 @@ trade-off consciente, com página de exportação em `/recuperar`.
 | [`docs/adr/0017`](docs/adr/0017-o-governador-mede-orcamento-nao-teto.md) | Por que 800 Mbps de subida entregavam 12, e o que mudou |
 | [`docs/adr/0018`](docs/adr/0018-as-malhas-mediam-a-propria-atuacao.md) | Os 30 achados da revisão adversarial do pipeline |
 | [`docs/adr/0019`](docs/adr/0019-medido-em-vez-de-deduzido.md) | 1200 cenários simulados e dois Chrome reais: o que se provou e o que se desmentiu |
+| [`docs/adr/0020`](docs/adr/0020-nivel-h264-nao-se-inventa.md) | Por que o nível H.264 do receptor não é mais reescrito |
+| [`docs/adr/0021`](docs/adr/0021-sala-privada-por-convite.md) | Sala privada por convite e protocolo v2 |
+| [`docs/adr/0022`](docs/adr/0022-identidade-crt-ambar.md) | A identidade CRT âmbar da interface |
+| [`docs/adr/0023`](docs/adr/0023-colapso-de-link-e-sonda.md) | Colapso de link e a sonda de subida |
+| [`docs/adr/0024`](docs/adr/0024-politica-opus.md) | Estéreo que chega em estéreo, e o que falta decidir no áudio |
+| [`docs/qa/`](docs/qa/) | O que foi executado e o que depende de gente, por tarefa |
 
 Comece pela [ADR 0005](docs/adr/0005-mesh-p2p.md) se quiser entender a
 arquitetura atual, e pela [0002](docs/adr/0002-transporte-p2p-self-host.md) se

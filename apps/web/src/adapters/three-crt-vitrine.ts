@@ -32,9 +32,10 @@ import { BASE_HEX, carregaModelo, descartaCena, restauraContornos } from './crt-
  * SINAL — que é literalmente o estado do canal antes de ele ter nome.
  *
  * As três lâmpadas da lateral já vinham modeladas e são exatamente o vocabulário
- * de estado da ADR 0008: âmbar enquanto confere, vermelho quando o nome não
- * serve, verde quando está pronto para ir ao ar. Verde ali é o mesmo verde do AO
- * VIVO um passo antes dele, não um segundo uso do acento.
+ * de estado do produto: âmbar enquanto confere, vermelho quando o nome não
+ * serve, verde quando está pronto para ir ao ar. Desde a ADR 0022 o verde é o
+ * `ok` — o mesmo "confirmado" do campo ao lado —, e o âmbar do tubo é o fósforo
+ * do slug, não um segundo uso do acento.
  *
  * # Três coisas que custam bateria, e o que foi feito com elas
  *
@@ -86,7 +87,7 @@ const FRAGMENT = /* glsl */ `
   }
 
   // O renderizador converte linear -> sRGB na saída, e este shader compõe em
-  // sRGB, que é onde os tokens da ADR 0008 fazem sentido. A última linha desfaz.
+  // sRGB, que é onde os tokens da ADR 0022 fazem sentido. A última linha desfaz.
   vec3 paraLinear(vec3 c) {
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
   }
@@ -131,7 +132,7 @@ const LAMPADA: Record<StatusCanal, string | null> = {
   livre: 'led_verde',
 };
 
-/** O que o tubo escreve embaixo do endereço. A cor sozinha nunca basta (ADR 0008 §3). */
+/** O que o tubo escreve embaixo do endereço. A cor sozinha nunca basta (ADR 0008 §3, mantido na 0022). */
 const OSD: Record<StatusCanal, string> = {
   vazio: 'SEM SINAL',
   verificando: 'SINTONIZANDO',
@@ -139,18 +140,18 @@ const OSD: Record<StatusCanal, string> = {
   livre: 'PRONTO PARA IR AO AR',
 };
 
-/** As cores das lâmpadas vêm da tabela da ADR 0008, não do modelo. */
+/** As cores das lâmpadas vêm dos tokens da ADR 0022 (ok, âmbar, LED), não do modelo. */
 const CORES_ACESAS: Record<string, string> = {
-  led_verde: '#22e07a',
-  led_ambar: '#ffb020',
-  led_vermelho: '#ff4d4d',
+  led_verde: '#8fd694',
+  led_ambar: '#f2a93b',
+  led_vermelho: '#ff6a52',
 };
 
 /** Apagada é a mesma cor a 22%: dá para ver que a lâmpada existe. */
 const CORES_APAGADAS: Record<string, string> = {
-  led_verde: '#0a3520',
+  led_verde: '#1d3a20',
   led_ambar: '#3a2a0c',
-  led_vermelho: '#3a1616',
+  led_vermelho: '#3a1a14',
 };
 
 /** Chiado de fundo por estado: sem nome, o tubo não tem o que mostrar. */
@@ -179,7 +180,7 @@ function corpoQueCabe(
 ): number {
   let corpo = maximo;
   for (; corpo > 16; corpo -= 2) {
-    ctx.font = `${peso} ${corpo}px "Barlow Condensed", system-ui, sans-serif`;
+    ctx.font = `${peso} ${corpo}px "Jersey 10", "Silkscreen", monospace`;
     if (ctx.measureText(texto).width <= largura) break;
   }
   return corpo;
@@ -218,12 +219,12 @@ function pintaTela(ctx: CanvasRenderingContext2D, { slug, status }: EstadoVitrin
   const vazio = slug === '';
   const herói = vazio ? 'SEM SINAL' : slug;
 
-  ctx.fillStyle = vazio ? '#8a8a96' : status === 'invalido' ? '#ff4d4d' : '#ededf0';
-  corpoQueCabe(ctx, herói, 600, vazio ? 86 : 96, L * 0.86);
+  ctx.fillStyle = vazio ? '#8a8272' : status === 'invalido' ? '#ff8a76' : '#ffc766';
+  corpoQueCabe(ctx, herói, 400, vazio ? 86 : 110, L * 0.86);
   ctx.fillText(herói, L / 2, A / 2 + 14);
 
-  ctx.fillStyle = status === 'invalido' ? '#ff4d4d' : status === 'livre' ? '#22e07a' : '#8a8a96';
-  ctx.font = '600 26px "Barlow Condensed", system-ui, sans-serif';
+  ctx.fillStyle = status === 'invalido' ? '#ff8a76' : status === 'livre' ? '#8fd694' : '#8a8272';
+  ctx.font = '400 22px "Silkscreen", monospace';
   ctx.letterSpacing = '0.16em';
   ctx.fillText(vazio ? 'ESCOLHA UM NOME AO LADO' : OSD[status], L / 2, A / 2 + 66);
   ctx.letterSpacing = '0px';
@@ -492,7 +493,7 @@ export const abrirVitrine = async ({
   observador.observe(canvas);
 
   // As fontes do canvas 2D podem não estar prontas no primeiro desenho: sem
-  // Barlow Condensed, "SEM SINAL" sai numa métrica que não é a do produto.
+  // Jersey 10, "SEM SINAL" sai numa métrica que não é a do produto.
   void document.fonts?.ready.then(() => {
     if (ctx === null) return;
     pintaTela(ctx, estado);

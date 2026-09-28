@@ -1,7 +1,10 @@
 # ADR 0008 — Disciplina de cor: papéis, contraste e escassez do acento
 
-**Status:** aceita · **Data:** 2026-08-23
+**Status:** aceita, **paleta e tipografia substituídas pela [ADR 0022](0022-identidade-crt-ambar.md)** · **Data:** 2026-08-23
 **Altera:** §11 da documentação técnica (valores de dois tokens)
+
+> A identidade mudou (âmbar sobre grafite; Silkscreen, Jersey 10 e Martian Mono). Continuam valendo o princípio de um papel por token, a exigência de 3:1 para contorno interativo (1.4.11) e "nenhum estado só por cor". Os hex e a tabela abaixo são históricos.
+
 
 ## Contexto
 

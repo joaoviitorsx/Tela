@@ -15,6 +15,8 @@ import { chromium } from 'playwright';
 const CHROME = '/home/joaoviitosx/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome';
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const SLUG = process.env.SLUG ?? 'joao';
+// Protocolo v2 (TELA-018): a sala só abre com o convite do link.
+const CONVITE = 'e2e' + 'c'.repeat(19);
 
 const ok = (cond, msg) => {
   console.log(`${cond ? '  ok  ' : ' FALHA'} ${msg}`);
@@ -66,7 +68,7 @@ ok(campo === 'seunome', 'campo de slug presente');
 
 console.log('\n2. A rota /:slug abre como espectador e fica offline (ninguém transmitindo)');
 const viewer = await newPage('viewer');
-await viewer.goto(`${WEB}/${SLUG}`, { waitUntil: 'networkidle' });
+await viewer.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'networkidle' });
 await viewer.waitForTimeout(2500);
 const texto = await viewer.textContent('body');
 ok(
@@ -79,7 +81,7 @@ const host = await newPage('host');
 await host.goto(`${WEB}/`, { waitUntil: 'networkidle' });
 
 const resultado = await host.evaluate(
-  async ([slug, base]) => {
+  async ([slug, base, convite]) => {
     const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
     const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
@@ -119,7 +121,7 @@ const resultado = await host.evaluate(
     });
     window.__transport = transport;
 
-    await transport.host(slug, 'o'.repeat(43));
+    await transport.host(slug, 'o'.repeat(43), convite);
     await transport.publishVideo(track, shared.PRESET_720P60);
     // Publicado DEPOIS do vídeo, como acontece de verdade — o sink virtual do
     // Linux resolve uns instantes depois da captura de tela.
@@ -127,7 +129,7 @@ const resultado = await host.evaluate(
     void base;
     return { hosted: true, contentHint: track.contentHint, temAudio: Boolean(audioTrack) };
   },
-  [SLUG, WEB],
+  [SLUG, WEB, CONVITE],
 );
 ok(resultado.hosted, 'transmissor reivindicou o canal pelo signaling real');
 ok(resultado.contentHint === 'motion', 'contentHint=motion aplicado na trilha');
@@ -276,6 +278,25 @@ console.log('\n3b. Grafo de ganho em Chrome real (TELA-009)');
   ok(grafo.mudoNoFallback && grafo.voltou && !grafo.ativoFallback, 'sem Web Audio, o mudo desliga a trilha crua');
 }
 
+console.log('\n3c. Sala privada: link sem convite ou com convite errado não entra (TELA-018)');
+{
+  const semConvite = await newPage('sem-convite');
+  await semConvite.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
+  await semConvite.waitForTimeout(1500);
+  const t1 = await semConvite.textContent('body');
+  ok(t1.includes('link incompleto'), `link sem #k= nem tenta entrar (${JSON.stringify(t1.slice(0, 60))})`);
+
+  const errado = await newPage('convite-errado');
+  await errado.goto(`${WEB}/${SLUG}#k=${'x'.repeat(22)}`, { waitUntil: 'domcontentloaded' });
+  await errado.waitForTimeout(3000);
+  const t2 = await errado.textContent('body');
+  ok(t2.includes('convite renovado'), `convite errado é recusado pelo servidor (${JSON.stringify(t2.slice(0, 60))})`);
+  const naMalhaAinda = await host.evaluate(() => window.__transport.peers().length);
+  ok(naMalhaAinda === 1, `recusado não ocupou vaga na malha (${naMalhaAinda})`);
+  await semConvite.close();
+  await errado.close();
+}
+
 console.log('\n4. Teto de espectadores é aplicado de verdade');
 /**
  * Um espectador já está assistindo; os outros enchem o canal.
@@ -290,7 +311,7 @@ const TETO = 5;
 const extras = [];
 for (let i = 0; i < TETO - 1; i += 1) {
   const p = await newPage(`extra${i}`);
-  await p.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
+  await p.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
   extras.push(p);
   await p.waitForTimeout(3000);
 }
@@ -298,7 +319,7 @@ const naMalha = await host.evaluate(() => window.__transport.peers().length);
 ok(naMalha === TETO, `malha cheia com ${naMalha} espectadores (teto ${TETO})`);
 
 const excedente = await newPage('excedente');
-await excedente.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
+await excedente.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
 await excedente.waitForTimeout(4000);
 const textoCheio = await excedente.textContent('body');
 ok(

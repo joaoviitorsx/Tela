@@ -17,18 +17,29 @@
       alguém esquecer de atualizar.
     -->
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="tela" />
-    <meta property="og:title" content="tela" />
+    <meta property="og:site_name" content="Tela" />
+    <meta property="og:title" content="Seu amigo te chamou pra assistir" />
     <meta
       property="og:description"
-      content="Transmita sua gameplay em 1080p com menos de 200ms de atraso. Sem cadastro."
+      content="Abre no navegador, sem cadastro nem instalar nada. Gameplay em 1080p com menos de 200ms de atraso."
     />
-    <meta property="og:image" content="/og.png" />
+    <!--
+      O nome do arquivo muda junto com a arte: Discord e WhatsApp guardam a
+      prévia pela URL da imagem, e trocar o conteúdo de `/og.png` deixaria a
+      TV verde antiga presa no cache deles por semanas.
+    -->
+    <meta property="og:image" content="/og-convite.png" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="tela — televisão retrô com um play verde na tela" />
+    <meta
+      property="og:image:alt"
+      content="TV retrô piscando ao lado do texto: ao vivo agora, seu amigo te chamou pra assistir"
+    />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#0B0C0E" />
+    <meta name="twitter:title" content="Seu amigo te chamou pra assistir" />
+    <!-- A faixa lateral da prévia no Discord vem daqui: o âmbar da arte. -->
+    <meta name="theme-color" content="#E99D38" />
     <!-- Sem diretório e sem busca: link só existe para quem recebeu (§15). -->
     <meta name="robots" content="noindex, nofollow" />
     <title>Tela</title>

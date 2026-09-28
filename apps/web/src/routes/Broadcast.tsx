@@ -124,7 +124,11 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
     retomarAudio,
     renovarConvite: renovarConviteDaSessao,
     desconectarTodos,
+    pausar,
+    retomar,
   } = useBroadcast(session);
+  /** Pausa de privacidade: manter o som é exceção explícita, desligada. */
+  const [pausaComSom, setPausaComSom] = useState(false);
 
   const live = state.status === 'live';
   const vivo = state.status === 'live' ? state : null;
@@ -520,6 +524,37 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
                 >
                   ABRIR COMO AMIGO ↗
                 </a>
+                {/*
+                  Pausa de privacidade (TELA-022): os amigos veem o quadro
+                  "transmissão pausada" no lugar da tela, sem perder a sala.
+                  Não é encerrar — a captura continua, e voltar é instantâneo.
+                */}
+                {vivo.pausa === null ? (
+                  <div className="flex flex-col gap-1.5">
+                    <Botao onClick={() => void pausar({ manterSom: pausaComSom })}>
+                      OCULTAR TRANSMISSÃO
+                    </Botao>
+                    <label className="flex min-h-11 cursor-pointer items-center gap-2 text-[11px] text-muted">
+                      <input
+                        type="checkbox"
+                        checked={pausaComSom}
+                        onChange={(e) => setPausaComSom(e.target.checked)}
+                      />
+                      manter o som enquanto oculto
+                    </label>
+                  </div>
+                ) : (
+                  <>
+                    <p role="status" className="m-0 text-[12px] leading-relaxed text-warn">
+                      Oculta: seus amigos veem "transmissão pausada"
+                      {vivo.pausa.comSom ? ', e ainda ouvem o som.' : ', sem som.'} O que já tinha
+                      saído antes do clique não volta.
+                    </p>
+                    <Botao tom="primaria" onClick={() => void retomar()}>
+                      VOLTAR A MOSTRAR
+                    </Botao>
+                  </>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <Botao onClick={() => void switchSource()}>TROCAR FONTE</Botao>
                   <Botao tom="perigo" onClick={handleStop}>

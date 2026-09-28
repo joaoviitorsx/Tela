@@ -29,6 +29,9 @@ import { useCopia } from '../react/use-copia.js';
 import { useDiagnostico } from '../react/use-diagnostico.js';
 import { useDialogo } from '../react/use-dialogo.js';
 import { BLOCOS_DO_TESTE, medidaDaConexaoDireta, useTesteDeRede } from '../react/use-teste-de-rede.js';
+import { useResumoDaTransmissao } from '../react/use-resumo-da-transmissao.js';
+import { FimDeTransmissao } from '../components/FimDeTransmissao.js';
+import { isPresetId } from '../core/media/presets.js';
 import { ModalApp } from './ModalApp.js';
 import { useMediaStats } from '../react/use-media-stats.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
@@ -64,6 +67,10 @@ const MOTIVOS: Record<BroadcastFailure, string> = {
   TRANSPORT_FAILED: 'A conexão de vídeo caiu.',
   USER_STOPPED: 'Transmissão encerrada.',
 };
+
+/** Rótulo do degrau para o resumo da tela de fim. Estável: vive fora do componente. */
+const rotuloDoPresetId = (id: string): string =>
+  isPresetId(id) ? PRESETS[id].label.replace(' econômico', ' eco') : id;
 
 /** O único motivo que não é falha. Todo o resto merece o tom de alerta. */
 const ENCERRAMENTO_NORMAL: BroadcastFailure = 'USER_STOPPED';
@@ -167,6 +174,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const diagCopia = useCopia(2_000);
   const dialogo = useDialogo(diagAberto, useCallback(() => setDiagAberto(false), []));
   const teste = useTesteDeRede(sondaDeRede);
+  const resumo = useResumoDaTransmissao(state, rotuloDoPresetId);
   const [appAberto, setAppAberto] = useState(false);
   const fecharApp = useCallback(() => setAppAberto(false), []);
 
@@ -257,46 +265,78 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   if (state.status === 'ended') {
     const falhou = state.reason !== ENCERRAMENTO_NORMAL;
     const relatorio = session.diagnostico(navigator.userAgent);
+    const recomecar = () => void start(slug, identity.ownerToken(), presetId, audioDeviceId);
     return (
-      <Moldura>
-        <PainelOsd titulo={falhou ? 'NÃO DEU PARA TRANSMITIR' : 'TRANSMISSÃO ENCERRADA'}>
-          <div className="flex flex-col items-start gap-5 p-5">
-            <p
-              role="status"
-              className={`m-0 flex items-start gap-2.5 text-[14px] leading-relaxed ${falhou ? 'text-warn' : 'text-text'}`}
-            >
-              {falhou && <span aria-hidden="true" className="font-[family-name:var(--font-pixel)] text-accent">!</span>}
-              {MOTIVOS[state.reason] ?? 'Transmissão encerrada.'}
-            </p>
-            {relatorio !== null && (
-              <details className="w-full text-[12px] text-muted">
-                <summary className="flex min-h-11 cursor-pointer items-center">
-                  ver diagnóstico da tentativa
-                </summary>
-                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all border-2 border-line bg-deep p-3 text-[11px]">
-                  {JSON.stringify(relatorio, null, 2)}
-                </pre>
-                <div className="mt-2">
-                  <Botao onClick={copiarDiagnostico}>
-                    {diagCopia.copiado ? 'COPIADO' : 'COPIAR DIAGNÓSTICO'}
+      <div className="flex min-h-dvh flex-col bg-void">
+        <VidroCrt />
+        <Cabecalho marcaHref="/" />
+        <main className="flex flex-1 items-center justify-center p-4 sm:p-8">
+          <FimDeTransmissao
+            falhou={falhou}
+            titulo={falhou ? 'SEM SINAL' : 'FIM DA TRANSMISSÃO'}
+            mensagem={
+              falhou
+                ? (MOTIVOS[state.reason] ?? 'A transmissão caiu.')
+                : 'Seus amigos já não recebem imagem. O link e o convite continuam seus: é só transmitir de novo.'
+            }
+            canal={`${window.location.host}/${slug}`}
+            resumo={
+              resumo === null
+                ? null
+                : [
+                    { rotulo: 'TEMPO NO AR', valor: resumo.tempoNoAr, tom: 'destaque' },
+                    {
+                      rotulo: 'PICO DE AMIGOS',
+                      valor: String(resumo.pico),
+                      nota:
+                        resumo.pico === 0
+                          ? 'ninguém entrou desta vez'
+                          : resumo.pico === 1
+                            ? 'assistindo ao mesmo tempo'
+                            : 'assistindo juntos',
+                    },
+                    { rotulo: 'ÚLTIMA QUALIDADE', valor: resumo.qualidade },
+                  ]
+            }
+            acoes={
+              <>
+                {(!falhou || REPETIVEL.has(state.reason)) && (
+                  <Botao
+                    tom="primaria"
+                    grande
+                    onClick={recomecar}
+                    icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
+                  >
+                    {falhou ? 'TENTAR DE NOVO' : 'TRANSMITIR DE NOVO'}
                   </Botao>
-                </div>
-              </details>
-            )}
-            <div className="flex flex-wrap gap-3">
-              {REPETIVEL.has(state.reason) && (
-                <Botao
-                  tom="primaria"
-                  onClick={() => void start(slug, identity.ownerToken(), presetId, audioDeviceId)}
-                >
-                  TENTAR DE NOVO
+                )}
+                <Botao grande onClick={onExit}>
+                  VOLTAR AO INÍCIO
                 </Botao>
-              )}
-              <Botao onClick={onExit}>VOLTAR PARA O INÍCIO</Botao>
-            </div>
-          </div>
-        </PainelOsd>
-      </Moldura>
+              </>
+            }
+            diagnostico={
+              relatorio === null ? null : (
+                <details className="w-full border-2 border-line bg-surface text-[12px] text-muted">
+                  <summary className="flex min-h-11 cursor-pointer items-center px-4">
+                    ver diagnóstico da tentativa
+                  </summary>
+                  <div className="flex flex-col gap-3 border-t-2 border-line p-4">
+                    <pre className="m-0 max-h-64 overflow-auto whitespace-pre-wrap break-all bg-deep p-3 text-[11px]">
+                      {JSON.stringify(relatorio, null, 2)}
+                    </pre>
+                    <div>
+                      <Botao onClick={copiarDiagnostico}>
+                        {diagCopia.copiado ? 'COPIADO' : 'COPIAR DIAGNÓSTICO'}
+                      </Botao>
+                    </div>
+                  </div>
+                </details>
+              )
+            }
+          />
+        </main>
+      </div>
     );
   }
 

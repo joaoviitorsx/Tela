@@ -423,6 +423,59 @@
   }
 
   /*
+    A TV desligando (tela de fim): a imagem colapsa numa linha, a linha num
+    ponto, o ponto apaga. É o que um CRT fazia de verdade ao perder o feixe.
+  */
+  @keyframes tv-desligar {
+    0% {
+      opacity: 1;
+      transform: scale(1, 1);
+      filter: brightness(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1, 0.006);
+      filter: brightness(2.6);
+    }
+    78% {
+      opacity: 1;
+      transform: scale(0.006, 0.006);
+      filter: brightness(4);
+    }
+    100% {
+      opacity: 0;
+      transform: scale(0, 0);
+    }
+  }
+
+  @keyframes tv-ponto {
+    0%,
+    72% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    80% {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.2);
+    }
+  }
+
+  @keyframes tv-acende {
+    from {
+      opacity: 0;
+      filter: blur(6px) brightness(2);
+    }
+    to {
+      opacity: 1;
+      filter: none;
+    }
+  }
+
+  /*
     Todo movimento mora aqui, dentro de `no-preference`: quem pediu menos
     movimento não recebe uma versão "mais rápida" — não recebe nada. Nenhum dos
     laços infinitos é de tela cheia; o único contínuo é o LED de 8px.
@@ -455,6 +508,21 @@
 
     .entra {
       animation: tela-fade-in 200ms var(--ease-out-soft) both;
+    }
+
+    /*
+      Tela de fim. As camadas nascem no estado FINAL (invisíveis) e a animação
+      é que as mostra — sem movimento, quem pediu menos vê direto o resultado,
+      em vez de uma camada branca congelada por cima da mensagem.
+    */
+    .tv-desligando {
+      animation: tv-desligar 800ms cubic-bezier(0.6, 0, 0.2, 1) both;
+    }
+    .tv-ponto {
+      animation: tv-ponto 1300ms ease-out both;
+    }
+    .tv-mensagem {
+      animation: tv-acende 600ms 1050ms ease-out both;
     }
   }
 }

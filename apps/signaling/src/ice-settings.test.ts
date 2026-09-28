@@ -62,12 +62,27 @@ describe('configuração ICE', () => {
     expect('problems' in parsed && parsed.problems).toContain('CLOUDFLARE_UNSUPPORTED_ON_NODE');
   });
 
-  it('Worker rejeita secrets incompletas e limite inválido sem mostrar valores', () => {
+  it('Worker com secrets incompletas segue SEM relay e relata só os códigos', async () => {
     const crypto = webcrypto as unknown as WebCryptoLike;
+    const relatos: string[][] = [];
     const partial: Env = { CHANNELS: null as never, TURN_KEY_ID: 'fixture-secret' };
-    expect(() => makeChannelDeps(partial, crypto)).toThrow('CLOUDFLARE_CONFIG_INCOMPLETE');
-    expect(() => makeChannelDeps(partial, crypto)).not.toThrow('fixture-secret');
+    const deps = makeChannelDeps(partial, crypto, (p) => relatos.push([...p]));
+    expect(relatos[0]).toContain('CLOUDFLARE_CONFIG_INCOMPLETE');
+    expect(JSON.stringify(relatos)).not.toContain('fixture-secret');
+    const ice = await deps.iceServersFor('peer');
+    expect(ice.relayStatus).toBe('not-configured');
+    expect(ice.servers.flatMap((s) => [s.urls].flat()).every((u) => u.startsWith('stun:'))).toBe(true);
+    // Limite de peers é variável do próprio wrangler.toml: esse continua barrando.
     expect(() => makeChannelDeps({ CHANNELS: null as never, MAX_PEERS: '999' }, crypto)).toThrow('MAX_PEERS_INVALID');
+  });
+
+  it('secrets gravados VAZIOS não derrubam a sinalização (produção, 2026-09-28)', async () => {
+    const crypto = webcrypto as unknown as WebCryptoLike;
+    const relatos: string[][] = [];
+    const vazios: Env = { CHANNELS: null as never, TURN_KEY_ID: '', TURN_KEY_API_TOKEN: ' ' };
+    const deps = makeChannelDeps(vazios, crypto, (p) => relatos.push([...p]));
+    expect(relatos[0]).toEqual(expect.arrayContaining(['TURN_KEY_ID_EMPTY', 'TURN_KEY_API_TOKEN_EMPTY']));
+    expect((await deps.iceServersFor('peer')).relayStatus).toBe('not-configured');
   });
 
   it('coturn emite uma credencial efêmera para todas as URLs', () => {

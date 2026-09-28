@@ -10,7 +10,7 @@ import {
   isBlockedSlug,
 } from '@tela/shared';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
-import { parseIceSettings } from './ice-settings.js';
+import { type IceSettings, parseIceSettings } from './ice-settings.js';
 import { makeCloudflareProvider, type IceProvisionResult } from './ice-provision.js';
 
 /**
@@ -972,12 +972,42 @@ export type WebCryptoLike = {
   };
 };
 
-export function makeChannelDeps(env: Env, crypto: WebCryptoLike): ChannelDeps {
+/**
+ * Configuração de ICE que não fecha vira "sem relay", não "sem sinalização".
+ *
+ * Lançava no construtor do Durable Object, e o custo disso foi uma produção
+ * inteira fora do ar: dois secrets de TURN gravados VAZIOS faziam toda
+ * conexão responder 500, com o deploy verde e o `check-prod` em dia. No Node a
+ * mesma validação falha no boot e alguém vê; no Worker o deploy passa e cada
+ * requisição morre em silêncio.
+ *
+ * O relay é a rota de exceção — NAT simétrico dos dois lados. A sinalização é
+ * a porta de entrada de todo mundo. Sem relay, a maioria dos amigos ainda
+ * conecta direto; sem sinalização, ninguém. Então: STUN só (o padrão, ou o
+ * `STUN_URLS` se ele estiver certo), `relayStatus: 'not-configured'` para os
+ * clientes, e os CÓDIGOS do problema no log — nunca os valores.
+ */
+function iceComFallback(env: Env, relatar: (problemas: readonly string[]) => void): IceSettings {
+  const parsed = parseIceSettings(env);
+  if ('settings' in parsed) return parsed.settings;
+  relatar(parsed.problems);
+  const soStun = parseIceSettings({ STUN_URLS: env.STUN_URLS });
+  if ('settings' in soStun) return soStun.settings;
+  const padrao = parseIceSettings({});
+  if ('settings' in padrao) return padrao.settings;
+  // O padrão é constante do código: se ele não passa, é bug, não configuração.
+  throw new Error('ICE_DEFAULT_INVALID');
+}
+
+export function makeChannelDeps(
+  env: Env,
+  crypto: WebCryptoLike,
+  relatar: (problemas: readonly string[]) => void = (problemas) =>
+    console.error(`ICE_CONFIG_INVALID: ${problemas.join(',')} — sinalização segue sem relay`),
+): ChannelDeps {
   const parsedMax = Number(env.MAX_PEERS ?? DEFAULT_LIMITS.maxPeers);
   if (!Number.isInteger(parsedMax) || parsedMax < 1 || parsedMax > 8) throw new Error('MAX_PEERS_INVALID');
-  const parsedIce = parseIceSettings(env);
-  if ('problems' in parsedIce) throw new Error(`ICE_CONFIG_INVALID: ${parsedIce.problems.join(',')}`);
-  const settings = parsedIce.settings;
+  const settings = iceComFallback(env, relatar);
   const cloudflare = makeCloudflareProvider(settings);
 
   const encoder = new TextEncoder();

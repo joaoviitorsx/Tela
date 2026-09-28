@@ -140,7 +140,7 @@ const FRAGMENT = /* glsl */ `
   }
 
   // O renderizador converte linear -> sRGB na saída. Como este shader compõe em
-  // sRGB (é onde os tokens da ADR 0008 fazem sentido), a última coisa que ele
+  // sRGB (é onde os tokens da ADR 0022 fazem sentido), a última coisa que ele
   // faz é desfazer essa conversão.
   vec3 paraLinear(vec3 c) {
     return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
@@ -215,7 +215,7 @@ const FRAGMENT = /* glsl */ `
 /**
  * Desenha as caixas medidas no DOM numa textura do tamanho da janela.
  *
- * As cores saem da tabela de tokens da ADR 0008 — o tubo e a página falam a
+ * As cores saem da tabela de tokens da ADR 0022 (que substituiu a 0008) — o tubo e a página falam a
  * mesma paleta, senão o crossfade acusa a troca em cor antes de acusar em
  * forma.
  */
@@ -241,17 +241,17 @@ function pintaInterface(
   for (const placa of placas) {
     const { x, y, largura, altura, tipo } = placa;
     if (tipo === 'contorno') {
-      ctx.strokeStyle = '#5E5E69';
+      ctx.strokeStyle = '#6b6252';
       ctx.lineWidth = 1;
       ctx.strokeRect(x + 0.5, y + 0.5, largura - 1, altura - 1);
     } else if (tipo === 'preenchido') {
-      ctx.fillStyle = '#121216';
+      ctx.fillStyle = '#111215';
       ctx.fillRect(x, y, largura, altura);
     } else if (tipo === 'acento') {
-      ctx.fillStyle = '#22E07A';
+      ctx.fillStyle = '#f2a93b';
       ctx.fillRect(x, y, largura, altura);
     } else {
-      ctx.fillStyle = '#8A8A96';
+      ctx.fillStyle = '#8a8272';
       ctx.fillRect(x, y, largura, altura);
     }
   }

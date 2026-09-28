@@ -140,6 +140,8 @@ export function fakeTrack(kind: 'video' | 'audio'): FakeTrack {
     },
     /** Só no fake: simula o usuário parando pelo controle nativo do browser. */
     fireEnded() {
+      // No navegador o evento só dispara com a trilha já terminada.
+      track.readyState = 'ended' as MediaStreamTrackState;
       for (const handler of listeners.get('ended') ?? []) handler();
     },
   };

@@ -278,6 +278,55 @@ console.log('\n3a. Estéreo de verdade: o que sai só na esquerda chega só na e
   );
 }
 
+console.log('\n3a2. Trocar o som sem renegociar: agora só na DIREITA (TELA-012)');
+{
+  await host.evaluate(async () => {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 660;
+    const merger = ctx.createChannelMerger(2);
+    osc.connect(merger, 0, 1);
+    const dest = ctx.createMediaStreamDestination();
+    merger.connect(dest);
+    osc.start();
+    await window.__transport.replaceAudio(dest.stream.getAudioTracks()[0]);
+  });
+  await viewer.waitForTimeout(1500);
+  const trocado = await viewer.evaluate(async () => {
+    const video = document.querySelector('video');
+    const stream = video?.srcObject;
+    if (!(stream instanceof MediaStream) || stream.getAudioTracks().length === 0) return null;
+    const ctx = new AudioContext();
+    await ctx.resume();
+    const origem = ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+    const divisor = ctx.createChannelSplitter(2);
+    origem.connect(divisor);
+    const medidores = [0, 1].map((i) => {
+      const a = ctx.createAnalyser();
+      a.fftSize = 2048;
+      divisor.connect(a, i);
+      return a;
+    });
+    const buf = new Float32Array(2048);
+    const rms = [0, 0];
+    for (let k = 0; k < 20; k += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      medidores.forEach((a, i) => {
+        a.getFloatTimeDomainData(buf);
+        let soma = 0;
+        for (const v of buf) soma += v * v;
+        rms[i] += Math.sqrt(soma / buf.length) / 20;
+      });
+    }
+    await ctx.close();
+    return { esquerda: Number(rms[0].toFixed(4)), direita: Number(rms[1].toFixed(4)) };
+  });
+  ok(
+    trocado !== null && trocado.direita > 0.05 && trocado.esquerda < trocado.direita * 0.1,
+    `a trilha nova chegou pelo mesmo sender, sem renegociar (${JSON.stringify(trocado)})`,
+  );
+}
+
 console.log('\n3b. Grafo de ganho em Chrome real (TELA-009)');
 {
   const grafo = await host.evaluate(async () => {

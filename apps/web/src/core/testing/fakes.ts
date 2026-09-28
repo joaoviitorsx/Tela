@@ -298,6 +298,11 @@ export class FakeMediaTransport implements MediaTransport {
     this.presets.push(preset);
   }
   readonly substituidas: MediaStreamTrack[] = [];
+  /** `replaceAudio`, em ordem; `null` = parou de mandar som. */
+  readonly audiosTrocados: (MediaStreamTrack | null)[] = [];
+  async replaceAudio(track: MediaStreamTrack | null): Promise<void> {
+    this.audiosTrocados.push(track);
+  }
   async replaceVideo(track: MediaStreamTrack): Promise<void> {
     this.substituidas.push(track);
   }

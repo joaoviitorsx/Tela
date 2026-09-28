@@ -1655,3 +1655,75 @@ describe('BroadcastSession — convite (TELA-018)', () => {
     expect(ctx.session.getState()).toEqual({ status: 'ended', reason: 'OUTDATED' });
   });
 });
+
+describe('BroadcastSession — o som acompanha a troca de tela quando veio dela (TELA-012)', () => {
+  function montar() {
+    const transport = new FakeMediaTransport();
+    const screen = new FakeScreenCapture();
+    const audio = new FakeAudioCapture();
+    const gain = new FakeAudioGain();
+    const scheduler = new FakeScheduler();
+    const session = new BroadcastSession({
+      transport, screen, audio, gain, scheduler, shareUrlFor,
+      convite: new FakeConvites(), createStream, statsIntervalMs: 1_000,
+    });
+    return { transport, screen, audio, gain, scheduler, session };
+  }
+  const vivo = (s: BroadcastSession) => {
+    const st = s.getState();
+    if (st.status !== 'live') throw new Error(st.status);
+    return st;
+  };
+
+  it('som da captura, e a nova tem som: troca a trilha sem renegociar', async () => {
+    const ctx = montar();
+    ctx.screen.withAudio = true;
+    await ctx.session.start(SLUG, TOKEN);
+    const antigo = ctx.screen.audio;
+    await ctx.session.switchSource();
+    const novo = ctx.screen.audio;
+    expect(novo).not.toBe(antigo);
+    expect(ctx.gain.anexadas.at(-1)).toBe(novo);
+    expect(ctx.transport.audiosTrocados).toEqual([novo]);
+    expect(novo.stopped).toBe(false);
+    expect(vivo(ctx.session).hasAudio).toBe(true);
+    const codigos = ctx.session.diagnostico('Chrome/130')?.eventos.map((e) => e.codigo);
+    expect(codigos).toContain('AUDIO_SOURCE_SWITCHED');
+  });
+
+  it('som da captura, e a nova NÃO tem som: para de mandar o som da antiga', async () => {
+    const ctx = montar();
+    ctx.screen.withAudio = true;
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.screen.withAudio = false;
+    ctx.screen.surface = 'window';
+    await ctx.session.switchSource();
+    expect(ctx.transport.audiosTrocados).toEqual([null]);
+    expect(ctx.gain.fechado).toBe(true);
+    const st = vivo(ctx.session);
+    expect(st.hasAudio).toBe(false);
+    expect(st.audio).toBe('sem-fonte');
+    expect(st.audioPerdidoPelaEscolha).toBe(true);
+  });
+
+  it('som de dispositivo (Linux) fica, e o da captura nova é parado', async () => {
+    const ctx = montar();
+    await ctx.session.start(SLUG, TOKEN, { audioDeviceId: 'monitor-1' });
+    expect(vivo(ctx.session).hasAudio).toBe(true);
+    ctx.screen.withAudio = true;
+    await ctx.session.switchSource();
+    expect(ctx.transport.audiosTrocados).toEqual([]);
+    expect(ctx.screen.audio.stopped).toBe(true);
+    expect(vivo(ctx.session).hasAudio).toBe(true);
+  });
+
+  it('cancelar o seletor não mexe no som', async () => {
+    const ctx = montar();
+    ctx.screen.withAudio = true;
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.screen.denied = true;
+    await ctx.session.switchSource();
+    expect(ctx.transport.audiosTrocados).toEqual([]);
+    expect(ctx.screen.audio.stopped).toBe(false);
+  });
+});

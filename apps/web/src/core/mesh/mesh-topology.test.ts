@@ -740,3 +740,36 @@ describe('MeshTopology — parâmetros de áudio verificáveis (TELA-008)', () =
     expect(ctx.mesh.resumoConfigAudio()).toBeNull();
   });
 });
+
+describe('MeshTopology — troca de áudio sem renegociar (TELA-012)', () => {
+  it('troca, silencia com null, e devolve o som ao mesmo sender', async () => {
+    const ctx = build();
+    const audio = fakeTrack('audio');
+    await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle(20);
+    const pc = ctx.factory.created[0] as FakePeerConnection;
+    const sender = pc.getSenders().find((s) => s.track?.kind === 'audio')!;
+    const trocas: (MediaStreamTrack | null)[] = [];
+    (sender as unknown as { replaceTrack: (t: MediaStreamTrack | null) => Promise<void> }).replaceTrack =
+      async (t) => {
+        trocas.push(t);
+        (sender as unknown as { track: MediaStreamTrack | null }).track = t;
+      };
+
+    const nova = fakeTrack('audio');
+    expect(await ctx.mesh.replaceAudio(nova, ctx.stream)).toBe(true);
+    expect(await ctx.mesh.replaceAudio(null, ctx.stream)).toBe(true);
+    const volta = fakeTrack('audio');
+    expect(await ctx.mesh.replaceAudio(volta, ctx.stream)).toBe(true);
+    expect(trocas).toEqual([nova, null, volta]);
+  });
+
+  it('sem sender de áudio, avisa que é preciso publicar', async () => {
+    const ctx = build();
+    await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle(20);
+    expect(await ctx.mesh.replaceAudio(fakeTrack('audio'), ctx.stream)).toBe(false);
+  });
+});

@@ -284,6 +284,11 @@ export type MediaTransport = {
    * diferença entre trocar de janela e recomeçar a transmissão.
    */
   replaceVideo(track: MediaStreamTrack): Promise<void>;
+  /**
+   * Troca a trilha de áudio sem renegociar quando já existe sender; publica
+   * (renegociando) quando não existe. `null` para de mandar som (TELA-012).
+   */
+  replaceAudio(track: MediaStreamTrack | null): Promise<void>;
   /** O que ceder quando os bits não dão para tudo: fluidez ou nitidez. */
   setPrioridade(prioridade: Prioridade): Promise<void>;
   /**

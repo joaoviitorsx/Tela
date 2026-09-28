@@ -284,6 +284,13 @@ export class BroadcastSession {
    * e ela não termina quando a fonte termina — só esta diz se o som acabou.
    */
   private audioFonte: MediaStreamTrack | null = null;
+  /**
+   * De onde veio o som, e portanto o que fazer com ele ao trocar a tela
+   * (TELA-012). `captura`: veio junto com a tela/aba/janela e ACOMPANHA a
+   * troca. `dispositivo`: sink virtual ou entrada escolhida, independente da
+   * tela, e FICA.
+   */
+  private origemAudio: 'captura' | 'dispositivo' | null = null;
   private readonly classificadorAudio = new ClassificadorDeAudio();
   private grafoAudio: EstadoGrafo = 'indisponivel';
   private timers: Array<() => void> = [];
@@ -535,6 +542,8 @@ export class BroadcastSession {
      * sem que nenhum deles precise saber que ele existe.
      */
     this.audioFonte = this.audioTrack;
+    this.origemAudio =
+      this.audioTrack === null ? null : capture.audio !== null ? 'captura' : 'dispositivo';
     const tipoFonte: TipoFonteAudio =
       this.audioTrack === null
         ? 'nenhuma'
@@ -1255,6 +1264,52 @@ export class BroadcastSession {
   }
 
   /**
+   * O áudio numa troca de tela (TELA-012, §6.8).
+   *
+   * Antes, a trilha de áudio da captura nova era sempre parada e a sessão
+   * seguia com a da antiga. Certo para o monitor do sink virtual, que não
+   * tem nada a ver com a tela; errado para o som que VEIO com a tela: trocar
+   * da aba do jogo para a do navegador continuava mandando o som do jogo — ou,
+   * pior, o de uma aba que a pessoa deixou de compartilhar.
+   *
+   * Três casos:
+   * - som de dispositivo: fica; o da captura nova é descartado (e parado — a
+   *   sessão não pode deixar captura de som viva sem uso);
+   * - som da captura, e a nova tem som: ganho religado na trilha nova e
+   *   `replaceTrack` nos senders, sem renegociar;
+   * - som da captura, e a nova NÃO tem: para de mandar som. Não se inventa
+   *   continuidade.
+   */
+  private async trocarAudioJunto(novo: MediaStreamTrack | null, surface: CaptureSurface): Promise<void> {
+    if (this.origemAudio === 'dispositivo') {
+      novo?.stop();
+      return;
+    }
+    const agora = this.deps.scheduler.now();
+    if (novo !== null) {
+      this.audioFonte = novo;
+      novo.addEventListener('ended', () => this.onFonteAudioEncerrada(novo));
+      // `attach` desmonta o grafo antigo e para a trilha crua dele.
+      this.audioTrack = this.deps.gain.attach(novo);
+      this.deps.gain.set(this.volumeTransmissao);
+      this.origemAudio = 'captura';
+      this.classificadorAudio.reiniciar();
+      this.diario.registrarCapturaAudio(descreverCaptura(novo, fonteDaSuperficie(surface)));
+      this.diario.evento('audio', 'AUDIO_SOURCE_SWITCHED', agora);
+      await this.deps.transport.replaceAudio(this.audioTrack);
+      return;
+    }
+    if (this.origemAudio === 'captura') {
+      await this.deps.transport.replaceAudio(null);
+      this.deps.gain.close();
+      this.audioTrack = null;
+      this.audioFonte = null;
+      this.origemAudio = null;
+      this.diario.evento('audio', 'AUDIO_NONE', agora);
+    }
+  }
+
+  /**
    * Retoma o grafo de áudio suspenso. Só funciona dentro de um GESTO: é o
    * botão "ativar áudio da transmissão" que chama isto.
    */
@@ -1376,21 +1431,7 @@ export class BroadcastSession {
 
     await this.deps.transport.replaceVideo(capture.video);
 
-    /**
-     * A trilha de ÁUDIO da nova captura é parada aqui, e o vazamento era real.
-     *
-     * A requisição pede `systemAudio: true`, e no Windows o `getDisplayMedia`
-     * devolve áudio junto. Ela só era parada no ramo de corrida perdida; no
-     * caminho feliz ninguém parava nem usava, e a sessão seguia com o áudio da
-     * captura ANTIGA. Alternar jogo → navegador → jogo três vezes numa partida
-     * deixava três capturas de som de sistema vivas, cada uma com seu pipeline
-     * do Chrome rodando na máquina do jogo, sem entregar som para ninguém.
-     *
-     * Trocar a fonte de vídeo não troca a de áudio de propósito: o som vem do
-     * sink do sistema ou do Windows, e reanexá-lo custaria uma renegociação
-     * que este método existe para evitar.
-     */
-    capture.audio?.stop();
+    await this.trocarAudioJunto(capture.audio, capture.surface);
 
     // Só depois de a nova estar no ar: parar antes deixaria um buraco visível.
     anterior?.stop();
@@ -1414,6 +1455,8 @@ export class BroadcastSession {
     this.setState({
       ...this.state,
       preview: this.preview,
+      hasAudio: this.audioTrack !== null,
+      ...(this.audioTrack === null ? { audio: 'sem-fonte' as const } : {}),
       audioPerdidoPelaEscolha:
         this.audioTrack === null &&
         this.surface !== 'monitor' &&
@@ -1621,6 +1664,7 @@ export class BroadcastSession {
     this.videoTrack = null;
     this.audioTrack = null;
     this.audioFonte = null;
+    this.origemAudio = null;
     this.classificadorAudio.reiniciar();
     this.grafoAudio = 'indisponivel';
     this.preview = null;

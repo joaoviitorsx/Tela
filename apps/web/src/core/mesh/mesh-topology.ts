@@ -472,6 +472,36 @@ export class MeshTopology {
     });
   }
 
+  /**
+   * Troca a trilha de ÁUDIO em todos os senders, sem renegociar (TELA-012).
+   * `null` para de mandar som — é o caso da fonte nova sem áudio: continuar
+   * mandando o som da janela antiga seria vazar o que a pessoa deixou de
+   * compartilhar. Devolve `false` quando não havia sender de áudio: aí quem
+   * chama precisa publicar (e renegociar).
+   */
+  replaceAudio(track: MediaStreamTrack | null, stream: MediaStream): Promise<boolean> {
+    this.stream = stream;
+    this.tracks = [...this.tracks.filter((t) => t.kind !== 'audio'), ...(track === null ? [] : [track])];
+    const senders = [...this.senders.values()].flat().filter((s) => s.track?.kind === 'audio' || this.eraAudio.has(s));
+    for (const s of senders) this.eraAudio.add(s);
+    if (senders.length === 0) return Promise.resolve(false);
+    return this.enqueue(async () => {
+      for (const sender of senders) {
+        try {
+          await sender.replaceTrack(track);
+        } catch {
+          // Peer fechando no meio da troca; o estado dele cuida do resto.
+        }
+      }
+    }).then(() => true);
+  }
+
+  /**
+   * Senders que já carregaram áudio. `replaceTrack(null)` zera `sender.track`,
+   * e sem esta memória a próxima troca não acharia onde pôr o som de volta.
+   */
+  private readonly eraAudio = new WeakSet<RTCRtpSender>();
+
   setPrioridade(prioridade: Prioridade): Promise<void> {
     this.prioridade = prioridade;
     const preset = this.preset;

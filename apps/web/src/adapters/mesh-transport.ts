@@ -321,6 +321,15 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       await topology?.replaceVideo(track, media);
     },
 
+    async replaceAudio(track) {
+      const media = mediaStream();
+      for (const antiga of media.getAudioTracks()) media.removeTrack(antiga);
+      if (track !== null) media.addTrack(track);
+      const trocou = (await topology?.replaceAudio(track, media)) ?? false;
+      // Não havia sender de áudio: publicar é o único caminho, e renegocia.
+      if (!trocou && track !== null) await republish();
+    },
+
     async setPrioridade(prioridade) {
       await topology?.setPrioridade(prioridade);
     },

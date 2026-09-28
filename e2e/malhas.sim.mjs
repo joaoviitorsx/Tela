@@ -567,6 +567,8 @@ async function rodarCenario(cfg) {
     gain: new FakeAudioGain(),
     scheduler,
     shareUrlFor,
+    // Obrigatório desde a TELA-018: o link leva o convite.
+    convite: new fakes.FakeConvites(),
     createStream,
     ...(memoria === undefined ? {} : { uplinkMemory: memoria }),
     statsIntervalMs: 1_000,
@@ -839,6 +841,34 @@ function montarQuedas() {
   return casos;
 }
 
+/**
+ * O defeito da TELA-015 exatamente: o link CAI e FICA. A queda de 30 s acima
+ * mede reação e volta; esta mede se a transmissão desce e para no degrau que
+ * o link paga — em vez de ficar a 1080p60 com 0,02 bpp e a tela calada.
+ */
+function montarColapsos() {
+  const casos = [];
+  for (const up of [50, 300]) {
+    for (const n of [1, 3, 5]) {
+      const peers = montarPeers(n, false, 'juntos');
+      casos.push({
+        id: `COLAPSO-up${up}-n${n}`,
+        upBps: Mbps(up),
+        upMbps: up,
+        n,
+        fraco: false,
+        cpu: 'nenhuma',
+        entrada: 'juntos',
+        semente: 'ausente',
+        peers,
+        sementeUplink: valorSemente('ausente', Mbps(up), peers),
+        quedas: [{ de: 120, ate: Number.POSITIVE_INFINITY, fator: 0.1 }],
+      });
+    }
+  }
+  return casos;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    7. RELATÓRIO
    ═══════════════════════════════════════════════════════════════════════ */
@@ -909,7 +939,11 @@ async function main() {
     return null;
   }
 
-  const casos = SO_QUEDAS ? montarQuedas() : [...montarMatriz(), ...montarQuedas()];
+  // Os colapsos só entram em `--quedas`: a matriz de 1200 fica comparável com
+  // as rodadas anteriores.
+  const casos = SO_QUEDAS
+    ? [...montarQuedas(), ...montarColapsos()]
+    : [...montarMatriz(), ...montarQuedas()];
   console.log(
     `\nSIMULADOR DAS MALHAS — ${casos.length} cenários × ${DURACAO_S}s` +
       `${CLAMP_DURO || CPU_COBRA ? `  [${CLAMP_DURO ? 'clamp-duro ' : ''}${CPU_COBRA ? 'cpu-cobra' : ''}]` : ''}\n`,
@@ -920,6 +954,12 @@ async function main() {
   for (let i = 0; i < casos.length; i += 1) {
     const r = await rodarCenario({ ...casos[i], sementeRng: 1000 + i });
     resultados.push(r);
+    // Depuração: `SERIE=<id do cenário>` imprime a série segundo a segundo.
+    if (process.env.SERIE === r.id) {
+      for (const p of r.serie) {
+        console.log(JSON.stringify({ ...p, maxBitrate: p.maxBitrate, orcamento: p.orcamento }));
+      }
+    }
     if ((i + 1) % 50 === 0 || i + 1 === casos.length) {
       const s = ((Date.now() - inicio) / 1000).toFixed(0);
       process.stdout.write(`\r  ${i + 1}/${casos.length} cenários  (${s}s)   `);
@@ -1205,7 +1245,35 @@ async function main() {
   console.log();
 
   /* ── 5. quedas ── */
-  const quedas = resultados.filter((r) => r.cfg.quedas.length > 0);
+  const colapsos = resultados.filter((r) => r.cfg.quedas.some((q) => q.ate > DURACAO_S));
+  const quedas = resultados.filter(
+    (r) => r.cfg.quedas.length > 0 && !r.cfg.quedas.some((q) => q.ate > DURACAO_S),
+  );
+  if (colapsos.length > 0) {
+    console.log('═'.repeat(78));
+    console.log('COLAPSO SUSTENTADO — link cai a 10% em t=120s e FICA (TELA-015)');
+    console.log('═'.repeat(78));
+    console.log(
+      tabela(
+        colapsos.map((r) => {
+          const antes = r.serie.find((s) => s.t === 119);
+          const depois = r.serie.at(-1);
+          const reacao = r.serie.find((s) => s.t > 120 && (s.maxBitrate ?? 0) < (antes.maxBitrate ?? 0) * 0.9);
+          return { id: r.id, antes, depois, reacao: reacao === undefined ? 'NUNCA' : `${reacao.t - 120}s` };
+        }),
+        [
+          { titulo: 'cenário', valor: (l) => l.id },
+          { titulo: 'degrau t=119', valor: (l) => l.antes.preset },
+          { titulo: 'reage em', valor: (l) => l.reacao },
+          { titulo: 'degrau t=300', valor: (l) => l.depois.preset },
+          { titulo: 'Mbps t=300', valor: (l) => emMbps(l.depois.maxBitrate ?? 0) },
+          { titulo: 'bpp entregue t=300', valor: (l) => (l.depois.bppMedido ?? 0).toFixed(4) },
+          { titulo: 'motivo na tela', valor: (l) => l.depois.motivo ?? 'nenhum' },
+        ],
+      ),
+    );
+    console.log();
+  }
   if (quedas.length > 0) {
     console.log('═'.repeat(78));
     console.log('QUEDA SUSTENTADA — link cai a 15% entre t=120s e t=150s');

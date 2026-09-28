@@ -1,4 +1,4 @@
-import type { EncodingPreset, Prioridade } from '@tela/shared';
+import type { EncodingPreset, Prioridade, RelayStatus } from '@tela/shared';
 import type { PeerInfo } from '../mesh/mesh-topology.js';
 
 /**
@@ -247,7 +247,7 @@ export type MediaTransport = {
    */
   host(slug: string, ownerToken: string): Promise<{ readonly maxPeers: number }>;
   /** Entra num canal como espectador. */
-  watch(slug: string): Promise<void>;
+  watch(slug: string): Promise<{ readonly relayStatus: RelayStatus | null }>;
 
   publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void>;
   publishAudio(track: MediaStreamTrack): Promise<void>;

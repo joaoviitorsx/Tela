@@ -216,6 +216,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         deps.channel.on('reopened', () => emitter.emit('signaling-restored', undefined)),
         deps.channel.on('viewers', ({ count }) => emitter.emit('viewers', { count })),
       );
+      return { relayStatus: opened.relayStatus ?? null };
     },
 
     async publishVideo(track, next) {

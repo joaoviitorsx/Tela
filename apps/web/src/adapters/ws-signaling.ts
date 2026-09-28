@@ -115,6 +115,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
             selfId: message.peerId,
             hostId: null,
             iceServers: message.iceServers,
+            ...(message.relayStatus === undefined ? {} : { relayStatus: message.relayStatus }),
             maxPeers: message.maxPeers,
             viewers: 0,
           });
@@ -129,6 +130,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
             selfId: message.peerId,
             hostId: message.hostId,
             iceServers: message.iceServers,
+            ...(message.relayStatus === undefined ? {} : { relayStatus: message.relayStatus }),
             maxPeers: 0,
             viewers: message.viewers,
           });

@@ -6,6 +6,8 @@ export type Motivo =
   | 'reconectando'
   | 'cheio'
   | 'sem-conexao'
+  | 'relay-indisponivel'
+  | 'relay-nao-configurado'
   | 'sem-servidor';
 
 type Props = {
@@ -154,7 +156,19 @@ const TEXTO: Record<Motivo, (maxPeers: number) => Conteudo> = {
   'sem-conexao': () => ({
     rotulo: 'sem rota',
     corpo:
-      'A transmissão está no ar, mas a conexão direta com ela não fechou — quase sempre é o NAT das duas operadoras. Seguimos tentando por outros caminhos.',
+      'A transmissão está no ar, mas o vídeo não conseguiu atravessar a rede. Vamos tentar novamente.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  'relay-indisponivel': () => ({
+    rotulo: 'rota alternativa indisponível',
+    corpo: 'O serviço que ajuda a conectar redes restritas está indisponível agora. A conexão direta também não fechou. Vamos tentar novamente.',
+    tom: 'warn',
+    varrendo: false,
+  }),
+  'relay-nao-configurado': () => ({
+    rotulo: 'sem rota alternativa',
+    corpo: 'Esta transmissão não tem uma rota alternativa configurada, e a conexão direta não fechou. Vamos tentar novamente.',
     tom: 'warn',
     varrendo: false,
   }),

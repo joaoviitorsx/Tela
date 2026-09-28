@@ -1,4 +1,4 @@
-import type { IceServerConfig, ServerMessage, SignalingErrorCode } from '@tela/shared';
+import type { IceServerConfig, RelayStatus, ServerMessage, SignalingErrorCode } from '@tela/shared';
 
 /**
  * O canal de sinalização visto de dentro do núcleo.
@@ -15,6 +15,8 @@ export type ChannelOpened = {
   /** Só existe para espectador: quem tem a mídia. */
   readonly hostId: string | null;
   readonly iceServers: readonly IceServerConfig[];
+  /** Servidores antigos podem omitir este campo. */
+  readonly relayStatus?: RelayStatus;
   /** Só existe para transmissor. */
   readonly maxPeers: number;
   /** Quantos já estavam assistindo quando entramos. Zero para o transmissor. */

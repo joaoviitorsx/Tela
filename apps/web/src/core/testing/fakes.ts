@@ -240,6 +240,7 @@ export class FakeMediaTransport implements MediaTransport {
   watchError: unknown = null;
   /** Quando true, `watch` nunca settla — o caso da negociação travada. */
   hangOnWatch = false;
+  relayStatus: 'available' | 'not-configured' | 'unavailable' | null = 'available';
 
   /** Teto que este transporte falso reporta como se viesse do servidor. */
   maxPeersDoServidor = 5;
@@ -250,10 +251,11 @@ export class FakeMediaTransport implements MediaTransport {
     return { maxPeers: this.maxPeersDoServidor };
   }
 
-  async watch(slug: string): Promise<void> {
+  async watch(slug: string): Promise<{ relayStatus: 'available' | 'not-configured' | 'unavailable' | null }> {
     if (this.watchError !== null) throw this.watchError;
-    if (this.hangOnWatch) return new Promise<void>(() => undefined);
+    if (this.hangOnWatch) return new Promise(() => undefined);
     this.watched = slug;
+    return { relayStatus: this.relayStatus };
   }
 
   async publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void> {

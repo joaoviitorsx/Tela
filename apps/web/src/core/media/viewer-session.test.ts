@@ -249,6 +249,19 @@ describe('ViewerSession', () => {
     expect(ctx.scheduler.pending).toBeGreaterThan(0);
   });
 
+  it('preserva indisponibilidade do relay quando a mídia não chega', async () => {
+    const ctx = build((t) => { t.relayStatus = 'unavailable'; });
+    await ctx.session.open(SLUG);
+    ctx.scheduler.advance(15_000);
+    await settle(30);
+    expect(ctx.session.getState()).toEqual({
+      status: 'sem-conexao',
+      slug: SLUG,
+      relayStatus: 'unavailable',
+    });
+    expect(ctx.session.diagnostico('Chrome/130')?.eventos.map((evento) => evento.codigo)).toContain('RELAY_UNAVAILABLE');
+  });
+
   it('mídia que chega depois do timeout não ressuscita a tentativa antiga', async () => {
     const ctx = build((t) => {
       t.hangOnWatch = true;

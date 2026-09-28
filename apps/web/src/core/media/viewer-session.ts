@@ -7,6 +7,7 @@ import type { MediaStats, MediaTransport } from '../ports/media-transport.js';
 import type { AmostraLatencia } from '../ports/frame-timing.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
 import { isSignalingError } from '../ports/signaling-channel.js';
+import type { RelayStatus } from '@tela/shared';
 
 /**
  * A sessão do espectador. Sem React e sem conhecer o transporte concreto.
@@ -59,7 +60,7 @@ export type ViewerState =
    * monta tudo, e nenhum pacote atravessa. Merece estado próprio porque a
    * ação do usuário é diferente de "offline" — não adianta esperar.
    */
-  | { readonly status: 'sem-conexao'; readonly slug: string }
+  | { readonly status: 'sem-conexao'; readonly slug: string; readonly relayStatus?: RelayStatus | null }
   /**
    * Não conseguimos nem falar com o servidor.
    *
@@ -295,6 +296,7 @@ export class ViewerSession {
     const cancels: Cancel[] = [];
 
     let delivered = false;
+    let relayStatus: RelayStatus | null = null;
     /**
      * Relógio da MÍDIA, separado do relógio da negociação.
      *
@@ -368,7 +370,13 @@ export class ViewerSession {
     };
 
     try {
-      await this.withTimeout(transport.watch(this.slug), epoch);
+      const opened = await this.withTimeout(transport.watch(this.slug), epoch);
+      relayStatus = opened.relayStatus;
+      if (!this.stale(epoch) && relayStatus !== null) {
+        this.diario.evento('turn', relayStatus === 'available' ? 'RELAY_AVAILABLE'
+          : relayStatus === 'unavailable' ? 'RELAY_UNAVAILABLE' : 'RELAY_NOT_CONFIGURED',
+        this.deps.scheduler.now());
+      }
     } catch (error) {
       await abandonar();
       if (this.stale(epoch)) return;
@@ -391,7 +399,7 @@ export class ViewerSession {
       } else if (error instanceof Error && error.message === 'CONNECT_TIMEOUT') {
         // O canal abriu, o SDP foi trocado, e a mídia não veio. Isso não é
         // "ninguém transmitindo" — é a rede entre os dois não fechando.
-        this.setState({ status: 'sem-conexao', slug: this.slug });
+        this.setState({ status: 'sem-conexao', slug: this.slug, relayStatus });
         this.advanceBackoff();
       } else {
         this.goOffline();
@@ -412,7 +420,7 @@ export class ViewerSession {
         void (async () => {
           await abandonar();
           if (this.stale(epoch)) return;
-          this.setState({ status: 'sem-conexao', slug: this.slug });
+          this.setState({ status: 'sem-conexao', slug: this.slug, relayStatus });
           this.advanceBackoff();
           this.scheduleRetry(epoch);
         })();

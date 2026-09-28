@@ -1,6 +1,11 @@
 import type { ReactNode } from 'react';
 
-export type AudioDeviceOption = { readonly id: string; readonly label: string };
+export type AudioDeviceOption = {
+  readonly id: string;
+  readonly label: string;
+  /** `entrada` é quase sempre microfone: fica num grupo à parte, nomeado. */
+  readonly tipo: 'monitor' | 'entrada';
+};
 
 type Props = {
   readonly os: 'windows' | 'linux' | 'macos' | 'desconhecido';
@@ -89,11 +94,34 @@ pactl load-module module-loopback source=tela_cap.monitor \\
                 className="min-h-11 rounded-md border border-edge bg-void px-3 text-[13px] outline-none transition-colors focus:border-text"
               >
                 <option value="">transmitir sem áudio</option>
-                {devices.map((device) => (
-                  <option key={device.id} value={device.id}>
-                    {device.label}
-                  </option>
-                ))}
+                {/*
+                  Monitores e entradas em grupos separados. Quando nenhum nome
+                  parece monitor a lista traz TODAS as entradas, e um microfone
+                  escolhido sem saber transmite a voz de quem joga, não o jogo.
+                  Nada é pré-selecionado: o padrão continua "sem áudio".
+                */}
+                {devices.some((d) => d.tipo === 'monitor') && (
+                  <optgroup label="som do sistema (monitor)">
+                    {devices
+                      .filter((d) => d.tipo === 'monitor')
+                      .map((device) => (
+                        <option key={device.id} value={device.id}>
+                          {device.label}
+                        </option>
+                      ))}
+                  </optgroup>
+                )}
+                {devices.some((d) => d.tipo === 'entrada') && (
+                  <optgroup label="outras entradas — microfone, não o jogo">
+                    {devices
+                      .filter((d) => d.tipo === 'entrada')
+                      .map((device) => (
+                        <option key={device.id} value={device.id}>
+                          {device.label}
+                        </option>
+                      ))}
+                  </optgroup>
+                )}
               </select>
             </>
           )}

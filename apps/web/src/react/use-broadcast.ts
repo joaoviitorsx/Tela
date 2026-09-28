@@ -18,6 +18,8 @@ export type BroadcastControls = {
   setPrioridade: (prioridade: Prioridade) => Promise<void>;
   /** Volume do que os espectadores ouvem. Síncrono: mexe num GainNode. */
   setVolumeTransmissao: (volume: number) => void;
+  /** Retoma o áudio suspenso pelo navegador. Chamar dentro do clique. */
+  retomarAudio: () => Promise<void>;
 };
 
 /**
@@ -69,5 +71,16 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
     [session],
   );
 
-  return { state, start, stop, setPreset, switchSource, setPrioridade, setVolumeTransmissao };
+  const retomarAudio = useCallback(() => session.retomarAudio(), [session]);
+
+  return {
+    state,
+    start,
+    stop,
+    setPreset,
+    switchSource,
+    setPrioridade,
+    setVolumeTransmissao,
+    retomarAudio,
+  };
 }

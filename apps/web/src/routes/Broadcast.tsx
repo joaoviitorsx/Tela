@@ -59,6 +59,8 @@ const ENCERRAMENTO_NORMAL: BroadcastFailure = 'USER_STOPPED';
  * propósito —, então o texto não pode sugerir isso.
  */
 const AVISO_AUDIO: Partial<Record<EstadoAudio, string>> = {
+  bloqueado:
+    'O navegador pausou o áudio da transmissão — os amigos estão ouvindo silêncio. Use "ativar áudio da transmissão" no painel.',
   encerrada:
     'O som da captura acabou — os amigos estão sem áudio. Pare e comece de novo para capturá-lo outra vez.',
   'sem-sinal':
@@ -98,8 +100,16 @@ const AVISO_AUDIO: Partial<Record<EstadoAudio, string>> = {
  */
 export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
-  const { state, start, stop, setPreset, switchSource, setPrioridade, setVolumeTransmissao } =
-    useBroadcast(session);
+  const {
+    state,
+    start,
+    stop,
+    setPreset,
+    switchSource,
+    setPrioridade,
+    setVolumeTransmissao,
+    retomarAudio,
+  } = useBroadcast(session);
 
   /**
    * Volume da transmissão, lembrado entre sessões.
@@ -565,6 +575,17 @@ export function Broadcast({ slug, presetId, audioDeviceId, onExit }: Props) {
                       passo={0.05}
                       onAtivo={setMexendoNoVolume}
                     />
+                    {/*
+                      Grafo suspenso: a trilha continua `live` e sai silêncio.
+                      Só um clique retoma — `resume()` fora de gesto é recusado.
+                    */}
+                    {(state.grafoAudio === 'suspenso' || state.grafoAudio === 'interrompido') && (
+                      <div className="mt-3">
+                        <BigButton tone="ghost" onClick={() => void retomarAudio()}>
+                          ativar áudio da transmissão
+                        </BigButton>
+                      </div>
+                    )}
                     {!state.volumeAjustavel && (
                       <p className="mt-2 text-[12px] leading-relaxed text-muted">
                         Este navegador não deixa ajustar o volume da transmissão. O som sai como

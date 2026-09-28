@@ -32,6 +32,7 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(first?.type).toBe('hosting');
     if (first?.type !== 'hosting') return;
     expect(Array.isArray(first.iceServers)).toBe(true);
+    expect(first.relayStatus).toBe('not-configured');
     expect(first.maxPeers).toBeGreaterThanOrEqual(1);
   });
 

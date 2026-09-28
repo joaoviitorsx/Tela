@@ -2,11 +2,11 @@ import {
   type ClientMessage,
   ClientMessageSchema,
   HELLO_TIMEOUT_MS,
-  type IceServerConfig,
   type ServerMessage,
   type SignalingErrorCode,
 } from '@tela/shared';
 import { type Limits, RateBuckets } from './limits.js';
+import type { IceProvisionResult } from './ice-provision.js';
 
 /**
  * Registro de canais do mesh.
@@ -52,7 +52,7 @@ export type RegistryDeps = {
   readonly equals: (a: string, b: string) => boolean;
   readonly isValidSlug: (slug: string) => boolean;
   /** Credenciais efêmeras, geradas por conexão. */
-  readonly iceServersFor: (peerId: string) => IceServerConfig[];
+  readonly iceServersFor: (peerId: string) => IceProvisionResult;
   readonly setTimer: (ms: number, task: () => void) => () => void;
   /** Identidade curta e imprevisível de peer. Injetada para o teste ser determinístico. */
   readonly newPeerId: (prefix: string) => string;
@@ -164,10 +164,12 @@ export function makeChannelRegistry(deps: RegistryDeps) {
 
         channelName = slug;
         cancelHelloTimer();
+        const ice = deps.iceServersFor(peer.id);
         socket.send({
           type: 'hosting',
           peerId: peer.id,
-          iceServers: deps.iceServersFor(peer.id),
+          iceServers: [...ice.servers],
+          relayStatus: ice.relayStatus,
           maxPeers: deps.limits.maxPeers,
         });
 
@@ -215,12 +217,14 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         channel.viewers.set(peer.id, peer);
         channelName = slug;
         cancelHelloTimer();
+        const ice = deps.iceServersFor(peer.id);
 
         socket.send({
           type: 'watching',
           peerId: peer.id,
           hostId: host.id,
-          iceServers: deps.iceServersFor(peer.id),
+          iceServers: [...ice.servers],
+          relayStatus: ice.relayStatus,
           viewers: channel.viewers.size,
         });
         // O transmissor é quem oferece — ele tem a mídia.

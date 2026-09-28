@@ -1,7 +1,6 @@
 import {
   type ClientMessage,
   ClientMessageSchema,
-  type IceServerConfig,
   MAX_FRAME_BYTES,
   SLUG_RE,
   type ServerMessage,
@@ -9,7 +8,8 @@ import {
   isBlockedSlug,
 } from '@tela/shared';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
-import { fetchCloudflareIceServers } from './cloudflare-turn.js';
+import { parseIceSettings } from './ice-settings.js';
+import { makeCloudflareProvider, type IceProvisionResult } from './ice-provision.js';
 
 /**
  * Servidor de sinalização em Cloudflare Workers + Durable Objects.
@@ -81,9 +81,12 @@ export type Env = {
   ASSETS?: { fetch(request: Request): Promise<Response> };
   MAX_PEERS?: string;
   STUN_URLS?: string;
+  ICE_PROVIDER?: string;
   TURN_URL?: string;
+  TURN_URLS?: string;
   TURN_SECRET?: string;
   TURN_TTL_SECONDS?: string;
+  TURN_FETCH_TIMEOUT_MS?: string;
   /**
    * Cloudflare Realtime TURN.
    *
@@ -154,7 +157,7 @@ export type ChannelDeps = {
    */
   readonly hash: (input: string) => Promise<string>;
   readonly equals: (a: string, b: string) => boolean;
-  readonly iceServersFor: (peerId: string) => Promise<IceServerConfig[]>;
+  readonly iceServersFor: (peerId: string) => Promise<IceProvisionResult>;
   readonly newPeerId: (prefix: string) => string;
 };
 
@@ -376,7 +379,7 @@ export class ChannelRoom {
      * e depois o mesmo `peer-joined` de novo na reapresentação. Duas
      * violações de protocolo que só não quebravam porque se cancelavam.
      */
-    const iceServers = await this.deps.iceServersFor(peerId);
+    const ice = await this.deps.iceServersFor(peerId);
 
     /**
      * Seção crítica: ler a posse, decidir e gravar sem ceder o loop no meio.
@@ -420,7 +423,8 @@ export class ChannelRoom {
     this.send(socket, {
       type: 'hosting',
       peerId,
-      iceServers,
+      iceServers: [...ice.servers],
+      relayStatus: ice.relayStatus,
       maxPeers: this.deps.limits.maxPeers,
     });
 
@@ -462,11 +466,13 @@ export class ChannelRoom {
       janelaContagem: 0,
     } satisfies Attachment);
 
+    const ice = await this.deps.iceServersFor(peerId);
     this.send(socket, {
       type: 'watching',
       peerId,
       hostId: host.at.peerId,
-      iceServers: await this.deps.iceServersFor(peerId),
+      iceServers: [...ice.servers],
+      relayStatus: ice.relayStatus,
       viewers: this.viewers().length,
     });
     // O transmissor é quem oferece — ele tem a mídia.
@@ -623,17 +629,18 @@ export type WebCryptoLike = {
 
 export function makeChannelDeps(env: Env, crypto: WebCryptoLike): ChannelDeps {
   const parsedMax = Number(env.MAX_PEERS ?? DEFAULT_LIMITS.maxPeers);
-  const stun = (env.STUN_URLS ?? 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478')
-    .split(',')
-    .map((u) => u.trim())
-    .filter(Boolean);
+  if (!Number.isInteger(parsedMax) || parsedMax < 1 || parsedMax > 8) throw new Error('MAX_PEERS_INVALID');
+  const parsedIce = parseIceSettings(env);
+  if ('problems' in parsedIce) throw new Error(`ICE_CONFIG_INVALID: ${parsedIce.problems.join(',')}`);
+  const settings = parsedIce.settings;
+  const cloudflare = makeCloudflareProvider(settings);
 
   const encoder = new TextEncoder();
 
   return {
     limits: {
       ...DEFAULT_LIMITS,
-      maxPeers: Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : DEFAULT_LIMITS.maxPeers,
+      maxPeers: parsedMax,
     },
 
     async hash(input) {
@@ -651,54 +658,44 @@ export function makeChannelDeps(env: Env, crypto: WebCryptoLike): ChannelDeps {
     },
 
     async iceServersFor(peerId) {
-      const servers: IceServerConfig[] = [{ urls: stun }];
-
-      if (env.TURN_KEY_ID !== undefined && env.TURN_KEY_API_TOKEN !== undefined) {
-        const cloudflare = await fetchCloudflareIceServers(
-          env.TURN_KEY_ID,
-          env.TURN_KEY_API_TOKEN,
-          ttlSegundos(env),
-        );
-        if (cloudflare.ok) {
-          servers.push(...cloudflare.servers);
-          if (cloudflare.hasRelay) return servers;
-          console.warn('TURN_RELAY_ABSENT');
-        } else {
-          // Código fixo e não sensível: nunca registrar resposta, token ou credencial.
-          console.warn(cloudflare.code);
-        }
-      }
-
-      if (env.TURN_URL === undefined || env.TURN_SECRET === undefined) return servers;
+      const primary = settings.provider === 'coturn'
+        ? { servers: [{ urls: [...settings.stunUrls] }], relayStatus: 'not-configured' } as IceProvisionResult
+        : await cloudflare();
+      if (primary.failureCode !== undefined) console.warn(primary.failureCode);
+      if (primary.relayStatus === 'available') return primary;
+      if (settings.turnSecret === undefined || settings.turnUrls.length === 0) return primary;
 
       // `use-auth-secret` do coturn: usuário e senha derivados, com validade
       // curta. Credencial estática num front público é um relay aberto para a
       // internet inteira, rodando na sua cota.
-      const ttl = ttlSegundos(env);
+      const ttl = settings.ttlSeconds;
       const expiry = Math.floor(Date.now() / 1000) + ttl;
       const username = `${expiry}:${peerId}`;
 
-      const key = await crypto.subtle.importKey(
-        'raw',
-        encoder.encode(env.TURN_SECRET),
-        { name: 'HMAC', hash: 'SHA-1' },
-        false,
-        ['sign'],
-      );
-      const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(username));
+      try {
+        const key = await crypto.subtle.importKey(
+          'raw',
+          encoder.encode(settings.turnSecret),
+          { name: 'HMAC', hash: 'SHA-1' },
+          false,
+          ['sign'],
+        );
+        const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(username));
 
-      servers.push({
-        urls: [env.TURN_URL],
-        username,
-        credential: toBase64(new Uint8Array(signature)),
-      });
-      return servers;
+        return {
+          servers: [...primary.servers, {
+            urls: [...settings.turnUrls],
+            username,
+            credential: toBase64(new Uint8Array(signature)),
+          }],
+          relayStatus: 'available',
+          expiresAt: expiry * 1000,
+          ...(primary.failureCode === undefined ? {} : { failureCode: primary.failureCode }),
+        };
+      } catch {
+        console.warn('TURN_UPSTREAM_FAILED');
+        return { servers: primary.servers, relayStatus: 'unavailable', failureCode: 'TURN_UPSTREAM_FAILED' };
+      }
     },
   };
-}
-
-
-function ttlSegundos(env: Env): number {
-  const bruto = Number(env.TURN_TTL_SECONDS ?? 600);
-  return Number.isFinite(bruto) && bruto > 0 ? bruto : 600;
 }

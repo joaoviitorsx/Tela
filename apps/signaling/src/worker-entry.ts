@@ -1,5 +1,6 @@
 import { SLUG_RE } from '@tela/shared';
 import { ChannelRoom, type Env, type HibernatableSocket, type WebCryptoLike, makeChannelDeps } from './worker.js';
+import { describeIceSettings, parseIceSettings } from './ice-settings.js';
 
 /**
  * Ponto de entrada do Cloudflare Worker.
@@ -78,6 +79,10 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === '/health') {
+      const parsedIce = parseIceSettings(env);
+      const iceConfig = 'settings' in parsedIce
+        ? { valid: true, ...describeIceSettings(parsedIce.settings) }
+        : { valid: false, problems: parsedIce.problems };
       /**
        * `channels: null` de propósito, e não omitido.
        *
@@ -86,7 +91,7 @@ export default {
        * equivalente aqui. Dizer `null` é honesto; omitir o campo faria a
        * resposta parecer a mesma coisa com um dado faltando.
        */
-      return new Response(JSON.stringify({ ok: true, runtime: 'durable-object', channels: null }), {
+      return new Response(JSON.stringify({ ok: true, runtime: 'durable-object', channels: null, iceConfig }), {
         headers: { 'content-type': 'application/json' },
       });
     }

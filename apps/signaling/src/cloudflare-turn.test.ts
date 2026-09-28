@@ -104,12 +104,12 @@ describe('contrato ICE da Cloudflare', () => {
 
     vi.stubGlobal('fetch', async () => Response.json({ iceServers: [stun, turn] }, { status: 201 }));
     const servers = await deps.iceServersFor('peer');
-    expect(servers).toHaveLength(3);
-    expect(servers[1]).toEqual(stun);
-    expect(servers[2]).toEqual(turn);
+    expect(servers.servers).toHaveLength(3);
+    expect(servers.servers[1]).toEqual(stun);
+    expect(servers.servers[2]).toEqual(turn);
 
     vi.stubGlobal('fetch', async () => Response.json({ iceServers: [stun, { ...turn, credential: undefined }] }, { status: 201 }));
-    expect(await deps.iceServersFor('peer')).toHaveLength(1);
+    expect((await deps.iceServersFor('peer')).servers).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith('TURN_RESPONSE_INVALID');
     expect(JSON.stringify(warn.mock.calls)).not.toContain('fixture-token');
     expect(JSON.stringify(warn.mock.calls)).not.toContain('fixture-credential');
@@ -120,7 +120,7 @@ describe('contrato ICE da Cloudflare', () => {
     vi.stubGlobal('fetch', async () => Response.json({ iceServers: [stun] }, { status: 201 }));
     const env: Env = { CHANNELS: null as never, TURN_KEY_ID: 'fixture-key', TURN_KEY_API_TOKEN: 'fixture-token' };
     const servers = await makeChannelDeps(env, webcrypto as unknown as WebCryptoLike).iceServersFor('peer');
-    expect(servers).toHaveLength(2);
+    expect(servers.servers).toHaveLength(2);
     expect(warn).toHaveBeenCalledWith('TURN_RELAY_ABSENT');
   });
 });

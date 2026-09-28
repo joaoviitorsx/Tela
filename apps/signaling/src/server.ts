@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { makeChannelRegistry } from './channel-registry.js';
 import { loadConfig } from './config.js';
 import { makeIceProvider, makePeerIdGenerator } from './ice.js';
+import { describeIceSettings } from './ice-settings.js';
 
 const config = loadConfig();
 
@@ -32,7 +33,7 @@ const registry = makeChannelRegistry({
 const http = createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, runtime: 'node', channels: registry.channelCount }));
+    res.end(JSON.stringify({ ok: true, runtime: 'node', channels: registry.channelCount, iceConfig: describeIceSettings(config.ice) }));
     return;
   }
   res.writeHead(404).end();

@@ -135,7 +135,18 @@ quantos estão passando por relay — relay funciona, mas custa latência e cota
 então é bom saber.
 
 Alternativa com coturn próprio: `wrangler secret put TURN_SECRET` e
-descomente `TURN_URL` no `wrangler.toml`.
+configure `TURN_URLS` no `wrangler.toml` com URLs UDP, TCP e TLS realmente
+oferecidas pelo seu servidor. `TURN_URL` singular continua aceito durante a
+migração; definir ambos impede a inicialização.
+
+O padrão `ICE_PROVIDER=auto` tenta Cloudflare e usa coturn configurado se a
+emissão falhar. `ICE_PROVIDER=coturn` escolhe apenas coturn. Cada chamada à
+Cloudflare tem prazo padrão de 2,5 s, no máximo uma repetição transitória e
+orçamento total de até 5 s. `/health` mostra `iceConfig` sanitizado (provedor,
+presença de configuração e contagens), sem chave ou credencial. Esse resumo
+confirma configuração, não prova que o relay transporta mídia. Credenciais
+incompletas aparecem como códigos fixos em `iceConfig.problems` e impedem
+novas conexões no Durable Object; valide também o par de secrets antes do deploy.
 
 ---
 
@@ -155,9 +166,11 @@ do lado do front é `VITE_SIGNAL_URL`.
 | `PORT` / `HOST` | onde escutar (padrão `3333` / `0.0.0.0`) |
 | `MAX_PEERS` | espectadores por canal (padrão 3) |
 | `STUN_URLS` | lista separada por vírgula |
-| `TURN_URL` | servidor de relay, se houver |
+| `ICE_PROVIDER` | `auto` (padrão) ou `coturn` no Node; Worker também aceita `cloudflare` |
+| `TURN_URLS` | URLs TURN separadas por vírgula; `TURN_URL` singular é legado |
 | `TURN_SECRET` | segredo compartilhado com o coturn — **prefira este** |
 | `TURN_TTL_SECONDS` | validade da credencial efêmera (padrão 600) |
+| `TURN_FETCH_TIMEOUT_MS` | prazo por chamada Cloudflare no Worker (padrão 2500 ms) |
 
 Precisa de TLS: sem `wss://`, o browser recusa a conexão a partir de uma página
 `https://`. Qualquer proxy reverso com certificado resolve.

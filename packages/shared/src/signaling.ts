@@ -49,6 +49,8 @@ export const IceServerSchema = z.object({
   credential: z.string().optional(),
 });
 export type IceServerConfig = z.infer<typeof IceServerSchema>;
+export const RelayStatusSchema = z.enum(['available', 'not-configured', 'unavailable']);
+export type RelayStatus = z.infer<typeof RelayStatusSchema>;
 
 /* ───────────────────── cliente → servidor ───────────────────── */
 
@@ -82,6 +84,8 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
      * curta. Credencial de TURN em bundle estático é credencial pública.
      */
     iceServers: z.array(IceServerSchema),
+    /** Estado público; a causa detalhada permanece apenas no servidor. */
+    relayStatus: RelayStatusSchema.optional(),
     maxPeers: z.number().int().min(1),
   }),
   z.object({
@@ -89,6 +93,7 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     peerId: PeerIdSchema,
     hostId: PeerIdSchema,
     iceServers: z.array(IceServerSchema),
+    relayStatus: RelayStatusSchema.optional(),
     /** Valor inicial; depois disso, mensagens `viewers` mantêm atualizado. */
     viewers: z.number().int().min(1),
   }),

@@ -1,6 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import type { IceServerConfig } from '@tela/shared';
 import type { Config } from './config.js';
+import type { IceProvisionResult } from './ice-provision.js';
 
 /**
  * Credenciais de ICE entregues a cada peer.
@@ -14,28 +15,31 @@ import type { Config } from './config.js';
  * com o segredo. O coturn valida sozinho, sem banco e sem chamada de volta,
  * e a credencial morre em minutos.
  */
-export function makeIceProvider(config: Config): (peerId: string) => IceServerConfig[] {
-  const stun: IceServerConfig = { urls: [...config.stunUrls] };
+export function makeIceProvider(config: Config): (peerId: string) => IceProvisionResult {
+  const stun: IceServerConfig = { urls: [...config.ice.stunUrls] };
 
   return (peerId: string) => {
     const servers: IceServerConfig[] = [stun];
 
-    if (config.TURN_URL && config.TURN_SECRET) {
-      const expiry = Math.floor(Date.now() / 1000) + config.TURN_TTL_SECONDS;
+    if (config.ice.turnUrls.length > 0 && config.ice.turnSecret) {
+      const expiry = Math.floor(Date.now() / 1000) + config.ice.ttlSeconds;
       const username = `${expiry}:${peerId}`;
-      const credential = createHmac('sha1', config.TURN_SECRET)
+      const credential = createHmac('sha1', config.ice.turnSecret)
         .update(username)
         .digest('base64');
-      servers.push({ urls: [config.TURN_URL], username, credential });
-    } else if (config.TURN_URL && config.TURN_USERNAME && config.TURN_PASSWORD) {
+      servers.push({ urls: [...config.ice.turnUrls], username, credential });
+      return { servers, relayStatus: 'available', expiresAt: expiry * 1000 };
+    }
+    if (config.NODE_ENV !== 'production' && config.ice.staticUsername && config.ice.staticPassword) {
       servers.push({
-        urls: [config.TURN_URL],
-        username: config.TURN_USERNAME,
-        credential: config.TURN_PASSWORD,
+        urls: [...config.ice.turnUrls],
+        username: config.ice.staticUsername,
+        credential: config.ice.staticPassword,
       });
+      return { servers, relayStatus: 'available' };
     }
 
-    return servers;
+    return { servers, relayStatus: 'not-configured' };
   };
 }
 

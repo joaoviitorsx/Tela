@@ -75,8 +75,11 @@ STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
 # Alternativa com coturn próprio:
 #   wrangler secret put TURN_SECRET
 # [vars]
-# TURN_URL = "turn:turn.seudominio.com:3478"
+# ICE_PROVIDER = "auto" # Cloudflare primeiro; coturn configurado vira fallback
+# TURN_URLS = "turn:turn.seudominio.com:3478?transport=udp,turn:turn.seudominio.com:3478?transport=tcp,turns:turn.seudominio.com:443?transport=tcp"
+# TURN_URL singular continua aceito apenas durante a migração; não combine os dois.
 # TURN_TTL_SECONDS = "600"
+# TURN_FETCH_TIMEOUT_MS = "2500"
 
 [observability]
 enabled = true

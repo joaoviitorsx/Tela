@@ -76,7 +76,7 @@ export function testDeps(clock: TestClock, overrides: Partial<Limits> = {}): Reg
     // MESMA regra de produção. Uma política de teste mais frouxa que a real
     // faz a suíte aprovar exatamente o que o servidor deveria recusar.
     isValidSlug: (slug) => SLUG_RE.test(slug) && !isBlockedSlug(slug),
-    iceServersFor: () => [{ urls: ['stun:test'] }],
+    iceServersFor: () => ({ servers: [{ urls: ['stun:test'] }], relayStatus: 'not-configured' }),
     newPeerId: (prefix) => `${prefix}_${(counter += 1).toString().padStart(3, '0')}`,
   };
 }

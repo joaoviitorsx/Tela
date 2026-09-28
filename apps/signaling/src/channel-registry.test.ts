@@ -37,6 +37,7 @@ describe('registro de canais', () => {
         type: 'hosting',
         peerId: 'h_001',
         iceServers: [{ urls: ['stun:test'] }],
+        relayStatus: 'not-configured',
         maxPeers: 3,
       });
     });
@@ -107,6 +108,7 @@ describe('registro de canais', () => {
           peerId: 'v_002',
           hostId: 'h_001',
           iceServers: [{ urls: ['stun:test'] }],
+          relayStatus: 'not-configured',
           viewers: 1,
         },
       ]);

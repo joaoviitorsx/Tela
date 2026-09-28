@@ -22,7 +22,12 @@ export type Vitrine3D = {
   readonly disponivel: boolean;
 };
 
-export function useVitrine(estado: EstadoVitrine, aoClicar: () => void): Vitrine3D {
+/**
+ * `ativo` diz se o canvas está na página. Fora do passo 01 ele desmonta, e ao
+ * voltar nasce OUTRO canvas: sem `ativo` na dependência do efeito, a cena
+ * continuava presa ao elemento morto e a TV sumia da tela inicial.
+ */
+export function useVitrine(estado: EstadoVitrine, aoClicar: () => void, ativo = true): Vitrine3D {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const vitrineRef = useRef<Vitrine | null>(null);
   const estadoRef = useRef(estado);
@@ -35,7 +40,7 @@ export function useVitrine(estado: EstadoVitrine, aoClicar: () => void): Vitrine
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas === null || !disponivel) return;
+    if (canvas === null || !disponivel || !ativo) return;
 
     let vivo = true;
     const abortador = new AbortController();
@@ -94,7 +99,7 @@ export function useVitrine(estado: EstadoVitrine, aoClicar: () => void): Vitrine
       vitrineRef.current?.dispose();
       vitrineRef.current = null;
     };
-  }, [disponivel]);
+  }, [disponivel, ativo]);
 
   useEffect(() => {
     vitrineRef.current?.mostra(estado);

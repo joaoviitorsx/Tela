@@ -139,7 +139,7 @@ export function Home({ onStart }: Props) {
     [slug, check.status],
   );
   const focaOCampo = useCallback(() => document.getElementById('slug')?.focus(), []);
-  const vitrine = useVitrine(noTubo, focaOCampo);
+  const vitrine = useVitrine(noTubo, focaOCampo, passo === 1);
 
   /* ─────────────── o menu do passo atual ─────────────── */
 

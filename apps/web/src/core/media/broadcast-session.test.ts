@@ -1930,3 +1930,73 @@ describe('BroadcastSession — aprovação manual (ADR 0025)', () => {
     expect(s.status === 'live' && s.nomes).toEqual({ v_1: 'ana' });
   });
 });
+
+describe('BroadcastSession — trocar a resolução ao vivo', () => {
+  /** Captura que obedece `applyConstraints` como o Chrome faz com `crop-and-scale`. */
+  function capturaQueObedece(ctx: ReturnType<typeof build>, largura: number, altura: number): void {
+    const video = ctx.screen.video;
+    video.settings = { width: largura, height: altura };
+    video.applyConstraints = async (c: MediaTrackConstraints) => {
+      video.constraints.push(c);
+      const w = (c.width as ConstrainULongRange | undefined)?.max;
+      const h = (c.height as ConstrainULongRange | undefined)?.max;
+      if (w !== undefined && h !== undefined) video.settings = { width: w, height: h };
+    };
+  }
+
+  it('subir de 720p para 1080p aumenta a CAPTURA, e a escala é reaplicada depois', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN, { presetId: 'p720p60' });
+    capturaQueObedece(ctx, 1280, 720);
+    const antes = ctx.transport.presets.length;
+
+    await ctx.session.setPreset('p1080p60');
+    await settle(8);
+
+    const pedida = ctx.screen.video.constraints.at(-1) as Record<string, unknown>;
+    expect(pedida['width']).toMatchObject({ max: 1920 });
+    expect(pedida['height']).toMatchObject({ max: 1080 });
+    // Uma vez pelo degrau, outra depois de a trilha mudar de tamanho.
+    expect(ctx.transport.presets.length).toBe(antes + 2);
+    expect(ctx.transport.presets.at(-1)?.width).toBe(1920);
+    const st = ctx.session.getState();
+    expect(st.status === 'live' && st.presetEscolhido).toBe('p1080p60');
+  });
+
+  it('descer também ajusta a captura, para não pagar pixel que ninguém vê', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN, { presetId: 'p1080p60' });
+    capturaQueObedece(ctx, 1920, 1080);
+    await ctx.session.setPreset('p720p60');
+    await settle(8);
+    expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ width: { max: 1280 } });
+    expect(ctx.screen.video.settings).toEqual({ width: 1280, height: 720 });
+  });
+
+  it('escolher o mesmo que já está escolhido não reconfigura nada', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN, { presetId: 'p720p60' });
+    const antes = ctx.transport.presets.length;
+    const constraints = ctx.screen.video.constraints.length;
+    await ctx.session.setPreset('p720p60');
+    await settle(8);
+    expect(ctx.transport.presets.length).toBe(antes);
+    expect(ctx.screen.video.constraints.length).toBe(constraints);
+  });
+
+  it('em nitidez, a captura volta da ociosidade a 30 fps, não a 60', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN, { prioridade: 'nitidez' });
+    // Ninguém assistindo: dez segundos de graça e a captura cai para 5 fps.
+    ctx.scheduler.advance(11_000);
+    await settle(4);
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+    expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ frameRate: 5 });
+    // Chegou alguém.
+    ctx.transport.emit('peers', [{ id: 'v_1', connectionState: 'connected', usingRelay: false }]);
+    ctx.scheduler.advance(1_000);
+    await settle(4);
+    expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ frameRate: 30 });
+  });
+});

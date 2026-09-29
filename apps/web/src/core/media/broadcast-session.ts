@@ -84,6 +84,8 @@ export type BroadcastState =
       readonly shareUrl: string;
       readonly slug: string;
       readonly presetId: PresetId;
+      /** O que a pessoa escolheu. `presetId` é o que está no ar; divergem quando a rede ou a CPU seguram. */
+      readonly presetEscolhido: PresetId;
       readonly presetForced: boolean;
       readonly peers: readonly PeerInfo[];
       /** Pedidos esperando resposta, do mais antigo ao mais novo. */
@@ -623,6 +625,7 @@ export class BroadcastSession {
       shareUrl,
       slug,
       presetId: this.presetId,
+      presetEscolhido: this.presetEscolhido,
       presetForced: false,
       peers: [],
       pedidos: this.listaDePedidos(),
@@ -1417,7 +1420,9 @@ export class BroadcastSession {
       this.presetId = next;
       return;
     }
-    if (next === this.presetId) return;
+    // Compara com a ESCOLHA, não com o que está no ar: com a rede segurando
+    // 720p, escolher 720p é uma decisão nova (baixar o teto), não um no-op.
+    if (next === this.presetEscolhido) return;
 
     // Escolha manual redefine o teto de tudo: é a nova intenção do usuário.
     this.presetEscolhido = next;
@@ -1454,6 +1459,25 @@ export class BroadcastSession {
      * `aplicarDegrau()` já manda ao transporte o degrau efetivo, uma vez só.
      */
     this.aplicarDegrau();
+    if (this.state.status === 'live') {
+      this.setState({
+        ...this.state,
+        presetEscolhido: next,
+        presetForced: this.presetId !== next,
+        motivoDegradacao: this.motivoAtual(this.presetId),
+      });
+    }
+
+    /**
+     * E a CAPTURA acompanha a escolha — era a metade que faltava.
+     *
+     * A resolução da trilha é fixada no `getDisplayMedia` e só muda por
+     * `applyConstraints`. Sem isto, quem começava em 720p e subia para 1080p ao
+     * vivo via o rótulo mudar e a imagem ficar em 1280×720: o encoder só tira
+     * pixel (`scaleResolutionDownBy ≥ 1`), não cria. Descer também passa por
+     * aqui, para a captura não ficar pagando 1080p que ninguém vai ver.
+     */
+    this.aplicarCaptura(this.fpsDaCaptura(), this.capturaOciosa);
   }
 
   /**
@@ -1501,7 +1525,7 @@ export class BroadcastSession {
 
     if (!ocioso) {
       this.ociosoDesde = null;
-      if (this.capturaOciosa) this.setCaptureFps(presetById(this.presetId).main.maxFramerate, false);
+      if (this.capturaOciosa) this.aplicarCaptura(this.fpsDaCaptura(false), false);
       return;
     }
 
@@ -1515,13 +1539,26 @@ export class BroadcastSession {
     if (this.capturaOciosa) return;
     if (agora - this.ociosoDesde < OCIOSO_GRACA_MS) return;
 
-    this.setCaptureFps(IDLE_CAPTURE_FPS, true);
+    this.aplicarCaptura(IDLE_CAPTURE_FPS, true);
   }
 
-  private setCaptureFps(frameRate: number, ocioso: boolean): void {
+  /**
+   * O framerate que a captura deve ter agora. Ociosa, 5; senão o do degrau
+   * escolhido, cortado pela prioridade — `nitidez` captura a 30, e voltar da
+   * ociosidade a 60 nesse modo capturava o dobro de quadros para o encoder
+   * descartar metade.
+   */
+  private fpsDaCaptura(ocioso: boolean = this.capturaOciosa): number {
+    if (ocioso) return IDLE_CAPTURE_FPS;
+    const preset = presetById(this.presetEscolhido);
+    return Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]);
+  }
+
+  private aplicarCaptura(frameRate: number, ocioso: boolean): void {
     const track = this.videoTrack;
     if (track === null || typeof track.applyConstraints !== 'function') return;
     this.capturaOciosa = ocioso;
+    const antes = track.getSettings?.();
 
     /**
      * O conjunto INTEIRO, não só o framerate.
@@ -1551,6 +1588,22 @@ export class BroadcastSession {
         height: { ideal: preset.height, max: preset.height },
         resizeMode: 'crop-and-scale',
       } as MediaTrackConstraints)
+      .then(() => {
+        /**
+         * Tamanho novo, escala nova — e a ordem é o ponto.
+         *
+         * `scaleResolutionDownBy` é calculado a partir do tamanho que a trilha
+         * TEM no momento do `setParameters`. Encolher a captura de 1920×1080
+         * para 1280×720 com a escala antiga (1,5) ainda em vigor mandava
+         * 853×480 para um degrau de 720p: pixel tirado duas vezes. Então, se o
+         * tamanho mudou, o degrau efetivo é reenviado agora que a trilha já
+         * está no tamanho novo.
+         */
+        if (this.videoTrack !== track || this.state.status !== 'live') return;
+        const depois = track.getSettings?.();
+        if (antes?.width === depois?.width && antes?.height === depois?.height) return;
+        void this.deps.transport.setPreset(presetById(this.presetId)).catch(() => undefined);
+      })
       .catch(() => {
         // Navegador que recusa restringir a captura segue no framerate cheio.
         this.capturaOciosa = false;

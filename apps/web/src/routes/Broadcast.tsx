@@ -13,6 +13,7 @@ import { BotoesDoCabecalho } from '../components/BotoesDoCabecalho.js';
 import { TesteDeRede } from '../components/TesteDeRede.js';
 import { Led } from '../components/Led.js';
 import { Medidor } from '../components/Medidor.js';
+import { AbasDeResolucao } from '../components/AbasDeResolucao.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
 import { PainelOsd } from '../components/PainelOsd.js';
 import type { Vaga } from '../components/SalaVagas.js';
@@ -103,6 +104,9 @@ const AJUDA_PRIORIDADE = {
 } as const;
 
 const IDS_BASE = ['resolucao', 'rede'] as const;
+
+/** O teclado do menu fica no invólucro das abas + linhas; ver o painel. */
+const SEM_TECLADO = { onKeyDown: () => undefined };
 
 /**
  * O console de quem transmite.
@@ -262,6 +266,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   /* ─────────────── o menu de ajuste rápido ─────────────── */
 
   const presetAtual = vivo?.presetId ?? presetId;
+  /** O que a pessoa escolheu; as setas andam a partir DAQUI, não do que a rede segurou. */
+  const presetEscolhido = vivo?.presetEscolhido ?? presetId;
   const prioridade = vivo?.prioridade ?? 'fluidez';
   const temAudio = vivo?.hasAudio ?? false;
   const ids = useMemo(() => (temAudio ? [...IDS_BASE, 'volume'] : [...IDS_BASE]), [temAudio]);
@@ -269,17 +275,17 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   const ajustar = useCallback(
     (id: string, direcao: -1 | 1) => {
       if (id === 'resolucao') {
-        const i = PRESET_ORDER.indexOf(presetAtual);
+        const i = PRESET_ORDER.indexOf(presetEscolhido);
         // Sem dar a volta: ao vivo, "←" em 1080p não pode cair em 360p por acidente.
         const proximo = PRESET_ORDER[Math.min(PRESET_ORDER.length - 1, Math.max(0, i + direcao))];
-        if (proximo !== undefined && proximo !== presetAtual) void setPreset(proximo);
+        if (proximo !== undefined && proximo !== presetEscolhido) void setPreset(proximo);
       } else if (id === 'rede') {
         void setPrioridade(prioridade === 'fluidez' ? 'nitidez' : 'fluidez');
       } else if (id === 'volume') {
         som.definir(Math.round((som.volume + direcao * 0.1) * 10) / 10);
       }
     },
-    [presetAtual, prioridade, setPreset, setPrioridade, som],
+    [presetEscolhido, prioridade, setPreset, setPrioridade, som],
   );
 
   const menu = useMenuOsd({ ids, aoAjustar: ajustar });
@@ -392,7 +398,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
 
   const conectados = vivo.peers.filter((p) => p.connectionState === 'connected').length;
   const viaRelay = vivo.peers.filter((p) => p.usingRelay).length;
-  const preset = PRESETS[presetAtual];
 
   const vagas: readonly Vaga[] = Array.from({ length: vivo.maxPeers }, (_, i): Vaga => {
     const peer = vivo.peers[i];
@@ -406,16 +411,20 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
       : { n, nome, estado: 'ASSISTINDO', tom: 'ok' };
   });
 
+  const escolhido = PRESETS[presetEscolhido];
+  const rotuloCurto = (id: PresetId) => PRESETS[id].label.replace(' econômico', ' eco');
+  const ajudaResolucao = [
+    `${escolhido.width}×${escolhido.height}. ~${(escolhido.main.maxBitrate / 1_000_000).toFixed(1).replace('.', ',')} Mbps de subida por espectador.`,
+    vivo.presetForced
+      ? vivo.motivoDegradacao === 'cpu'
+        ? `A máquina não estava dando conta e está saindo ${rotuloCurto(presetAtual)}. Fechar programas pesados ajuda.`
+        : `O link está segurando em ${rotuloCurto(presetAtual)}; sobe sozinho quando a rede abrir.`
+      : '',
+  ]
+    .filter((t) => t !== '')
+    .join(' ');
+
   const linhas: readonly LinhaMenu[] = [
-    {
-      id: 'resolucao',
-      tipo: 'ciclo',
-      rotulo: 'RESOLUÇÃO',
-      valor: preset.label.replace(' econômico', ' eco'),
-      indice: PRESET_ORDER.indexOf(presetAtual),
-      total: PRESET_ORDER.length,
-      ajuda: `${preset.width}×${preset.height}. ~${(preset.main.maxBitrate / 1_000_000).toFixed(1).replace('.', ',')} Mbps de subida por espectador.${vivo.presetForced ? ' O encoder não estava dando conta e a qualidade caiu sozinha: você pode subir de novo.' : ''}`,
-    },
     {
       id: 'rede',
       tipo: 'ciclo',
@@ -555,16 +564,34 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
 
           <aside className="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto border-t-2 border-line p-3 sm:p-4 lg:border-l-2 lg:border-t-0">
             <PainelOsd titulo="AJUSTE RÁPIDO" direita={menu.posicao} className="flex-1">
-              <MenuOsd
-                rotulo="Ajustes ao vivo"
-                linhas={linhas}
-                ativo={menu.ativo}
-                propsContainer={menu.propsContainer}
-                propsLinha={menu.propsLinha}
-                aoAjustar={ajustar}
-                aoDefinirBarra={(_, pct) => som.definir(pct / 100)}
-                aoSelecionar={menu.selecionar}
-              />
+              {/*
+                O teclado do menu vale para as abas e para as linhas: um só
+                `onKeyDown`, aqui em volta — o MenuOsd recebe um inerte para o
+                evento não ser tratado duas vezes na subida.
+              */}
+              <div {...menu.propsContainer}>
+                <AbasDeResolucao
+                  opcoes={PRESET_ORDER.map((id) => ({ id, rotulo: rotuloCurto(id) }))}
+                  escolhido={presetEscolhido}
+                  noAr={vivo.presetForced ? presetAtual : null}
+                  ajuda={ajudaResolucao}
+                  aoEscolher={(id) => {
+                    const alvo = PRESET_ORDER.find((p) => p === id);
+                    if (alvo !== undefined) void setPreset(alvo);
+                  }}
+                  propsGrupo={menu.propsLinha('resolucao')}
+                />
+                <MenuOsd
+                  rotulo="Ajustes ao vivo"
+                  linhas={linhas}
+                  ativo={menu.ativo}
+                  propsContainer={SEM_TECLADO}
+                  propsLinha={menu.propsLinha}
+                  aoAjustar={ajustar}
+                  aoDefinirBarra={(_, pct) => som.definir(pct / 100)}
+                  aoSelecionar={menu.selecionar}
+                />
+              </div>
 
               {/*
                 Grafo suspenso: a trilha continua `live` e sai SILÊNCIO. Só um

@@ -1,7 +1,8 @@
 # ADR 0021 — Sala privada por convite e protocolo versionado
 
 **Data:** 2026-09-28
-**Estado:** aceita
+**Estado:** substituída em parte pela ADR 0026 (o convite saiu do link; o
+protocolo versionado e `remove-viewers` continuam)
 **Tarefa:** TELA-018 · **Mantém:** R6 (sem conta, sem login), R8 (payload opaco)
 
 ## Contexto

@@ -17,13 +17,13 @@ do Discord. O dono pediu para aceitar cada pessoa antes de ela ver a tela.
 2. **Apelido digitado.** O espectador diz como quer aparecer (1 a 24
    caracteres, sem caractere de controle). Fica no navegador dele
    (`tela.apelido`). Não é conta: ninguém confere, dois podem usar o mesmo.
-3. **Quem foi aceito volta direto até o convite ser renovado.** Cada navegador
+3. **Quem foi aceito volta direto até o dono desconectar todos.** Cada navegador
    de espectador tem uma chave de 128 bits (`tela.espectador`). O servidor manda
    ao dono só o `sha256` dela — a *impressão* —, calculado no servidor: se o
    cliente mandasse a própria impressão, qualquer um se passaria por quem já foi
    aceito. O dono guarda as impressões aceitas (`tela.aprovados`, até 64) e
-   aceita sozinho quem já conhece. **Renovar o convite ou desconectar todos
-   zera a lista.**
+   aceita sozinho quem já conhece. **Desconectar todos zera a lista.** (Havia
+   também "renovar o convite", que saiu com o convite na ADR 0026.)
 4. **Aviso ao dono:** fila no console com ACEITAR / RECUSAR, contador no título
    da aba (`(2) ● No ar · Tela`) e um bipe curto por pedido novo (respeita o
    mudo). A placa de repouso — o que vai na captura se a aba ficar visível —

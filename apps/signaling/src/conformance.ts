@@ -21,12 +21,10 @@ export type ConformanceClient = {
 };
 
 /**
- * O que acompanha a saudação. Padrão: versão atual e o `CONVITE` da suíte.
- * `null` OMITE o campo — é assim que se simula cliente antigo ou link sem
- * convite.
+ * O que acompanha a saudação. Padrão: versão atual. `null` OMITE o campo — é
+ * assim que se simula cliente antigo.
  */
 export type Saudacao = {
-  readonly invite?: string | null;
   readonly protocol?: number | null;
   /** Só `watch`. Padrão: o id do cliente. `null` omite. */
   readonly name?: string | null;
@@ -75,8 +73,6 @@ export type ConformanceDriver = {
 export const OWNER = 'o'.repeat(43);
 export const OUTRO = 'z'.repeat(43);
 export const SLUG = 'joao';
-export const CONVITE = 'c'.repeat(22);
-export const OUTRO_CONVITE = 'd'.repeat(22);
 
 /** Monta `host`/`watch` com os campos da versão atual, salvo omissão explícita. */
 export function saudar(
@@ -84,14 +80,12 @@ export function saudar(
   saudacao: Saudacao = {},
   id = 'espectador',
 ): Record<string, unknown> {
-  const invite = saudacao.invite === undefined ? CONVITE : saudacao.invite;
   const protocol = saudacao.protocol === undefined ? PROTOCOL_VERSION : saudacao.protocol;
   const assiste = base['type'] === 'watch';
   const name = saudacao.name === undefined ? id : saudacao.name;
   const viewerKey = saudacao.viewerKey === undefined ? chaveDe(id) : saudacao.viewerKey;
   return {
     ...base,
-    ...(invite === null ? {} : { invite }),
     ...(protocol === null ? {} : { protocol }),
     ...(assiste && name !== null ? { name } : {}),
     ...(assiste && viewerKey !== null ? { viewerKey } : {}),

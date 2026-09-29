@@ -78,12 +78,6 @@ type Attachment = {
   readonly fingerprint?: string;
   /** Só no socket do host: sha256 do ownerToken de quem reivindicou. */
   readonly ownerHash?: string;
-  /**
-   * Só no socket do host: sha256 do convite vigente (TELA-018). Viaja com o
-   * host pelo mesmo motivo do `ownerHash`: sobreviver à hibernação. Sem host
-   * não há o que assistir, então não precisa de storage.
-   */
-  readonly inviteHash?: string;
   /** Tirado pelo transmissor: some da plateia na hora, antes do close chegar. */
   readonly removido?: boolean;
   /** Janela de rate limit desta conexão, também à prova de hibernação. */
@@ -389,16 +383,14 @@ export class ChannelRoom {
         if (at !== null) return;
         const versao = this.versaoRecusada(message.protocol);
         if (versao !== null) return this.fail(socket, versao);
-        // Sala sem convite não existe na v2: nunca abrir por omissão.
-        if (message.invite === undefined) return this.fail(socket, 'BAD_MESSAGE');
-        return await this.claim(socket, slug, message.slug, message.ownerToken, message.invite);
+        return await this.claim(socket, slug, message.slug, message.ownerToken);
       }
       case 'watch': {
         if (at !== null) return;
         const versao = this.versaoRecusada(message.protocol);
         if (versao !== null) return this.fail(socket, versao);
         return await this.join(
-          socket, slug, message.slug, message.invite, message.participantId, message.attemptId,
+          socket, slug, message.slug, message.participantId, message.attemptId,
           message.name, message.viewerKey,
         );
       }
@@ -406,9 +398,6 @@ export class ChannelRoom {
       case 'deny':
         if (at === null) return this.fail(socket, 'BAD_MESSAGE');
         return await this.responder(socket, at, message.peerId, message.type === 'admit');
-      case 'set-invite':
-        if (at === null) return this.fail(socket, 'BAD_MESSAGE');
-        return await this.setInvite(socket, at, message.invite);
       case 'remove-viewers':
         if (at === null) return this.fail(socket, 'BAD_MESSAGE');
         return this.removeViewers(socket, at, message.peerId);
@@ -478,7 +467,6 @@ export class ChannelRoom {
     slug: string,
     claimed: string,
     ownerToken: string,
-    invite: string,
   ): Promise<void> {
     // O slug do Durable Object vence: ele veio da URL e determinou qual
     // instância atendeu. Divergir significa cliente confuso ou malicioso.
@@ -509,7 +497,6 @@ export class ChannelRoom {
     }
 
     const hash = await this.deps.hash(ownerToken);
-    const inviteHash = await this.deps.hash(invite);
     const peerId = this.deps.newPeerId('h');
 
     /*
@@ -566,7 +553,6 @@ export class ChannelRoom {
         peerId,
         role: 'host',
         ownerHash: hash,
-        inviteHash,
         janelaInicio: Date.now(),
         janelaContagem: 0,
       } satisfies Attachment);
@@ -610,7 +596,7 @@ export class ChannelRoom {
   }
 
   private async join(
-    socket: HibernatableSocket, slug: string, wanted: string, invite: string | undefined,
+    socket: HibernatableSocket, slug: string, wanted: string,
     participantId?: string, attemptId?: string, name?: string, viewerKey?: string,
   ): Promise<void> {
     // `isBlockedSlug` também aqui: sem ele o Node responde `SLUG_INVALID` e o
@@ -626,19 +612,7 @@ export class ChannelRoom {
     // nomes não distingue "não existe" de "existe e está fora do ar".
     if (host === null) return this.fail(socket, 'NOT_HOSTING');
 
-    /**
-     * Convite ANTES de vaga e de credencial TURN (TELA-018, §9.1). Só é dito
-     * quando há transmissão, como no Node.
-     */
-    const inviteHash = invite === undefined ? null : await this.deps.hash(invite);
-    if (!this.ctx.getWebSockets().includes(socket)) return;
-    const hostAgora = this.host();
-    if (hostAgora === null) return this.fail(socket, 'NOT_HOSTING');
-    if (inviteHash === null || typeof hostAgora.at.inviteHash !== 'string' ||
-      !this.deps.equals(hostAgora.at.inviteHash, inviteHash)) {
-      return this.fail(socket, 'INVITE_INVALID');
-    }
-
+    // Sem convite desde a ADR 0026: a porta é a aprovação do dono, abaixo.
     // Sem apelido e chave não há o que mostrar ao transmissor (ADR 0025).
     if (name === undefined || viewerKey === undefined) return this.fail(socket, 'BAD_MESSAGE');
     const fingerprint = await this.deps.hash(viewerKey);
@@ -756,17 +730,6 @@ export class ChannelRoom {
       fingerprint,
     });
     this.anunciarPlateia();
-  }
-
-  /** Só o transmissor atual troca o convite. Quem já está dentro fica. */
-  private async setInvite(socket: HibernatableSocket, at: Attachment, invite: string): Promise<void> {
-    if (at.role !== 'host' || this.host()?.socket !== socket) return this.fail(socket, 'BAD_MESSAGE');
-    const inviteHash = await this.deps.hash(invite);
-    if (!this.ctx.getWebSockets().includes(socket)) return;
-    const atual = this.attachmentOf(socket);
-    if (atual === null || this.host()?.socket !== socket) return;
-    socket.serializeAttachment({ ...atual, inviteHash } satisfies Attachment);
-    this.send(socket, { type: 'invite-set' });
   }
 
   /**

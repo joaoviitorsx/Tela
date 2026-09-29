@@ -7,7 +7,6 @@ import { SpySocket, TestClock, testDeps } from './testing.js';
 const SLUG = 'joao';
 const OWNER = 'o'.repeat(43);
 const OUTRO = 'z'.repeat(43);
-const CONVITE = 'c'.repeat(22);
 
 describe('registro de canais', () => {
   let clock: TestClock;
@@ -28,7 +27,7 @@ describe('registro de canais', () => {
   function host(slug = SLUG, ownerToken = OWNER, ip = '1.1.1.1') {
     const socket = new SpySocket();
     const conn = registry.accept(socket, ip);
-    conn.receive(JSON.stringify({ type: 'host', slug, ownerToken, protocol: PROTOCOL_VERSION, invite: CONVITE }));
+    conn.receive(JSON.stringify({ type: 'host', slug, ownerToken, protocol: PROTOCOL_VERSION }));
     hosts.push({ socket, conn });
     return { socket, conn };
   }
@@ -40,7 +39,7 @@ describe('registro de canais', () => {
     espectadores += 1;
     const name = `amigo${espectadores}`;
     conn.receive(JSON.stringify({
-      type: 'watch', slug, protocol: PROTOCOL_VERSION, invite: CONVITE,
+      type: 'watch', slug, protocol: PROTOCOL_VERSION,
       name, viewerKey: `k${name}`.padEnd(22, 'k'),
     }));
     if (socket.ofType('awaiting-approval').length > 0) {
@@ -352,7 +351,7 @@ describe('registro de canais', () => {
 });
 
 describe('convite (TELA-018)', () => {
-  it('convite inválido não gasta credencial TURN nem vaga', () => {
+  it('pedido sem resposta não gasta credencial TURN nem vaga', () => {
     const clock = new TestClock();
     const pedidos: string[] = [];
     const base = testDeps(clock, { maxPeers: 1 });
@@ -365,14 +364,14 @@ describe('convite (TELA-018)', () => {
     });
     const hostSock = new SpySocket();
     registry.accept(hostSock, '1.1.1.1').receive(JSON.stringify({
-      type: 'host', slug: SLUG, ownerToken: OWNER, protocol: PROTOCOL_VERSION, invite: CONVITE,
+      type: 'host', slug: SLUG, ownerToken: OWNER, protocol: PROTOCOL_VERSION,
     }));
     const antes = pedidos.length;
-    const intruso = new SpySocket();
-    registry.accept(intruso, '2.2.2.2').receive(JSON.stringify({
-      type: 'watch', slug: SLUG, protocol: PROTOCOL_VERSION, invite: 'x'.repeat(22),
+    const estranho = new SpySocket();
+    registry.accept(estranho, '2.2.2.2').receive(JSON.stringify({
+      type: 'watch', slug: SLUG, protocol: PROTOCOL_VERSION, name: 'eva', viewerKey: 'e'.repeat(22),
     }));
-    expect(intruso.last()).toEqual({ type: 'error', code: 'INVITE_INVALID' });
+    expect(estranho.last()).toEqual({ type: 'awaiting-approval' });
     expect(pedidos.length).toBe(antes);
     expect(registry.viewerCount(SLUG)).toBe(0);
   });

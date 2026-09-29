@@ -1,7 +1,7 @@
 import { webcrypto } from 'node:crypto';
 import { HELLO_TIMEOUT_MS, MAX_FRAME_BYTES } from '@tela/shared';
 import { describe, expect, it } from 'vitest';
-import { CONVITE, OUTRO, OWNER, SLUG, saudar } from './conformance.js';
+import { OUTRO, OWNER, SLUG, saudar } from './conformance.js';
 import type { IceProvisionResult } from './ice-provision.js';
 import { FakeDurableContext, FakeHibernatableSocket } from './testing-worker-driver.js';
 import { ChannelRoom, type Env, type WebCryptoLike, makeChannelDeps } from './worker.js';
@@ -98,22 +98,16 @@ describe('Worker endurecido (TELA-019)', () => {
     expect(s.pedidos.length).toBe(antes);
   });
 
-  it('o convite sobrevive à hibernação: o errado segue barrado, o certo entra', async () => {
+  it('depois da hibernação, o pedido ainda chega ao transmissor', async () => {
     const s = sala();
     await s.mandar(s.abrir(), saudar({ type: 'host', slug: SLUG, ownerToken: OWNER }));
     const depois = new ChannelRoom(s.ctx, makeChannelDeps(
       { CHANNELS: null as never, MAX_PEERS: '3' }, webcrypto as unknown as WebCryptoLike,
     ));
-    const errado = new FakeHibernatableSocket();
-    depois.accept(errado);
-    await depois.handleMessage(errado, SLUG, JSON.stringify(saudar(
-      { type: 'watch', slug: SLUG }, { invite: 'x'.repeat(22) },
-    )));
-    expect(errado.sent.at(-1)).toEqual({ type: 'error', code: 'INVITE_INVALID' });
-    const certo = new FakeHibernatableSocket();
-    depois.accept(certo);
-    await depois.handleMessage(certo, SLUG, JSON.stringify(saudar({ type: 'watch', slug: SLUG }, { invite: CONVITE })));
-    // Convite certo: o pedido chega ao transmissor (a entrada é dele, ADR 0025).
-    expect(certo.sent[0]?.type).toBe('awaiting-approval');
+    const v = new FakeHibernatableSocket();
+    depois.accept(v);
+    await depois.handleMessage(v, SLUG, JSON.stringify(saudar({ type: 'watch', slug: SLUG })));
+    // A entrada é do dono (ADR 0025): o pedido chega, sem convite (ADR 0026).
+    expect(v.sent[0]?.type).toBe('awaiting-approval');
   });
 });

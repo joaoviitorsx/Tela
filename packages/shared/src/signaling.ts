@@ -27,27 +27,23 @@ export const PeerIdSchema = z.string().min(1).max(64);
  *
  * A 3 trouxe a aprovação manual (ADR 0025): quem fala 2 entraria sem pedir, e
  * por isso recebe `PROTOCOL_MISMATCH` — "recarregue" — em vez de passar.
- */
-export const PROTOCOL_VERSION = 3;
-
-/**
- * Segredo de convite: pelo menos 128 bits em base64url (16 bytes = 22 chars).
  *
- * Independente do `ownerToken`: o convite vai no link do espectador, o token
- * do dono nunca. O servidor guarda só o hash, e o compara antes de reservar
- * vaga ou emitir credencial TURN.
+ * A 4 tirou o convite do link (ADR 0026): o link é só o nome do canal, e quem
+ * decide quem entra é a aprovação. Abas abertas na 3 mandariam `set-invite`,
+ * que não existe mais — recarregar é mais honesto que um erro no meio do ar.
  */
-export const InviteSchema = z.string().regex(/^[A-Za-z0-9_-]{22,128}$/);
+export const PROTOCOL_VERSION = 4;
+
 export type PeerId = z.infer<typeof PeerIdSchema>;
 
 /**
- * Chave do navegador de quem assiste (ADR 0025): mesmo formato do convite.
+ * Chave do navegador de quem assiste (ADR 0025): 128 bits em base64url.
  *
  * É o que faz "já aprovei esta pessoa" valer na volta. O transmissor nunca vê a
  * chave, só o sha256 dela (`fingerprint`), calculado PELO SERVIDOR — um cliente
  * que mandasse o próprio fingerprint poderia se passar por quem já foi aceito.
  */
-export const ViewerKeySchema = InviteSchema;
+export const ViewerKeySchema = z.string().regex(/^[A-Za-z0-9_-]{22,128}$/);
 
 /**
  * Como o transmissor reconhece quem pede para entrar. Não é conta (R6): não
@@ -70,8 +66,6 @@ export const SignalingErrorCodeSchema = z.enum([
   'RATE_LIMITED',
   'OWNER_INVALID',
   'BAD_MESSAGE',
-  /** Convite ausente, errado ou renovado. Só é dito quando há transmissão. */
-  'INVITE_INVALID',
   /** Cliente e servidor falam versões diferentes: recarregar resolve. */
   'PROTOCOL_MISMATCH',
   /** O transmissor tirou este espectador. Não tentar de novo sozinho. */
@@ -111,13 +105,10 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     protocol: z.number().int().min(1).max(1000).optional(),
     slug: z.string().min(1).max(64),
     ownerToken: z.string().min(43).max(256),
-    /** Obrigatório a partir da versão 2; a validação é do servidor, não do schema. */
-    invite: InviteSchema.optional(),
   }),
   z.object({
     type: z.literal('watch'), slug: z.string().min(1).max(64),
     protocol: z.number().int().min(1).max(1000).optional(),
-    invite: InviteSchema.optional(),
     /** Identidade efêmera de alta entropia; quem a conhece pode retomar a vaga. */
     participantId: z.string().min(16).max(128).optional(),
     /** Nova PC = nova tentativa; reconexão apenas do socket preserva este ID. */
@@ -134,14 +125,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('deny'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('refresh-ice'), requestId: z.string().min(1).max(64) }),
   /**
-   * Só o transmissor: troca o convite. Quem já está assistindo fica; só
-   * entradas NOVAS passam a exigir o convite novo (decisão do dono do produto).
-   */
-  z.object({ type: z.literal('set-invite'), invite: InviteSchema }),
-  /**
-   * Só o transmissor: tira um espectador, ou todos sem `peerId`. Ação separada
-   * de renovar. Convite é token compartilhado: quem sai pode voltar com o
-   * mesmo link até ele ser renovado — não é banimento.
+   * Só o transmissor: tira um espectador, ou todos sem `peerId`. Não é
+   * banimento: quem sai pode pedir de novo, e o dono decide de novo.
    */
   z.object({ type: z.literal('remove-viewers'), peerId: PeerIdSchema.optional() }),
   /** `to` opcional: espectador só tem um destino possível, o transmissor. */
@@ -198,15 +183,13 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     issuedAt: z.number().int().nonnegative().optional(),
     expiresAt: z.number().int().nonnegative().optional(),
   }),
-  /** Resposta a `set-invite`: o convite novo já vale para entradas novas. */
-  z.object({ type: z.literal('invite-set') }),
   /**
-   * Para o espectador: convite aceito, pedido na mão do transmissor. Nada de
-   * vaga nem credencial TURN ainda — isso só depois do `admit` (ADR 0025).
+   * Para o espectador: pedido na mão do transmissor. Nada de vaga nem
+   * credencial TURN ainda — isso só depois do `admit` (ADR 0025).
    */
   z.object({ type: z.literal('awaiting-approval') }),
   /**
-   * Para o transmissor: alguém com o convite pede para entrar. `peerId` é o que
+   * Para o transmissor: alguém pede para entrar. `peerId` é o que
    * ele terá ao entrar; `fingerprint` é o sha256 da chave do navegador dele.
    */
   z.object({

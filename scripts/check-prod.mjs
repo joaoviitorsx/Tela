@@ -5,6 +5,9 @@
  *   PROD_URL=https://... pnpm prod
  */
 import { execSync } from 'node:child_process';
+// A versão do protocolo vem do build do pacote compartilhado: número fixo aqui
+// quebraria a checagem na próxima troca de versão — e passaria a mentir.
+import { PROTOCOL_VERSION } from '../packages/shared/dist/index.js';
 
 // URL real do Worker publicado.
 //
@@ -113,7 +116,7 @@ const sinal = await new Promise((resolve) => {
   }, 8_000);
   ws.addEventListener('open', () => {
     ws.send(JSON.stringify({
-      type: 'watch', protocol: 3, slug, invite: 'c'.repeat(22),
+      type: 'watch', protocol: PROTOCOL_VERSION, slug,
       name: 'check-prod', viewerKey: 'k'.repeat(22),
     }));
   });

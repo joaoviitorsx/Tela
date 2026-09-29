@@ -3,9 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { makeNodeDriver } from './testing-node-driver.js';
 import { makeWorkerDriver } from './testing-worker-driver.js';
 import {
-  CONVITE,
   OUTRO,
-  OUTRO_CONVITE,
   OWNER,
   SLUG,
   type ConformanceDriver,
@@ -383,52 +381,40 @@ it('Worker espera TURN antes de reapresentar a reserva ao host reconectado', asy
   ]);
 });
 
-describe.each(implementacoes)('convite privado e protocolo versionado (TELA-018) — %s', (_nome, criar) => {
-  it('espectador sem convite não entra, nem recebe vaga ou ICE', async () => {
+describe.each(implementacoes)('link só com o nome e protocolo versionado (ADR 0026) — %s', (_nome, criar) => {
+  it('sem convite nenhum, quem tem o nome PEDE para entrar — e só', async () => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER);
-    const v = await d.watch('v', SLUG, undefined, { invite: null });
-    expect(errorOf(v)).toBe('INVITE_INVALID');
+    const v = await d.watch('v', SLUG, undefined, { aprovar: false });
+    expect(ofType(v, 'awaiting-approval')).toHaveLength(1);
     expect(ofType(v, 'watching')).toEqual([]);
-    expect(ofType(host, 'peer-joined')).toEqual([]);
-    expect(v.closed()).toBe(true);
+    expect(ofType(host, 'join-request').map((m) => m.name)).toEqual(['v']);
   });
 
-  it('convite errado é recusado; o certo entra', async () => {
+  it('sem transmissão, qualquer nome dá NOT_HOSTING', async () => {
     const d = criar();
-    await d.host('h', SLUG, OWNER);
-    const errado = await d.watch('v1', SLUG, undefined, { invite: OUTRO_CONVITE });
-    expect(errorOf(errado)).toBe('INVITE_INVALID');
-    const certo = await d.watch('v2', SLUG);
-    expect(ofType(certo, 'watching')).toHaveLength(1);
+    expect(errorOf(await d.watch('v1', SLUG))).toBe('NOT_HOSTING');
   });
 
-  it('sem transmissão, convite errado e inexistente dão o mesmo NOT_HOSTING', async () => {
+  it('cliente v1 (sem protocolo) é recusado com código que ele entende', async () => {
     const d = criar();
-    const semNada = await d.watch('v1', SLUG, undefined, { invite: OUTRO_CONVITE });
-    expect(errorOf(semNada)).toBe('NOT_HOSTING');
-  });
-
-  it('cliente v1 (sem protocolo) é recusado com código que ele entende — sala nunca abre', async () => {
-    const d = criar();
-    const hostAntigo = await d.host('h1', SLUG, OWNER, { protocol: null, invite: null });
+    const hostAntigo = await d.host('h1', SLUG, OWNER, { protocol: null });
     expect(errorOf(hostAntigo)).toBe('BAD_MESSAGE');
     await d.host('h2', SLUG, OWNER);
-    const antigo = await d.watch('v', SLUG, undefined, { protocol: null, invite: null });
+    const antigo = await d.watch('v', SLUG, undefined, { protocol: null });
     expect(errorOf(antigo)).toBe('BAD_MESSAGE');
-  });
-
-  it('host v2 sem convite não abre sala aberta por omissão', async () => {
-    const d = criar();
-    const host = await d.host('h', SLUG, OWNER, { invite: null });
-    expect(errorOf(host)).toBe('BAD_MESSAGE');
-    expect(ofType(host, 'hosting')).toEqual([]);
   });
 
   it('versão diferente recebe PROTOCOL_MISMATCH', async () => {
     const d = criar();
     const futuro = await d.host('h', SLUG, OWNER, { protocol: PROTOCOL_VERSION + 1 });
     expect(errorOf(futuro)).toBe('PROTOCOL_MISMATCH');
+  });
+
+  it('aba aberta na v3 (com convite) recebe PROTOCOL_MISMATCH: recarregar', async () => {
+    const d = criar();
+    const velho = await d.host('h', SLUG, OWNER, { protocol: 3 });
+    expect(errorOf(velho)).toBe('PROTOCOL_MISMATCH');
   });
 
   it('espectador v2 (sem aprovação) recebe PROTOCOL_MISMATCH, nunca entra direto', async () => {
@@ -440,41 +426,21 @@ describe.each(implementacoes)('convite privado e protocolo versionado (TELA-018)
     expect(ofType(host, 'peer-joined')).toEqual([]);
   });
 
-  it('renovar convite barra entradas novas e mantém quem já está dentro', async () => {
+  it('`set-invite` não existe mais: mensagem desconhecida', async () => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER);
-    const dentro = await d.watch('v1', SLUG);
-    await d.send('h', { type: 'set-invite', invite: OUTRO_CONVITE });
-    expect(ofType(host, 'invite-set')).toHaveLength(1);
-
-    const linkVelho = await d.watch('v2', SLUG);
-    expect(errorOf(linkVelho)).toBe('INVITE_INVALID');
-    const linkNovo = await d.watch('v3', SLUG, undefined, { invite: OUTRO_CONVITE });
-    expect(ofType(linkNovo, 'watching')).toHaveLength(1);
-    expect(dentro.closed()).toBe(false);
+    await d.send('h', { type: 'set-invite', invite: 'd'.repeat(22) });
+    expect(errorOf(host)).toBe('BAD_MESSAGE');
   });
 
-  it('renovar não troca o dono do canal', async () => {
+  it('espectador não remove ninguém', async () => {
     const d = criar();
     await d.host('h', SLUG, OWNER);
-    await d.send('h', { type: 'set-invite', invite: OUTRO_CONVITE });
-    const estranho = await d.host('x', SLUG, OUTRO, { invite: OUTRO_CONVITE });
-    expect(errorOf(estranho)).toBe('SLUG_TAKEN');
-  });
-
-  it('espectador não troca convite nem remove ninguém', async () => {
-    const d = criar();
-    const host = await d.host('h', SLUG, OWNER);
     const v1 = await d.watch('v1', SLUG);
     const v2 = await d.watch('v2', SLUG);
     await d.send('v1', { type: 'remove-viewers' });
     expect(errorOf(v1)).toBe('BAD_MESSAGE');
     expect(v2.closed()).toBe(false);
-    await d.send('v2', { type: 'set-invite', invite: OUTRO_CONVITE });
-    expect(errorOf(v2)).toBe('BAD_MESSAGE');
-    expect(ofType(host, 'invite-set')).toEqual([]);
-    const aindaEntra = await d.watch('v3', SLUG, undefined, { invite: CONVITE });
-    expect(ofType(aindaEntra, 'watching')).toHaveLength(1);
   });
 
   it('desconectar todos fecha a sinalização de cada um e avisa o transmissor', async () => {
@@ -503,16 +469,9 @@ describe.each(implementacoes)('convite privado e protocolo versionado (TELA-018)
     expect(v2.closed()).toBe(false);
     expect(ofType(host, 'peer-left')).toEqual([{ type: 'peer-left', peerId: peerIdOf(v1) }]);
   });
-
-  it('o convite nunca volta para ninguém', async () => {
-    const d = criar();
-    const host = await d.host('h', SLUG, OWNER);
-    const v = await d.watch('v', SLUG);
-    for (const c of [host, v]) expect(JSON.stringify(c.received())).not.toContain(CONVITE);
-  });
 });
 
-it('Worker: convite inválido não gasta credencial TURN', async () => {
+it('Worker: pedido ainda sem resposta não gasta credencial TURN', async () => {
   const pedidos: string[] = [];
   const d = makeWorkerDriver(async (peerId) => {
     pedidos.push(peerId);
@@ -520,7 +479,7 @@ it('Worker: convite inválido não gasta credencial TURN', async () => {
   });
   await d.host('h', SLUG, OWNER);
   const antes = pedidos.length;
-  await d.watch('v', SLUG, undefined, { invite: OUTRO_CONVITE });
+  await d.watch('v', SLUG, undefined, { aprovar: false });
   expect(pedidos.length).toBe(antes);
 });
 

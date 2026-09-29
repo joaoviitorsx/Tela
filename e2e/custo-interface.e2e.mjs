@@ -141,7 +141,7 @@ const passo2 = await medir('home passo 02', async (p) => {
   await p.getByRole('button', { name: /^TRANSMITIR/ }).click();
 });
 const espera = await medir('espectador esperando sinal', async (p) => {
-  await p.goto(`${WEB}/${slug()}#k=${'c'.repeat(22)}`, { waitUntil: 'networkidle' });
+  await p.goto(`${WEB}/${slug()}`, { waitUntil: 'networkidle' });
 });
 const aceso = await medir('ao vivo, console aceso', aoVivo);
 const apagado = await medir('ao vivo, console apagado (placa)', async (p) => {

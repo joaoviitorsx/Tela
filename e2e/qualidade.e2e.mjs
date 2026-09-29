@@ -32,8 +32,6 @@ import { chromium } from 'playwright';
 const CHROME = process.env.CHROME ?? chromium.executablePath();
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const SLUG = process.env.SLUG ?? 'qualidade';
-// Protocolo v2 (TELA-018): a sala só abre com o convite do link.
-const CONVITE = 'q2e' + 'c'.repeat(19);
 const SAIDA = process.env.SAIDA ?? join(tmpdir(), 'qualidade-e2e.json');
 
 /** Dureza do conteúdo. Ver o bloco em `fonteAnimada`. */
@@ -533,7 +531,7 @@ console.log(`   -> ${h264.length} variantes de H.264 no SENDER`);
 /* ---- Sobe o transmissor ------------------------------------------- */
 console.log('\n[setup] transmissor publica canvas 1920x1080 animado');
 const subiu = await host.evaluate(
-  async ([slug, fonte, convite]) => {
+  async ([slug, fonte]) => {
     const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
     const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
@@ -555,7 +553,7 @@ const subiu = await host.evaluate(
       scheduler: makeBrowserScheduler(),
     });
     window.__transport = transport;
-    await transport.host(slug, 'q'.repeat(43), convite);
+    await transport.host(slug, 'q'.repeat(43));
     // Este harness mede qualidade, não aprovação (ADR 0025): aceita todo pedido.
     transport.on('pedido', (p) => transport.responderPedido(p.peerId, true));
     await transport.publishVideo(track, shared.PRESET_1080P60);
@@ -602,7 +600,7 @@ const subiu = await host.evaluate(
       presets: Object.keys(shared.PRESETS),
     };
   },
-  [SLUG, FONTE, CONVITE],
+  [SLUG, FONTE],
 );
 console.log(`   trilha: ${JSON.stringify(subiu.settings)} hint=${subiu.contentHint}`);
 console.log(`   fonte: ${JSON.stringify(FONTE)}`);
@@ -610,7 +608,7 @@ relatorio.trilha = { ...subiu, fonte: FONTE };
 
 /* ---- Espectador 1 -------------------------------------------------- */
 const viewer1 = await novaPagina('viewer1');
-await viewer1.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
+await viewer1.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
 
 async function esperarFrames(page, segundos = 30) {
   for (let i = 0; i < segundos; i += 1) {
@@ -1150,12 +1148,12 @@ async function medirParidade(n) {
 }
 
 const viewer2 = await novaPagina('viewer2');
-await viewer2.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
+await viewer2.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
 await esperarFrames(viewer2, 30);
 await medirParidade(2);
 
 const viewer3 = await novaPagina('viewer3');
-await viewer3.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
+await viewer3.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
 await esperarFrames(viewer3, 30);
 await medirParidade(3);
 

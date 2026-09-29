@@ -567,8 +567,6 @@ async function rodarCenario(cfg) {
     gain: new FakeAudioGain(),
     scheduler,
     shareUrlFor,
-    // Obrigatório desde a TELA-018: o link leva o convite.
-    convite: new fakes.FakeConvites(),
     createStream,
     ...(memoria === undefined ? {} : { uplinkMemory: memoria }),
     statsIntervalMs: 1_000,

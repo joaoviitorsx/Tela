@@ -16,9 +16,8 @@ import { chromium } from 'playwright';
 const CHROME = process.env.CHROME ?? chromium.executablePath();
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const SLUG = process.env.SLUG ?? 'joao';
-// Protocolo v3: a sala só abre com o convite do link (TELA-018), e cada
-// espectador pede para entrar (ADR 0025).
-const CONVITE = 'e2e' + 'c'.repeat(19);
+// Protocolo v4: o link é só o nome (ADR 0026) e cada espectador pede para
+// entrar (ADR 0025).
 
 const ok = (cond, msg) => {
   console.log(`${cond ? '  ok  ' : ' FALHA'} ${msg}`);
@@ -79,7 +78,7 @@ ok(campo === 'seunome', 'campo de slug presente');
 
 console.log('\n2. A rota /:slug abre como espectador e fica offline (ninguém transmitindo)');
 const viewer = await newPage('viewer');
-await viewer.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'networkidle' });
+await viewer.goto(`${WEB}/${SLUG}`, { waitUntil: 'networkidle' });
 await viewer.waitForTimeout(2500);
 const texto = await viewer.textContent('body');
 ok(
@@ -92,7 +91,7 @@ const host = await newPage('host');
 await host.goto(`${WEB}/`, { waitUntil: 'networkidle' });
 
 const resultado = await host.evaluate(
-  async ([slug, base, convite]) => {
+  async ([slug, base]) => {
     const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
     const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
@@ -137,7 +136,7 @@ const resultado = await host.evaluate(
     });
     window.__transport = transport;
 
-    await transport.host(slug, 'o'.repeat(43), convite);
+    await transport.host(slug, 'o'.repeat(43));
     // Aprovação manual (ADR 0025): o teste decide caso a caso, e liga o aceite
     // automático depois de provar o fluxo.
     window.__pedidos = [];
@@ -153,7 +152,7 @@ const resultado = await host.evaluate(
     void base;
     return { hosted: true, contentHint: track.contentHint, temAudio: Boolean(audioTrack) };
   },
-  [SLUG, WEB, CONVITE],
+  [SLUG, WEB],
 );
 ok(resultado.hosted, 'transmissor reivindicou o canal pelo signaling real');
 ok(resultado.contentHint === 'motion', 'contentHint=motion aplicado na trilha');
@@ -435,29 +434,31 @@ console.log('\n3b. Grafo de ganho em Chrome real (TELA-009)');
   ok(grafo.mudoNoFallback && grafo.voltou && !grafo.ativoFallback, 'sem Web Audio, o mudo desliga a trilha crua');
 }
 
-console.log('\n3c. Sala privada: link sem convite ou com convite errado não entra (TELA-018)');
+console.log('\n3c. Link só com o nome (ADR 0026): quem abre pede, e link antigo com #k= também');
 {
-  const semConvite = await newPage('sem-convite');
-  await semConvite.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
-  await semConvite.waitForTimeout(1500);
-  const t1 = await semConvite.textContent('body');
-  ok(t1.includes('link incompleto'), `link sem #k= nem tenta entrar (${JSON.stringify(t1.slice(0, 60))})`);
-
-  const errado = await newPage('convite-errado');
-  await errado.goto(`${WEB}/${SLUG}#k=${'x'.repeat(22)}`, { waitUntil: 'domcontentloaded' });
-  await errado.waitForTimeout(3000);
-  const t2 = await errado.textContent('body');
-  ok(t2.includes('convite renovado'), `convite errado é recusado pelo servidor (${JSON.stringify(t2.slice(0, 60))})`);
+  await host.evaluate(() => { window.__autoAceitar = false; });
+  const soNome = await newPage('so-nome');
+  await soNome.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
+  const antigo = await newPage('link-antigo');
+  await antigo.goto(`${WEB}/${SLUG}#k=${'x'.repeat(22)}`, { waitUntil: 'domcontentloaded' });
+  await soNome.waitForTimeout(3000);
+  const t1 = await soNome.textContent('body');
+  ok(t1.includes('pedido enviado'), `link só com o nome chega ao pedido (${JSON.stringify(t1.slice(0, 60))})`);
+  const t2 = await antigo.textContent('body');
+  ok(t2.includes('pedido enviado'), `link antigo com #k= é aceito e o fragmento ignorado (${JSON.stringify(t2.slice(0, 60))})`);
+  const nomes = await host.evaluate(() => window.__pedidos.map((p) => p.nome));
+  ok(nomes.includes('so-nome') && nomes.includes('link-antigo'), `os dois pedidos chegaram ao transmissor (${nomes.join(', ')})`);
   const naMalhaAinda = await host.evaluate(() => window.__transport.peers().length);
-  ok(naMalhaAinda === 1, `recusado não ocupou vaga na malha (${naMalhaAinda})`);
-  await semConvite.close();
-  await errado.close();
+  ok(naMalhaAinda === 1, `pedido sem resposta não ocupa vaga na malha (${naMalhaAinda})`);
+  await soNome.close();
+  await antigo.close();
+  await host.evaluate(() => { window.__autoAceitar = true; });
 }
 
 console.log('\n3d. Aprovação manual: apelido pedido uma vez, e recusa é estado próprio (ADR 0025)');
 {
   const novo = await newPage('sem-apelido', { apelido: null });
-  await novo.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
+  await novo.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
   await novo.waitForTimeout(1500);
   const form = await novo.textContent('body');
   ok(form.includes('SEU APELIDO'), `sem apelido guardado, pergunta antes de pedir (${JSON.stringify(form.slice(0, 60))})`);
@@ -496,7 +497,7 @@ const TETO = 5;
 const extras = [];
 for (let i = 0; i < TETO - 1; i += 1) {
   const p = await newPage(`extra${i}`);
-  await p.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
+  await p.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
   extras.push(p);
   await p.waitForTimeout(3000);
 }
@@ -504,7 +505,7 @@ const naMalha = await host.evaluate(() => window.__transport.peers().length);
 ok(naMalha === TETO, `malha cheia com ${naMalha} espectadores (teto ${TETO})`);
 
 const excedente = await newPage('excedente');
-await excedente.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
+await excedente.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
 await excedente.waitForTimeout(4000);
 const textoCheio = await excedente.textContent('body');
 ok(

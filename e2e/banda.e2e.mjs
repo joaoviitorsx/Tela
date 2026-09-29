@@ -23,7 +23,6 @@ import { chromium } from 'playwright';
 const CHROME = process.env.CHROME ?? chromium.executablePath();
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const SLUG = process.env.SLUG ?? 'banda';
-const CONVITE = 'col' + 'c'.repeat(19);
 const LIMITE_BPS = Number(process.env.LIMITE_BPS ?? 1_500_000);
 
 const ok = (cond, msg) => {
@@ -44,7 +43,7 @@ host.on('pageerror', (e) => console.log(`  [host] pageerror: ${e.message}`));
 await host.goto(`${WEB}/?abertura=0`, { waitUntil: 'domcontentloaded' });
 
 await host.evaluate(
-  async ([slug, convite]) => {
+  async ([slug]) => {
     const { BroadcastSession } = await import('/src/core/media/broadcast-session.ts');
     const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
@@ -85,8 +84,7 @@ await host.evaluate(
       },
       gain: makeBrowserAudioGain(),
       scheduler,
-      shareUrlFor: (s, k) => `${location.origin}/${s}#k=${k}`,
-      convite: { atual: () => convite, renovar: () => convite },
+      shareUrlFor: (s) => `${location.origin}/${s}`,
       createStream: (tracks) => new MediaStream([...tracks]),
     });
     window.__sessao = session;
@@ -97,7 +95,7 @@ await host.evaluate(
       if (s.status === 'live') for (const p of s.pedidos) session.aceitarPedido(p.peerId);
     });
   },
-  [SLUG, CONVITE],
+  [SLUG],
 );
 
 const estado = () =>
@@ -138,7 +136,7 @@ for (const pagina of [host]) {
 // Aprovação manual (ADR 0025): o espectador chega com apelido e o host aceita.
 await host.context().addInitScript(() => localStorage.setItem('tela.apelido', 'banda'));
 const viewer = await host.context().newPage();
-await viewer.goto(`${WEB}/${SLUG}#k=${CONVITE}`, { waitUntil: 'domcontentloaded' });
+await viewer.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
 
 console.log(`\n2. Link de ${(LIMITE_BPS / 1e6).toFixed(1)} Mbps desde a conexão: a sessão desce e diz por quê`);
 const limitacoes = [];

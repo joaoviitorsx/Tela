@@ -13,7 +13,7 @@ import type { Storage } from '../ports/storage.js';
 export const CHAVE_ESPECTADOR_KEY = 'tela.espectador';
 export const APELIDO_KEY = 'tela.apelido';
 
-/** 128 bits, o mesmo piso do convite. */
+/** 128 bits: o piso do §9.1 para um segredo que identifica alguém. */
 const CHAVE_BYTES = 16;
 const CHAVE_RE = /^[A-Za-z0-9_-]{22,128}$/;
 

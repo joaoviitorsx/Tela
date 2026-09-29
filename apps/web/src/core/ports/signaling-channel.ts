@@ -27,7 +27,7 @@ export type ChannelOpened = IceCredentials & {
   readonly viewers: number;
 };
 
-/** Alguém com o convite pede para entrar (ADR 0025). Só o transmissor recebe. */
+/** Alguém pede para entrar (ADR 0025). Só o transmissor recebe. */
 export type PedidoDeEntrada = {
   readonly peerId: string;
   readonly nome: string;
@@ -47,7 +47,7 @@ export type ChannelEvents = {
   'pedido': PedidoDeEntrada;
   /** Só o transmissor: quem pedia desistiu ou caiu antes da resposta. */
   'pedido-cancelado': { peerId: string };
-  /** Só o espectador: convite aceito, o pedido está com o transmissor. */
+  /** Só o espectador: o pedido está com o transmissor. */
   'aguardando-aprovacao': void;
   'peer-left': { peerId: string };
   /** Quantos estão assistindo. Só o espectador recebe. */
@@ -68,9 +68,8 @@ export type ChannelEvents = {
 
 export type SignalingError = { readonly code: SignalingErrorCode };
 
-/** `invite` é o segredo do link; o servidor guarda só o hash dele. */
+/** Quem pede para assistir. O link é só o nome do canal (ADR 0026). */
 export type EntradaDeEspectador = {
-  readonly invite: string;
   /** Como o transmissor vai ver quem pede (ADR 0025). */
   readonly nome: string;
   /** Segredo deste navegador; o transmissor só vê o hash dele. */
@@ -81,14 +80,9 @@ export type EntradaDeEspectador = {
 
 export type SignalingChannel = {
   /** Reivindica o canal como transmissor. Rejeita com `SignalingError`. */
-  host(slug: string, ownerToken: string, invite: string): Promise<ChannelOpened>;
+  host(slug: string, ownerToken: string): Promise<ChannelOpened>;
   /** Entra como espectador. Rejeita com `SignalingError`. */
   watch(slug: string, entrada: EntradaDeEspectador): Promise<ChannelOpened>;
-  /**
-   * Troca o convite do canal (TELA-018). Resolve quando o servidor confirmou:
-   * a partir daí só o convite novo entra. Quem já está dentro fica.
-   */
-  setInvite(invite: string): Promise<void>;
   /** Tira um espectador, ou todos sem `peerId`. Não é banimento. */
   removeViewers(peerId?: string): void;
   /** Só o transmissor: aceita ou recusa um pedido de entrada. */

@@ -67,7 +67,7 @@ export type BroadcastFailure =
  * União discriminada: estado impossível não é representável.
  * Não existe `live` sem link, nem `ended` sem motivo.
  */
-/** Alguém com o convite esperando o dono responder (ADR 0025). */
+/** Alguém esperando o dono responder (ADR 0025). */
 export type PedidoPendente = {
   readonly peerId: string;
   readonly nome: string;
@@ -182,15 +182,10 @@ export type BroadcastSessionDeps = {
   gain: AudioGain;
   scheduler: Scheduler;
   /**
-   * Monta o link de quem assiste. Leva o convite: sem ele o link não abre a
-   * sala (TELA-018). Sem servidor, quem sabe montar é o front.
+   * Monta o link de quem assiste: só o nome do canal (ADR 0026). Sem
+   * servidor, quem sabe montar é o front.
    */
-  shareUrlFor: (slug: string, invite: string) => string;
-  /**
-   * O segredo do link, guardado neste aparelho. `atual` é o de sempre;
-   * `renovar` troca e guarda o novo. Quem implementa é a identidade do dono.
-   */
-  convite: { atual(): string; renovar(): string };
+  shareUrlFor: (slug: string) => string;
   /**
    * Quem este aparelho já aceitou (ADR 0025): quem volta não pede de novo.
    * Opcional só para testes e simulador; sem ele a memória dura a sessão.
@@ -586,7 +581,7 @@ export class BroadcastSession {
 
     try {
       // O servidor é a autoridade sobre o teto; o palpite local só vale até aqui.
-      const aberto = await this.deps.transport.host(slug, ownerToken, this.deps.convite.atual());
+      const aberto = await this.deps.transport.host(slug, ownerToken);
       if (Number.isFinite(aberto.maxPeers) && aberto.maxPeers > 0) {
         this.maxPeers = aberto.maxPeers;
       }
@@ -622,7 +617,7 @@ export class BroadcastSession {
     }
     if (this.stale(epoch)) return this.abandon();
 
-    const shareUrl = this.deps.shareUrlFor(slug, this.deps.convite.atual());
+    const shareUrl = this.deps.shareUrlFor(slug);
     this.setState({
       status: 'live',
       shareUrl,
@@ -1087,34 +1082,8 @@ export class BroadcastSession {
    * nos parâmetros do sender. Arrastar a barra não custa nada à transmissão.
    */
   /**
-   * Troca o convite (TELA-018). Quem já está assistindo fica; o link velho
-   * deixa de abrir a sala para quem chegar depois.
-   *
-   * A ordem importa: o novo é guardado ANTES de ir ao servidor. Se o servidor
-   * não confirmar, o link antigo continua valendo lá até o próximo `host` —
-   * que já leva o novo, porque a saudação de reconexão o carrega. Devolve se
-   * o servidor confirmou, para a UI não afirmar o que não aconteceu.
-   */
-  async renovarConvite(): Promise<boolean> {
-    if (this.state.status !== 'live') return false;
-    const slug = this.state.slug;
-    const novo = this.deps.convite.renovar();
-    // Convite novo, lista nova: quem volta pelo link novo pede de novo.
-    this.aprovados.limpar();
-    let confirmado = true;
-    try {
-      await this.deps.transport.setInvite(novo);
-    } catch {
-      confirmado = false;
-    }
-    if (this.state.status !== 'live' || this.state.slug !== slug) return confirmado;
-    this.setState({ ...this.state, shareUrl: this.deps.shareUrlFor(slug, novo) });
-    return confirmado;
-  }
-
-  /**
-   * Tira todo mundo que está assistindo. Ação separada de renovar: com o
-   * convite de sempre, quem saiu pode voltar pelo mesmo link.
+   * Tira todo mundo que está assistindo, e esquece quem foi aceito: quem
+   * voltar pelo link pede de novo, e o dono decide de novo.
    */
   desconectarTodos(): void {
     if (this.state.status !== 'live') return;
@@ -1155,7 +1124,7 @@ export class BroadcastSession {
     this.publicarPedidos();
   }
 
-  /** Aceita e lembra: a mesma pessoa não pede de novo até renovar o convite. */
+  /** Aceita e lembra: a mesma pessoa não pede de novo até o dono desconectar todos. */
   aceitarPedido(peerId: string): void {
     const pedido = this.pedidos.get(peerId);
     if (pedido === undefined) return;

@@ -138,7 +138,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
     setPrioridade,
     setVolumeTransmissao,
     retomarAudio,
-    renovarConvite: renovarConviteDaSessao,
     desconectarTodos,
     aceitarPedido,
     recusarPedido,
@@ -162,7 +161,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   const [previewAberto, setPreviewAberto] = useState(true);
   const [diagAberto, setDiagAberto] = useState(false);
   const [focoNoConsole, setFocoNoConsole] = useState(false);
-  const [convite, setConvite] = useState<'parado' | 'renovado' | 'falhou'>('parado');
 
   /**
    * O console some sozinho, e não some enquanto está sendo OPERADO — que aqui
@@ -203,18 +201,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   const copiarLink = link.copiar;
   useEffect(() => session.on('started', ({ shareUrl }) => copiarLink(shareUrl)), [session, copiarLink]);
 
-  /**
-   * Renovar já copia o link novo: é a única coisa que se faz com ele em
-   * seguida. A resposta do servidor decide o texto — "renovado" só quando ele
-   * confirmou.
-   */
-  const renovarConvite = useCallback(async () => {
-    const confirmado = await renovarConviteDaSessao();
-    const atual = session.getState();
-    if (atual.status === 'live') copiarLink(atual.shareUrl);
-    setConvite(confirmado ? 'renovado' : 'falhou');
-    window.setTimeout(() => setConvite('parado'), 3_000);
-  }, [renovarConviteDaSessao, session, copiarLink]);
 
   /**
    * Inicia ao montar, encerra ao desmontar.
@@ -316,7 +302,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             mensagem={
               falhou
                 ? (MOTIVOS[state.reason] ?? 'A transmissão caiu.')
-                : 'Seus amigos já não recebem imagem. O link e o convite continuam seus: é só transmitir de novo.'
+                : 'Seus amigos já não recebem imagem. O link continua seu: é só transmitir de novo.'
             }
             canal={`${window.location.host}/${slug}`}
             resumo={
@@ -489,7 +475,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
           NO AR
         </span>
         <p className="numeral m-0 text-[clamp(30px,5vw,56px)] text-accent-hi [text-shadow:0_0_18px_rgb(242_169_59_/_0.4)]">
-          {vivo.shareUrl.replace(/^https?:\/\//, '').split('#')[0]}
+          {vivo.shareUrl.replace(/^https?:\/\//, '')}
         </p>
         <p className="m-0 text-[13px] text-muted">
           {conectados} de {vivo.maxPeers} assistindo · {stats.rtt}
@@ -663,35 +649,22 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             </PainelOsd>
 
             {/*
-              Convite: duas ações, porque são duas decisões. Renovar barra quem
-              tem o link velho e deixa quem já está dentro; desconectar tira
-              quem está dentro, que pode voltar pelo mesmo link enquanto ele não
-              for renovado.
+              Quem entra: o link é só o nome (ADR 0026), então a porta é a
+              aprovação. Desconectar todos tira quem está dentro E esquece os
+              aceitos — quem voltar pede de novo.
             */}
-            <PainelOsd titulo="SALA PRIVADA ▸ CONVITE">
+            <PainelOsd titulo="SALA ▸ QUEM ENTRA">
               <div className="flex flex-col gap-3 p-3.5">
                 <p className="m-0 text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
-                  Só entra quem tem o link completo, e cada pessoa pede para entrar. Quem você
-                  aceitou volta sem pedir. Renovar gera um link novo e zera os aceitos.
+                  Quem abre o link pede para entrar, e você aceita cada pessoa. Quem você aceitou
+                  volta sem pedir até você desconectar todos.
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  <Botao onClick={() => void renovarConvite()}>
-                    {convite === 'renovado'
-                      ? 'LINK NOVO COPIADO'
-                      : convite === 'falhou'
-                        ? 'SEM CONFIRMAÇÃO: TENTE DE NOVO'
-                        : 'RENOVAR CONVITE'}
-                  </Botao>
-                  {vivo.peers.length > 0 && (
+                {vivo.peers.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
                     <Botao tom="perigo" onClick={desconectarTodos}>
                       DESCONECTAR TODOS
                     </Botao>
-                  )}
-                </div>
-                {convite !== 'parado' && (
-                  <p role="status" className="sr-only">
-                    {convite === 'renovado' ? 'Convite renovado.' : 'O servidor não confirmou.'}
-                  </p>
+                  </div>
                 )}
               </div>
             </PainelOsd>

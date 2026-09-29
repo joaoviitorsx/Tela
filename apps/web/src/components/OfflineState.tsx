@@ -13,8 +13,6 @@ export type Motivo =
   | 'relay-indisponivel'
   | 'relay-nao-configurado'
   | 'sem-servidor'
-  | 'convite-ausente'
-  | 'convite-invalido'
   | 'removido'
   | 'aguardando-aprovacao'
   | 'recusado'
@@ -163,7 +161,7 @@ type Conteudo = {
  * Fundir os dois num "não deu" mandaria a pessoa agir quando ela só precisa
  * esperar — ou esperar quando nada vai acontecer sozinho.
  *
- * Os `rotulo` de `offline`, `conectando`, `cheio`, `convite-*` são os que o E2E
+ * Os `rotulo` de `offline`, `conectando`, `cheio`, `pedido-*` são os que o E2E
  * (`e2e/mesh.e2e.mjs`) procura no texto da página. Não mude sem mudar lá.
  */
 const TEXTO: Record<Motivo, (maxPeers: number, nome: string) => Conteudo> = {
@@ -220,19 +218,6 @@ const TEXTO: Record<Motivo, (maxPeers: number, nome: string) => Conteudo> = {
     rotulo: 'sem rota alternativa',
     corpo:
       'Esta transmissão não tem uma rota alternativa configurada, e a conexão direta não fechou. Vamos tentar novamente.',
-    tom: 'alerta',
-    espera: false,
-  }),
-  'convite-ausente': () => ({
-    rotulo: 'link incompleto',
-    corpo:
-      'Este link não traz o convite da transmissão. Peça o link de novo a quem está transmitindo e cole ele inteiro, com a parte depois do #.',
-    tom: 'alerta',
-    espera: false,
-  }),
-  'convite-invalido': () => ({
-    rotulo: 'convite renovado',
-    corpo: 'Quem transmite renovou o convite, e este link não abre mais a sala. Peça o link novo.',
     tom: 'alerta',
     espera: false,
   }),

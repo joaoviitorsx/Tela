@@ -82,22 +82,10 @@ export type ViewerState =
    * proxy corporativo, rede caída.
    */
   | { readonly status: 'sem-servidor'; readonly slug: string }
-  /**
-   * Convite (TELA-018). Três estados, porque as ações são três:
-   *
-   * - `convite-ausente`: o link não trazia o segredo. Nem se tenta a rede —
-   *   não há o que mandar.
-   * - `convite-invalido`: o transmissor renovou. Só um link novo resolve,
-   *   então não se insiste sozinho.
-   * - `removido`: o transmissor tirou este espectador. Voltar sozinho seria
-   *   desfazer a escolha dele.
-   */
-  | { readonly status: 'convite-ausente'; readonly slug: string }
-  | { readonly status: 'convite-invalido'; readonly slug: string }
+  /** O transmissor tirou este espectador. Voltar sozinho seria desfazer a escolha dele. */
   | { readonly status: 'removido'; readonly slug: string }
   /**
-   * Aprovação manual (ADR 0025). O convite valeu e o pedido está com o
-   * transmissor — que pode estar no meio de uma partida. Esperar aqui é o
+   * Aprovação manual (ADR 0025). O pedido está com o transmissor — que pode estar no meio de uma partida. Esperar aqui é o
    * caminho normal, então nenhum relógio de conexão corre.
    */
   | { readonly status: 'aguardando-aprovacao'; readonly slug: string; readonly nome: string }
@@ -124,8 +112,7 @@ function audioInicial(stream: MediaStream): EstadoAudio {
 }
 
 /** Erros em que tentar de novo sozinho não muda a resposta. */
-const FIM_SEM_RETRY: Partial<Record<string, 'convite-invalido' | 'removido' | 'recusado' | 'desatualizado'>> = {
-  INVITE_INVALID: 'convite-invalido',
+const FIM_SEM_RETRY: Partial<Record<string, 'removido' | 'recusado' | 'desatualizado'>> = {
   REMOVED: 'removido',
   DENIED: 'recusado',
   PROTOCOL_MISMATCH: 'desatualizado',
@@ -200,8 +187,6 @@ export class ViewerSession {
   private plateia = 1;
   private pollMs = POLL_MIN_MS;
   private slug = '';
-  /** Segredo do link. `null` quando o link veio sem ele. */
-  private invite: string | null = null;
   /** Como o transmissor vai ver o pedido, e a chave deste navegador. */
   private quem: { readonly nome: string; readonly chave: string } = { nome: '', chave: '' };
   /** O pedido está com o transmissor: o relógio de conexão não corre. */
@@ -281,12 +266,6 @@ export class ViewerSession {
         case 'sem-servidor':
           this.diario.evento('signaling', 'SIGNALING_UNAVAILABLE', agora);
           break;
-        case 'convite-ausente':
-          this.diario.evento('session', 'INVITE_MISSING', agora);
-          break;
-        case 'convite-invalido':
-          this.diario.evento('signaling', 'INVITE_INVALID', agora);
-          break;
         case 'removido':
           this.diario.evento('session', 'REMOVED', agora);
           break;
@@ -311,7 +290,6 @@ export class ViewerSession {
 
   async open(
     slug: string,
-    invite: string | null = null,
     quem: { readonly nome: string; readonly chave: string } = this.quem,
   ): Promise<void> {
     // O epoch sobe ANTES de qualquer await. React em StrictMode monta, desmonta
@@ -322,7 +300,6 @@ export class ViewerSession {
     const epoch = this.epoch;
 
     this.slug = slug;
-    this.invite = invite;
     this.quem = quem;
     this.disposed = false;
     this.pollMs = POLL_MIN_MS;
@@ -335,12 +312,6 @@ export class ViewerSession {
     this.diario.evento('session', 'START', this.deps.scheduler.now());
     await this.dropTransport();
     if (this.stale(epoch)) return;
-
-    // Sem segredo no link não há o que mandar ao servidor: nem se tenta.
-    if (this.invite === null) {
-      this.setState({ status: 'convite-ausente', slug: this.slug });
-      return;
-    }
 
     this.unwatchVisibility?.();
     this.unwatchVisibility = this.deps.scheduler.onVisibilityChange(() => {
@@ -510,7 +481,6 @@ export class ViewerSession {
 
     try {
       const opened = await this.withTimeout(transport.watch(this.slug, {
-        invite: this.invite ?? '',
         nome: this.quem.nome,
         chave: this.quem.chave,
         participantId: this.participantId,
@@ -536,7 +506,7 @@ export class ViewerSession {
         this.setState({ status: 'full', slug: this.slug });
         this.advanceBackoff();
       } else if (isSignalingError(error) && FIM_SEM_RETRY[error.code] !== undefined) {
-        // Insistir com o mesmo convite, ou na mesma versão, dá o mesmo não.
+        // Insistir na mesma versão, ou depois de tirado ou recusado, dá o mesmo não.
         this.setState({ status: FIM_SEM_RETRY[error.code]!, slug: this.slug });
         return;
       } else if (

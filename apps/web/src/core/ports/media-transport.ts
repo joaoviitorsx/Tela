@@ -227,7 +227,7 @@ export type TransportEvents = {
   viewers: { count: number };
   /** Só no espectador: o pedido está com o transmissor (ADR 0025). */
   'aguardando-aprovacao': void;
-  /** Só no transmissor: alguém com o convite pede para entrar. */
+  /** Só no transmissor: alguém pede para entrar. */
   pedido: PedidoDeEntrada;
   /** Só no transmissor: o pedido sumiu antes da resposta. */
   'pedido-cancelado': { peerId: string };
@@ -272,11 +272,9 @@ export type MediaTransport = {
    * "5/3" com cinco espectadores conectados, porque o palpite era 3 e o
    * servidor aceitava 5.
    */
-  host(slug: string, ownerToken: string, invite: string): Promise<{ readonly maxPeers: number }>;
+  host(slug: string, ownerToken: string): Promise<{ readonly maxPeers: number }>;
   /** Entra num canal como espectador. */
   watch(slug: string, entrada: EntradaDeEspectador): Promise<{ readonly relayStatus: RelayStatus | null }>;
-  /** Troca o convite do canal; resolve quando o servidor confirmou (TELA-018). */
-  setInvite(invite: string): Promise<void>;
   /**
    * Tira espectadores: o servidor fecha a sinalização deles e o `peer-left`
    * que volta faz a malha fechar o peer. Sem `peerId`, todos.

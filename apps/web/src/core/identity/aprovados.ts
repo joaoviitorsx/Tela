@@ -4,7 +4,7 @@ import type { Storage } from '../ports/storage.js';
  * Quem o dono já aceitou, neste aparelho (ADR 0025).
  *
  * Guarda impressões — o sha256 da chave do navegador de cada espectador, que é
- * tudo o que o servidor mostra. Vale até o dono renovar o convite ou tirar
+ * tudo o que o servidor mostra. Vale até o dono tirar
  * todo mundo: aí a lista zera e cada um pede de novo. O servidor não guarda
  * nada disto; se guardasse, precisaria de armazenamento durável só para isso.
  */

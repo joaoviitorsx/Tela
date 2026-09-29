@@ -67,8 +67,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   }
 
   return {
-    async host(slug, ownerToken, invite) {
-      const opened = await deps.channel.host(slug, ownerToken, invite);
+    async host(slug, ownerToken) {
+      const opened = await deps.channel.host(slug, ownerToken);
 
       const recoveryFor = (peerId: string): PeerRecovery => {
         const existing = recoveries.get(peerId);
@@ -352,10 +352,6 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
     setJitterAlvo(ms) {
       viewerLink?.setJitterAlvo(ms);
-    },
-
-    setInvite(invite) {
-      return deps.channel.setInvite(invite);
     },
 
     removeViewers(peerId) {

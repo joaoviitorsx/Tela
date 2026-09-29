@@ -6,7 +6,7 @@ type Props = {
   /** Linha grande do tubo: "FIM DA TRANSMISSÃO" ou "SEM SINAL". */
   readonly titulo: string;
   readonly mensagem: string;
-  /** "tela.gg/canal", sem o convite. */
+  /** "tela.gg/canal". */
   readonly canal: string;
   readonly resumo: readonly Medida[] | null;
   readonly acoes: ReactNode;

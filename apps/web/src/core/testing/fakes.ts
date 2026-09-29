@@ -239,13 +239,9 @@ export class FakeAudioCapture implements AudioCapture {
 export class FakeMediaTransport implements MediaTransport {
   private readonly emitter = new Emitter<TransportEvents>();
 
-  hosted: { slug: string; ownerToken: string; invite: string } | null = null;
+  hosted: { slug: string; ownerToken: string } | null = null;
   watched: string | null = null;
   watchIdentity: EntradaDeEspectador | undefined;
-  /** Convites mandados por `setInvite`, em ordem. */
-  readonly convites: string[] = [];
-  /** `setInvite` rejeita com isto quando não é `null`. */
-  inviteError: unknown = null;
   /** Chamadas de `removeViewers`: `null` = todos. */
   readonly removidos: (string | null)[] = [];
   readonly videos: { track: MediaStreamTrack; preset: EncodingPreset }[] = [];
@@ -265,15 +261,10 @@ export class FakeMediaTransport implements MediaTransport {
   /** Teto que este transporte falso reporta como se viesse do servidor. */
   maxPeersDoServidor = 5;
 
-  async host(slug: string, ownerToken: string, invite: string): Promise<{ maxPeers: number }> {
+  async host(slug: string, ownerToken: string): Promise<{ maxPeers: number }> {
     if (this.hostError !== null) throw this.hostError;
-    this.hosted = { slug, ownerToken, invite };
+    this.hosted = { slug, ownerToken };
     return { maxPeers: this.maxPeersDoServidor };
-  }
-
-  async setInvite(invite: string): Promise<void> {
-    if (this.inviteError !== null) throw this.inviteError;
-    this.convites.push(invite);
   }
 
   removeViewers(peerId?: string): void {
@@ -458,11 +449,7 @@ export class FakeSignalingChannel implements SignalingChannel {
     };
   }
 
-  readonly convites: string[] = [];
   readonly removidos: (string | null)[] = [];
-  async setInvite(invite: string): Promise<void> {
-    this.convites.push(invite);
-  }
   removeViewers(peerId?: string): void {
     this.removidos.push(peerId ?? null);
   }
@@ -521,7 +508,7 @@ export class FakeRandom implements Random {
   }
 }
 
-export const shareUrlFor = (slug: string, invite: string) => `https://tela.gg/${slug}#k=${invite}`;
+export const shareUrlFor = (slug: string) => `https://tela.gg/${slug}`;
 
 /** Quadro neutro falso: devolve uma trilha nova e conta aberturas/fechamentos. */
 export class FakeQuadroNeutro {
@@ -536,20 +523,6 @@ export class FakeQuadroNeutro {
   fechar(): void {
     this.fechamentos += 1;
     this.ultima?.stop();
-  }
-}
-
-/** Convite em memória, com renovação previsível para os testes afirmarem. */
-export class FakeConvites {
-  valor = 'c'.repeat(22);
-  private n = 0;
-  atual(): string {
-    return this.valor;
-  }
-  renovar(): string {
-    this.n += 1;
-    this.valor = `${'n'.repeat(21)}${this.n}`;
-    return this.valor;
   }
 }
 

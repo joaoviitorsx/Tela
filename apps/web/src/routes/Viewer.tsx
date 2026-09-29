@@ -8,7 +8,6 @@ import { IconOlho } from '../components/Icon.js';
 import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
 import { createViewerSession, espectador, volumePreference } from '../container.js';
-import { conviteDoFragmento } from '../core/domain/convite.js';
 import { apelidoValido } from '../core/identity/espectador.js';
 import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { ViewerState } from '../core/media/viewer-session.js';
@@ -42,8 +41,6 @@ const MOTIVO: Record<Exclude<ViewerState['status'], 'watching'>, Motivo> = {
   full: 'cheio',
   'sem-conexao': 'sem-conexao',
   'sem-servidor': 'sem-servidor',
-  'convite-ausente': 'convite-ausente',
-  'convite-invalido': 'convite-invalido',
   removido: 'removido',
   'aguardando-aprovacao': 'aguardando-aprovacao',
   recusado: 'recusado',
@@ -182,24 +179,22 @@ export function Viewer({ slug }: Props) {
 
   useTabTitle(watching ? `● ${slug} · Tela` : `${slug} · Tela`);
 
-  // O convite vem do fragmento, que nunca sai do navegador em HTTP.
-  const convite = useMemo(() => conviteDoFragmento(window.location.hash), []);
   /**
    * O apelido do pedido (ADR 0025). `null` = ainda não disse quem é: a sessão
-   * nem abre, porque não há pedido sem nome. Link sem convite não pergunta —
-   * não há pedido a fazer.
+   * nem abre, porque não há pedido sem nome. Um `#k=` de link antigo
+   * (ADR 0021) é simplesmente ignorado (ADR 0026).
    */
   const [nome, setNome] = useState<string | null>(() => espectador.apelido());
   const [rascunho, setRascunho] = useState(() => espectador.apelido() ?? '');
-  const precisaNome = convite !== null && nome === null;
+  const precisaNome = nome === null;
 
   useEffect(() => {
     if (precisaNome) return;
-    void session.open(slug, convite, { nome: nome ?? '', chave: espectador.chave() });
+    void session.open(slug, { nome: nome ?? '', chave: espectador.chave() });
     return () => {
       void session.close();
     };
-  }, [session, slug, convite, nome, precisaNome]);
+  }, [session, slug, nome, precisaNome]);
 
   /**
    * `srcObject` não é atributo — precisa ser atribuído na instância.

@@ -8,7 +8,6 @@ import {
   FakeScreenCapture,
   createStream,
   shareUrlFor,
-  FakeConvites,
   FakeQuadroNeutro,
 } from '../testing/fakes.js';
 import { BroadcastSession } from './broadcast-session.js';
@@ -34,7 +33,6 @@ function build() {
     gain,
     scheduler,
     shareUrlFor,
-    convite: new FakeConvites(),
     createStream,
     statsIntervalMs: 1_000,
   });
@@ -63,7 +61,7 @@ describe('BroadcastSession — caminho feliz', () => {
 
   it('reivindica o canal com o slug e o token do dono', async () => {
     await ctx.session.start(SLUG, TOKEN);
-    expect(ctx.transport.hosted).toEqual({ slug: SLUG, ownerToken: TOKEN, invite: 'c'.repeat(22) });
+    expect(ctx.transport.hosted).toEqual({ slug: SLUG, ownerToken: TOKEN });
   });
 
   it('publica o vídeo com o preset escolhido', async () => {
@@ -83,7 +81,7 @@ describe('BroadcastSession — caminho feliz', () => {
     const links: string[] = [];
     ctx.session.on('started', ({ shareUrl }) => links.push(shareUrl));
     await ctx.session.start(SLUG, TOKEN);
-    expect(links).toEqual([`https://tela.gg/${SLUG}#k=${'c'.repeat(22)}`]);
+    expect(links).toEqual([`https://tela.gg/${SLUG}`]);
   });
 });
 
@@ -1528,7 +1526,7 @@ describe('BroadcastSession — grafo e ciclo da captura de áudio (TELA-009)', (
     const scheduler = new FakeScheduler();
     const session = new BroadcastSession({
       transport, screen, audio: new FakeAudioCapture(), gain, scheduler,
-      shareUrlFor, convite: new FakeConvites(), createStream, statsIntervalMs: 1_000,
+      shareUrlFor, createStream, statsIntervalMs: 1_000,
     });
     return { transport, screen, gain, scheduler, session };
   }
@@ -1638,31 +1636,13 @@ describe('BroadcastSession — recusa não é falha técnica (TELA-013)', () => 
   });
 });
 
-describe('BroadcastSession — convite (TELA-018)', () => {
-  it('reivindica com o convite, e o link leva o convite, nunca o token', async () => {
+describe('BroadcastSession — sala e link (ADR 0026)', () => {
+  it('o link é só o nome do canal, e nunca leva o token', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
-    expect(ctx.transport.hosted?.invite).toBe('c'.repeat(22));
     const st = ctx.session.getState();
-    expect(st.status === 'live' && st.shareUrl).toBe(`https://tela.gg/${SLUG}#k=${'c'.repeat(22)}`);
+    expect(st.status === 'live' && st.shareUrl).toBe(`https://tela.gg/${SLUG}`);
     expect(st.status === 'live' && st.shareUrl.includes(TOKEN)).toBe(false);
-  });
-
-  it('renovar manda o convite novo e troca o link', async () => {
-    const ctx = build();
-    await ctx.session.start(SLUG, TOKEN);
-    expect(await ctx.session.renovarConvite()).toBe(true);
-    const novo = ctx.transport.convites.at(-1);
-    expect(novo).toBeDefined();
-    const st = ctx.session.getState();
-    expect(st.status === 'live' && st.shareUrl.endsWith(`#k=${novo}`)).toBe(true);
-  });
-
-  it('servidor que não confirma: devolve false, sem afirmar sucesso', async () => {
-    const ctx = build();
-    await ctx.session.start(SLUG, TOKEN);
-    ctx.transport.inviteError = { code: 'SIGNAL_UNREACHABLE' };
-    expect(await ctx.session.renovarConvite()).toBe(false);
   });
 
   it('desconectar todos pede ao transporte para tirar todo mundo', async () => {
@@ -1689,7 +1669,7 @@ describe('BroadcastSession — o som acompanha a troca de tela quando veio dela 
     const scheduler = new FakeScheduler();
     const session = new BroadcastSession({
       transport, screen, audio, gain, scheduler, shareUrlFor,
-      convite: new FakeConvites(), createStream, statsIntervalMs: 1_000,
+      createStream, statsIntervalMs: 1_000,
     });
     return { transport, screen, audio, gain, scheduler, session };
   }
@@ -1762,7 +1742,7 @@ describe('BroadcastSession — pausa de privacidade (TELA-022)', () => {
     const scheduler = new FakeScheduler();
     const session = new BroadcastSession({
       transport, screen, audio: new FakeAudioCapture(), gain, scheduler, shareUrlFor,
-      convite: new FakeConvites(), quadroNeutro: quadro, createStream, statsIntervalMs: 1_000,
+      quadroNeutro: quadro, createStream, statsIntervalMs: 1_000,
     });
     return { transport, screen, gain, quadro, scheduler, session };
   }
@@ -1916,17 +1896,6 @@ describe('BroadcastSession — aprovação manual (ADR 0025)', () => {
     expect(ctx.transport.respostas).toEqual([]);
     const s = ctx.session.getState();
     expect(s.status === 'live' && s.pedidos).toEqual([]);
-  });
-
-  it('renovar o convite zera os aprovados', async () => {
-    const ctx = build();
-    await ctx.session.start(SLUG, TOKEN);
-    ctx.transport.emit('pedido', pedido('v_1'));
-    ctx.session.aceitarPedido('v_1');
-    await ctx.session.renovarConvite();
-    ctx.transport.emit('pedido', pedido('v_2'));
-    const s = ctx.session.getState();
-    expect(s.status === 'live' && s.pedidos.map((p) => p.peerId)).toEqual(['v_2']);
   });
 
   it('desconectar todos zera os aprovados', async () => {

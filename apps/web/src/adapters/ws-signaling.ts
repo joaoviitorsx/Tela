@@ -43,9 +43,8 @@ const RECONECTAR_FATOR = 1.8;
 const NAO_ADIANTA_INSISTIR: ReadonlySet<string> = new Set([
   'SLUG_TAKEN',
   'SLUG_INVALID',
-  // TELA-018: convite trocado, espectador tirado, cliente de outra versão.
-  // Reconectar sozinho com a mesma saudação daria o mesmo não.
-  'INVITE_INVALID',
+  // Espectador tirado, cliente de outra versão: reconectar sozinho com a
+  // mesma saudação daria o mesmo não.
   'REMOVED',
   'PROTOCOL_MISMATCH',
   // Recusado pelo transmissor: pedir de novo é escolha da pessoa, não do laço.
@@ -66,8 +65,6 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
   let slugAtual = '';
   let tentativa = 0;
   let religar: number | null = null;
-  let pendingInvite: { resolve: () => void; reject: (e: SignalingError) => void; timer: number } | null =
-    null;
   let pendingRefresh: {
     requestId: string;
     promise: Promise<IceCredentials>;
@@ -217,14 +214,6 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
           pending.resolve(message);
           return;
         }
-        case 'invite-set': {
-          const pending = pendingInvite;
-          if (pending === null) return;
-          pendingInvite = null;
-          window.clearTimeout(pending.timer);
-          pending.resolve();
-          return;
-        }
         case 'error':
           /*
             Erro depois de aberto que não se resolve insistindo (`REMOVED`):
@@ -323,10 +312,10 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
   }
 
   return {
-    host(slug, ownerToken, invite) {
+    host(slug, ownerToken) {
       return new Promise<ChannelOpened>((resolve, reject) => {
         const hello: ClientMessage = {
-          type: 'host', protocol: PROTOCOL_VERSION, slug, ownerToken, invite,
+          type: 'host', protocol: PROTOCOL_VERSION, slug, ownerToken,
         };
         /**
          * Zerar aqui é obrigatório: `close()` marca `closedByUs` e nada mais
@@ -354,7 +343,6 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       return new Promise<ChannelOpened>((resolve, reject) => {
         const hello: ClientMessage = {
           type: 'watch', protocol: PROTOCOL_VERSION, slug,
-          invite: entrada.invite,
           name: entrada.nome,
           viewerKey: entrada.chave,
           ...(entrada.participantId === undefined ? {} : { participantId: entrada.participantId }),
@@ -388,28 +376,6 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       pendingRefresh = { requestId, promise, resolve: resolveRefresh, reject: rejectRefresh, timer };
       socket.send(JSON.stringify({ type: 'refresh-ice', requestId } satisfies ClientMessage));
       return promise;
-    },
-
-    setInvite(invite) {
-      if (socket === null || socket.readyState !== WebSocket.OPEN) {
-        return Promise.reject({ code: 'SIGNAL_UNREACHABLE' } satisfies SignalingError);
-      }
-      /*
-        A saudação guardada é o que a reconexão reenvia. Sem atualizá-la, uma
-        queda de rede depois de renovar reapresentaria o convite VELHO — e o
-        servidor, que aceita o convite que o dono traz, reabriria o link antigo.
-      */
-      if (saudacao?.type === 'host') saudacao = { ...saudacao, invite };
-      pendingInvite?.reject({ code: 'SIGNAL_UNREACHABLE' });
-      const ws = socket;
-      return new Promise<void>((resolve, reject) => {
-        const timer = window.setTimeout(() => {
-          if (pendingInvite?.timer === timer) pendingInvite = null;
-          reject({ code: 'SIGNAL_UNREACHABLE' } satisfies SignalingError);
-        }, HELLO_TIMEOUT_MS * 2);
-        pendingInvite = { resolve, reject, timer };
-        ws.send(JSON.stringify({ type: 'set-invite', invite } satisfies ClientMessage));
-      });
     },
 
     removeViewers(peerId) {

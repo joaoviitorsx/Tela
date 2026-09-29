@@ -34,7 +34,7 @@ it('renova ICE no mesmo socket com resposta correlacionada e chamada coalescida'
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('window', { setTimeout, clearTimeout });
   const channel = makeWsSignaling('ws://test/signal');
-  const opening = channel.host('joao', 'o'.repeat(43), 'c'.repeat(22));
+  const opening = channel.host('joao', 'o'.repeat(43));
   const socket = FakeSocket.created[0];
   if (socket === undefined) throw new Error('socket ausente');
   socket.emit('open');
@@ -66,7 +66,7 @@ async function hostAberto() {
   vi.stubGlobal('WebSocket', FakeSocket);
   vi.stubGlobal('window', { setTimeout, clearTimeout });
   const channel = makeWsSignaling('ws://test/signal');
-  const opening = channel.host('joao', 'o'.repeat(43), 'c'.repeat(22));
+  const opening = channel.host('joao', 'o'.repeat(43));
   const socket = FakeSocket.created[0];
   if (socket === undefined) throw new Error('socket ausente');
   socket.emit('open');
@@ -77,21 +77,18 @@ async function hostAberto() {
   return { channel, socket };
 }
 
-it('saudação leva a versão atual do protocolo e o convite (TELA-018)', async () => {
+it('saudação leva a versão atual do protocolo, sem convite (ADR 0026)', async () => {
   const { channel, socket } = await hostAberto();
-  expect(JSON.parse(socket.sent[0]!)).toMatchObject({ type: 'host', protocol: PROTOCOL_VERSION, invite: 'c'.repeat(22) });
+  const hello = JSON.parse(socket.sent[0]!);
+  expect(hello).toMatchObject({ type: 'host', protocol: PROTOCOL_VERSION });
+  expect(hello).not.toHaveProperty('invite');
   channel.close();
 });
 
-it('setInvite resolve na confirmação e a reconexão passa a levar o convite novo', async () => {
+it('a reconexão do transmissor reapresenta a mesma saudação', async () => {
   vi.useFakeTimers();
   try {
     const { channel, socket } = await hostAberto();
-    const pedido = channel.setInvite('d'.repeat(22));
-    expect(JSON.parse(socket.sent.at(-1)!)).toEqual({ type: 'set-invite', invite: 'd'.repeat(22) });
-    socket.emit('message', JSON.stringify({ type: 'invite-set' }));
-    await expect(pedido).resolves.toBeUndefined();
-
     socket.close(); // queda: agenda reconexão
     // A primeira religação sai em 0,5–1 s (jitter); mais que isso deixaria o
     // relógio da saudação vencer e abrir um terceiro socket.
@@ -99,7 +96,7 @@ it('setInvite resolve na confirmação e a reconexão passa a levar o convite no
     const novo = FakeSocket.created[1];
     expect(novo).toBeDefined();
     novo?.emit('open');
-    expect(JSON.parse(novo!.sent[0]!)).toMatchObject({ type: 'host', invite: 'd'.repeat(22) });
+    expect(JSON.parse(novo!.sent[0]!)).toMatchObject({ type: 'host', slug: 'joao', protocol: PROTOCOL_VERSION });
     channel.close();
   } finally {
     vi.useRealTimers();
@@ -114,7 +111,7 @@ it('REMOVED depois de aberto não reconecta sozinho', async () => {
     const channel = makeWsSignaling('ws://test/signal');
     const motivos: string[] = [];
     channel.on('closed', ({ reason }) => motivos.push(reason));
-    const opening = channel.watch('joao', { invite: 'c'.repeat(22), nome: 'ana', chave: 'k'.repeat(22) });
+    const opening = channel.watch('joao', { nome: 'ana', chave: 'k'.repeat(22) });
     const socket = FakeSocket.created[0]!;
     socket.emit('open');
     socket.emit('message', JSON.stringify({
@@ -140,7 +137,7 @@ it('espera de aprovação (ADR 0025): o relógio da saudação para e o watch s�
     let esperando = 0;
     channel.on('aguardando-aprovacao', () => { esperando += 1; });
     let resolvido = false;
-    const opening = channel.watch('joao', { invite: 'c'.repeat(22), nome: 'ana', chave: 'k'.repeat(22) })
+    const opening = channel.watch('joao', { nome: 'ana', chave: 'k'.repeat(22) })
       .then((v) => { resolvido = true; return v; });
     const socket = FakeSocket.created[0]!;
     socket.emit('open');
@@ -169,7 +166,7 @@ it('DENIED durante a espera rejeita e não reconecta sozinho', async () => {
     vi.stubGlobal('WebSocket', FakeSocket);
     vi.stubGlobal('window', { setTimeout, clearTimeout });
     const channel = makeWsSignaling('ws://test/signal');
-    const opening = channel.watch('joao', { invite: 'c'.repeat(22), nome: 'ana', chave: 'k'.repeat(22) });
+    const opening = channel.watch('joao', { nome: 'ana', chave: 'k'.repeat(22) });
     const socket = FakeSocket.created[0]!;
     socket.emit('open');
     socket.emit('message', JSON.stringify({ type: 'awaiting-approval' }));

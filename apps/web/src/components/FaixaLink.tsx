@@ -3,7 +3,7 @@ import { IconOk, IconOlho } from './Icon.js';
 import { SalaVagas, type Vaga } from './SalaVagas.js';
 
 type Props = {
-  /** O link completo, com `#k=convite`. */
+  /** O link do canal: só o nome (ADR 0026). */
   readonly link: string;
   /** Recém-gerado: a faixa brilha por alguns segundos. */
   readonly novo: boolean;
@@ -18,10 +18,8 @@ type Props = {
  * A faixa do link: o que o transmissor mais precisa e mais faz — copiar e
  * mandar para os amigos.
  *
- * O link é PRIVADO (sala por convite): o que vem depois do `#` é a chave. A
- * faixa mostra o endereço curto em destaque e a parte do convite em corpo
- * pequeno, para ficar claro que o link inteiro é o que se manda — e que
- * copiar é mais seguro que ler em voz alta.
+ * O link é só o nome do canal, e dá para ditar na call: quem entra é quem
+ * você aceitar (ADR 0025/0026), não quem tem um segredo.
  */
 export function FaixaLink({
   link,
@@ -32,10 +30,7 @@ export function FaixaLink({
   total,
   ocupadas,
 }: Props) {
-  const semProtocolo = link.replace(/^https?:\/\//, '');
-  const corte = semProtocolo.indexOf('#');
-  const endereco = corte < 0 ? semProtocolo : semProtocolo.slice(0, corte);
-  const convite = corte < 0 ? '' : semProtocolo.slice(corte);
+  const endereco = link.replace(/^https?:\/\//, '');
 
   return (
     <div
@@ -51,17 +46,10 @@ export function FaixaLink({
       <div className="flex min-w-[220px] flex-1 flex-col justify-center gap-1 px-4 py-2.5">
         <span className="flex items-center gap-1.5 font-[family-name:var(--font-pixel)] text-[11px] text-ok">
           <IconOk className="h-3 w-3" />
-          LINK PRIVADO GERADO. MANDE O LINK INTEIRO
+          LINK NO AR. QUEM ABRIR PEDE PARA ENTRAR
         </span>
-        <span className="flex min-w-0 items-baseline gap-2">
-          <span className="numeral truncate text-[clamp(24px,3vw,32px)] text-accent-hi [text-shadow:0_0_10px_rgb(242_169_59_/_0.4)]">
-            {endereco}
-          </span>
-          {convite !== '' && (
-            <span className="hidden max-w-[16ch] truncate text-[11px] text-dim sm:inline" title="A chave do convite. Vai junto quando você copia.">
-              {convite}
-            </span>
-          )}
+        <span className="numeral min-w-0 truncate text-[clamp(24px,3vw,32px)] text-accent-hi [text-shadow:0_0_10px_rgb(242_169_59_/_0.4)]">
+          {endereco}
         </span>
       </div>
 

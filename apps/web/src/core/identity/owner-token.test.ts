@@ -53,42 +53,13 @@ describe('identidade do dono', () => {
   });
 });
 
-describe('convite do link (TELA-018)', () => {
-  /** Um byte diferente por chamada: renovar tem de produzir outro segredo. */
-  class SequenciaRandom {
-    private n = 0;
-    bytes(length: number): Uint8Array {
-      this.n += 1;
-      return new Uint8Array(length).fill(this.n);
-    }
-  }
-
-  it('128 bits em base64url, guardado e estável entre transmissões', () => {
+describe('convite antigo (ADR 0026)', () => {
+  it('não existe mais, e forget limpa o que sobrou de antes', () => {
     const storage = new FakeStorage();
-    const identity = makeIdentity(storage, new SequenciaRandom());
-    const convite = identity.convite();
-    expect(convite).toMatch(/^[A-Za-z0-9_-]{22}$/);
-    expect(identity.convite()).toBe(convite);
-    expect(storage.get(INVITE_KEY)).toBe(convite);
-  });
-
-  it('independente do token do dono', () => {
-    const identity = makeIdentity(new FakeStorage(), new SequenciaRandom());
-    expect(identity.ownerToken()).not.toContain(identity.convite());
-  });
-
-  it('renovar troca e guarda; o antigo não volta', () => {
-    const storage = new FakeStorage();
-    const identity = makeIdentity(storage, new SequenciaRandom());
-    const antigo = identity.convite();
-    const novo = identity.renovarConvite();
-    expect(novo).not.toBe(antigo);
-    expect(identity.convite()).toBe(novo);
-  });
-
-  it('convite corrompido no storage é regenerado', () => {
-    const storage = new FakeStorage();
-    storage.set(INVITE_KEY, 'curto');
-    expect(makeIdentity(storage, new SequenciaRandom()).convite()).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    storage.set(INVITE_KEY, 'c'.repeat(22));
+    const identity = makeIdentity(storage, new FakeRandom());
+    expect('convite' in identity).toBe(false);
+    identity.forget();
+    expect(storage.get(INVITE_KEY)).toBeNull();
   });
 });

@@ -11,7 +11,6 @@ import {
   FakeScreenCapture,
   createStream,
   shareUrlFor,
-  FakeConvites,
 } from '../core/testing/fakes.js';
 import { useBroadcast } from './use-broadcast.js';
 
@@ -41,7 +40,6 @@ function build() {
     gain: new FakeAudioGain(),
     scheduler: new FakeScheduler(),
     shareUrlFor,
-    convite: new FakeConvites(),
     createStream,
   });
   return { session, transport, screen };

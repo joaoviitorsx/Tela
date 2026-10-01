@@ -86,9 +86,13 @@ uma sem a outra não faz nada (ADR 0015). É escolha explícita do usuário, ao
 vivo, e volta sozinha ao padrão. Ninguém decide isso pelo código.
 
 A quarta é a mais importante em mesh e a que mais parece errada à primeira
-vista. O Chrome reaproveita o mesmo encoder entre `RTCRtpSender`s cujos
-parâmetros batem: um encode, três envios. Varie o bitrate por peer e viram três
-encoders 1080p60 disputando a GPU com o jogo.
+vista. Esta seção dizia que o Chrome reaproveita o encoder entre
+`RTCRtpSender`s de parâmetros iguais — "um encode, três envios". O D0 MEDIU e
+não é verdade: o Chromium codifica uma vez por `RTCPeerConnection`. Por isso
+quem transmite usa o transporte "um encode, N envios" (ADR 0029): um encoder
+só, e cada sender leva uma isca que um Encoded Transform troca pelo quadro
+real. Os parâmetros continuam idênticos para todos — agora literalmente, o
+quadro é um só. Varie o bitrate por peer e o "um encode" deixa de existir.
 
 **Adaptação é coletiva, não individual.** Se um espectador tem rede ruim, ou
 ele aguenta o que está sendo enviado, ou todos descem juntos um degrau. Está
@@ -224,7 +228,7 @@ Seja honesto sobre isso. Você não tem GPU, nem tela, nem `getDisplayMedia`, ne
 | Hardware encode ativo | humano, em `chrome://gpu` |
 | Impacto no FPS do jogo | humano, com MangoHud |
 | Áudio do sistema no Linux | humano, com sink virtual |
-| Se o encoder é reaproveitado entre peers | humano, comparando FPS com 1 e com 3 espectadores |
+| Custo de encode fixo com N espectadores (ADR 0029) | humano, comparando FPS do jogo com 1 e com 10 espectadores |
 | Taxa de sucesso de ICE em CGNAT brasileiro | humano, com amigos em operadoras diferentes |
 | Consumo real da cota de TURN | humano, no painel do provedor |
 

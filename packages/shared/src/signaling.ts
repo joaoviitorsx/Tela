@@ -31,8 +31,12 @@ export const PeerIdSchema = z.string().min(1).max(64);
  * A 4 tirou o convite do link (ADR 0026): o link é só o nome do canal, e quem
  * decide quem entra é a aprovação. Abas abertas na 3 mandariam `set-invite`,
  * que não existe mais — recarregar é mais honesto que um erro no meio do ar.
+ *
+ * A 5 tornou a aprovação opcional por sala, desligada por padrão (ADR 0028):
+ * quem tem o link entra direto. Aba na 4 pediria apelido e esperaria um
+ * aceite que não vem mais.
  */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type PeerId = z.infer<typeof PeerIdSchema>;
 
@@ -105,6 +109,11 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     protocol: z.number().int().min(1).max(1000).optional(),
     slug: z.string().min(1).max(64),
     ownerToken: z.string().min(43).max(256),
+    /**
+     * Aprovar cada espectador (ADR 0025). Ausente = sala aberta: quem tem o
+     * link entra direto (ADR 0028). O dono decide ao reivindicar.
+     */
+    approval: z.boolean().optional(),
   }),
   z.object({
     type: z.literal('watch'), slug: z.string().min(1).max(64),
@@ -113,7 +122,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
     participantId: z.string().min(16).max(128).optional(),
     /** Nova PC = nova tentativa; reconexão apenas do socket preserva este ID. */
     attemptId: z.string().min(16).max(128).optional(),
-    /** Obrigatórios a partir da versão 3 (ADR 0025); quem exige é o servidor. */
+    /** Exigidos só em sala com aprovação (ADR 0025/0028); quem exige é o servidor. */
     name: ApelidoSchema.optional(),
     viewerKey: ViewerKeySchema.optional(),
   }),

@@ -26,6 +26,8 @@ export type ConformanceClient = {
  */
 export type Saudacao = {
   readonly protocol?: number | null;
+  /** Só `host`: sala com aprovação (ADR 0025). Padrão: aberta (ADR 0028). */
+  readonly approval?: boolean;
   /** Só `watch`. Padrão: o id do cliente. `null` omite. */
   readonly name?: string | null;
   /** Só `watch`. Padrão: derivada do id do cliente. `null` omite. */
@@ -87,6 +89,7 @@ export function saudar(
   return {
     ...base,
     ...(protocol === null ? {} : { protocol }),
+    ...(base['type'] === 'host' && saudacao.approval !== undefined ? { approval: saudacao.approval } : {}),
     ...(assiste && name !== null ? { name } : {}),
     ...(assiste && viewerKey !== null ? { viewerKey } : {}),
   };

@@ -63,6 +63,8 @@ type Channel = {
   readonly pedidos: Map<string, Pedido>;
   /** sha256 do ownerToken de quem reivindicou o canal. */
   ownerHash: string;
+  /** Cada espectador passa pelo dono (ADR 0025). Desligado = sala aberta (ADR 0028). */
+  aprovacao: boolean;
   /** Momento em que o canal ficou sem transmissor. `null` enquanto há um. */
   emptySince: number | null;
 };
@@ -183,7 +185,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
       }
 
       function claimChannel(
-        slug: string, ownerToken: string, protocol: number | undefined,
+        slug: string, ownerToken: string, protocol: number | undefined, aprovacao: boolean,
       ): void {
         const versao = versaoRecusada(protocol);
         if (versao !== null) return fail(versao);
@@ -203,6 +205,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           peer = { id: deps.newPeerId('h'), role: 'host', socket };
           existing.host = peer;
           existing.emptySince = null;
+          existing.aprovacao = aprovacao;
         } else {
           peer = { id: deps.newPeerId('h'), role: 'host', socket };
           channels.set(slug, {
@@ -210,6 +213,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
             viewers: new Map(),
             pedidos: new Map(),
             ownerHash,
+            aprovacao,
             emptySince: null,
           });
         }
@@ -238,8 +242,12 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         for (const viewer of existing?.viewers.values() ?? []) {
           socket.send({ type: 'peer-joined', peerId: viewer.id, ...quemE(viewer) });
         }
-        // Pedidos que esperavam o transmissor voltar continuam de pé.
-        for (const p of existing?.pedidos.values() ?? []) socket.send(pedidoParaHost(p));
+        // Pedidos que esperavam o transmissor voltar continuam de pé — ou
+        // entram de uma vez, se ele voltou com a sala aberta.
+        for (const p of [...(existing?.pedidos.values() ?? [])]) {
+          if (aprovacao) socket.send(pedidoParaHost(p));
+          else p.admitir();
+        }
       }
 
       /**
@@ -277,6 +285,22 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           aprovação do dono logo abaixo — que já vem antes de vaga e de
           credencial TURN.
         */
+        /*
+          Sala aberta (ADR 0028): quem tem o link entra direto — vaga,
+          credencial e `watching`, como antes da ADR 0025. Retomada pelo
+          `participantId`, que já é um segredo de alta entropia do navegador.
+        */
+        if (!channel.aprovacao) {
+          const impressao = viewerKey === undefined ? undefined : deps.hash(viewerKey);
+          const anterior = participantId === undefined ? undefined : [...channel.viewers.values()]
+            .find((viewer) => viewer.participantId === participantId);
+          channelName = slug;
+          cancelHelloTimer();
+          if (anterior !== undefined) return entrar(channel, anterior.id, name, impressao, participantId, attemptId, anterior);
+          if (channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
+          return entrar(channel, deps.newPeerId('v'), name, impressao, participantId, attemptId, undefined);
+        }
+
         // Sem apelido e chave não há o que mostrar ao transmissor (ADR 0025).
         if (name === undefined || viewerKey === undefined) return fail('BAD_MESSAGE');
         const fingerprint = deps.hash(viewerKey);
@@ -334,13 +358,15 @@ export function makeChannelRegistry(deps: RegistryDeps) {
 
       /** Da aprovação (ou da retomada) em diante: vaga, credencial, `watching`. */
       function entrar(
-        channel: Channel, id: string, name: string, fingerprint: string,
+        channel: Channel, id: string, name: string | undefined, fingerprint: string | undefined,
         participantId: string | undefined, attemptId: string | undefined, previous: Peer | undefined,
       ): void {
         const host = channel.host;
         if (host === null) return fail('NOT_HOSTING');
         peer = {
-          id, role: 'viewer', socket, name, fingerprint,
+          id, role: 'viewer', socket,
+          ...(name === undefined ? {} : { name }),
+          ...(fingerprint === undefined ? {} : { fingerprint }),
           ...(participantId === undefined ? {} : { participantId }),
           ...(attemptId === undefined ? {} : { attemptId }),
         };
@@ -443,7 +469,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           switch (message.type) {
             case 'host':
               if (peer !== null) return;
-              return claimChannel(message.slug, message.ownerToken, message.protocol);
+              return claimChannel(message.slug, message.ownerToken, message.protocol, message.approval === true);
             case 'watch':
               if (peer !== null || pedido !== null) return;
               return joinChannel(

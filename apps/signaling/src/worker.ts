@@ -78,6 +78,11 @@ type Attachment = {
   readonly fingerprint?: string;
   /** Só no socket do host: sha256 do ownerToken de quem reivindicou. */
   readonly ownerHash?: string;
+  /**
+   * Só no socket do host: a sala pede aprovação de cada espectador (ADR 0025)?
+   * Ausente = aberta (ADR 0028). Mora no attachment pela hibernação.
+   */
+  readonly aprovacao?: boolean;
   /** Tirado pelo transmissor: some da plateia na hora, antes do close chegar. */
   readonly removido?: boolean;
   /** Janela de rate limit desta conexão, também à prova de hibernação. */
@@ -383,7 +388,7 @@ export class ChannelRoom {
         if (at !== null) return;
         const versao = this.versaoRecusada(message.protocol);
         if (versao !== null) return this.fail(socket, versao);
-        return await this.claim(socket, slug, message.slug, message.ownerToken);
+        return await this.claim(socket, slug, message.slug, message.ownerToken, message.approval === true);
       }
       case 'watch': {
         if (at !== null) return;
@@ -467,6 +472,7 @@ export class ChannelRoom {
     slug: string,
     claimed: string,
     ownerToken: string,
+    aprovacao: boolean,
   ): Promise<void> {
     // O slug do Durable Object vence: ele veio da URL e determinou qual
     // instância atendeu. Divergir significa cliente confuso ou malicioso.
@@ -553,6 +559,7 @@ export class ChannelRoom {
         peerId,
         role: 'host',
         ownerHash: hash,
+        aprovacao,
         janelaInicio: Date.now(),
         janelaContagem: 0,
       } satisfies Attachment);
@@ -592,7 +599,15 @@ export class ChannelRoom {
       });
     }
     // Pedidos que esperavam o transmissor voltar continuam de pé.
-    for (const p of this.pedidos()) this.send(socket, this.pedidoParaHost(p.at));
+    // Ou entram de uma vez, se ele voltou com a sala aberta.
+    for (const p of this.pedidos()) {
+      if (aprovacao) this.send(socket, this.pedidoParaHost(p.at));
+      else {
+        await this.admitir(
+          p.socket, p.at.peerId, p.at.name, p.at.fingerprint, p.at.participantId, p.at.attemptId, null,
+        );
+      }
+    }
   }
 
   private async join(
@@ -612,8 +627,27 @@ export class ChannelRoom {
     // nomes não distingue "não existe" de "existe e está fora do ar".
     if (host === null) return this.fail(socket, 'NOT_HOSTING');
 
-    // Sem convite desde a ADR 0026: a porta é a aprovação do dono, abaixo.
-    // Sem apelido e chave não há o que mostrar ao transmissor (ADR 0025).
+    /*
+      Sala aberta (ADR 0028): quem tem o link entra direto, como antes da
+      ADR 0025. Retomada pelo `participantId`, segredo de alta entropia do
+      navegador.
+    */
+    if (host.at.aprovacao !== true) {
+      const impressao = viewerKey === undefined ? undefined : await this.deps.hash(viewerKey);
+      if (!this.ctx.getWebSockets().includes(socket)) return;
+      if (this.host() === null) return this.fail(socket, 'NOT_HOSTING');
+      const anterior = participantId === undefined ? undefined : this.viewers()
+        .find((viewer) => viewer.at.participantId === participantId);
+      if (anterior === undefined && this.viewers().length >= this.deps.limits.maxPeers) {
+        return this.fail(socket, 'CHANNEL_FULL');
+      }
+      return await this.admitir(
+        socket, anterior?.at.peerId ?? this.deps.newPeerId('v'), name, impressao,
+        participantId, attemptId, anterior?.socket ?? null,
+      );
+    }
+
+    // Sala com aprovação: sem apelido e chave não há o que mostrar ao dono (ADR 0025).
     if (name === undefined || viewerKey === undefined) return this.fail(socket, 'BAD_MESSAGE');
     const fingerprint = await this.deps.hash(viewerKey);
     if (!this.ctx.getWebSockets().includes(socket)) return;
@@ -689,14 +723,14 @@ export class ChannelRoom {
 
   /** Da aprovação (ou da retomada) em diante: vaga, credencial, `watching`. */
   private async admitir(
-    socket: HibernatableSocket, peerId: string, name: string, fingerprint: string,
+    socket: HibernatableSocket, peerId: string, name: string | undefined, fingerprint: string | undefined,
     participantId: string | undefined, attemptId: string | undefined, anterior: HibernatableSocket | null,
   ): Promise<void> {
     socket.serializeAttachment({
       peerId,
       role: 'viewer',
-      name,
-      fingerprint,
+      ...(name === undefined ? {} : { name }),
+      ...(fingerprint === undefined ? {} : { fingerprint }),
       ...(participantId === undefined ? {} : { participantId }),
       ...(attemptId === undefined ? {} : { attemptId }),
       ready: false,
@@ -726,8 +760,8 @@ export class ChannelRoom {
     this.send(currentHost.socket, {
       type: 'peer-joined', peerId,
       ...(attemptId === undefined ? {} : { attemptId }),
-      name,
-      fingerprint,
+      ...(name === undefined ? {} : { name }),
+      ...(fingerprint === undefined ? {} : { fingerprint }),
     });
     this.anunciarPlateia();
   }

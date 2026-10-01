@@ -100,7 +100,7 @@ describe('Worker endurecido (TELA-019)', () => {
 
   it('depois da hibernação, o pedido ainda chega ao transmissor', async () => {
     const s = sala();
-    await s.mandar(s.abrir(), saudar({ type: 'host', slug: SLUG, ownerToken: OWNER }));
+    await s.mandar(s.abrir(), saudar({ type: 'host', slug: SLUG, ownerToken: OWNER }, { approval: true }));
     const depois = new ChannelRoom(s.ctx, makeChannelDeps(
       { CHANNELS: null as never, MAX_PEERS: '3' }, webcrypto as unknown as WebCryptoLike,
     ));

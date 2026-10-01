@@ -364,7 +364,7 @@ describe('convite (TELA-018)', () => {
     });
     const hostSock = new SpySocket();
     registry.accept(hostSock, '1.1.1.1').receive(JSON.stringify({
-      type: 'host', slug: SLUG, ownerToken: OWNER, protocol: PROTOCOL_VERSION,
+      type: 'host', slug: SLUG, ownerToken: OWNER, protocol: PROTOCOL_VERSION, approval: true,
     }));
     const antes = pedidos.length;
     const estranho = new SpySocket();

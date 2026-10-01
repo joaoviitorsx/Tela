@@ -1,0 +1,103 @@
+# Empacotamento do Tela Desktop.
+#
+# Por que electron-builder: o plano (docs/desktop/PLANO-desktop.md §7) decidiu
+# NSIS no Windows e AppImage + RPM + DEB no Linux. É a única ferramenta que
+# gera os quatro de uma configuração só, e é a que o `electron-updater` espera
+# quando a atualização automática entrar — ela ainda NÃO entra: nada aqui
+# baixa nem instala nada ao vivo.
+#
+# Como rodar: `pnpm --filter @tela/desktop dist` (ou dist:linux / dist:win),
+# depois de `pnpm --filter @tela/web build:desktop` e
+# `pnpm --filter @tela/desktop build`. O CI faz isso em
+# .github/workflows/desktop.yml; o caminho humano está em docs/desktop/BETA.md.
+
+appId: io.github.joaoviitorsx.tela
+productName: Tela
+
+# `Tela-0.1.0-beta.1-win-x64.exe`, `Tela-0.1.0-beta.1-linux-x64.AppImage`.
+# A versão no nome é o que deixa dois instaladores conviverem na pasta de
+# downloads de quem testa sem ninguém confundir qual é qual.
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
+
+# PNG de 1024 px rasterizado de apps/web/public/tela-app-icon.svg. O .ico do
+# Windows e os tamanhos do Linux saem dele na hora do empacotamento.
+icon: build/icon.png
+
+directories:
+  output: release
+
+# Só o que o processo principal carrega. `tsc` compila os testes para
+# dist/main também, e eles não pertencem ao pacote.
+files:
+  - dist/main/**
+  - dist/preload/**
+  - package.json
+  - '!dist/main/**/*.test.js'
+  - '!**/*.map'
+  - '!**/*.d.ts'
+  - '!**/*.d.cts'
+  - '!**/.tsbuildinfo'
+
+# O renderer é o site, compilado com `pnpm --filter @tela/web build:desktop`.
+# main.ts o serve de `process.resourcesPath/web` quando empacotado.
+extraResources:
+  - from: ../web/dist-desktop
+    to: web
+
+# Nenhum módulo nativo e nenhuma dependência de runtime: o pacote é main,
+# preload e o site. Reconstruir node_modules seria trabalho à toa. O
+# tela-captura (nativo/linux) ainda não entra — é o D2.
+npmRebuild: false
+
+publish:
+  provider: github
+  owner: joaoviitorsx
+  repo: Tela
+  releaseType: prerelease
+  # A tag do git é `desktop-vX.Y.Z`: o site não é versionado por tag, e o
+  # prefixo diz de que app é. Sem isto o padrão seria `vX.Y.Z`, e o release
+  # iria parar numa tag que ninguém criou.
+  tagNamePrefix: desktop-v
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # Sem certificado, não assina (§15: SmartScreen aceito por enquanto). `true`
+  # só grava ícone e metadados no .exe. docs/desktop/BETA.md explica a quem
+  # testa o caminho "Mais informações → Executar assim mesmo".
+  signAndEditExecutable: true
+
+nsis:
+  # Instalador com telas: quem testa escolhe a pasta e vê o que está
+  # instalando. Por usuário, sem pedir administrador.
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+    - target: rpm
+      arch: [x64]
+  # O nome do pacote vem do `name` do package.json, e `@tela/desktop` viraria
+  # `Tela` — com maiúscula, que o dpkg não aceita. Fixo em minúsculas.
+  executableName: tela
+  # O Electron se apresenta ao ambiente com o `desktopName` do package.json;
+  # com o nome igual ao do .desktop gerado, o GNOME junta a janela ao ícone.
+  syncDesktopName: true
+  category: AudioVideo
+  synopsis: Transmita seu jogo em 1080p60 para quem tem o link
+  # deb e rpm exigem mantenedor com e-mail. O endereço é o noreply público
+  # do GitHub do dono do repositório — não é caixa de ninguém.
+  maintainer: Tela <joaoviitorsx@users.noreply.github.com>
+  vendor: Tela
+
+deb:
+  packageName: tela
+
+rpm:
+  packageName: tela

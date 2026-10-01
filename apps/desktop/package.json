@@ -1,10 +1,16 @@
 {
   "name": "@tela/desktop",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0-beta.1",
   "type": "module",
-  "description": "Tela Desktop (Electron): janela única com a interface do site — ver docs/desktop/PLANO-desktop.md.",
+  "description": "Transmita seu jogo em 1080p60 para quem tem o link.",
+  "author": {
+    "name": "Tela",
+    "url": "https://github.com/joaoviitorsx/Tela"
+  },
+  "homepage": "https://github.com/joaoviitorsx/Tela",
   "main": "dist/main/main.js",
+  "desktopName": "tela.desktop",
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.preload.json --noEmit",
@@ -16,12 +22,16 @@
     "d0:encoder": "electron d0/encoder.mjs",
     "d0:injecao": "electron d0/injecao.mjs",
     "d0:nativo": "node d0/captura-nativa.mjs",
-    "nativo:build": "sh nativo/linux/build.sh"
+    "nativo:build": "sh nativo/linux/build.sh",
+    "dist": "electron-builder --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "dist:win": "electron-builder --win --publish never"
   },
   "devDependencies": {
     "@tela/tsconfig": "workspace:*",
     "@types/node": "^22.10.2",
     "electron": "44.5.1",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

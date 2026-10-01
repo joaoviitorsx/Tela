@@ -23,3 +23,9 @@ onlyBuiltDependencies:
   # O postinstall do `electron` baixa o binário do Chromium/Electron. Sem ele, o
   # `apps/desktop` instala e falha só ao abrir, com "Electron failed to install".
   - electron
+
+# O `electron-builder` traz o `electron-winstaller` (Squirrel.Windows) como
+# dependência mesmo para quem só gera NSIS, como nós. O postinstall dele não
+# serve para nada aqui; sem a lista o pnpm avisaria em todo `install`.
+ignoredBuiltDependencies:
+  - electron-winstaller

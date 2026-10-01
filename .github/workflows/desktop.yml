@@ -1,0 +1,178 @@
+name: desktop
+
+# Gera os instaladores do Tela Desktop e publica um pré-release no GitHub.
+#
+# Dispara numa tag `desktop-vX.Y.Z` (o site não é versionado por tag; o
+# prefixo diz de que app é). `workflow_dispatch` existe para ensaiar o
+# empacotamento sem publicar nada: os instaladores saem como artefato do run.
+# O caminho humano — subir versão, criar a tag, testar — está em
+# docs/desktop/BETA.md.
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+# Só o que o `gh release` precisa: criar o release e anexar arquivos.
+permissions:
+  contents: write
+
+env:
+  # O postinstall do Electron baixa ~100 MB de binário que ninguém aqui abre.
+  # O electron-builder baixa o próprio zip do Electron (cache dele) e só lê a
+  # versão de node_modules/electron/package.json.
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+  # O renderer é compilado com o signaling de produção embutido: o app não tem
+  # tela de configuração, e a beta tem que falar com o mesmo servidor do site.
+  VITE_SIGNAL_URL: wss://tela.transmissao.workers.dev/signal
+  VITE_PUBLIC_ORIGIN: https://tela.transmissao.workers.dev
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Confere a versão e abre o release como RASCUNHO antes de qualquer build.
+  #
+  # Rascunho primeiro, por dois motivos: os dois empacotadores rodam em
+  # paralelo e os dois tentariam criar o release ao mesmo tempo; e um
+  # pré-release pela metade (só Windows, sem hash) não deve aparecer na
+  # página. O electron-builder reaproveita um rascunho cuja tag bate — e a
+  # tag bate porque `tagNamePrefix: desktop-v` está no electron-builder.yml.
+  # ─────────────────────────────────────────────────────────────────────────
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.versao.outputs.tag }}
+      versao: ${{ steps.versao.outputs.versao }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag É a versão. `desktop-v0.1.0-beta.1` com package.json em 0.1.0
+      # publicaria um instalador que se apresenta com outro número — e o
+      # electron-builder usa a versão do package.json para achar o release.
+      - name: a tag é a versão do package.json
+        id: versao
+        run: |
+          versao=$(node -p "require('./apps/desktop/package.json').version")
+          echo "versao=$versao" >> "$GITHUB_OUTPUT"
+          echo "tag=desktop-v$versao" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref_type }}" = tag ] && [ "${{ github.ref_name }}" != "desktop-v$versao" ]; then
+            echo "::error::a tag é ${{ github.ref_name }}, mas apps/desktop/package.json está em $versao."
+            echo "Suba a versão no package.json e crie a tag desktop-v<versão> no mesmo commit."
+            exit 1
+          fi
+
+      # Push de tag não passa pelo ci.yml (ele filtra por branch). Verde é a
+      # condição de publicar, então o mínimo do app roda aqui.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm turbo lint typecheck test --filter=@tela/desktop...
+
+      - name: rascunho do release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.versao.outputs.tag }}
+          VERSAO: ${{ steps.versao.outputs.versao }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG já existe; os instaladores entram nele"
+            exit 0
+          fi
+          gh release create "$TAG" --draft --prerelease --verify-tag \
+            --title "Tela Desktop $VERSAO" \
+            --notes "Beta do Tela Desktop. Como instalar, o aviso do SmartScreen e como conferir o SHA-256: docs/desktop/BETA.md."
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Um runner por sistema: o NSIS precisa de Windows (sem wine), e AppImage,
+  # deb e rpm saem do Ubuntu. Sem assinatura em nenhum dos dois (§15).
+  # ─────────────────────────────────────────────────────────────────────────
+  empacotar:
+    needs: preparar
+    strategy:
+      # Se o Windows falhar, o Linux ainda sobe — e vice-versa. O rascunho só
+      # vira release no job `publicar`, que exige os dois.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ needs.preparar.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      # Sem `with: version`: a versão do pnpm vem do "packageManager" do
+      # package.json. Nos dois lugares, o action aborta.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+
+      # O electron-builder gera o .rpm com o `rpmbuild` do sistema.
+      - name: rpmbuild, para o pacote do Fedora
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+
+      # Na ordem das dependências: o site importa @tela/shared compilado, e o
+      # app empacota o site. `turbo build --filter=@tela/desktop...` não
+      # serviria — ele roda o `build` do site, que é a versão para a web, não
+      # o `build:desktop`.
+      - run: pnpm --filter @tela/shared build
+      - run: pnpm --filter @tela/web build:desktop
+      - run: pnpm --filter @tela/desktop build
+
+      - name: empacotar e anexar ao rascunho
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm --filter @tela/desktop exec electron-builder --publish always
+
+      - name: empacotar (ensaio, sem publicar)
+        if: github.ref_type != 'tag'
+        run: pnpm --filter @tela/desktop exec electron-builder --publish never
+
+      # O instalador do Windows não é assinado: o hash é a única forma de quem
+      # baixa saber que recebeu o arquivo que o CI gerou (§7).
+      - name: SHA-256 dos instaladores
+        shell: bash
+        run: |
+          cd apps/desktop/release
+          ls -la
+          arquivos=$(ls *.exe *.AppImage *.deb *.rpm 2>/dev/null)
+          test -n "$arquivos"
+          sha256sum $arquivos | tee "SHA256SUMS-${{ runner.os }}.txt"
+
+      - name: SHA-256 no release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" "apps/desktop/release/SHA256SUMS-${{ runner.os }}.txt" --clobber
+
+      - uses: actions/upload-artifact@v4
+        if: github.ref_type != 'tag'
+        with:
+          name: tela-desktop-${{ runner.os }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.rpm
+            apps/desktop/release/SHA256SUMS-*.txt
+          if-no-files-found: error
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Só com os dois sistemas anexados o rascunho vira pré-release visível. Se
+  # um deles falhou, o rascunho fica para inspeção — e ninguém baixa metade.
+  # ─────────────────────────────────────────────────────────────────────────
+  publicar:
+    needs: [preparar, empacotar]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: rascunho vira pré-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.preparar.outputs.tag }}
+        run: |
+          gh release edit "$TAG" --draft=false --prerelease
+          gh release view "$TAG"

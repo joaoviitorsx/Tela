@@ -461,6 +461,13 @@ codifica no NVENC (a `libnvidia-encode` vem com o driver, carregada por
 `dlopen`) e entrega H.264 ao mesmo ponto de injeção. O WebRTC, a sinalização e
 o espectador não mudam.
 
+**Feito no D0c** (`D0c-nvenc-linux.md`): processo `tela-captura` (não addon),
+portal → PipeWire DMA-BUF → GL → `nvh264enc` do GStreamer do sistema. 1080p
+com ~0,07 núcleo; 3 espectadores web em 1920×1080 sem congelamento. Desvio
+do texto acima: GStreamer em vez de `dlopen` direto da `libnvidia-encode`
+(motivo e custo no relatório). Limite do compositor: ~40 q/s em captura de
+monitor no GNOME.
+
 **Pendências antes de produto** (D0b §"O que falta"): IDRs por reconfiguração
 da isca, reconexão ocasional, malhas mirando o codificador.
 

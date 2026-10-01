@@ -1,7 +1,7 @@
 # ADR 0025 — Aprovação manual de cada espectador
 
 **Data:** 2026-09-28
-**Estado:** aceita
+**Estado:** aceita; deixou de ser obrigatória na ADR 0028 (sala aberta por padrão, aprovação como opção da sala)
 **Mantém:** R6 (sem conta), R8 (payload opaco), ADR 0021 (convite)
 
 ## Contexto

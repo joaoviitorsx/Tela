@@ -328,6 +328,8 @@ Um marco por vez (AGENTS.md); cada um termina em relatório e decisão.
 
 | Fase | Tarefa | Entrega | Sai quando |
 |---|---|---|---|
+| **D0b — Um encode, N envios** | TELA-027 | Protótipo isca + Encoded Transform + VideoEncoder único (feito, `D0b-um-encode-n-envios.md`) | Custo por espectador ~0,2 núcleo, medido |
+| **D0c — NVENC no Linux** | TELA-034 (antecipada) | Addon: captura PipeWire + NVENC + saída H.264 para o ponto de injeção | 1080p60 com ≤ 0,5 núcleo no Fedora do dono |
 | **D0 — Prova técnica** | TELA-027 | App Electron mínimo: a `BroadcastSession` atual na janela, captura pelo handler, transmissão para um navegador; modo escondido; `tela --benchmark`; detecção de encoder | Matriz §9 medida; **decisão na ADR 0027**: seguir, seguir com limitação (ex.: Linux NVIDIA a 720p) ou abrir TELA-034 |
 | **D1 — Shell** | TELA-028 | `app://`, preload, container desktop, URLs configuradas, importação do código de recuperação, Origin no Worker, moldura da §11 | Telas do site rodando no app; testes de IPC |
 | **D2 — Captura** | TELA-029 | Seletor próprio com miniaturas no Windows; portal no Linux; troca e fim de fonte | Matriz de limitações por ambiente |
@@ -432,6 +434,39 @@ Detalhes em `D0-relatorio-linux.md`. Nesta máquina (RTX 4050, sem iGPU):
   amigos. A premissa de encoder compartilhado da R5 não se confirmou aqui.
 - Contra o orçamento (≤ 0,5 núcleo): 1080p60 com 3 amigos fica em ~3,5 núcleos.
 - Caminhos A/B/C no relatório; decisão depois do D0 no Windows.
+
+### 13.1 Arquitetura de mídia que sai do D0
+
+O D0b (`D0b-um-encode-n-envios.md`) provou dentro do Chromium o "um encode,
+N envios": o custo por espectador a mais caiu de ~1,2 para ~0,2 núcleo, com o
+espectador web de produção recebendo 1080p sem mudança. Isso reorganiza o
+caminho de mídia do desktop em duas peças:
+
+```text
+ CODIFICADOR (um só, trocável)                     ENVIO (um por espectador)
+ ─────────────────────────────                     ────────────────────────
+ Windows: VideoEncoder prefer-hardware (MF/NVENC)   RTCPeerConnection de hoje,
+ Linux NVIDIA: addon NVENC com captura PipeWire     isca 160×90 + Encoded Transform
+ Linux sem HW: VideoEncoder (OpenH264)               (Encoded Source quando o
+          │                                          Chromium publicar)
+          └──── H.264 Annex B por MessagePort ────►  mesma malha de banda: o degrau
+                                                     e o bitrate passam a mirar o
+                                                     codificador único
+```
+
+**Linux NVIDIA:** o `copyTo` de um quadro 1080p custa de 5 a 20 ms, então o
+addon não recebe quadros do Chromium — ele captura pelo PipeWire (portal
+ScreenCast, DMA-BUF quando a NVIDIA aceitar, memória compartilhada quando não),
+codifica no NVENC (a `libnvidia-encode` vem com o driver, carregada por
+`dlopen`) e entrega H.264 ao mesmo ponto de injeção. O WebRTC, a sinalização e
+o espectador não mudam.
+
+**Pendências antes de produto** (D0b §"O que falta"): IDRs por reconfiguração
+da isca, reconexão ocasional, malhas mirando o codificador.
+
+**R5:** a premissa "um encode, três envios" não vale no Chromium sem esta
+arquitetura (D0). A regra de parâmetros idênticos continua necessária; o
+texto da R5 deve ser corrigido por ADR junto com a adoção do codificador único.
 
 ## 14. Um link, app ou navegador (pedido do dono, 2026-10-01)
 

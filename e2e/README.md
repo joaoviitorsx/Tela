@@ -83,3 +83,26 @@ Mede o `TaskDuration` do CDP em cada tela parada, lista as animações infinitas
 captura uma vez só e que cada página tem no máximo um socket de sinalização
 (TELA-026). WebGL é SwiftShader: o número da TV 3D não é custo real, a
 comparação visível × oculta é.
+
+---
+
+# Tela Desktop — o app Electron de verdade
+
+```bash
+pnpm dev                                                       # signaling :3333 + web :5173
+VITE_SIGNAL_URL=ws://localhost:3333/signal VITE_PUBLIC_ORIGIN=http://localhost:5173 \
+  pnpm --filter @tela/web build:desktop
+pnpm --filter @tela/desktop build
+node e2e/desktop.e2e.mjs            # carga no app://, ponte, CSP, trilho, modo escondido
+node e2e/desktop-ao-vivo.e2e.mjs    # vai ao ar DE DENTRO do app; espectador web real
+node e2e/um-encode.e2e.mjs          # "um encode, N envios" em Chrome headless
+```
+
+Os dois `desktop*` abrem a janela do app na tela (não há Electron headless) e
+precisam do binário do Electron — por isso não estão na CI, que pula o
+download. Para o app EMPACOTADO: `pnpm --filter @tela/desktop exec
+electron-builder --linux dir` e `TELA_EXE=apps/desktop/release/linux-unpacked/tela`.
+
+No ao vivo, só a captura é sintética (`getDisplayMedia` no Wayland abre o
+diálogo do sistema); container desktop, worker do "um encode" servido pelo
+`app://`, CSP de produção e o espectador são o caminho real.

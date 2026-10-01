@@ -11,6 +11,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# `apps/desktop` traz o Electron, cujo postinstall baixa ~100 MB de binário.
+# Nenhum job daqui abre o app; baixar em cada um seria só tempo e banda.
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+
 jobs:
   check:
     runs-on: ubuntu-latest

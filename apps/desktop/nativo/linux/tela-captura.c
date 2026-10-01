@@ -54,6 +54,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 enum { MSG_QUADRO = 1, MSG_EVENTO = 2, MSG_CAPTURA = 3 };
@@ -100,17 +101,29 @@ static GQueue entradas = G_QUEUE_INIT;
 
 /* ---------------------------------------------------------------- saída */
 
-static void escrever_tudo(const void *dados, size_t n) {
-  const guint8 *p = dados;
+/*
+ * Uma mensagem inteira (cabeçalho, metadados do quadro e H.264) numa syscall
+ * só: eram três `write` por quadro. `writev` pode escrever só parte; o laço
+ * avança pelos vetores até o fim.
+ */
+static void escrever_vetores(struct iovec *v, int n) {
   while (n > 0) {
-    ssize_t w = write(STDOUT_FILENO, p, n);
+    ssize_t w = writev(STDOUT_FILENO, v, n);
     if (w < 0) {
       if (errno == EINTR) continue;
       /* O app fechou o cano: não há para quem entregar. */
       _exit(0);
     }
-    p += w;
-    n -= (size_t)w;
+    size_t resto = (size_t)w;
+    while (n > 0 && resto >= v->iov_len) {
+      resto -= v->iov_len;
+      v++;
+      n--;
+    }
+    if (n > 0) {
+      v->iov_base = (guint8 *)v->iov_base + resto;
+      v->iov_len -= resto;
+    }
   }
 }
 
@@ -125,10 +138,13 @@ static void enviar(guint8 tipo, const guint8 *cabecalho, size_t ncab, const void
   guint8 h[5];
   le32(h, (guint32)(1 + ncab + ncorpo));
   h[4] = tipo;
+  struct iovec v[3] = {
+      {.iov_base = h, .iov_len = sizeof h},
+      {.iov_base = (void *)cabecalho, .iov_len = ncab},
+      {.iov_base = (void *)corpo, .iov_len = ncorpo},
+  };
   g_mutex_lock(&saida_mutex);
-  escrever_tudo(h, sizeof h);
-  if (ncab > 0) escrever_tudo(cabecalho, ncab);
-  if (ncorpo > 0) escrever_tudo(corpo, ncorpo);
+  escrever_vetores(v, 3);
   g_mutex_unlock(&saida_mutex);
 }
 

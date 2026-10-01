@@ -158,6 +158,13 @@ const opcao = (nome) => {
 const CLAMP_DURO = flag('clamp-duro') || flag('pessimista');
 const CPU_COBRA = flag('cpu-cobra') || flag('pessimista');
 const RAPIDO = flag('rapido');
+/**
+ * `--escala`: a sala grande da ADR 0029 (10, 20 e 50 espectadores) no lugar
+ * da matriz de sempre. Matriz própria e portão próprio — ver `portaoEscala`.
+ */
+const ESCALA = flag('escala');
+/** Teto que o transmissor declara: o do "um encode" (ADR 0029). */
+const CAPACIDADE = 50;
 const SO_QUEDAS = flag('quedas');
 const TRACE = opcao('trace');
 
@@ -356,14 +363,14 @@ class SimTransport {
       iceServers: [{ urls: ['stun:sim'] }],
       send: () => undefined,
       createConnection: this.fabrica.create,
-      maxPeers: 5,
+      maxPeers: CAPACIDADE,
     });
   }
 
   /* ── porta MediaTransport ── */
 
   async host() {
-    return { maxPeers: 5 };
+    return { maxPeers: CAPACIDADE };
   }
   async watch() {}
 
@@ -570,6 +577,7 @@ async function rodarCenario(cfg) {
     createStream,
     ...(memoria === undefined ? {} : { uplinkMemory: memoria }),
     statsIntervalMs: 1_000,
+    capacidade: CAPACIDADE,
   });
 
   await session.start('sim', 'o'.repeat(43));
@@ -742,7 +750,7 @@ async function rodarCenario(cfg) {
    ═══════════════════════════════════════════════════════════════════════ */
 
 const UPLOADS = [5, 10, 20, 50, 100, 300, 800];
-const ESPECTADORES = [1, 2, 3, 5];
+const ESPECTADORES = ESCALA ? [10, 20, 50] : [1, 2, 3, 5];
 const DESCIDA_NORMAL = Mbps(500);
 const DESCIDA_FRACA = Mbps(5);
 const CPUS = ['nenhuma', 'blips5', 'sustentada20'];
@@ -1088,7 +1096,7 @@ async function main() {
       `  max ${Math.max(...resultados.map((r) => r.tEstabiliza))}s`,
   );
   {
-    const porN = [1, 2, 3, 5].map((n) => {
+    const porN = ESPECTADORES.map((n) => {
       const g = resultados.filter((r) => r.cfg.n === n);
       return `N=${n}:${mediana(g.map((r) => r.reconfigs))}`;
     });
@@ -1425,12 +1433,41 @@ export function portao(resultados) {
   return false;
 }
 
+/*
+  Sala grande (ADR 0029). Com 50 espectadores num link de 10 Mbps cada um
+  recebe 200 kbps: imagem abaixo do piso é FÍSICA, não regressão — a escada
+  desce até o fundo e fica, que é o certo. O que não pode acontecer em
+  nenhum tamanho de sala é a malha ficar muda, entrar em estado absorvente
+  ou afogar o link; é isso que este portão cobra.
+*/
+const TETOS_ESCALA = {
+  mudos: 0,
+  absorventes: 0,
+  afogando: 0,
+};
+
+export function portaoEscala(resultados) {
+  const medido = {
+    mudos: resultados.filter((r) => r.mudo).length,
+    absorventes: resultados.filter((r) => r.absorvente).length,
+    afogando: resultados.filter((r) => r.pctSobreuso > 10).length,
+  };
+  console.log('\nPORTÃO DA SALA GRANDE (--escala)');
+  let ok = true;
+  for (const [k, teto] of Object.entries(TETOS_ESCALA)) {
+    const v = medido[k];
+    if (v > teto) ok = false;
+    console.log(`  ${v > teto ? 'FALHA' : '  ok '}  ${k.padEnd(16)} ${String(v).padStart(4)} / ${teto}`);
+  }
+  return ok;
+}
+
 const resultados = await main();
 
 /*
   Portão de CI. Sem a flag o simulador só REPORTA, que é o uso interativo; com
   ela ele DECIDE, que é o uso no build.
 */
-if (flag('portao') && Array.isArray(resultados) && !portao(resultados)) {
+if (flag('portao') && Array.isArray(resultados) && !(ESCALA ? portaoEscala(resultados) : portao(resultados))) {
   process.exitCode = 1;
 }

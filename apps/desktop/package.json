@@ -7,7 +7,8 @@
   "main": "d0/main.mjs",
   "scripts": {
     "d0": "electron d0/main.mjs",
-    "d0:encoder": "electron d0/encoder.mjs"
+    "d0:encoder": "electron d0/encoder.mjs",
+    "d0:injecao": "electron d0/injecao.mjs"
   },
   "devDependencies": {
     "electron": "44.5.1"

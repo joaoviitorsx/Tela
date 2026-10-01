@@ -34,10 +34,10 @@ node e2e/bench/rede-malha-vs-arvore.calc.mjs  # D (calculadora, não benchmark)
 
 | # | Caminho | Frequência | O() hoje | O() melhor | Custo a N=50 | Prioridade | Recomendação |
 |---|---|---|---|---|---|---|---|
-| A1 | `FilaDeInjecao.vaga` (`recentes.find`) + `chegou` (`push/shift`) | F·N = 3 000/s | O(Q) por vaga → O(N·Q·F) | O(1) por vaga (anel por `seq`) | **1,0 ms/s** medido (342 ns/vaga); anel 0,24 ms/s | P2 | anel indexado por `seq % Q`; decisões idênticas (verificado) |
+| A1 | `FilaDeInjecao.vaga` (`recentes.find`) + `chegou` (`push/shift`) | F·N = 3 000/s | O(Q) por vaga → O(N·Q·F) | O(1) por vaga (anel por `seq`) | **1,0 ms/s** medido (342 ns/vaga); anel 0,24 ms/s | P2 **aplicado** | anel indexado por `seq % Q`; decisões idênticas (verificado) |
 | A2 | `real.dados.slice(0)` por sender (worker) | F·N | O(N·B·F) bytes | O(N·B·F) — inerente ao spec | **8,7 ms/s**, 78 MB/s, 0,87 % de um núcleo (medido) | P3 | não é gargalo; manter |
 | A3 | Chromium por sender: `SetData`, pacotização, SRTP, `sendmsg` | F·N·B/MTU ≈ 62 500 pacotes/s | O(N·B·F/MTU) | idem — só cai com repasse (§D) | **estimado 150–400 ms/s de thread de rede** (12–30 % de um núcleo) | **P0 medir** | é o custo que escala de verdade; procedimento em §F |
-| A4 | `LeitorDoProtocolo` (`Buffer.concat` por pedaço) | F + eventos | O(B²/c) por mensagem | O(B) (lista de pedaços) | 0,5 ms/s a 64 KiB; 8 ms/s a 512 B; IDR 300 KB em 512 B: 88 MB copiados (295×) | P2 | parser com lista + offset; custo passa a ser determinístico |
+| A4 | `LeitorDoProtocolo` (`Buffer.concat` por pedaço) | F + eventos | O(B²/c) por mensagem | O(B) (lista de pedaços) | 0,5 ms/s a 64 KiB; 8 ms/s a 512 B; IDR 300 KB em 512 B: 88 MB copiados (295×) | P2 **aplicado** | parser com lista + offset; custo passa a ser determinístico |
 | A5 | `injecao.mjs`: `postMessage` sem transferência | F | 1 clone de B | 0 (transfer) | 0,4 ms/s (7 µs/quadro) | P3 | transferir se o `MessagePortMain` aceitar |
 | A6 | WebCodecs `copyTo` + `entrada` Map; isca (`fillRect` + `requestFrame`) | F | O(B) + O(1) | — | <1 ms/s | — | nada |
 | A7 | `tela-captura.c`: `GQueue` de latência, 3 `write()` por quadro | F | O(1); 180 syscalls/s | `writev` → 60/s | desprezível | P3 | `writev` quando mexer no arquivo |
@@ -49,7 +49,7 @@ node e2e/bench/rede-malha-vs-arvore.calc.mjs  # D (calculadora, não benchmark)
 | C1 | Entrada de peer: `admit` → `PeerLink` → `applyPreset` (enfileirado) | por evento | O(1) por entrada; O(N) por troca de degrau (`adaptAll`) | — | troca de degrau: N `setParameters` da isca (nunca reconfigurada) | — | correto |
 | C2 | Worker (DO): `relay()` desserializa 2(N+1) attachments por sinal | por sinal (~30 por entrada) | O(N) por sinal → O(N²) por entrada em massa | O(1) com índice | **163 µs/sinal; 245 ms de CPU do DO por entrada de 50** (proxy medido) | P1 | índice `Map<peerId>` reconstruído uma vez por mensagem (ou cache invalidado na escrita) |
 | C3 | Node (`channel-registry`): `relay` por `Map`, presença O(N) por entrada | por evento | O(1) / O(N) | — | 1 275 mensagens `viewers` para 50 entradas | — | nada |
-| C4 | IDR por PLI coalescido a 500 ms | por evento | B_IDR·N por IDR | — | **7,5 MB por IDR a N=50; até 2/s = 15 MB/s > 75 Mbps de link** (algebra) | **P1** | janela de coalescência ∝ N; NACK antes de PLI; na cascata, agregar PLI no repassador |
+| C4 | IDR por PLI coalescido a 500 ms | por evento | B_IDR·N por IDR | — | **7,5 MB por IDR a N=50; até 2/s = 15 MB/s > 75 Mbps de link** (algebra) | **P1 aplicado** (janela ∝ N + teto por sender) | janela de coalescência ∝ N; teto por sender; NACK antes de PLI; na cascata, agregar PLI no repassador |
 | D | Upload: malha U = N·b vs árvore U = k·b | — | O(N) | O(k) | ver §D: a 100 Mbps, 50 pessoas recebem 360p abaixo do piso em malha; 720p–1080p com repasse | — | fase da cascata |
 
 **Leitura rápida.** Nada no JavaScript do produto é quadrático no caminho por quadro, e as duas suspeitas de custo por quadro (A1, A2) somam ~10 ms por segundo a N=50 — menos de 1 % de um núcleo. O custo que escala de verdade com N está DENTRO do Chromium (A3): 50 `RTCPeerConnection`s pacotizando, cifrando e enviando a mesma mídia 50 vezes, e 50 `getStats()` por segundo (B2). Nenhum dos dois cabe em benchmark Node; os dois têm procedimento de medição em §F. Fora do navegador, os únicos defeitos de classe de complexidade são o `Buffer.concat` do leitor (A4, O(B²/c)) e a varredura de attachments do Worker (C2, O(N) por mensagem).
@@ -82,6 +82,17 @@ Só `chegou()` × 100 000: `push`+`shift` 75 ns/quadro; anel 6 ns/quadro (12×).
 Antes de cronometrar, a bancada executa os dois sobre o mesmo roteiro e compara CADA decisão (`enviar` com qual `seq`, `descartar` com ou sem `pedirChave`, e o valor de `atraso()` a 10 Hz): idênticas em todos os cenários e tamanhos.
 
 **Importa a N=50?** Em valor absoluto, não: 1 ms por segundo de transmissão. Importa onde ele roda — no worker do Encoded Transform, no caminho de CADA quadro de CADA sender, entre o leitor e o escritor do stream; 340 ns de busca linear por vaga é jitter que não precisa existir, e o anel tira a dependência de Q (se Q subir para 600 a 60 fps para cobrir 10 s, o `find` sobe junto; o anel não). O ganho é 4× sobre um custo pequeno: **P2** — fazer, com o teste de equivalência da bancada virando teste unitário.
+
+**Aplicado (2026-10-01).** `FilaDeInjecao` passou a ser o anel; a bancada guarda a versão de array como "anterior" e continua comparando CADA decisão antes de cronometrar (idênticas em todos os cenários). Medido de novo, mesma máquina:
+
+| modo | N | ns/vaga anterior | ns/vaga atual | ganho |
+|---|---|---|---|---|
+| em dia | 5 | 277 | 246 | 1,1× |
+| em dia | 20 | 237 | 85 | 2,8× |
+| em dia | 50 | 369 | 87 | 4,2× |
+| atrasados | 50 | 269 | 38 | 7,1× |
+
+`chegou()`: 74 → 8 ns/quadro. A N=50 em dia: 10,5 → 2,5 ms por 10 s simulados (**1,0 → 0,25 ms/s**). Testes novos em `fila-de-injecao.test.ts`: borda da janela (Q−1 serve, Q não), 20 voltas do anel, sender atrasado dentro da janela depois das voltas, IDR fora da ponta, atraso com sender morto esperando chave. Uma diferença deliberada, só com a invariante quebrada: com BURACO na numeração (`seq` pulado) o array ficava parado com `pedirChave: false` até a janela passar; o anel confere `quadro.seq === proximo` e pede IDR na hora.
 
 ### A2. Cópia por sender no worker — `adapters/injecao-worker.ts`
 
@@ -133,6 +144,17 @@ Total estimado: **150–400 ms de CPU por segundo a N=50, concentrado na thread 
 Um IDR de 300 KB em pedaços de 512 B: atual 12,5 ms e **88,4 MB copiados para 0,3 MB úteis (295×)**; lista 0,14 ms.
 
 **Importa?** No Linux o Node lê o pipe em pedaços de até 64 KiB, então o caso real é a primeira linha: 0,5 ms/s, 2,2× de cópia — não pesa. O que a lista compra é previsibilidade: o custo deixa de depender de como o SO fatiou e de o processo principal do Electron estar atrasado. **P2**, feito junto com A5 quando se tocar no `injecao.mjs`.
+
+**Aplicado (2026-10-01).** `LeitorDoProtocolo` é a lista + offset; a bancada guarda o `Buffer.concat` como "anterior". Um detalhe que a bancada não tinha e o teste pegou: reler o cabeçalho (`lerU32(0)`) a cada pedaço que não completa a mensagem anda a lista inteira — com pedaços de 1 byte voltava a ser quadrático (28 s no teste). O tamanho da mensagem na cabeça é lido uma vez e guardado; cada `receber` é O(1) até a mensagem fechar. Medido de novo:
+
+| pedaço | anterior (ms) | atual (ms) | ganho | copiado anterior | copiado atual |
+|---|---|---|---|---|---|
+| 64 KiB | 4,71 | 3,19 | 1,5× | 35,0 MB | 15,7 MB |
+| 16 KiB | 5,87 | 2,82 | 2,1× | 46,8 MB | 15,7 MB |
+| 4 KiB | 12,86 | 3,16 | 4,1× | 93,1 MB | 15,7 MB |
+| 512 B | 75,64 | 4,21 | 18,0× | 523 MB | 15,7 MB |
+
+IDR de 300 KB em 512 B: 11,75 → 0,17 ms; 88,4 → 0,30 MB copiados. Teste: `apps/desktop/d0/protocolo-captura.test.mjs` (`node --test`), fragmentação aleatória de 1 B a 200 KB em 8 sementes contra uma decodificação de referência do stream inteiro, mais cabeçalho partido em 4 pedaços, várias mensagens num pedaço, pedaço vazio, `ArrayBuffer` próprio (mexer na origem não altera o quadro). Única diferença de comportamento, fora do protocolo: `tamanho = 0` é pulado (4 bytes) em vez de ler o tipo do byte seguinte e desalinhar.
 
 ### A5. Ponte processo principal → renderer — `apps/desktop/d0/injecao.mjs`
 
@@ -202,6 +224,27 @@ Um DO é single-threaded: 245 ms de CPU numa rajada de entrada é fila na troca 
 Cada entrada espera um IDR NA PONTA (regra H.264 da fila), e cada PLI de espectador vira pedido ao codificador único, coalescido a 1 por 500 ms (`INTERVALO_MINIMO_DE_CHAVE_MS`). Um IDR custa B_IDR·N no link: **150 KB × 50 = 7,5 MB por IDR**; num link de 100 Mbps (75 útil) são 0,8 s de cano para UM quadro — o pacer espalha, mas a latência de todos sobe e o `availableOutgoingBitrate` cai. Com 50 espectadores, a taxa agregada de PLI é 50× a de um (cada perda em cada caminho pode gerar um), e a coalescência deixa passar até 2 IDR/s = **15 MB/s, acima do link inteiro**. Isso é o modo de falha "a segunda transmissão pior que a primeira" em versão N: a rede boa de 49 paga a rede ruim de 1.
 
 **P1 (álgebra, sem bancada):** (a) a janela de coalescência deve crescer com N — por exemplo `max(500 ms, 40 ms × N)` (2 s a N=50), e o espectador que pediu continua decodificando o que chega; (b) perda deve ser resolvida por NACK/RTX (já ligado no WebRTC) antes de PLI — conferir no espectador se `pliCount` cresce junto com `nackCount` ou sozinho; (c) na cascata, o repassador agrega os PLI da subárvore e repassa UM. O codificador já registra `pedidosDeChave` por motivo — é o contador para medir isso em `um-encode.e2e.mjs` com `ESPECTADORES=20`.
+
+**Aplicado (2026-10-01), em duas camadas:**
+
+1. **Janela global ∝ N** — `janelaDeChaveMs(senders, motivo)` em `core/media/fila-de-injecao.ts`, usada pelos dois codificadores (`CodificadorWebCodecs`, `CodificadorExterno`) no lugar do `INTERVALO_MINIMO_DE_CHAVE_MS = 500` fixo: `max(500 ms, 40 ms × N)`. N vem do worker de injeção, que é quem sabe quantos senders têm vaga (`FilaDeInjecao.senders()`), e viaja no aviso `{ tipo: 'chave', motivo, senders }`. O motivo passou a dizer a verdade: `entrada` (primeiro IDR do sender), `pli` (o espectador pediu) ou `atrasado` (sender que ficou para trás da fila) — antes toda repetição do pedido saía como `entrada`.
+
+   **`entrada` não paga a janela de N:** fica nos 500 ms. Dois motivos. A taxa de entradas é limitada por gente (e pelo rate limit do signaling), não por N × perda — é o PLI que cresce com a plateia, porque cada caminho perde pacote por conta própria. E quem entra vê tela preta até o primeiro IDR: 2 s de espera a N=50 seria a primeira impressão do produto, para poupar um IDR que a entrada ia custar de qualquer jeito. Um estouro de 50 entradas juntas continua custando no máximo 2 IDR/s enquanto dura — igual a hoje, e acaba quando a sala enche.
+
+   **Álgebra** (B_IDR = 150–300 KB, b = 12 Mbps por espectador, tráfego de P = N·b):
+
+   | | IDR/s máx. | bytes de IDR por segundo no link, N=50 | fração do tráfego de P |
+   |---|---|---|---|
+   | antes (500 ms) | 2 | 2 × 50 × B_IDR = **15–30 MB/s (120–240 Mbps)** | 20–40 % em qualquer N |
+   | depois (40 ms × N) | 1/(0,04·N) | N × B_IDR / (0,04·N) = 25 × B_IDR = **3,75–7,5 MB/s (30–60 Mbps)**, independente de N | 5–10 % a N=50; igual a antes até N=12 |
+
+   A janela ∝ N faz o gasto com IDR virar uma CONSTANTE (B_IDR / 40 ms) em vez de crescer com a plateia; a fração do link cai com 1/N. O espectador que pediu continua decodificando o que chega enquanto espera (no pior caso 2 s de artefato, nunca tela preta — o PLI é de referência perdida, não de ausência de quadro).
+
+2. **Teto por sender (tempestade de PLI)** — `INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS = 2 s` na `FilaDeInjecao`: um sender só consegue UM IDR pedido por 2 s (o da entrada não gasta o direito). O pedido excedente não chega ao codificador (`pedirChave: false`), mas o sender continua esperando IDR na ponta e recupera no IDR de qualquer outro ou quando o intervalo vence — nunca fica mais de 2 s sem ser atendido. Sem isto, um espectador quebrado ou mal-intencionado mandando PLI sem parar forçava um IDR por janela global para TODO MUNDO (cada IDR vai N vezes): 2 IDR/s a N=5 são 12 Mbps de IDR sobre 60 Mbps de P (20 %). O 2 s sai da conta "quanto um espectador sozinho pode custar": N × B_IDR / X ≤ 5 % de N × b ⇔ X ≥ B_IDR / (0,05 × b) = 1,2 Mb / 0,6 Mbps = **2 s** (4 s com IDR de 300 KB; fica em 10 %). A fração é independente de N — os dois lados escalam com N — então o teto vale igual para 5 e para 50. Um PLI legítimo e esparso (um a cada poucos segundos; uma referência perdida precisa de UM IDR) nunca é segurado.
+
+   Teste (`fila-de-injecao.test.ts`): um sender com 100 PLI/s por 10 s, contra o pior codificador (todo pedido vira IDR no quadro seguinte), produz ≤ 6 IDRs (1 da entrada + 5) e o outro sender recebe os 600 quadros sem um descarte; o spammer nunca fica mais que um intervalo sem receber; PLI logo depois de entrar ainda é atendido; quem está de molho aproveita o IDR pedido por outro.
+
+   **Falta um fio, fora destes arquivos:** `encode-once-transport.ts` repassa `codificador.pedirChave(m.data.motivo)` sem o `senders` do aviso. Até acrescentar `, m.data.senders` nessa linha, a janela global fica no piso de 500 ms (o comportamento de hoje) — o teto por sender já vale, porque mora no worker. Medir no navegador: `pedidosDeChave` por motivo e `idrs` por minuto a N=20 com `tc netem loss 2%` num espectador (§F.4).
 
 ---
 
@@ -308,11 +351,11 @@ Com 20 % da sala em fibra de 300 Mbps, 50 pessoas cabem em DOIS saltos. A condi�
 | Prioridade | O quê | Ganho esperado | Risco | Testes |
 |---|---|---|---|---|
 | **P0 — medir** | A3 e B2 em Chrome real com N=20 e N=50 (§F) | decide o teto prático por máquina e se B2 vale | nenhum | `um-encode.e2e.mjs ESPECTADORES=20` + `chrome://tracing` |
-| **P1** | C4: coalescência de PLI ∝ N; conferir NACK antes de PLI; contador por motivo no console | evita 15 MB/s de IDR a N=50; a rede ruim de 1 deixa de custar a de 49 | baixo (só a janela); espectador novo pode esperar até 2 s pelo IDR | `fila-de-injecao.test.ts` + `webcodecs-codificador` com relógio fake; e2e com `ESPECTADORES=20` contando `idrs` |
+| **P1 — feito** (janela ∝ N, teto por sender; falta o `senders` no repasse do transporte) | C4: coalescência de PLI ∝ N; conferir NACK antes de PLI; contador por motivo no console | evita 15 MB/s de IDR a N=50; a rede ruim de 1 deixa de custar a de 49 | baixo (só a janela); espectador novo NÃO espera: `entrada` fica em 500 ms | `fila-de-injecao.test.ts`, `webcodecs-codificador.test.ts`, `codificador-externo.test.ts` com relógio fake; e2e com `ESPECTADORES=20` contando `idrs` |
 | **P1** | C2: índice por mensagem/cache no Worker | 163 → 2–75 µs por sinal; 245 → 3 ms por entrada de 50 | hibernação: o cache nasce vazio e é reconstruído; `conformance.test.ts` já cobre o protocolo | `worker.test.ts` + `conformance.test.ts` (sem mudança de comportamento) |
 | **P1 (condicional ao P0)** | B2: rodízio N/5 + `getStats(selector)` | 5× menos chamadas, 5–10× menos objetos por chamada | detecção de colapso até 5× mais lenta; o simulador mede | `malhas.sim.mjs` (1 200 cenários) com rodízio modelado; `qualidade.e2e.mjs` |
-| P2 | A1: anel por `seq` na `FilaDeInjecao` | 4× (1,0 → 0,24 ms/s); O(1) independente de Q | baixíssimo: decisões idênticas verificadas | mover a equivalência da bancada para `fila-de-injecao.test.ts`; `um-encode.e2e.mjs` |
-| P2 | A4: leitor com lista de pedaços | O(B²/c) → O(B); 1,5× a 64 KiB, 15× a 512 B | baixo; equivalência de quadros verificada | teste do leitor com fragmentação aleatória (hoje não existe) + `desktop-ao-vivo.e2e.mjs` |
+| P2 — feito | A1: anel por `seq` na `FilaDeInjecao` | 4× (1,0 → 0,25 ms/s medido depois); O(1) independente de Q | baixíssimo: decisões idênticas verificadas | `fila-de-injecao.test.ts` (borda, voltas, buraco); `um-encode.e2e.mjs` |
+| P2 — feito | A4: leitor com lista de pedaços | O(B²/c) → O(B); 1,5× a 64 KiB, 18× a 512 B | baixo; equivalência de quadros verificada | `apps/desktop/d0/protocolo-captura.test.mjs` (fragmentação aleatória, `node --test`) + `desktop-ao-vivo.e2e.mjs` |
 | P3 | A5 (transferir no `MessagePortMain`), B4 (`useMemo` em `vagas`), A7 (`writev`), A2 (nada) | <1 ms/s cada | nenhum | os existentes |
 
 O que NÃO fazer: otimizar a cópia por sender (A2) — é inerente e barata; "adaptar por peer" para poupar banda (R5, ADR 0015) — continua errado, agora com mais força, porque o quadro é um só.

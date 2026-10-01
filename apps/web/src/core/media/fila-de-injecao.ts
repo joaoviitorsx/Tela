@@ -12,6 +12,12 @@
  *   começar num IDR antigo deixava o sender preso N quadros atrás para sempre,
  *   porque cada vaga leva no máximo um quadro (medido: 17 quadros, ~280 ms);
  * - vaga sem quadro novo não vai ao ar (o transform descarta).
+ *
+ * Os quadros ficam num anel indexado por `seq % Q`. O codificador numera em
+ * ordem e sem buraco, então "o quadro de seq s ainda está guardado" é um teste
+ * de intervalo e `anel[s % Q]` é ele: O(1) por vaga, independente de Q. A
+ * versão anterior (array + `find`) percorria ~Q entradas em TODA vaga de sender
+ * em dia — o caso normal era o pior caso (docs/engenharia/complexidade.md, A1).
  */
 export type QuadroCodificado<D> = {
   readonly seq: number;
@@ -28,72 +34,126 @@ export const QUADROS_GUARDADOS = 180;
 /** Sender sem vaga há este tempo está morto (conexão fechada sem avisar o stream). */
 export const SENDER_MORTO_MS = 1_000;
 
+/**
+ * Pedidos de quadro-chave em rajada viram um IDR: nunca mais de um por esta
+ * janela. É o piso; com plateia a janela cresce (`janelaDeChaveMs`).
+ */
+export const JANELA_MINIMA_DE_CHAVE_MS = 500;
+/**
+ * Quanto a janela cresce por sender. Um IDR custa B_IDR × N no link (cada
+ * sender manda o mesmo quadro), e a taxa de PLI cresce com N (cada caminho
+ * perde pacote por conta própria). Com a janela ∝ N, o gasto com IDR fica
+ * limitado a B_IDR / 40 ms — constante, em vez de crescer com a plateia
+ * (complexidade.md, C4).
+ */
+export const JANELA_DE_CHAVE_POR_SENDER_MS = 40;
+/**
+ * Um sender só consegue UM IDR pedido por este intervalo (o da entrada não
+ * conta). Sem isto, um espectador quebrado ou mal-intencionado mandando PLI
+ * sem parar forçava um IDR por janela para TODO MUNDO — cada IDR vai N vezes.
+ * O pedido excedente não vai ao codificador, mas o sender continua esperando o
+ * próximo IDR na ponta, então recupera no IDR de qualquer outro ou quando o
+ * intervalo vence. 2 s: um espectador custa no máximo B_IDR × N / 2 s, que é
+ * 5–10 % do tráfego de P (N × b) em qualquer N (complexidade.md, C4).
+ */
+export const INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS = 2_000;
+
+/**
+ * Por quanto tempo um pedido de quadro-chave fica de molho depois do último IDR.
+ *
+ * `entrada` não paga a janela da plateia: quem acabou de entrar vê tela preta
+ * até o primeiro IDR, e a taxa de entradas é limitada por gente (e pelo rate
+ * limit do signaling), não por N × perda. Os outros motivos — PLI, sender que
+ * ficou para trás, troca de fonte — esperam `max(piso, 40 ms × senders)`.
+ */
+export function janelaDeChaveMs(senders: number, motivo?: string): number {
+  if (motivo === 'entrada' || !Number.isFinite(senders)) return JANELA_MINIMA_DE_CHAVE_MS;
+  return Math.max(JANELA_MINIMA_DE_CHAVE_MS, JANELA_DE_CHAVE_POR_SENDER_MS * Math.floor(senders));
+}
+
 type EstadoDoSender = {
   proximo: number;
   esperandoChave: boolean;
   ultimaVaga: number;
+  /** Instante a partir do qual um pedido deste sender vale de novo. */
+  chaveLiberadaEm: number;
 };
 
 export class FilaDeInjecao<D> {
-  private readonly recentes: QuadroCodificado<D>[] = [];
+  private readonly anel: (QuadroCodificado<D> | undefined)[] = new Array<QuadroCodificado<D> | undefined>(
+    QUADROS_GUARDADOS,
+  ).fill(undefined);
   private ultimoSeq = -1;
-  private readonly senders = new Map<string, EstadoDoSender>();
+  private readonly estados = new Map<string, EstadoDoSender>();
 
   constructor(private readonly agora: () => number) {}
 
   /** Um quadro novo saiu do codificador único. */
   chegou(quadro: QuadroCodificado<D>): void {
-    this.recentes.push(quadro);
+    this.anel[quadro.seq % QUADROS_GUARDADOS] = quadro;
     this.ultimoSeq = quadro.seq;
-    if (this.recentes.length > QUADROS_GUARDADOS) this.recentes.shift();
   }
 
   entrou(sender: string): void {
-    this.senders.set(sender, { proximo: -1, esperandoChave: true, ultimaVaga: this.agora() });
+    this.estados.set(sender, { proximo: -1, esperandoChave: true, ultimaVaga: this.agora(), chaveLiberadaEm: -Infinity });
   }
 
   saiu(sender: string): void {
-    this.senders.delete(sender);
+    this.estados.delete(sender);
+  }
+
+  /** Quantos senders têm vaga aqui — a plateia, vista de quem injeta. */
+  senders(): number {
+    return this.estados.size;
   }
 
   /**
    * O espectador deste sender pediu quadro-chave (PLI). Ele volta a esperar um
-   * IDR na ponta; a decisão da próxima vaga já pede um ao codificador.
+   * IDR na ponta; a decisão da próxima vaga já pede um ao codificador — se o
+   * sender ainda tem direito (`INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS`).
    */
   pediuChave(sender: string): void {
-    const s = this.senders.get(sender);
+    const s = this.estados.get(sender);
     if (s !== undefined) s.esperandoChave = true;
   }
 
   /** Uma vaga de isca deste sender: vai quadro real ou não vai nada. */
   vaga(sender: string): DecisaoDaVaga<D> {
-    let s = this.senders.get(sender);
+    let s = this.estados.get(sender);
     if (s === undefined) {
       this.entrou(sender);
-      s = this.senders.get(sender)!;
+      s = this.estados.get(sender)!;
     }
-    s.ultimaVaga = this.agora();
+    const agora = this.agora();
+    s.ultimaVaga = agora;
 
     if (s.esperandoChave) {
-      const ponta = this.recentes.at(-1);
+      const ponta = this.ponta();
       if (ponta !== undefined && ponta.chave && ponta.seq >= s.proximo) {
+        // O IDR da entrada é de graça; os seguintes gastam o direito do sender.
+        if (s.proximo >= 0) s.chaveLiberadaEm = agora + INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS;
         s.esperandoChave = false;
         s.proximo = ponta.seq + 1;
         return { tipo: 'enviar', quadro: ponta };
       }
-      return { tipo: 'descartar', pedirChave: true };
+      return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
 
-    const quadro = this.recentes.find((q) => q.seq === s.proximo);
-    if (quadro !== undefined) {
-      s.proximo += 1;
-      return { tipo: 'enviar', quadro };
+    const p = s.proximo;
+    if (p >= this.primeiroSeq() && p <= this.ultimoSeq) {
+      const quadro = this.anel[p % QUADROS_GUARDADOS];
+      if (quadro !== undefined && quadro.seq === p) {
+        s.proximo += 1;
+        return { tipo: 'enviar', quadro };
+      }
+      // Buraco na numeração (invariante quebrada): a cadeia de P já era.
+      s.esperandoChave = true;
+      return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
     // Ficou para trás do que ainda está guardado: só um IDR salva a cadeia.
-    const primeiro = this.recentes[0];
-    if (primeiro !== undefined && s.proximo < primeiro.seq) {
+    if (p < this.primeiroSeq()) {
       s.esperandoChave = true;
-      return { tipo: 'descartar', pedirChave: true };
+      return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
     return { tipo: 'descartar', pedirChave: false };
   }
@@ -108,11 +168,20 @@ export class FilaDeInjecao<D> {
   atraso(): number {
     const agora = this.agora();
     let pior = 0;
-    for (const s of this.senders.values()) {
+    for (const s of this.estados.values()) {
       if (agora - s.ultimaVaga > SENDER_MORTO_MS) continue;
       if (s.esperandoChave || s.proximo < 0) continue;
       pior = Math.max(pior, this.ultimoSeq + 1 - s.proximo);
     }
     return pior;
+  }
+
+  private ponta(): QuadroCodificado<D> | undefined {
+    return this.ultimoSeq < 0 ? undefined : this.anel[this.ultimoSeq % QUADROS_GUARDADOS];
+  }
+
+  /** O seq mais antigo que ainda cabe no anel (ou 0, enquanto ele não encheu). */
+  private primeiroSeq(): number {
+    return Math.max(0, this.ultimoSeq - QUADROS_GUARDADOS + 1);
   }
 }

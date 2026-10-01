@@ -1,4 +1,5 @@
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
+import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import type { CodificadorUnico, DepsDoCodificador, EstatisticasDoCodificador } from './codificador-unico.js';
 
 /**
@@ -43,8 +44,6 @@ export type PortaDoNativo = {
   onmessage: ((e: { readonly data: MensagemDoNativo }) => void) | null;
 };
 
-/** Mesma regra do WebCodecs: pedidos em rajada viram um IDR. */
-const INTERVALO_MINIMO_DE_CHAVE_MS = 500;
 /** Variação de bitrate abaixo disto não vale uma ordem. */
 const MUDANCA_DE_BITRATE = 0.05;
 
@@ -92,10 +91,11 @@ export class CodificadorExterno implements CodificadorUnico {
     this.pedirChave('outro');
   }
 
-  pedirChave(motivo = 'outro'): void {
+  /** Mesma regra do WebCodecs: um IDR por `janelaDeChaveMs(senders, motivo)`. */
+  pedirChave(motivo = 'outro', senders = 0): void {
     this.pedidos[motivo] = (this.pedidos[motivo] ?? 0) + 1;
     const agora = this.agora();
-    if (agora - this.ultimaChave < INTERVALO_MINIMO_DE_CHAVE_MS) return;
+    if (agora - this.ultimaChave < janelaDeChaveMs(senders, motivo)) return;
     this.ultimaChave = agora;
     this.ordem('chave');
   }

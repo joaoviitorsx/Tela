@@ -20,10 +20,15 @@ export type ChunkInjetado = {
   readonly height: number;
 };
 
-/** Do worker para o codificador. */
-export type MotivoDeChave = 'pli' | 'entrada';
+/**
+ * Do worker para o codificador. O motivo do pedido de chave decide a janela de
+ * coalescência (`janelaDeChaveMs`): `entrada` é o primeiro IDR de um sender;
+ * `pli` veio do espectador; `atrasado` é sender que ficou para trás da fila.
+ * `senders` é a plateia vista daqui — o codificador escala a janela por ela.
+ */
+export type MotivoDeChave = 'pli' | 'entrada' | 'atrasado';
 export type AvisoDoWorker =
-  | { readonly tipo: 'chave'; readonly motivo: MotivoDeChave }
+  | { readonly tipo: 'chave'; readonly motivo: MotivoDeChave; readonly senders: number }
   | { readonly tipo: 'atraso'; readonly quadros: number };
 
 type QuadroIsca = {
@@ -73,6 +78,9 @@ escopo.onrtctransform = ({ transformer }) => {
   const leitor = transformer.readable.getReader();
   const escritor = transformer.writable.getWriter();
   let vistos = 0;
+  // Por que este sender estaria esperando IDR: começa pela entrada; depois de
+  // servido, só por PLI ou por ter ficado para trás.
+  let motivo: MotivoDeChave = 'entrada';
   void (async () => {
     for (;;) {
       const { value: quadro, done } = await leitor.read();
@@ -86,13 +94,16 @@ escopo.onrtctransform = ({ transformer }) => {
         quadro-chave nela depois do primeiro só nasce de PLI/FIR do espectador:
         é o pedido de quadro-chave dele, chegando por aqui.
       */
-      const pli = quadro.type === 'key' && vistos > 1;
-      if (pli) fila.pediuChave(id);
+      if (quadro.type === 'key' && vistos > 1) {
+        fila.pediuChave(id);
+        motivo = 'pli';
+      }
       const decisao = fila.vaga(id);
       if (decisao.tipo === 'descartar') {
-        if (decisao.pedirChave) avisar({ tipo: 'chave', motivo: pli ? 'pli' : 'entrada' });
+        if (decisao.pedirChave) avisar({ tipo: 'chave', motivo, senders: fila.senders() });
         continue;
       }
+      motivo = 'atrasado';
       const real = decisao.quadro.dados;
       // Cópia por sender: um ArrayBuffer não pode ser de dois quadros.
       quadro.data = real.dados.slice(0);

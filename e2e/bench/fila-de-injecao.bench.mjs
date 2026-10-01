@@ -1,6 +1,8 @@
 /**
- * `FilaDeInjecao` (array + `push/shift` + `find`) contra um anel indexado por
- * `seq` — o mesmo contrato, O(1) por vaga.
+ * `FilaDeInjecao` de hoje (anel indexado por `seq % Q`, O(1) por vaga) contra a
+ * versão anterior (array + `push/shift` + `find`, O(Q) por vaga) — o mesmo
+ * contrato. A anterior vive só aqui, como "antes" da medição (A1 do
+ * docs/engenharia/complexidade.md); a atual é importada do código REAL.
  *
  * O que se mede: 10 s simulados a 60 fps, N senders pedindo vaga a cada quadro
  * (o caminho quente do "um encode, N envios"), mais `atraso()` a 10 Hz como no
@@ -23,30 +25,32 @@ import { sobTsx, W, cabecalho, medir, fmt, linha, rng, JSON_SAIDA } from './comu
 
 sobTsx(import.meta.url);
 
-const { FilaDeInjecao, QUADROS_GUARDADOS, SENDER_MORTO_MS } = await import(W('core/media/fila-de-injecao.ts'));
+const { FilaDeInjecao, QUADROS_GUARDADOS, SENDER_MORTO_MS, INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS } = await import(
+  W('core/media/fila-de-injecao.ts')
+);
 
-/* ─────────────────────────── a alternativa: anel por seq ─────────────────────────── */
+/* ─────────────────────────── a anterior: array + push/shift + find ─────────────────────────── */
 
 /**
- * Mesmo contrato de `FilaDeInjecao`, guardando os últimos Q quadros num anel
- * indexado por `seq % Q`. Invariante: os seqs chegam em ordem e sem buraco (o
- * codificador numera), então "o quadro de seq s" está em `anel[s % Q]` se e só
- * se `ultimoSeq - Q < s <= ultimoSeq`.
+ * A `FilaDeInjecao` como era antes do anel (array do mais velho para o mais
+ * novo; `chegou` = `push` e `shift` acima de Q; `vaga` = `find` por `seq`).
+ * Com o MESMO teto de quadro-chave por sender da atual, para a comparação
+ * isolar a estrutura de dados — o teto não muda a complexidade de nada.
  */
-class FilaAnel {
-  constructor(agora, capacidade = QUADROS_GUARDADOS) {
+class FilaArray {
+  constructor(agora) {
     this.agora = agora;
-    this.Q = capacidade;
-    this.anel = new Array(capacidade).fill(undefined);
+    this.recentes = [];
     this.ultimoSeq = -1;
     this.senders = new Map();
   }
   chegou(quadro) {
-    this.anel[quadro.seq % this.Q] = quadro;
+    this.recentes.push(quadro);
     this.ultimoSeq = quadro.seq;
+    if (this.recentes.length > QUADROS_GUARDADOS) this.recentes.shift();
   }
   entrou(sender) {
-    this.senders.set(sender, { proximo: -1, esperandoChave: true, ultimaVaga: this.agora() });
+    this.senders.set(sender, { proximo: -1, esperandoChave: true, ultimaVaga: this.agora(), chaveLiberadaEm: -Infinity });
   }
   saiu(sender) {
     this.senders.delete(sender);
@@ -55,35 +59,33 @@ class FilaAnel {
     const s = this.senders.get(sender);
     if (s !== undefined) s.esperandoChave = true;
   }
-  /** O seq mais antigo ainda guardado, ou -1 se vazio. */
-  primeiroSeq() {
-    return this.ultimoSeq < 0 ? -1 : Math.max(0, this.ultimoSeq - this.Q + 1);
-  }
   vaga(sender) {
     let s = this.senders.get(sender);
     if (s === undefined) {
       this.entrou(sender);
       s = this.senders.get(sender);
     }
-    s.ultimaVaga = this.agora();
+    const agora = this.agora();
+    s.ultimaVaga = agora;
     if (s.esperandoChave) {
-      const ponta = this.ultimoSeq < 0 ? undefined : this.anel[this.ultimoSeq % this.Q];
+      const ponta = this.recentes.at(-1);
       if (ponta !== undefined && ponta.chave && ponta.seq >= s.proximo) {
+        if (s.proximo >= 0) s.chaveLiberadaEm = agora + INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS;
         s.esperandoChave = false;
         s.proximo = ponta.seq + 1;
         return { tipo: 'enviar', quadro: ponta };
       }
-      return { tipo: 'descartar', pedirChave: true };
+      return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
-    const p = s.proximo;
-    if (p >= this.primeiroSeq() && p <= this.ultimoSeq) {
-      const quadro = this.anel[p % this.Q];
+    const quadro = this.recentes.find((q) => q.seq === s.proximo);
+    if (quadro !== undefined) {
       s.proximo += 1;
       return { tipo: 'enviar', quadro };
     }
-    if (this.ultimoSeq >= 0 && p < this.primeiroSeq()) {
+    const primeiro = this.recentes[0];
+    if (primeiro !== undefined && s.proximo < primeiro.seq) {
       s.esperandoChave = true;
-      return { tipo: 'descartar', pedirChave: true };
+      return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
     return { tipo: 'descartar', pedirChave: false };
   }
@@ -147,8 +149,8 @@ function candidatos() {
   const agoraRef = { t: 0 };
   return {
     agoraRef,
+    anterior: () => new FilaArray(() => agoraRef.t),
     atual: () => new FilaDeInjecao(() => agoraRef.t),
-    anel: () => new FilaAnel(() => agoraRef.t),
   };
 }
 
@@ -157,47 +159,47 @@ function candidatos() {
 for (const modo of ['em-dia', 'atrasados']) {
   for (const n of [1, 5, 20, 50]) {
     const cen = roteiro(n, modo);
-    const { agoraRef, atual, anel } = candidatos();
+    const { agoraRef, anterior, atual } = candidatos();
     const a = [];
     const b = [];
-    executar(atual(), cen, agoraRef, a);
-    executar(anel(), cen, agoraRef, b);
+    executar(anterior(), cen, agoraRef, a);
+    executar(atual(), cen, agoraRef, b);
     if (a.length !== b.length || a.some((v, i) => v !== b[i])) {
       const i = a.findIndex((v, j) => v !== b[j]);
-      console.error(`DIVERGÊNCIA ${modo} N=${n} na decisão ${i}: atual=${a[i]} anel=${b[i]}`);
+      console.error(`DIVERGÊNCIA ${modo} N=${n} na decisão ${i}: anterior=${a[i]} atual=${b[i]}`);
       process.exit(1);
     }
   }
 }
-if (!JSON_SAIDA) console.log('equivalência: as decisões do anel são idênticas às da fila atual em todos os cenários.');
+if (!JSON_SAIDA) console.log('equivalência: as decisões do anel (atual) são idênticas às do array (anterior) em todos os cenários.');
 
 /* ─────────────────────────── medição ─────────────────────────── */
 
 cabecalho(`FilaDeInjecao — ${SEGUNDOS} s simulados a ${FPS} fps, Q=${QUADROS_GUARDADOS}`);
 
 if (!JSON_SAIDA) {
-  console.log('modo       N   vagas    atual (ms)   anel (ms)   ns/vaga atual   ns/vaga anel   ganho');
+  console.log('modo       N   vagas   anterior (ms)   atual (ms)   ns/vaga anterior   ns/vaga atual   ganho');
 }
 for (const modo of ['em-dia', 'atrasados']) {
   for (const n of [5, 20, 50]) {
     const cen = roteiro(n, modo);
-    const { agoraRef, atual, anel } = candidatos();
+    const { agoraRef, anterior, atual } = candidatos();
     const vagas = cen.senders.reduce(
       (soma, _, i) => soma + Math.ceil((QUADROS - cen.entrada[i]) / cen.passo[i]),
       0,
     );
-    const ma = medir(() => executar(atual(), cen, agoraRef));
-    const mb = medir(() => executar(anel(), cen, agoraRef));
+    const ma = medir(() => executar(anterior(), cen, agoraRef));
+    const mb = medir(() => executar(atual(), cen, agoraRef));
     const nsA = (ma.medianaMs * 1e6) / vagas;
     const nsB = (mb.medianaMs * 1e6) / vagas;
     if (!JSON_SAIDA) {
       console.log(
         `${modo.padEnd(10)} ${String(n).padStart(2)}  ${String(vagas).padStart(6)}   ` +
-          `${fmt(ma.medianaMs).padStart(9)}    ${fmt(mb.medianaMs).padStart(8)}   ` +
-          `${fmt(nsA, 0).padStart(13)}   ${fmt(nsB, 0).padStart(12)}   ${fmt(ma.medianaMs / mb.medianaMs, 1)}×`,
+          `${fmt(ma.medianaMs).padStart(12)}    ${fmt(mb.medianaMs).padStart(9)}   ` +
+          `${fmt(nsA, 0).padStart(16)}   ${fmt(nsB, 0).padStart(13)}   ${fmt(ma.medianaMs / mb.medianaMs, 1)}×`,
       );
     }
-    linha({ bench: 'fila-de-injecao', modo, n, vagas, atualMs: ma.medianaMs, anelMs: mb.medianaMs, nsPorVagaAtual: nsA, nsPorVagaAnel: nsB });
+    linha({ bench: 'fila-de-injecao', modo, n, vagas, anteriorMs: ma.medianaMs, atualMs: mb.medianaMs, nsPorVagaAnterior: nsA, nsPorVagaAtual: nsB });
   }
 }
 
@@ -206,8 +208,8 @@ for (const modo of ['em-dia', 'atrasados']) {
 if (!JSON_SAIDA) console.log('\nsó chegou() × 100 000 quadros (push+shift a Q=180 vs escrita no anel):');
 {
   const ag = { t: 0 };
-  const fa = new FilaDeInjecao(() => ag.t);
-  const fb = new FilaAnel(() => ag.t);
+  const fa = new FilaArray(() => ag.t);
+  const fb = new FilaDeInjecao(() => ag.t);
   const ma = medir(() => {
     for (let q = 0; q < 100_000; q += 1) fa.chegou({ seq: q, chave: false, dados: q });
     return fa;
@@ -217,8 +219,8 @@ if (!JSON_SAIDA) console.log('\nsó chegou() × 100 000 quadros (push+shift a Q=
     return fb;
   });
   if (!JSON_SAIDA) {
-    console.log(`  push+shift: ${fmt(ma.medianaMs)} ms (${fmt((ma.medianaMs * 1e6) / 1e5, 0)} ns/quadro)`);
-    console.log(`  anel:       ${fmt(mb.medianaMs)} ms (${fmt((mb.medianaMs * 1e6) / 1e5, 0)} ns/quadro)`);
+    console.log(`  anterior (push+shift): ${fmt(ma.medianaMs)} ms (${fmt((ma.medianaMs * 1e6) / 1e5, 0)} ns/quadro)`);
+    console.log(`  atual (anel):          ${fmt(mb.medianaMs)} ms (${fmt((mb.medianaMs * 1e6) / 1e5, 0)} ns/quadro)`);
   }
-  linha({ bench: 'fila-de-injecao/chegou', pushShiftMs: ma.medianaMs, anelMs: mb.medianaMs });
+  linha({ bench: 'fila-de-injecao/chegou', anteriorMs: ma.medianaMs, atualMs: mb.medianaMs });
 }

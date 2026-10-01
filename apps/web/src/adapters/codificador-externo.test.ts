@@ -99,6 +99,42 @@ describe('CodificadorExterno — o processo nativo como codificador único', () 
     expect(cod.estatisticas().pedidosDeChave).toEqual({ entrada: 2, pli: 3 });
   });
 
+  it('com plateia, PLI espera 40 ms × senders (2 s a N=50); a entrada continua em 500 ms', async () => {
+    const { cod, ordens, passar } = montar();
+    await cod.iniciar(TRILHA, ALVO); // IDR da entrada em t=0
+    ordens.length = 0;
+    passar(600);
+    cod.pedirChave('pli', 50);
+    expect(ordens).toEqual([]); // 600 ms < 2 s
+    passar(1_400);
+    cod.pedirChave('pli', 50);
+    expect(ordens).toEqual(['chave']); // 2 s: abriu
+    passar(600);
+    cod.pedirChave('atrasado', 50);
+    expect(ordens).toEqual(['chave']); // sender para trás paga a mesma janela
+    cod.pedirChave('entrada', 50);
+    expect(ordens).toEqual(['chave', 'chave']); // quem entra não paga
+    passar(100);
+    cod.pedirChave('pli', 5);
+    expect(ordens).toEqual(['chave', 'chave']); // 100 ms < 500 ms, mesmo com plateia pequena
+    passar(400);
+    cod.pedirChave('pli', 5);
+    expect(ordens).toEqual(['chave', 'chave', 'chave']);
+    expect(cod.estatisticas().pedidosDeChave).toEqual({ entrada: 2, pli: 4, atrasado: 1 });
+  });
+
+  it('sem `senders` (quem chama não é o worker) vale o piso de 500 ms', async () => {
+    const { cod, ordens, passar } = montar();
+    await cod.iniciar(TRILHA, ALVO);
+    ordens.length = 0;
+    passar(499);
+    cod.pedirChave('outro');
+    expect(ordens).toEqual([]);
+    passar(1);
+    cod.pedirChave('outro');
+    expect(ordens).toEqual(['chave']);
+  });
+
   it('atraso só vira ordem quando muda', () => {
     const { cod, ordens } = montar();
     cod.definirAtraso(0);

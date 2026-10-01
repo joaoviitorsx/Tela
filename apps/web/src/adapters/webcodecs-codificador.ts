@@ -1,4 +1,5 @@
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
+import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import type { CodificadorUnico, EstatisticasDoCodificador } from './codificador-unico.js';
 import type { ChunkInjetado } from './injecao-worker.js';
 
@@ -23,8 +24,6 @@ declare class MediaStreamTrackProcessor<T> {
  * WebRTC do Chromium negocia por padrão — o decoder do espectador já espera.
  */
 export const CODEC = 'avc1.42e02a';
-/** Pedidos de quadro-chave em rajada (vários espectadores entrando) viram um IDR. */
-const INTERVALO_MINIMO_DE_CHAVE_MS = 500;
 /** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */
 const ATRASO_TOLERADO = 2;
 
@@ -88,9 +87,15 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.lerDe(track);
   }
 
-  pedirChave(motivo = 'outro'): void {
+  /**
+   * Pedidos em rajada viram um IDR: um por `janelaDeChaveMs(senders, motivo)`.
+   * O pedido dentro da janela não fica pendente — o worker repete a cada vaga
+   * enquanto o sender espera, então ele volta sozinho quando a janela abre.
+   * Sem `senders` (quem chama não é o worker) vale o piso de 500 ms.
+   */
+  pedirChave(motivo = 'outro', senders = 0): void {
     this.pedidos[motivo] = (this.pedidos[motivo] ?? 0) + 1;
-    if (this.agora() - this.ultimaChave >= INTERVALO_MINIMO_DE_CHAVE_MS) this.pedirChaveAgora = true;
+    if (this.agora() - this.ultimaChave >= janelaDeChaveMs(senders, motivo)) this.pedirChaveAgora = true;
   }
 
   definirAtraso(quadros: number): void {

@@ -16,6 +16,13 @@ describe('origem do upgrade (TELA-019)', () => {
     expect(origemPermitida('http://localhost:5173', ['http://localhost:5173'], 'https://tela.gg')).toBe(true);
   });
 
+  it('o app desktop (app://tela) passa quando listado, e só assim (PLANO-desktop §3.5)', () => {
+    expect(origemPermitida('app://tela', ['app://tela'], 'https://tela.gg')).toBe(true);
+    expect(origemPermitida('APP://tela/', ['app://tela'], 'https://tela.gg')).toBe(true);
+    expect(origemPermitida('app://tela', [], 'https://tela.gg')).toBe(false);
+    expect(origemPermitida('app://outro', ['app://tela'], 'https://tela.gg')).toBe(false);
+  });
+
   it('sem Origin passa: não é navegador, e a regra não é autenticação', () => {
     expect(origemPermitida(null, ['https://tela.gg'])).toBe(true);
     expect(origemPermitida('', ['https://tela.gg'])).toBe(true);

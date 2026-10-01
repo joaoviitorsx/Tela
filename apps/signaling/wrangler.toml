@@ -57,6 +57,11 @@ new_sqlite_classes = ["ChannelDurableObject"]
 # produção em 3 espectadores enquanto o front prometia 5.
 MAX_PEERS = "5"
 STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
+# Origens extras que podem abrir a sinalização (TELA-019). A do próprio Worker
+# já passa; a lista é para quem NÃO é servido por ele. `app://tela` é o Tela
+# Desktop (PLANO-desktop §3.5): a interface vem do protocolo próprio do app, e
+# sem esta linha o upgrade dele leva 403.
+ALLOWED_ORIGINS = "app://tela"
 
 # TURN — necessário para a cauda de conexões que não fecham direto.
 #

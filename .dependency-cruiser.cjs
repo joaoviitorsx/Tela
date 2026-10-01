@@ -21,6 +21,11 @@ module.exports = {
           '\\.(config|d)\\.ts$',
           'apps/signaling/src/server\\.ts$',
           'apps/web/src/main\\.tsx$',
+          // Entradas do renderer do desktop: o HTML e o plugin do Vite chegam nelas, não um import.
+          'apps/web/src/desktop/(entry\\.tsx|container\\.desktop\\.ts)$',
+          // Entradas do Electron: o main pelo `package.json`, o preload pelo caminho na janela.
+          'apps/desktop/src/main/main\\.ts$',
+          'apps/desktop/src/preload/',
           'packages/shared/src/index\\.ts$',
           '_reference/',
           '\\.test\\.ts$',
@@ -54,7 +59,7 @@ module.exports = {
   options: {
     doNotFollow: { path: 'node_modules' },
     tsPreCompilationDeps: true,
-    exclude: { path: 'node_modules|dist|_reference' },
+    exclude: { path: 'node_modules|dist|dist-desktop|_reference' },
     enhancedResolveOptions: {
       extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
     },

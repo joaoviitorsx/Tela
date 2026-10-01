@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "vite --config vite.desktop.config.ts",
     "build": "tsc -p tsconfig.json --noEmit && vite build && node ../../scripts/stamp-build.mjs",
+    "build:desktop": "tsc -p tsconfig.json --noEmit && vite build --config vite.desktop.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src",

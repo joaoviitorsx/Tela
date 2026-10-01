@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Build do renderer do Tela Desktop (apps/web/vite.desktop.config.ts).
+dist-desktop/
 .turbo/
 *.tsbuildinfo
 .env
@@ -27,3 +29,7 @@ e2e/malhas.sim.json
 
 # Binário do tela-captura (apps/desktop/nativo/linux/build.sh).
 apps/desktop/nativo/linux/build/
+
+# Instaladores do Tela Desktop (apps/desktop/electron-builder.yml). Saem do
+# CI, com hash; o repositório não carrega binário de 100 MB.
+apps/desktop/release/

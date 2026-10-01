@@ -156,6 +156,29 @@ export default tseslint.config(
     },
   },
 
+  {
+    /**
+     * A moldura do app desktop segue a mesma regra das rotas: só o container
+     * conhece adapters — e lá o container é `container.desktop.ts`.
+     */
+    files: ['apps/web/src/desktop/**/*.ts', 'apps/web/src/desktop/**/*.tsx'],
+    ignores: ['apps/web/src/desktop/container.desktop.ts', '**/*.test.ts', '**/*.test.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: SFU_SDKS,
+          patterns: [
+            {
+              group: ['**/adapters/**'],
+              message: 'Em src/desktop/ só container.desktop.ts importa adapters.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   /* ─────────── Signaling: R8, o servidor nunca toca mídia ─────────── */
   {
     files: ['apps/signaling/src/**/*.ts'],

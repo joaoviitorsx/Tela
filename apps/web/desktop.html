@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#E99D38" />
+    <title>Tela</title>
+    <!--
+      A entrada do Tela Desktop. É o `index.html` sem a prévia do link: o app é
+      servido de `app://tela` e ninguém cola essa URL no Discord. A CSP entra
+      no build, por `vite.desktop.config.ts`.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Jersey+10&family=Martian+Mono:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+    <!--
+      O modelo da abertura. No site o preload é condicional, por script inline,
+      porque o espectador no celular não deve baixar 208 KB à toa. Aqui o app
+      sempre abre na tela inicial e o arquivo vem do disco — e a CSP não aceita
+      script inline. Estático, então.
+    -->
+    <link rel="preload" href="/tela-crt.glb" as="fetch" type="model/gltf-binary" crossorigin="anonymous" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/desktop/entry.tsx"></script>
+  </body>
+</html>

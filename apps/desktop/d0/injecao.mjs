@@ -10,13 +10,19 @@
  *   pnpm --filter @tela/desktop exec electron d0/injecao.mjs
  *
  * TELA_D0_ESPECTADORES=1,3 · TELA_D0_SEGUNDOS=40 · TELA_D0_AQUECIMENTO=20 ·
- * TELA_D0_MODO=produto|normal
+ * TELA_D0_MODO=produto|normal|nativo
+ *
+ * `nativo` (D0c, Linux): quem captura e codifica é o `tela-captura` (PipeWire +
+ * NVENC, nativo/linux), e o host desenha a fonte NA JANELA para a captura de
+ * tela ter movimento. TELA_D0_FONTE=mutter:eDP-1 (sem diálogo) ou portal.
  */
-import { app, BrowserWindow } from 'electron';
+import { spawn } from 'node:child_process';
+import { app, BrowserWindow, MessageChannelMain } from 'electron';
 import { readFileSync } from 'node:fs';
 import { cpus } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LeitorDoProtocolo } from './protocolo-captura.mjs';
 
 const AQUI = dirname(fileURLToPath(import.meta.url));
 const WEB = process.env.TELA_WEB ?? 'http://localhost:5173';
@@ -25,6 +31,8 @@ const AQUECIMENTO = Number(process.env.TELA_D0_AQUECIMENTO ?? 20);
 const GRUPOS = (process.env.TELA_D0_ESPECTADORES ?? '1,3').split(',').map(Number);
 /** `produto` (um encode, N envios, como o app usa) ou `normal` (o caminho de hoje, para comparar). */
 const MODO = process.env.TELA_D0_MODO ?? 'produto';
+const FONTE = process.env.TELA_D0_FONTE ?? 'mutter:eDP-1';
+const NATIVO = join(AQUI, '..', 'nativo', 'linux', 'build', 'tela-captura');
 
 const PREFERENCIAS = {
   backgroundThrottling: false,
@@ -83,7 +91,14 @@ async function montarHost({ slug, modo }) {
   const trilhaIsca = isca.captureStream(60).getVideoTracks()[0];
   trilhaIsca.contentHint = 'motion';
 
-  if (modo === 'produto') {
+  if (modo === 'nativo') {
+    // A captura de tela precisa ver movimento: a fonte vai para a janela.
+    canvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:99999';
+    document.body.append(canvas);
+    while (window.__portaNativa === undefined) await new Promise((r) => setTimeout(r, 50));
+  }
+
+  if (modo === 'produto' || modo === 'nativo') {
     // O produto: BroadcastSession real (malhas, governador) sobre o transporte
     // "um encode, N envios" — o mesmo que o app vai usar.
     const { BroadcastSession } = await import('/src/core/media/broadcast-session.ts');
@@ -91,12 +106,14 @@ async function montarHost({ slug, modo }) {
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
     const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
     const { makeBrowserAudioGain } = await import('/src/adapters/browser-audio-gain.ts');
+    const { CodificadorExterno } = await import('/src/adapters/codificador-externo.ts');
     const scheduler = makeBrowserScheduler();
     const session = new BroadcastSession({
       transport: makeEncodeOnceTransport({
         channel: makeWsSignaling(`ws://${location.host}/signal`),
         scheduler,
         criarWorker: () => new Worker(new URL('/src/adapters/injecao-worker.ts', location.origin), { type: 'module' }),
+        ...(modo === 'nativo' ? { criarCodificador: (d) => new CodificadorExterno(window.__portaNativa, d) } : {}),
       }),
       screen: { isSupported: () => true, request: async () => ({ ok: true, value: { video: real, audio: null, surface: 'monitor' } }) },
       audio: { requestPermission: async () => false, listMonitors: async () => [], capture: async () => { throw new Error('sem áudio'); } },
@@ -166,10 +183,40 @@ async function lerEspectador() {
   return r;
 }
 
+/**
+ * Sobe o `tela-captura` e liga a saída dele à página por um MessagePort — a
+ * mesma ponte que o app vai ter (processo principal ↔ renderer).
+ */
+function ligarNativo(wc) {
+  const filho = spawn(NATIVO, [`--fonte=${FONTE}`, '--alvo=1920,1080,60,12000000'], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const { port1, port2 } = new MessageChannelMain();
+  const leitor = new LeitorDoProtocolo({
+    quadro: (q) => port1.postMessage({ tipo: 'quadro', chave: q.chave, width: q.width, height: q.height, dados: q.dados }),
+    captura: () => port1.postMessage({ tipo: 'captura' }),
+    evento: (e) => {
+      if (e.evento !== 'stats' || process.env.TELA_D0_STATS === '1') console.log(`  [nativo] ${JSON.stringify(e)}`);
+      port1.postMessage({ tipo: 'evento', evento: e });
+    },
+  });
+  filho.stdout.on('data', (b) => leitor.receber(b));
+  filho.on('exit', (c) => console.log(`  [nativo] saiu: ${c}`));
+  port1.on('message', (e) => {
+    if (process.env.TELA_D0_STATS === '1' && !e.data.linha.startsWith('atraso')) console.log(`  [ordem] ${e.data.linha}`);
+    filho.stdin.write(`${e.data.linha}\n`);
+  });
+  port1.start();
+  wc.postMessage('captura-nativa', null, [port2]);
+  return filho;
+}
+
 async function rodar(n) {
+  const nativo = MODO === 'nativo';
   const host = new BrowserWindow({
-    show: true, width: 640, height: 360, title: `Tela D0 · injeção · ${n}`,
-    webPreferences: { ...PREFERENCIAS, contextIsolation: false, preload: join(AQUI, 'espectador-preload.cjs') },
+    show: true, width: nativo ? 960 : 640, height: nativo ? 540 : 360, title: `Tela D0 · injeção · ${n}`,
+    webPreferences: {
+      ...PREFERENCIAS, contextIsolation: false,
+      preload: join(AQUI, nativo ? 'host-preload.cjs' : 'espectador-preload.cjs'),
+    },
   });
   host.webContents.on('console-message', (ev) => {
     const msg = ev.message ?? ev;
@@ -177,6 +224,7 @@ async function rodar(n) {
   });
   await host.loadURL(`${WEB}/@@d0`);
   console.log('  host carregado');
+  const filho = nativo ? ligarNativo(host.webContents) : null;
   const slug = `inj${Math.random().toString(36).slice(2, 8)}`;
   await host.webContents.executeJavaScript(
     `(${montarHost.toString()})(${JSON.stringify({ slug, modo: MODO })})`,
@@ -209,6 +257,7 @@ async function rodar(n) {
   console.log(`  host: ${JSON.stringify(await ler(host.webContents, 'window.__d0Stats()', 'host'))}`);
   const t0 = Date.now();
   const k0 = ticks(pid);
+  const n0 = filho === null ? null : ticks(filho.pid);
   const amostras = [];
   for (let s = 0; s < SEGUNDOS; s += 5) {
     await dormir(5000);
@@ -244,15 +293,18 @@ async function rodar(n) {
     console.log(`  amostra ${amostras.length}: ${JSON.stringify(amostras.at(-1))}`);
   }
   const nucleos = k0 === null ? null : (ticks(pid) - k0) / 100 / ((Date.now() - t0) / 1000);
+  const nativoNucleos = n0 === null ? null : (ticks(filho.pid) - n0) / 100 / ((Date.now() - t0) / 1000);
   const depoisV = await Promise.all(vs.map((v, i) => ler(v.webContents, `(${lerEspectador.toString()})()`, `espectador ${i}`)));
   for (const v of vs) v.destroy();
   host.destroy();
+  filho?.kill('SIGTERM');
   await dormir(3000);
   const media = (k) => amostras.reduce((a, x) => a + x[k], 0) / amostras.length;
   const segundos = (Date.now() - t0) / 1000;
   return {
     espectadores: n,
     hostNucleos: nucleos,
+    nativoNucleos,
     encoderMbps: media('mbps'),
     encoderFps: media('fps'),
     idrs: amostras.at(-1)?.chaves,

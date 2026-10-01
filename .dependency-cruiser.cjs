@@ -59,7 +59,7 @@ module.exports = {
   options: {
     doNotFollow: { path: 'node_modules' },
     tsPreCompilationDeps: true,
-    exclude: { path: 'node_modules|dist|dist-desktop|_reference' },
+    exclude: { path: 'node_modules|dist|dist-desktop|apps/desktop/release|_reference' },
     enhancedResolveOptions: {
       extensions: ['.ts', '.tsx', '.js', '.jsx', '.json'],
     },

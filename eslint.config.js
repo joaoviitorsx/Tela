@@ -30,6 +30,9 @@ export default tseslint.config(
   {
     ignores: [
       '**/dist/**',
+      // Artefatos do Tela Desktop: o renderer compilado e os pacotes do electron-builder.
+      '**/dist-desktop/**',
+      'apps/desktop/release/**',
       '**/node_modules/**',
       '**/.turbo/**',
       '**/*.d.ts',
@@ -231,6 +234,22 @@ export default tseslint.config(
       'no-restricted-syntax': 'off',
       'no-restricted-globals': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+
+  /*
+    Harnesses de medição do desktop (d0/) e o lançador de desenvolvimento: JS
+    puro que roda em DOIS mundos no mesmo arquivo — Node/Electron e funções
+    serializadas para dentro de páginas (`executeJavaScript`). Uma lista de
+    globais mentiria para um dos dois, e sem typecheck o `no-undef` só acusa o
+    que é intencional. Relatório no console é a saída deles.
+  */
+  {
+    files: ['apps/desktop/d0/**', 'apps/desktop/scripts/**'],
+    rules: {
+      'no-undef': 'off',
+      'no-console': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
     },
   },
 );

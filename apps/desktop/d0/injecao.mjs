@@ -3,14 +3,14 @@
  *
  * Um `VideoEncoder` (WebCodecs) codifica a fonte UMA vez; cada sender WebRTC
  * codifica só uma isca de 160x90 e um transform troca o conteúdo de cada quadro
- * pelo quadro real (ver injecao-worker.js). Os espectadores são a rota
+ * pelo quadro real (ver apps/web/src/adapters/injecao-worker.ts). Os espectadores são a rota
  * `/<canal>` de verdade, sem saber de nada.
  *
  *   pnpm dev                                         (noutro terminal)
  *   pnpm --filter @tela/desktop exec electron d0/injecao.mjs
  *
  * TELA_D0_ESPECTADORES=1,3 · TELA_D0_SEGUNDOS=40 · TELA_D0_AQUECIMENTO=20 ·
- * TELA_D0_BITRATE=12000000
+ * TELA_D0_MODO=produto|normal
  */
 import { app, BrowserWindow } from 'electron';
 import { readFileSync } from 'node:fs';
@@ -22,11 +22,9 @@ const AQUI = dirname(fileURLToPath(import.meta.url));
 const WEB = process.env.TELA_WEB ?? 'http://localhost:5173';
 const SEGUNDOS = Number(process.env.TELA_D0_SEGUNDOS ?? 40);
 const AQUECIMENTO = Number(process.env.TELA_D0_AQUECIMENTO ?? 20);
-const BITRATE = Number(process.env.TELA_D0_BITRATE ?? 12_000_000);
 const GRUPOS = (process.env.TELA_D0_ESPECTADORES ?? '1,3').split(',').map(Number);
-const CODIGO_WORKER = readFileSync(join(AQUI, 'injecao-worker.js'), 'utf8');
-/** `injecao` (um encode, N envios) ou `normal` (o caminho de hoje, para comparar). */
-const MODO = process.env.TELA_D0_MODO ?? 'injecao';
+/** `produto` (um encode, N envios, como o app usa) ou `normal` (o caminho de hoje, para comparar). */
+const MODO = process.env.TELA_D0_MODO ?? 'produto';
 
 const PREFERENCIAS = {
   backgroundThrottling: false,
@@ -48,8 +46,7 @@ const ticks = (pid) => {
   return Number(c[11]) + Number(c[12]);
 };
 
-async function montarHost({ slug, codigoWorker, bitrate, modo, contrapressao }) {
-  const CONTRAPRESSAO = contrapressao;
+async function montarHost({ slug, modo }) {
   const W = 1920;
   const H = 1080;
   // Fonte com cara de jogo (mesma do d0/main.mjs).
@@ -86,6 +83,43 @@ async function montarHost({ slug, codigoWorker, bitrate, modo, contrapressao }) 
   const trilhaIsca = isca.captureStream(60).getVideoTracks()[0];
   trilhaIsca.contentHint = 'motion';
 
+  if (modo === 'produto') {
+    // O produto: BroadcastSession real (malhas, governador) sobre o transporte
+    // "um encode, N envios" — o mesmo que o app vai usar.
+    const { BroadcastSession } = await import('/src/core/media/broadcast-session.ts');
+    const { makeEncodeOnceTransport } = await import('/src/adapters/encode-once-transport.ts');
+    const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
+    const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
+    const { makeBrowserAudioGain } = await import('/src/adapters/browser-audio-gain.ts');
+    const scheduler = makeBrowserScheduler();
+    const session = new BroadcastSession({
+      transport: makeEncodeOnceTransport({
+        channel: makeWsSignaling(`ws://${location.host}/signal`),
+        scheduler,
+        criarWorker: () => new Worker(new URL('/src/adapters/injecao-worker.ts', location.origin), { type: 'module' }),
+      }),
+      screen: { isSupported: () => true, request: async () => ({ ok: true, value: { video: real, audio: null, surface: 'monitor' } }) },
+      audio: { requestPermission: async () => false, listMonitors: async () => [], capture: async () => { throw new Error('sem áudio'); } },
+      gain: makeBrowserAudioGain(),
+      scheduler,
+      shareUrlFor: (x) => `${location.origin}/${x}`,
+      createStream: (tracks) => new MediaStream([...tracks]),
+    });
+    await session.start(slug, `d0${'p'.repeat(41)}`, { presetId: 'p1080p60' });
+    window.__d0Stats = () => {
+      const st = session.getState();
+      const x = st.status === 'live' ? st.stats : null;
+      return {
+        mbps: (x?.bitrateBps ?? 0) / 1e6, fps: x?.fps ?? 0, chaves: null,
+        conectados: st.status === 'live' ? st.peers.filter((p) => p.connectionState === 'connected').length : 0,
+        hardware: x?.encoderImplementation ?? null, saida: `${x?.width}x${x?.height}`,
+        degrau: st.status === 'live' ? st.presetId : st.status, limitacao: x?.limitation ?? null,
+        bpp: x?.bpp ?? null, msPorQuadro: x?.msPorQuadro ?? null, idrs: x?.idrs, pedidos: x?.pedidosDeChave,
+      };
+    };
+    return;
+  }
+
   if (modo === 'normal') {
     const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
     const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
@@ -109,107 +143,7 @@ async function montarHost({ slug, codigoWorker, bitrate, modo, contrapressao }) 
     return;
   }
 
-  // Worker único para todos os senders.
-  const worker = new Worker(URL.createObjectURL(new Blob([codigoWorker], { type: 'text/javascript' })));
-  const canal = new MessageChannel();
-  worker.postMessage({ tipo: 'porta', porta: canal.port2 }, [canal.port2]);
-
-  // Todo sender de vídeo que nascer ganha o transform — o transporte não sabe.
-  const anexar = (sender) => {
-    if (sender && sender.transform == null) sender.transform = new RTCRtpScriptTransform(worker, {});
-  };
-  const addTrack = RTCPeerConnection.prototype.addTrack;
-  RTCPeerConnection.prototype.addTrack = function (track, ...resto) {
-    const s = addTrack.call(this, track, ...resto);
-    if (track.kind === 'video') anexar(s);
-    return s;
-  };
-  const addTransceiver = RTCPeerConnection.prototype.addTransceiver;
-  RTCPeerConnection.prototype.addTransceiver = function (alvo, ...resto) {
-    const tr = addTransceiver.call(this, alvo, ...resto);
-    const tipo = typeof alvo === 'string' ? alvo : alvo.kind;
-    if (tipo === 'video') anexar(tr.sender);
-    return tr;
-  };
-
-  // O encoder único.
-  let seq = 0;
-  let pedirChave = true;
-  let ultimaChave = 0;
-  let bytes = 0;
-  let chaves = 0;
-  let quadrosCodificados = 0;
-  const enc = new VideoEncoder({
-    output: (chunk) => {
-      const buf = new ArrayBuffer(chunk.byteLength);
-      chunk.copyTo(buf);
-      bytes += chunk.byteLength;
-      quadrosCodificados += 1;
-      if (chunk.type === 'key') chaves += 1;
-      canal.port1.postMessage({ seq: seq++, key: chunk.type === 'key', data: buf, width: W, height: H }, [buf]);
-    },
-    error: (e) => console.error('[encoder]', e.message),
-  });
-  const config = {
-    codec: 'avc1.42e02a', width: W, height: H, bitrate, framerate: 60,
-    latencyMode: 'realtime', avc: { format: 'annexb' }, hardwareAcceleration: 'no-preference',
-  };
-  const suporte = await VideoEncoder.isConfigSupported({ ...config, hardwareAcceleration: 'prefer-hardware' });
-  enc.configure(config);
-  let atraso = 0;
-  let atrasoMax = 0;
-  let pulados = 0;
-  canal.port1.onmessage = (msg) => {
-    // Muitos pedidos juntos (vários espectadores entrando) viram UM IDR.
-    if (msg.data?.tipo === 'chave' && performance.now() - ultimaChave > 500) pedirChave = true;
-    if (msg.data?.tipo === 'atraso') { atraso = msg.data.quadros; atrasoMax = Math.max(atrasoMax, atraso); }
-  };
-  const leitor = new MediaStreamTrackProcessor({ track: real }).readable.getReader();
-  (async () => {
-    for (;;) {
-      const { value: f, done } = await leitor.read();
-      if (done) return;
-      if (enc.encodeQueueSize > 2) { f.close(); continue; } // encoder atrasado: descarta, não acumula
-      // Contrapressão: há fila nos senders — este quadro não é codificado.
-      if (CONTRAPRESSAO && atraso >= 2 && !pedirChave) { pulados += 1; f.close(); continue; }
-      const chave = pedirChave;
-      if (chave) { pedirChave = false; ultimaChave = performance.now(); }
-      enc.encode(f, { keyFrame: chave });
-      f.close();
-    }
-  })();
-
-  const { makeMeshTransport } = await import('/src/adapters/mesh-transport.ts');
-  const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
-  const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
-  const shared = await import('/node_modules/@tela/shared/dist/index.js');
-  const transport = makeMeshTransport({
-    channel: makeWsSignaling(`ws://${location.host}/signal`),
-    scheduler: makeBrowserScheduler(),
-  });
-  console.log('d0: encoder ok, hardware=' + suporte.supported);
-  await transport.host(slug, `d0${'i'.repeat(41)}`);
-  console.log('d0: canal reivindicado');
-  await transport.publishVideo(trilhaIsca, shared.PRESETS.p1080p60);
-  console.log('d0: isca publicada');
-
-  let marca = { t: performance.now(), bytes: 0, quadros: 0 };
-  window.__d0Stats = () => {
-    const agora = performance.now();
-    const dt = (agora - marca.t) / 1000;
-    const r = {
-      mbps: ((bytes - marca.bytes) * 8) / 1e6 / dt,
-      fps: (quadrosCodificados - marca.quadros) / dt,
-      chaves,
-      atraso,
-      atrasoMax,
-      pulados,
-      conectados: transport.peers().filter((p) => p.connectionState === 'connected').length,
-      hardware: suporte.supported,
-    };
-    marca = { t: agora, bytes, quadros: quadrosCodificados };
-    return r;
-  };
+  throw new Error(`modo desconhecido: ${modo}`);
 }
 
 /** Roda na página do espectador: o que de fato chega e é DECODIFICADO (inbound-rtp). */
@@ -233,7 +167,10 @@ async function lerEspectador() {
 }
 
 async function rodar(n) {
-  const host = new BrowserWindow({ show: true, width: 640, height: 360, title: `Tela D0 · injeção · ${n}`, webPreferences: PREFERENCIAS });
+  const host = new BrowserWindow({
+    show: true, width: 640, height: 360, title: `Tela D0 · injeção · ${n}`,
+    webPreferences: { ...PREFERENCIAS, contextIsolation: false, preload: join(AQUI, 'espectador-preload.cjs') },
+  });
   host.webContents.on('console-message', (ev) => {
     const msg = ev.message ?? ev;
     if (!/OpenH264|vite/i.test(String(msg))) console.log(`  [host] ${msg}`);
@@ -242,7 +179,7 @@ async function rodar(n) {
   console.log('  host carregado');
   const slug = `inj${Math.random().toString(36).slice(2, 8)}`;
   await host.webContents.executeJavaScript(
-    `(${montarHost.toString()})(${JSON.stringify({ slug, codigoWorker: CODIGO_WORKER, bitrate: BITRATE, modo: MODO, contrapressao: process.env.TELA_D0_CONTRAPRESSAO !== '0' })})`,
+    `(${montarHost.toString()})(${JSON.stringify({ slug, modo: MODO })})`,
   );
   console.log('  host montado');
   const vs = [];
@@ -276,6 +213,23 @@ async function rodar(n) {
   for (let s = 0; s < SEGUNDOS; s += 5) {
     await dormir(5000);
     amostras.push(await ler(host.webContents, 'window.__d0Stats()', 'host'));
+    if (process.env.TELA_D0_ISCA === '1') {
+      const isca = await ler(host.webContents, `(async () => {
+        const out = [];
+        for (const pc of window.__pcs ?? []) {
+          if (pc.connectionState !== 'connected') continue;
+          (await pc.getStats()).forEach((x) => {
+            if (x.type === 'outbound-rtp' && x.kind === 'video') out.push({
+              w: x.frameWidth, h: x.frameHeight, chaves: x.keyFramesEncoded, pli: x.pliCount, fir: x.firCount,
+              nack: x.nackCount, trocasRes: x.qualityLimitationResolutionChanges, lim: x.qualityLimitationReason,
+              enc: x.encoderImplementation, fps: x.framesPerSecond,
+            });
+          });
+        }
+        return out;
+      })()`, 'isca');
+      console.log(`  isca: ${JSON.stringify(isca)}`);
+    }
     if (process.env.TELA_D0_SEGUIR === '1') {
       const v0 = await ler(vs[0].webContents, `(async () => {
         const pcs = window.__pcs ?? [];
@@ -314,6 +268,7 @@ async function rodar(n) {
       congelamentos: d.congelamentos - (antesV[i].congelamentos ?? 0),
       plis: d.plis - (antesV[i].plis ?? 0),
       perdas: d.perdas - (antesV[i].perdas ?? 0),
+      idrsDecodificados: d.chaves - (antesV[i].chaves ?? 0),
       decoder: d.decoder,
     })),
   };

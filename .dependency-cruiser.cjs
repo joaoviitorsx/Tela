@@ -24,6 +24,8 @@ module.exports = {
           'packages/shared/src/index\\.ts$',
           '_reference/',
           '\\.test\\.ts$',
+          // Harnesses de medição do desktop: entram por caminho (preload, electron), não por import.
+          'apps/desktop/d0/',
         ],
       },
       to: {},

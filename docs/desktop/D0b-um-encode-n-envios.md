@@ -57,7 +57,53 @@ decodifica 1920×1080.
 | Fila extra de conteúdo | — | 0–1 quadro |
 | Decodificado no espectador | 54 fps (720p, controle) | 54 fps em 1080p (2 de 3; o 3º reconectou uma vez) |
 
-## O que falta para virar produto
+## Virou produto (2026-10-01)
+
+O protótipo foi para o código do app como peças próprias, com a
+`BroadcastSession` e as malhas intactas:
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `alvoDoCodificador` | `core/media/alvo-do-codificador.ts` (puro, testado) | Resolução, fps e bitrate do encoder único com a regra da topologia (nominal sem medição; orçamento até o teto útil), mais um freio pela pior estimativa medida — que vira `bandwidth` para a malha descer o degrau |
+| `FilaDeInjecao` | `core/media/fila-de-injecao.ts` (puro, testado) | Qual quadro real vai em cada vaga de isca: IDR na ponta para quem entra, ordem sem buracos, sender morto fora do atraso |
+| Worker | `adapters/injecao-worker.ts` | Liga a fila ao Encoded Transform |
+| `CodificadorWebCodecs` | `adapters/webcodecs-codificador.ts` | Encoder único, contrapressão, IDR limitado a um por 500 ms |
+| `makeEncodeOnceTransport` | `adapters/encode-once-transport.ts` | Embrulha o mesh: isca com parâmetros fixos, degrau/orçamento/prioridade no encoder, estatísticas com bytes reais dos senders e tamanho do encoder |
+| E2E | `e2e/um-encode.e2e.mjs` | Chrome real, espectadores de produção, critérios automáticos |
+
+### Os três defeitos que a medição achou no caminho
+
+1. **A isca gerava quadro-chave sozinha** (~3/s): clone da captura, ela levava
+   o movimento do jogo e a detecção de troca de cena do encoder inseria IDR.
+   Cada um virava IDR no encoder único — 112 em 60 s, espectador a 20 fps com
+   103 congelamentos. A isca agora é um canvas estático que emite um quadro por
+   quadro capturado: **2 quadros-chave em toda a transmissão**.
+2. **Fila presa atrás** (~280 ms a mais): quem entrava começava num IDR antigo.
+   Agora só num IDR na ponta.
+3. **Trava da contrapressão** por sender morto contando atraso: senders sem
+   vaga há 1 s saem da conta.
+
+`VideoEncoder.configure()` só com bitrate novo **não** gera quadro-chave
+(conferido), então o freio rápido pode ajustar o bitrate a cada segundo.
+
+### Resultado com a sessão real (malhas, governador), 3 espectadores
+
+| | |
+|---|---|
+| Degrau alcançado | p1080p60, 0,13 bpp (o caminho normal ficava em 720p no mesmo loopback) |
+| Recebido | 1920×1080 a 54 fps nos três, 0–1 congelamento |
+| CPU do transmissor | 1,62 núcleo (encode em software, Linux NVIDIA) |
+| E2E headless (2 espectadores, fonte 30 fps) | 30 fps decodificados, 0 quadro-chave em 30 s, sem reconexão |
+
+## O que falta (atualizado)
+
+- Ligar o transporte novo no app (D1): hoje só os harnesses o usam.
+- Linux NVIDIA continua em software (~1,2 núcleo a 1080p60, agora constante
+  com N): addon NVENC (D0c).
+- A reconexão ocasional vista no protótipo não reapareceu depois das três
+  correções; seguir observando nas rodadas longas.
+
+## O que faltava para virar produto (registro do protótipo)
 
 1. **IDRs demais (22 em 75 s).** Toda reconfiguração da isca (`setParameters`
    ao entrar espectador, troca de degrau) gera chave na isca, tratada como PLI.

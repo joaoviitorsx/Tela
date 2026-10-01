@@ -44,9 +44,21 @@ importers:
 
   apps/desktop:
     devDependencies:
+      '@tela/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
       electron:
         specifier: 44.5.1
         version: 44.5.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.1)(happy-dom@20.11.6)(lightningcss@1.32.0)
 
   apps/signaling:
     dependencies:

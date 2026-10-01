@@ -3,9 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Tela Desktop (Electron). Por enquanto só a prova técnica D0 — ver docs/desktop/PLANO-desktop.md.",
-  "main": "d0/main.mjs",
+  "description": "Tela Desktop (Electron): janela única com a interface do site — ver docs/desktop/PLANO-desktop.md.",
+  "main": "dist/main/main.js",
   "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.preload.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "start": "electron dist/main/main.js",
+    "dev": "node scripts/dev.mjs",
     "d0": "electron d0/main.mjs",
     "d0:encoder": "electron d0/encoder.mjs",
     "d0:injecao": "electron d0/injecao.mjs",
@@ -13,6 +19,10 @@
     "nativo:build": "sh nativo/linux/build.sh"
   },
   "devDependencies": {
-    "electron": "44.5.1"
+    "@tela/tsconfig": "workspace:*",
+    "@types/node": "^22.10.2",
+    "electron": "44.5.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

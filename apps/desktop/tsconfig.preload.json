@@ -1,0 +1,10 @@
+{
+  "extends": "@tela/tsconfig/node.json",
+  "compilerOptions": {
+    "outDir": "dist/preload",
+    "rootDir": "src/preload",
+    "tsBuildInfoFile": "dist/preload/.tsbuildinfo",
+    "lib": ["ES2023", "DOM"]
+  },
+  "include": ["src/preload"]
+}

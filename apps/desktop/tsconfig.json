@@ -1,0 +1,9 @@
+{
+  "extends": "@tela/tsconfig/node.json",
+  "compilerOptions": {
+    "outDir": "dist/main",
+    "rootDir": "src/main",
+    "tsBuildInfoFile": "dist/main/.tsbuildinfo"
+  },
+  "include": ["src/main"]
+}

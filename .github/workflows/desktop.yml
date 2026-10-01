@@ -136,9 +136,12 @@ jobs:
         run: |
           cd apps/desktop/release
           ls -la
-          arquivos=$(ls *.exe *.AppImage *.deb *.rpm 2>/dev/null)
-          test -n "$arquivos"
-          sha256sum $arquivos | tee "SHA256SUMS-${{ runner.os }}.txt"
+          # `ls *.exe` sem .exe sai com erro e o `bash -e` derrubava o passo
+          # no Linux (e o mesmo com *.AppImage no Windows). Glob vazio some.
+          shopt -s nullglob
+          arquivos=(*.exe *.AppImage *.deb *.rpm)
+          test "${#arquivos[@]}" -gt 0
+          sha256sum "${arquivos[@]}" | tee "SHA256SUMS-${{ runner.os }}.txt"
 
       - name: SHA-256 no release
         if: github.ref_type == 'tag'

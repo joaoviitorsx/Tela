@@ -28,6 +28,12 @@ export type Saudacao = {
   readonly protocol?: number | null;
   /** Só `host`: sala com aprovação (ADR 0025). Padrão: aberta (ADR 0028). */
   readonly approval?: boolean;
+  /**
+   * Só `host`: quantos espectadores o transmissor aguenta (ADR 0029). Padrão:
+   * omitido, que é o teto do servidor. Qualquer valor atravessa — é assim que
+   * se testa a recusa dos inválidos.
+   */
+  readonly capacidade?: unknown;
   /** Só `watch`. Padrão: o id do cliente. `null` omite. */
   readonly name?: string | null;
   /** Só `watch`. Padrão: derivada do id do cliente. `null` omite. */
@@ -75,6 +81,8 @@ export type ConformanceDriver = {
 export const OWNER = 'o'.repeat(43);
 export const OUTRO = 'z'.repeat(43);
 export const SLUG = 'joao';
+/** Teto do servidor nos drivers: pequeno para o "canal cheio" ser barato de encher. */
+export const TETO_DE_TESTE = 3;
 
 /** Monta `host`/`watch` com os campos da versão atual, salvo omissão explícita. */
 export function saudar(
@@ -90,6 +98,7 @@ export function saudar(
     ...base,
     ...(protocol === null ? {} : { protocol }),
     ...(base['type'] === 'host' && saudacao.approval !== undefined ? { approval: saudacao.approval } : {}),
+    ...(base['type'] === 'host' && saudacao.capacidade !== undefined ? { capacidade: saudacao.capacidade } : {}),
     ...(assiste && name !== null ? { name } : {}),
     ...(assiste && viewerKey !== null ? { viewerKey } : {}),
   };

@@ -55,7 +55,8 @@ export type ViewerState =
       readonly slug: string;
       readonly stream: MediaStream | null;
     }
-  | { readonly status: 'full'; readonly slug: string }
+  /** `maxPeers`: o teto da sala que recusou, quando o servidor diz; `null` em servidor antigo. */
+  | { readonly status: 'full'; readonly slug: string; readonly maxPeers: number | null }
   /**
    * Negociou e a mídia nunca chegou.
    *
@@ -503,7 +504,7 @@ export class ViewerSession {
       if (this.stale(epoch)) return;
       if (isSignalingError(error) && error.code === 'CHANNEL_FULL') {
         // Sala cheia não é erro permanente: alguém sai, a vaga abre.
-        this.setState({ status: 'full', slug: this.slug });
+        this.setState({ status: 'full', slug: this.slug, maxPeers: error.maxPeers ?? null });
         this.advanceBackoff();
       } else if (isSignalingError(error) && FIM_SEM_RETRY[error.code] !== undefined) {
         // Insistir na mesma versão, ou depois de tirado ou recusado, dá o mesmo não.

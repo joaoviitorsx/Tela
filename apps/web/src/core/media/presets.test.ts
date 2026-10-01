@@ -120,10 +120,9 @@ describe('orçamento P2P', () => {
       100 × 0,75 = 75 Mbps ÷ 16,2 = 4 espectadores, não 5.
     */
     expect(p2pViewerBudget(100_000_000, PRESETS.p1080p60)).toBe(4);
-    // Com 480p60 (3,8 Mbps de teto real) o limite volta a ser o do browser.
-    expect(p2pViewerBudget(100_000_000, PRESETS.p480p60)).toBe(
-      P2P_LIMITS.maxViewersBrowser,
-    );
+    // Com 480p60 (4,08 Mbps de teto real) são 18 — abaixo do teto do produto,
+    // que passou de 5 para 50 (ADR 0029): este link não enche uma sala de 50.
+    expect(p2pViewerBudget(100_000_000, PRESETS.p480p60)).toBe(18);
   });
   /**
    * 30 × 0,7 = 21 Mbps, e 1080p60 passou a custar 12 Mbps por espectador — a
@@ -166,10 +165,9 @@ describe('orçamento P2P', () => {
     expect(suggestPreset(0, 1)).toBe('p360p60');
   });
 
-  it('nunca passa do teto do browser, por melhor que seja o link', () => {
-    expect(p2pViewerBudget(1_000_000_000, PRESETS.p480p60)).toBe(
-      P2P_LIMITS.maxViewersBrowser,
-    );
+  it('nunca passa do teto do produto, por melhor que seja o link', () => {
+    // 1 Gbps pagaria 183 em 480p60; o produto para em 50.
+    expect(p2pViewerBudget(1_000_000_000, PRESETS.p480p60)).toBe(P2P_LIMITS.maxViewers);
   });
 
   it('sugere o melhor preset que cabe no upload dividido pelos espectadores', () => {

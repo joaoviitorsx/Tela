@@ -22,7 +22,7 @@ declare class MediaStreamTrackProcessor<T> {
  * H.264 Constrained Baseline nível 4.2: cobre 1080p60, e é o perfil que o
  * WebRTC do Chromium negocia por padrão — o decoder do espectador já espera.
  */
-const CODEC = 'avc1.42e02a';
+export const CODEC = 'avc1.42e02a';
 /** Pedidos de quadro-chave em rajada (vários espectadores entrando) viram um IDR. */
 const INTERVALO_MINIMO_DE_CHAVE_MS = 500;
 /** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */

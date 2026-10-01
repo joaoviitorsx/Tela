@@ -2,6 +2,7 @@ import {
   type ClientMessage,
   ClientMessageSchema,
   HELLO_TIMEOUT_MS,
+  P2P_LIMITS,
   PROTOCOL_VERSION,
   type ServerMessage,
   type SignalingErrorCode,
@@ -65,6 +66,12 @@ type Channel = {
   ownerHash: string;
   /** Cada espectador passa pelo dono (ADR 0025). Desligado = sala aberta (ADR 0028). */
   aprovacao: boolean;
+  /**
+   * Teto de espectadores DESTE canal: o menor entre o do servidor e a
+   * `capacidade` que o transmissor declarou (ADR 0029). Quem codifica uma vez
+   * por espectador declara cinco; quem tem um encode e N envios, cinquenta.
+   */
+  teto: number;
   /** Momento em que o canal ficou sem transmissor. `null` enquanto há um. */
   emptySince: number | null;
 };
@@ -167,12 +174,23 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         if (peer === null && pedido === null && !closed) fail('HELLO_TIMEOUT');
       });
 
-      function fail(code: SignalingErrorCode): void {
+      /** `maxPeers` só acompanha `CHANNEL_FULL`: o teto real, para a tela de "sem vaga". */
+      function fail(code: SignalingErrorCode, maxPeers?: number): void {
         // Sem isto, toda conexão recusada segurava o timer até o fim e
         // disparava um segundo frame de erro num socket já fechado.
         cancelHelloTimer();
-        socket.send({ type: 'error', code });
+        socket.send({ type: 'error', code, ...(maxPeers === undefined ? {} : { maxPeers }) });
         socket.close();
+      }
+
+      /**
+       * O teto do canal é o menor entre o do servidor e o que o transmissor
+       * declarou. Sem declaração, o teto de quem codifica uma vez por
+       * espectador: cliente antigo não manda `capacidade` e só conhecia cinco
+       * vagas — dar cinquenta a ele seriam cinquenta encoders.
+       */
+      function tetoDoCanal(capacidade: number | undefined): number {
+        return Math.min(deps.limits.maxPeers, capacidade ?? P2P_LIMITS.maxViewersSemUmEncode);
       }
 
       /**
@@ -186,6 +204,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
 
       function claimChannel(
         slug: string, ownerToken: string, protocol: number | undefined, aprovacao: boolean,
+        capacidade: number | undefined,
       ): void {
         const versao = versaoRecusada(protocol);
         if (versao !== null) return fail(versao);
@@ -196,6 +215,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
 
         const ownerHash = deps.hash(ownerToken);
         const existing = channels.get(slug);
+        const teto = tetoDoCanal(capacidade);
 
         if (existing !== undefined) {
           if (!deps.equals(existing.ownerHash, ownerHash)) return fail('SLUG_TAKEN');
@@ -206,6 +226,8 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           existing.host = peer;
           existing.emptySince = null;
           existing.aprovacao = aprovacao;
+          // Quem voltou com teto menor não expulsa ninguém: só não entra mais.
+          existing.teto = teto;
         } else {
           peer = { id: deps.newPeerId('h'), role: 'host', socket };
           channels.set(slug, {
@@ -214,6 +236,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
             pedidos: new Map(),
             ownerHash,
             aprovacao,
+            teto,
             emptySince: null,
           });
         }
@@ -228,7 +251,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           relayStatus: ice.relayStatus,
           ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
           ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
-          maxPeers: deps.limits.maxPeers,
+          maxPeers: teto,
         });
 
         /**
@@ -297,7 +320,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           channelName = slug;
           cancelHelloTimer();
           if (anterior !== undefined) return entrar(channel, anterior.id, name, impressao, participantId, attemptId, anterior);
-          if (channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
+          if (channel.viewers.size >= channel.teto) return fail('CHANNEL_FULL', channel.teto);
           return entrar(channel, deps.newPeerId('v'), name, impressao, participantId, attemptId, undefined);
         }
 
@@ -317,7 +340,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         cancelHelloTimer();
         if (previous !== undefined) return entrar(channel, previous.id, name, fingerprint, participantId, attemptId, previous);
 
-        if (channel.viewers.size >= deps.limits.maxPeers) return fail('CHANNEL_FULL');
+        if (channel.viewers.size >= channel.teto) return fail('CHANNEL_FULL', channel.teto);
 
         // O mesmo pedido chegando por outro socket substitui o anterior.
         const repetido = participantId === undefined ? undefined : [...channel.pedidos.values()]
@@ -337,9 +360,9 @@ export function makeChannelRegistry(deps: RegistryDeps) {
             pedido = null;
             channel.pedidos.delete(id);
             // A vaga é conferida de novo: pode ter enchido enquanto esperava.
-            if (channel.viewers.size >= deps.limits.maxPeers) {
+            if (channel.viewers.size >= channel.teto) {
               channel.host?.socket.send({ type: 'join-cancelled', peerId: id });
-              return fail('CHANNEL_FULL');
+              return fail('CHANNEL_FULL', channel.teto);
             }
             entrar(channel, id, name, fingerprint, participantId, attemptId, undefined);
           },
@@ -453,7 +476,9 @@ export function makeChannelRegistry(deps: RegistryDeps) {
             inWindow = 0;
           }
           inWindow += 1;
-          if (inWindow > deps.limits.messageLimit) return fail('RATE_LIMITED');
+          // O transmissor negocia com a plateia inteira; o espectador, com um peer.
+          const teto = peer?.role === 'host' ? deps.limits.hostMessageLimit : deps.limits.messageLimit;
+          if (inWindow > teto) return fail('RATE_LIMITED');
 
           let json: unknown;
           try {
@@ -469,7 +494,9 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           switch (message.type) {
             case 'host':
               if (peer !== null) return;
-              return claimChannel(message.slug, message.ownerToken, message.protocol, message.approval === true);
+              return claimChannel(
+                message.slug, message.ownerToken, message.protocol, message.approval === true, message.capacidade,
+              );
             case 'watch':
               if (peer !== null || pedido !== null) return;
               return joinChannel(

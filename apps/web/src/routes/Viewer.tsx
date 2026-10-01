@@ -385,7 +385,10 @@ export function Viewer({ slug }: Props) {
         <OfflineState
           slug={slug}
           motivo={motivo}
-          maxPeers={P2P_LIMITS.maxViewersBrowser}
+          // O teto é do TRANSMISSOR, não do produto: 5 em quem codifica por
+          // peer, 50 em quem codifica uma vez. O servidor diz qual ao recusar;
+          // um servidor antigo não diz, e aí resta o teto do produto.
+          maxPeers={state.status === 'full' && state.maxPeers !== null ? state.maxPeers : P2P_LIMITS.maxViewers}
           // Onde a conexão está de verdade: a sessão sabe se ainda procura o
           // canal ou já negocia. Os blocos do "sintonizando" seguem isso, não
           // um relógio.

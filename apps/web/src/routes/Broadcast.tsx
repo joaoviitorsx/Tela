@@ -400,10 +400,10 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   const conectados = vivo.peers.filter((p) => p.connectionState === 'connected').length;
   const viaRelay = vivo.peers.filter((p) => p.usingRelay).length;
 
-  const vagas: readonly Vaga[] = Array.from({ length: vivo.maxPeers }, (_, i): Vaga => {
-    const peer = vivo.peers[i];
+  // Só as OCUPADAS: as livres são `maxPeers − peers`, e com 50 vagas não
+  // vale construir 50 objetos para dizer "vaga livre" 45 vezes.
+  const vagas: readonly Vaga[] = vivo.peers.map((peer, i): Vaga => {
     const n = String(i + 1).padStart(2, '0');
-    if (peer === undefined) return { n, nome: null, estado: '—', tom: 'vazio' };
     // O apelido que a pessoa deu ao pedir; sem ele (cliente antigo), o número.
     const nome = vivo.nomes[peer.id]?.toUpperCase() ?? `ESPECTADOR ${i + 1}`;
     if (peer.connectionState !== 'connected') return { n, nome, estado: 'CONECTANDO', tom: 'alerta' };
@@ -532,7 +532,6 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
               aoCopiar={() => copiarLink(vivo.shareUrl)}
               vagas={vagas}
               total={vivo.maxPeers}
-              ocupadas={vivo.peers.length}
             />
 
             <FilaDePedidos pedidos={pedidos} aoAceitar={aceitarPedido} aoRecusar={recusarPedido} />

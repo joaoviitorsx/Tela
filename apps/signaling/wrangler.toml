@@ -51,11 +51,14 @@ tag = "v1"
 new_sqlite_classes = ["ChannelDurableObject"]
 
 [vars]
-# Precisa acompanhar `P2P_LIMITS.maxViewersBrowser` em
-# `packages/shared/src/encoding.ts`. Esta variável SOBREPÕE o padrão do código:
-# ficou em "3" depois que o limite subiu para 5, e sozinha teria mantido a
-# produção em 3 espectadores enquanto o front prometia 5.
-MAX_PEERS = "5"
+# Precisa acompanhar `P2P_LIMITS.maxViewers` em `packages/shared/src/encoding.ts`
+# (50, paridade com o Go Live do Discord — ADR 0029). Esta variável SOBREPÕE o
+# padrão do código e só pode BAIXAR o teto do produto, nunca passar dele: ficou
+# em "3" depois que o limite subiu para 5, e sozinha teria mantido a produção
+# em 3 espectadores enquanto o front prometia 5. O teto por canal é o menor
+# entre este e a `capacidade` que o transmissor declara — quem codifica uma
+# vez por espectador (Firefox, Safari) continua em 5 por conta própria.
+MAX_PEERS = "50"
 STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
 # Origens extras que podem abrir a sinalização (TELA-019). A do próprio Worker
 # já passa; a lista é para quem NÃO é servido por ele. `app://tela` é o Tela

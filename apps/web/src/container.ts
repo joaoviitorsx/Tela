@@ -1,4 +1,4 @@
-import { OFFENSIVE, type PresetId, RESERVED, suggestPreset } from '@tela/shared';
+import { OFFENSIVE, P2P_LIMITS, type PresetId, RESERVED, suggestPreset } from '@tela/shared';
 import { makeBrowserAudioCapture } from './adapters/browser-audio-capture.js';
 import { makeBrowserAudioGain } from './adapters/browser-audio-gain.js';
 import { makeBrowserFrameTiming } from './adapters/browser-frame-timing.js';
@@ -7,7 +7,10 @@ import { makeBrowserScheduler } from './adapters/browser-scheduler.js';
 import { makeBrowserScreenCapture } from './adapters/browser-screen-capture.js';
 import { makeCryptoRandom } from './adapters/crypto-random.js';
 import { makeLocalStorage } from './adapters/local-storage.js';
+import { makeEncodeOnceTransport } from './adapters/encode-once-transport.js';
 import { makeMeshTransport } from './adapters/mesh-transport.js';
+import { codificaH264, requisitosAusentes, suportaUmEncode } from './adapters/suporte-um-encode.js';
+import { CODEC } from './adapters/webcodecs-codificador.js';
 import { makeCanvasQuadroNeutro } from './adapters/canvas-quadro-neutro.js';
 import { makeBrowserSondaDeRede } from './adapters/browser-sonda-de-rede.js';
 import { makeWebAudioCue } from './adapters/web-audio-cue.js';
@@ -126,9 +129,61 @@ function createTransport(): MediaTransport {
   return makeMeshTransport({ channel: makeWsSignaling(SIGNAL_URL), scheduler });
 }
 
+/**
+ * Quem transmite: "um encode, N envios" (D0b) onde o navegador tem as peças,
+ * mesh puro onde não tem.
+ *
+ * A escolha decide a CAPACIDADE, não só a CPU. O Chromium codifica uma vez
+ * por `RTCPeerConnection` (medido no D0); com um encoder só, o custo por
+ * espectador é banda, e cabem `P2P_LIMITS.maxViewers`. Sem ele, cada
+ * espectador é mais um encoder 1080p60 disputando a GPU com o jogo, e o teto
+ * continua sendo `maxViewersSemUmEncode`. O número declarado ao servidor sai
+ * daqui; o diagnóstico mostra o mesmo, pelo mesmo motivo.
+ */
+const temAsPecas = suportaUmEncode(window);
+/**
+ * Sondagem do H.264 no `VideoEncoder`, uma vez, ao carregar: muito antes de
+ * alguém apertar TRANSMITIR. `null` enquanto responde — aí vale a detecção
+ * das peças, que é o caso comum.
+ */
+let h264: boolean | null = temAsPecas ? null : false;
+if (temAsPecas) {
+  void codificaH264((window as unknown as { VideoEncoder?: unknown }).VideoEncoder, CODEC).then((v) => {
+    h264 = v;
+  });
+}
+
+export function umEncode(): boolean {
+  return temAsPecas && h264 !== false;
+}
+/** O que falta a este navegador para servir mais gente. Vazio quando serve. */
+export function pecasAusentesDoUmEncode(): readonly string[] {
+  const faltam: string[] = [...requisitosAusentes(window)];
+  if (temAsPecas && h264 === false) faltam.push('H.264 no VideoEncoder');
+  return faltam;
+}
+export function capacidadeDeEspectadores(): number {
+  return umEncode() ? P2P_LIMITS.maxViewers : P2P_LIMITS.maxViewersSemUmEncode;
+}
+
+/**
+ * O worker de injeção, por fábrica: o Vite só empacota o worker quando vê o
+ * `new Worker(new URL(...), import.meta.url)` literal.
+ */
+const criarWorker = (): Worker =>
+  new Worker(new URL('./adapters/injecao-worker.ts', import.meta.url), { type: 'module' });
+
+function createTransportDoTransmissor(): MediaTransport {
+  const channel = makeWsSignaling(SIGNAL_URL);
+  return umEncode()
+    ? makeEncodeOnceTransport({ channel, scheduler, criarWorker })
+    : makeMeshTransport({ channel, scheduler });
+}
+
 export function createBroadcastSession(): BroadcastSession {
   return new BroadcastSession({
-    transport: createTransport(),
+    transport: createTransportDoTransmissor(),
+    capacidade: capacidadeDeEspectadores(),
     screen: makeBrowserScreenCapture(),
     audio: audioCapture,
     // Um grafo por sessão: `close()` desmonta, e reusar um contexto fechado

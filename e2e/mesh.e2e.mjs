@@ -438,9 +438,11 @@ console.log('\n4. Teto de espectadores é aplicado de verdade');
  *
  * Este teste já mentiu uma vez: quando o limite subiu de 3 para 5, ele
  * continuou enchendo o canal com 4 espectadores e o "canal cheio" nunca
- * enchia. O número abaixo PRECISA acompanhar `P2P_LIMITS.maxViewersBrowser`
- * em `packages/shared/src/encoding.ts` — o e2e roda contra o bundle, sem
- * import, então não dá para derivar daqui.
+ * enchia. O número abaixo PRECISA acompanhar a `capacidade` que o host do
+ * teste declara (ADR 0029): `P2P_LIMITS.maxViewersSemUmEncode` quando ele
+ * codifica uma vez por espectador, `P2P_LIMITS.maxViewers` quando tem um
+ * encode e N envios — ver `packages/shared/src/encoding.ts`. O e2e roda
+ * contra o bundle, sem import, então não dá para derivar daqui.
  */
 const TETO = 5;
 const extras = [];

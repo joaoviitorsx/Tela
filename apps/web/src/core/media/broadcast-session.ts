@@ -207,7 +207,14 @@ export type BroadcastSessionDeps = {
   uplinkMemory?: { read(): string | null; write(value: string): void };
   /** `MediaStream` é global de browser; `core/` não constrói um direto. */
   createStream: (tracks: readonly MediaStreamTrack[]) => MediaStream;
-  maxPeers?: number;
+  /**
+   * Quantos espectadores ESTE transmissor consegue servir — decidido por quem
+   * fia o transporte, porque depende dele: "um encode, N envios" atende o teto
+   * do produto; o mesh puro codifica uma vez por peer e para em poucos.
+   * Ausente = o conservador, porque assumir o maior quando ninguém disse é
+   * prometer o que a máquina não entrega.
+   */
+  capacidade?: number;
   statsIntervalMs?: number;
   diagnosticId?: () => string;
   appVersion?: string | null;
@@ -341,8 +348,10 @@ export class BroadcastSession {
   private pressure = 0;
   private pressureKind: QualityLimitation = 'none';
   private capturaOciosa = false;
+  /** O que este transmissor consegue servir. O teto efetivo é o mínimo entre isto e o do servidor. */
+  private readonly capacidade: number;
   /** Palpite até o servidor dizer o dele, no `hosting`. Nunca um número solto. */
-  private maxPeers: number = P2P_LIMITS.maxViewersBrowser;
+  private maxPeers: number;
   /** Sobrevive ao ciclo da transmissão: quem escolheu 40% quer 40% de novo. */
   private volumeTransmissao = 1;
 
@@ -369,7 +378,8 @@ export class BroadcastSession {
     // Nunca um número solto: `3` aqui sobrevivia até o `hosting` responder, e
     // nesse meio-tempo o HUD e as vagas desenhavam três de um canal que aceita
     // cinco — contradizendo o texto da própria Home, que lê `P2P_LIMITS`.
-    this.maxPeers = deps.maxPeers ?? P2P_LIMITS.maxViewersBrowser;
+    this.capacidade = deps.capacidade ?? P2P_LIMITS.maxViewersSemUmEncode;
+    this.maxPeers = this.capacidade;
   }
 
   getState(): BroadcastState {
@@ -582,10 +592,13 @@ export class BroadcastSession {
     this.setState({ status: 'connecting' });
 
     try {
-      // O servidor é a autoridade sobre o teto; o palpite local só vale até aqui.
-      const aberto = await this.deps.transport.host(slug, ownerToken);
+      // O servidor é a autoridade sobre o teto; o palpite local só vale até
+      // aqui. Mas nunca ACIMA do que esta máquina serve: um servidor antigo,
+      // que ignora a capacidade declarada, não pode abrir 50 vagas num
+      // transmissor que codifica uma vez por peer.
+      const aberto = await this.deps.transport.host(slug, ownerToken, { capacidade: this.capacidade });
       if (Number.isFinite(aberto.maxPeers) && aberto.maxPeers > 0) {
-        this.maxPeers = aberto.maxPeers;
+        this.maxPeers = Math.min(aberto.maxPeers, this.capacidade);
       }
     } catch (error) {
       if (this.stale(epoch)) return this.abandon();

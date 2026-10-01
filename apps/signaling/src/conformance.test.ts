@@ -1,5 +1,6 @@
-import { PROTOCOL_VERSION } from '@tela/shared';
+import { P2P_LIMITS, PROTOCOL_VERSION } from '@tela/shared';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_LIMITS } from './limits.js';
 import { makeNodeDriver } from './testing-node-driver.js';
 import { makeWorkerDriver } from './testing-worker-driver.js';
 import {
@@ -21,9 +22,10 @@ import {
  * único jeito honesto de manter duas implementações do mesmo protocolo sem
  * que elas divirjam com o tempo.
  */
-const implementacoes: [string, () => ConformanceDriver][] = [
-  ['node + ws', () => comAprovacao(makeNodeDriver())],
-  ['cloudflare durable object', () => comAprovacao(makeWorkerDriver())],
+type Opcoes = { readonly maxPeers?: number };
+const implementacoes: [string, (opcoes?: Opcoes) => ConformanceDriver][] = [
+  ['node + ws', (opcoes) => comAprovacao(makeNodeDriver(opcoes))],
+  ['cloudflare durable object', (opcoes) => comAprovacao(makeWorkerDriver(undefined, opcoes))],
 ];
 
 describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
@@ -152,6 +154,76 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     await d.watch('v2', SLUG);
     await d.watch('v3', SLUG);
     expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
+  });
+
+  /**
+   * O teto do canal é do TRANSMISSOR, não do servidor (ADR 0029): quem
+   * codifica uma vez por espectador declara cinco; quem tem um encode e N
+   * envios declara cinquenta. O servidor só põe o teto por cima.
+   */
+  describe('capacidade declarada pelo transmissor (ADR 0029)', () => {
+    it('sem capacidade (cliente antigo), o teto é o de quem codifica por espectador', async () => {
+      const d = criar({ maxPeers: 8 });
+      const host = await d.host('h', SLUG, OWNER);
+      expect(ofType(host, 'hosting')[0]?.maxPeers).toBe(5);
+    });
+
+    it('capacidade 5: o sexto espectador recebe CHANNEL_FULL com o teto real', async () => {
+      const d = criar({ maxPeers: 8 });
+      const host = await d.host('h', SLUG, OWNER, { capacidade: 5 });
+      expect(ofType(host, 'hosting')[0]?.maxPeers).toBe(5);
+      for (let i = 1; i <= 5; i += 1) expect(ofType(await d.watch(`v${i}`, SLUG), 'watching')).toHaveLength(1);
+      const sexto = await d.watch('v6', SLUG);
+      expect(ofType(sexto, 'error')).toEqual([{ type: 'error', code: 'CHANNEL_FULL', maxPeers: 5 }]);
+      expect(sexto.closed()).toBe(true);
+      expect(ofType(host, 'peer-joined')).toHaveLength(5);
+    });
+
+    it('capacidade acima do teto do servidor é cortada no teto do servidor', async () => {
+      const d = criar({ maxPeers: 3 });
+      const host = await d.host('h', SLUG, OWNER, { capacidade: 5 });
+      expect(ofType(host, 'hosting')[0]?.maxPeers).toBe(3);
+      for (const id of ['v1', 'v2', 'v3']) await d.watch(id, SLUG);
+      expect(ofType(await d.watch('v4', SLUG), 'error')).toEqual([
+        { type: 'error', code: 'CHANNEL_FULL', maxPeers: 3 },
+      ]);
+    });
+
+    it('capacidade inválida é BAD_MESSAGE, como qualquer campo fora do schema', async () => {
+      for (const [id, capacidade] of [['zero', 0], ['acima', P2P_LIMITS.maxViewers + 1], ['fracao', 2.5], ['texto', '5']] as const) {
+        const d = criar();
+        const host = await d.host(id, SLUG, OWNER, { capacidade });
+        expect(errorOf(host), id).toBe('BAD_MESSAGE');
+        expect(host.closed(), id).toBe(true);
+      }
+    });
+
+    it('a capacidade vale também na sala com aprovação, inclusive na hora de aceitar', async () => {
+      const d = criar({ maxPeers: 8 });
+      const host = await d.host('h', SLUG, OWNER, { approval: true, capacidade: 2 });
+      const esperando = await d.watch('ana', SLUG, undefined, { aprovar: false });
+      const peerId = ofType(host, 'join-request')[0]!.peerId;
+      await d.watch('x', SLUG);
+      await d.watch('y', SLUG);
+      expect(ofType(await d.watch('z', SLUG), 'error')).toEqual([
+        { type: 'error', code: 'CHANNEL_FULL', maxPeers: 2 },
+      ]);
+      await d.send('h', { type: 'admit', peerId });
+      expect(ofType(esperando, 'error')).toEqual([{ type: 'error', code: 'CHANNEL_FULL', maxPeers: 2 }]);
+    });
+
+    it('o transmissor que reconecta redeclara a capacidade, e ela sobrevive à hibernação', async () => {
+      const d = criar({ maxPeers: 8 });
+      await d.host('h1', SLUG, OWNER, { capacidade: 1 });
+      await d.watch('v1', SLUG);
+      expect(errorOf(await d.watch('v2', SLUG))).toBe('CHANNEL_FULL');
+      d.disconnect('h1');
+      const h2 = await d.host('h2', SLUG, OWNER, { capacidade: 2 });
+      expect(ofType(h2, 'hosting')[0]?.maxPeers).toBe(2);
+      d.hibernar?.();
+      expect(ofType(await d.watch('v3', SLUG), 'watching')).toHaveLength(1);
+      expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
+    });
   });
 
   it('uma nova tentativa do mesmo participante substitui a vaga sem expulsar outros', async () => {
@@ -605,9 +677,10 @@ describe.each(implementacoes)('aprovação manual (ADR 0025) — %s', (_nome, cr
   it('a fila tem teto: pedido excedente é recusado sem chegar ao transmissor', async () => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER, { approval: true });
-    for (let i = 0; i < 8; i += 1) await d.watch(`p${i}`, SLUG, undefined, esperar);
-    expect(errorOf(await d.watch('p8', SLUG, undefined, esperar))).toBe('RATE_LIMITED');
-    expect(ofType(host, 'join-request')).toHaveLength(8);
+    const teto = DEFAULT_LIMITS.maxPending;
+    for (let i = 0; i < teto; i += 1) await d.watch(`p${i}`, SLUG, undefined, esperar);
+    expect(errorOf(await d.watch(`p${teto}`, SLUG, undefined, esperar))).toBe('RATE_LIMITED');
+    expect(ofType(host, 'join-request')).toHaveLength(teto);
   });
 
   it('canal cheio no momento de aceitar: CHANNEL_FULL e o pedido sai da fila', async () => {

@@ -169,7 +169,7 @@ do lado do front é `VITE_SIGNAL_URL`.
 | Variável | Para quê |
 |---|---|
 | `PORT` / `HOST` | onde escutar (padrão `3333` / `0.0.0.0`) |
-| `MAX_PEERS` | espectadores por canal (padrão 5, máximo 8) |
+| `MAX_PEERS` | teto de espectadores por canal que o servidor aceita (padrão e máximo 50, o teto do produto — ADR 0029). O transmissor declara a própria `capacidade` ao reivindicar o canal, e vale o menor dos dois |
 | `ALLOWED_ORIGINS` | origens que podem abrir o WebSocket, separadas por vírgula. **Obrigatória em produção no Node** (o servidor não sobe sem ela). No Worker, a origem dele mesmo já passa; liste só as extras |
 | `NODE_ENV` | `production` liga as recusas de configuração insegura (TURN estático, origem aberta) |
 | `STUN_URLS` | lista separada por vírgula |

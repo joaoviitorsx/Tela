@@ -1,3 +1,4 @@
+import { P2P_LIMITS } from '@tela/shared';
 import { z } from 'zod';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
 import { parseIceSettings, type IceSettings } from './ice-settings.js';
@@ -10,7 +11,8 @@ const Schema = z.object({
   /** Origens permitidas no handshake do WebSocket. Vazio = qualquer uma. */
   ALLOWED_ORIGINS: z.string().default(''),
 
-  MAX_PEERS: z.coerce.number().int().min(1).max(8).default(DEFAULT_LIMITS.maxPeers),
+  /** Pode baixar o teto do produto (ADR 0029), nunca passar dele. */
+  MAX_PEERS: z.coerce.number().int().min(1).max(P2P_LIMITS.maxViewers).default(DEFAULT_LIMITS.maxPeers),
 
   STUN_URLS: z.string().default('stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478'),
   ICE_PROVIDER: z.string().optional(),

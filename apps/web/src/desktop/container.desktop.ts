@@ -1,3 +1,4 @@
+import { P2P_LIMITS } from '@tela/shared';
 import { makeBrowserAudioGain } from '../adapters/browser-audio-gain.js';
 import { makeBrowserScreenCapture } from '../adapters/browser-screen-capture.js';
 import { makeCanvasQuadroNeutro } from '../adapters/canvas-quadro-neutro.js';
@@ -72,9 +73,18 @@ function createTransport(): MediaTransport {
   return makeEncodeOnceTransport({ channel: signaling(), scheduler, criarWorker });
 }
 
+/**
+ * O app SEMPRE transmite com um encoder só — o Chromium embarcado tem as três
+ * peças —, então serve o teto do produto. A web decide isto por detecção.
+ */
+export const umEncode = (): boolean => true;
+export const pecasAusentesDoUmEncode = (): readonly string[] => [];
+export const capacidadeDeEspectadores = (): number => P2P_LIMITS.maxViewers;
+
 export function createBroadcastSession(): BroadcastSession {
   return new BroadcastSession({
     transport: createTransport(),
+    capacidade: capacidadeDeEspectadores(),
     screen: makeBrowserScreenCapture(),
     audio,
     gain: makeBrowserAudioGain(),

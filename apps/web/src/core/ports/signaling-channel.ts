@@ -66,7 +66,21 @@ export type ChannelEvents = {
   reopened: ChannelOpened;
 };
 
-export type SignalingError = { readonly code: SignalingErrorCode };
+export type SignalingError = {
+  readonly code: SignalingErrorCode;
+  /** Em `CHANNEL_FULL`, o teto da sala que recusou — para a tela dizer o número certo. */
+  readonly maxPeers?: number | undefined;
+};
+
+/**
+ * O que o transmissor declara ao reivindicar o canal.
+ *
+ * `capacidade` é quantos espectadores ele consegue servir. Não é o teto do
+ * produto: um transmissor que codifica uma vez por peer para em poucos, e um
+ * com "um encode, N envios" atende o teto inteiro. O servidor responde com o
+ * `maxPeers` efetivo, e é esse que vale.
+ */
+export type OpcoesDeHost = { readonly capacidade?: number | undefined };
 
 /** Quem pede para assistir. O link é só o nome do canal (ADR 0026). */
 export type EntradaDeEspectador = {
@@ -80,7 +94,7 @@ export type EntradaDeEspectador = {
 
 export type SignalingChannel = {
   /** Reivindica o canal como transmissor. Rejeita com `SignalingError`. */
-  host(slug: string, ownerToken: string): Promise<ChannelOpened>;
+  host(slug: string, ownerToken: string, opcoes?: OpcoesDeHost): Promise<ChannelOpened>;
   /** Entra como espectador. Rejeita com `SignalingError`. */
   watch(slug: string, entrada: EntradaDeEspectador): Promise<ChannelOpened>;
   /** Tira um espectador, ou todos sem `peerId`. Não é banimento. */

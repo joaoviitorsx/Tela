@@ -210,3 +210,38 @@ it('sala aberta: sem apelido nem chave, o hello não manda campos vazios (ADR 00
   expect(hello).not.toHaveProperty('viewerKey');
   channel.close();
 });
+
+it('a saudação de transmissor leva a capacidade declarada, e a reconexão a repete', async () => {
+  vi.stubGlobal('WebSocket', FakeSocket);
+  vi.stubGlobal('window', { setTimeout, clearTimeout });
+  const channel = makeWsSignaling('ws://test/signal');
+  const opening = channel.host('joao', 'o'.repeat(43), { capacidade: 50 });
+  const socket = FakeSocket.created[0];
+  if (socket === undefined) throw new Error('socket ausente');
+  socket.emit('open');
+  const hello = JSON.parse(socket.sent[0] ?? '{}') as { type: string; capacidade?: number };
+  expect(hello).toMatchObject({ type: 'host', capacidade: 50 });
+  socket.emit('message', JSON.stringify({ type: 'hosting', peerId: 'h_1', iceServers: [], maxPeers: 50 }));
+  await opening;
+  channel.close();
+});
+
+it('sem capacidade declarada a saudação não inventa uma', async () => {
+  const { socket, channel } = await hostAberto();
+  const hello = JSON.parse(socket.sent[0] ?? '{}') as Record<string, unknown>;
+  expect('capacidade' in hello).toBe(false);
+  channel.close();
+});
+
+it('CHANNEL_FULL traz o teto da sala que recusou, quando o servidor diz', async () => {
+  vi.stubGlobal('WebSocket', FakeSocket);
+  vi.stubGlobal('window', { setTimeout, clearTimeout });
+  const channel = makeWsSignaling('ws://test/signal');
+  const opening = channel.watch('joao', { nome: 'ana', chave: 'k'.repeat(32) });
+  const socket = FakeSocket.created[0];
+  if (socket === undefined) throw new Error('socket ausente');
+  socket.emit('open');
+  socket.emit('message', JSON.stringify({ type: 'error', code: 'CHANNEL_FULL', maxPeers: 5 }));
+  await expect(opening).rejects.toMatchObject({ code: 'CHANNEL_FULL', maxPeers: 5 });
+  channel.close();
+});

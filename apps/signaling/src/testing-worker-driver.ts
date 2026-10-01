@@ -1,6 +1,6 @@
 import { webcrypto } from 'node:crypto';
 import type { ServerMessage } from '@tela/shared';
-import { type ConformanceClient, type ConformanceDriver, saudar } from './conformance.js';
+import { type ConformanceClient, type ConformanceDriver, TETO_DE_TESTE, saudar } from './conformance.js';
 import type { IceProvisionResult } from './ice-provision.js';
 import {
   ChannelRoom,
@@ -102,8 +102,9 @@ export class FakeDurableContext implements DurableContext {
  */
 export function makeWorkerDriver(
   iceServersFor?: (peerId: string) => Promise<IceProvisionResult>,
+  opcoes: { readonly maxPeers?: number } = {},
 ): ConformanceDriver {
-  const env: Env = { CHANNELS: null as never, MAX_PEERS: '3' };
+  const env: Env = { CHANNELS: null as never, MAX_PEERS: String(opcoes.maxPeers ?? TETO_DE_TESTE) };
   const deps = { ...makeChannelDeps(env, webcrypto as unknown as WebCryptoLike),
     ...(iceServersFor === undefined ? {} : { iceServersFor }) };
 

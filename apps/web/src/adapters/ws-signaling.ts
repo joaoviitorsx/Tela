@@ -173,7 +173,7 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
           settled = true;
           window.clearTimeout(timer);
           ws.close();
-          aoFalhar({ code: message.code });
+          aoFalhar({ code: message.code, maxPeers: message.maxPeers });
           return;
         }
         /*
@@ -312,10 +312,13 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
   }
 
   return {
-    host(slug, ownerToken) {
+    host(slug, ownerToken, opcoes) {
       return new Promise<ChannelOpened>((resolve, reject) => {
+        // `capacidade` vai na saudação, e a saudação é o que a reconexão
+        // reenvia: o servidor que voltou recebe o mesmo número sem código novo.
         const hello: ClientMessage = {
           type: 'host', protocol: PROTOCOL_VERSION, slug, ownerToken,
+          ...(opcoes?.capacidade === undefined ? {} : { capacidade: opcoes.capacidade }),
         };
         /**
          * Zerar aqui é obrigatório: `close()` marca `closedByUs` e nada mais

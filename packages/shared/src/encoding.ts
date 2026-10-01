@@ -296,25 +296,34 @@ export const CONTENT_HINT_POR_PRIORIDADE: Record<Prioridade, 'motion' | 'detail'
  * Orçamento de upstream no modo P2P (self-host caseiro).
  *
  * No modo SFU o transmissor sobe UMA vez (main + camada baixa) e o servidor
- * replica. No modo P2P o transmissor sobe N vezes — uma por espectador — e
- * roda N encoders. O gargalo deixa de ser o servidor e passa a ser a máquina
- * e o link de casa, exatamente os recursos que o jogo precisa.
+ * replica. No modo P2P o transmissor sobe N vezes — uma por espectador. O
+ * gargalo deixa de ser o servidor e passa a ser o link de casa (e, sem "um
+ * encode, N envios", também a máquina) — exatamente os recursos que o jogo
+ * precisa.
  *
- * Ver docs/adr/0002-transporte-p2p-self-host.md.
+ * Ver docs/adr/0002-transporte-p2p-self-host.md e docs/adr/0029.
  */
 export const P2P_LIMITS = {
   /**
-   * Teto duro de espectadores por transmissão.
+   * Teto do PRODUTO: espectadores por transmissão (ADR 0029, decisão do dono
+   * em 2026-10-01). Cinquenta é a paridade com o Go Live do Discord — o que
+   * as pessoas perderam e vieram buscar aqui.
    *
-   * O custo que escala aqui é BANDA, não CPU: pela R5 todos os peers recebem
-   * parâmetros idênticos, então o Chrome reaproveita um encoder só. O que
-   * multiplica é o upload — cada espectador recebe uma cópia inteira do vídeo.
-   *
-   * A 5 espectadores: 12,5 Mbps de subida em `p720p60eco`, 20 em `p720p60`,
-   * 40 em `p1080p60`. Quem não tiver o link cai de degrau automaticamente, em
-   * conjunto — nunca individualmente, senão viram N encoders (R5).
+   * O custo que escala em malha P2P é BANDA DE UPLOAD, não CPU: com um encode
+   * e N envios, cada espectador custa uma cópia do vídeo e nada do encoder. E
+   * a adaptação é coletiva (R5, ADR 0015): quem não tem o link para 50 cópias
+   * em 1080p60 desce de degrau com TODO MUNDO junto, nunca um peer de cada
+   * vez — senão viram N encoders. O servidor de sinalização aplica este
+   * número como teto absoluto; o transmissor declara o dele, abaixo disto.
    */
-  maxViewersBrowser: 5,
+  maxViewers: 50,
+  /**
+   * Teto de quem ainda codifica UMA VEZ POR ESPECTADOR — navegador sem
+   * `MediaStreamTrackProcessor` (Firefox, Safari), onde não há "um encode, N
+   * envios" e cada vaga é mais um encoder 1080p60 disputando a GPU com o
+   * jogo. É o teto que valeu até a ADR 0029, e continua valendo para eles.
+   */
+  maxViewersSemUmEncode: 5,
   /**
    * Fração do upstream medido que pode ser usada — o resto é folga
    * anti-bufferbloat.
@@ -350,7 +359,7 @@ export function p2pViewerBudget(
     tetoDeBitrate(preset.width, preset.height, preset.main.maxFramerate),
   );
   const byBandwidth = Math.floor(usable / perViewer);
-  return Math.max(0, Math.min(byBandwidth, P2P_LIMITS.maxViewersBrowser));
+  return Math.max(0, Math.min(byBandwidth, P2P_LIMITS.maxViewers));
 }
 
 /**

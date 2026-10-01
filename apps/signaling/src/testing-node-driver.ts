@@ -1,12 +1,12 @@
 import type { ServerMessage } from '@tela/shared';
 import { type Connection, makeChannelRegistry } from './channel-registry.js';
-import { type ConformanceClient, type ConformanceDriver, saudar } from './conformance.js';
+import { type ConformanceClient, type ConformanceDriver, TETO_DE_TESTE, saudar } from './conformance.js';
 import { SpySocket, TestClock, testDeps } from './testing.js';
 
 /** Driver de conformidade sobre o registro em memória (Node + `ws`). */
-export function makeNodeDriver(): ConformanceDriver {
+export function makeNodeDriver(opcoes: { readonly maxPeers?: number } = {}): ConformanceDriver {
   const clock = new TestClock();
-  const registry = makeChannelRegistry(testDeps(clock, { maxPeers: 3 }));
+  const registry = makeChannelRegistry(testDeps(clock, { maxPeers: opcoes.maxPeers ?? TETO_DE_TESTE }));
   const sockets = new Map<string, SpySocket>();
   const conns = new Map<string, Connection>();
 

@@ -3,6 +3,7 @@ import {
   ClientMessageSchema,
   HELLO_TIMEOUT_MS,
   MAX_FRAME_BYTES,
+  P2P_LIMITS,
   PROTOCOL_VERSION,
   SLUG_RE,
   type ServerMessage,
@@ -83,6 +84,12 @@ type Attachment = {
    * Ausente = aberta (ADR 0028). Mora no attachment pela hibernação.
    */
   readonly aprovacao?: boolean;
+  /**
+   * Só no socket do host: a `capacidade` que ele declarou (ADR 0029). O teto
+   * do canal é o menor entre ela e o do servidor. Mora no attachment porque o
+   * teto precisa valer depois da hibernação, quando o `claim` já é passado.
+   */
+  readonly capacidade?: number;
   /** Tirado pelo transmissor: some da plateia na hora, antes do close chegar. */
   readonly removido?: boolean;
   /** Janela de rate limit desta conexão, também à prova de hibernação. */
@@ -234,9 +241,23 @@ export class ChannelRoom {
     socket.send(JSON.stringify(message));
   }
 
-  private fail(socket: HibernatableSocket, code: SignalingErrorCode): void {
-    this.send(socket, { type: 'error', code });
+  /** `maxPeers` só acompanha `CHANNEL_FULL`: o teto real, para a tela de "sem vaga". */
+  private fail(socket: HibernatableSocket, code: SignalingErrorCode, maxPeers?: number): void {
+    this.send(socket, { type: 'error', code, ...(maxPeers === undefined ? {} : { maxPeers }) });
     socket.close(1008, code);
+  }
+
+  /**
+   * Teto de espectadores DESTE canal: o menor entre o do servidor e a
+   * `capacidade` do transmissor atual (ADR 0029). Sem declaração, o teto de
+   * quem codifica uma vez por espectador: cliente antigo só conhecia cinco.
+   */
+  private teto(): number {
+    return this.tetoPara(this.host()?.at.capacidade);
+  }
+
+  private tetoPara(capacidade: number | undefined): number {
+    return Math.min(this.deps.limits.maxPeers, capacidade ?? P2P_LIMITS.maxViewersSemUmEncode);
   }
 
   private attachmentOf(socket: HibernatableSocket): Attachment | null {
@@ -388,7 +409,9 @@ export class ChannelRoom {
         if (at !== null) return;
         const versao = this.versaoRecusada(message.protocol);
         if (versao !== null) return this.fail(socket, versao);
-        return await this.claim(socket, slug, message.slug, message.ownerToken, message.approval === true);
+        return await this.claim(
+          socket, slug, message.slug, message.ownerToken, message.approval === true, message.capacidade,
+        );
       }
       case 'watch': {
         if (at !== null) return;
@@ -444,7 +467,9 @@ export class ChannelRoom {
       janelaContagem: contagem,
     } satisfies Attachment);
 
-    return contagem <= this.deps.limits.messageLimit;
+    // O transmissor negocia com a plateia inteira; o espectador, com um peer.
+    const teto = at.role === 'host' ? this.deps.limits.hostMessageLimit : this.deps.limits.messageLimit;
+    return contagem <= teto;
   }
 
   /**
@@ -473,6 +498,7 @@ export class ChannelRoom {
     claimed: string,
     ownerToken: string,
     aprovacao: boolean,
+    capacidade: number | undefined,
   ): Promise<void> {
     // O slug do Durable Object vence: ele veio da URL e determinou qual
     // instância atendeu. Divergir significa cliente confuso ou malicioso.
@@ -560,6 +586,7 @@ export class ChannelRoom {
         role: 'host',
         ownerHash: hash,
         aprovacao,
+        ...(capacidade === undefined ? {} : { capacidade }),
         janelaInicio: Date.now(),
         janelaContagem: 0,
       } satisfies Attachment);
@@ -570,6 +597,7 @@ export class ChannelRoom {
     if (assumido === null) return this.fail(socket, 'SLUG_TAKEN');
 
     // Mesmo dono reconectando (refresh, troca de rede): derruba o antigo.
+    // Se voltou com teto menor, ninguém é expulso: só não entra mais.
     assumido.anterior?.socket.close(1000, 'substituido');
 
     this.send(socket, {
@@ -579,7 +607,7 @@ export class ChannelRoom {
       relayStatus: ice.relayStatus,
       ...(ice.issuedAt === undefined ? {} : { issuedAt: ice.issuedAt }),
       ...(ice.expiresAt === undefined ? {} : { expiresAt: ice.expiresAt }),
-      maxPeers: this.deps.limits.maxPeers,
+      maxPeers: this.tetoPara(capacidade),
     });
 
     /**
@@ -638,8 +666,8 @@ export class ChannelRoom {
       if (this.host() === null) return this.fail(socket, 'NOT_HOSTING');
       const anterior = participantId === undefined ? undefined : this.viewers()
         .find((viewer) => viewer.at.participantId === participantId);
-      if (anterior === undefined && this.viewers().length >= this.deps.limits.maxPeers) {
-        return this.fail(socket, 'CHANNEL_FULL');
+      if (anterior === undefined && this.viewers().length >= this.teto()) {
+        return this.fail(socket, 'CHANNEL_FULL', this.teto());
       }
       return await this.admitir(
         socket, anterior?.at.peerId ?? this.deps.newPeerId('v'), name, impressao,
@@ -666,7 +694,7 @@ export class ChannelRoom {
       return await this.admitir(socket, previous.at.peerId, name, fingerprint, participantId, attemptId, previous.socket);
     }
 
-    if (this.viewers().length >= this.deps.limits.maxPeers) return this.fail(socket, 'CHANNEL_FULL');
+    if (this.viewers().length >= this.teto()) return this.fail(socket, 'CHANNEL_FULL', this.teto());
 
     // O mesmo pedido chegando por outro socket substitui o anterior.
     const repetido = participantId === undefined ? undefined : this.pedidos()
@@ -710,10 +738,10 @@ export class ChannelRoom {
       return this.fail(alvo.socket, 'DENIED');
     }
     // A vaga é conferida de novo: pode ter enchido enquanto esperava.
-    if (this.viewers().length >= this.deps.limits.maxPeers) {
+    if (this.viewers().length >= this.teto()) {
       alvo.socket.serializeAttachment({ ...alvo.at, removido: true } satisfies Attachment);
       this.send(socket, { type: 'join-cancelled', peerId });
-      return this.fail(alvo.socket, 'CHANNEL_FULL');
+      return this.fail(alvo.socket, 'CHANNEL_FULL', this.teto());
     }
     await this.admitir(
       alvo.socket, peerId, alvo.at.name ?? '?', alvo.at.fingerprint ?? '',
@@ -1002,8 +1030,11 @@ export function makeChannelDeps(
   relatar: (problemas: readonly string[]) => void = (problemas) =>
     console.error(`ICE_CONFIG_INVALID: ${problemas.join(',')} — sinalização segue sem relay`),
 ): ChannelDeps {
+  // Pode baixar o teto do produto (ADR 0029), nunca passar dele.
   const parsedMax = Number(env.MAX_PEERS ?? DEFAULT_LIMITS.maxPeers);
-  if (!Number.isInteger(parsedMax) || parsedMax < 1 || parsedMax > 8) throw new Error('MAX_PEERS_INVALID');
+  if (!Number.isInteger(parsedMax) || parsedMax < 1 || parsedMax > P2P_LIMITS.maxViewers) {
+    throw new Error('MAX_PEERS_INVALID');
+  }
   const settings = iceComFallback(env, relatar);
   const cloudflare = makeCloudflareProvider(settings);
 

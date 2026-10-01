@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { P2P_LIMITS } from './encoding.js';
 
 /**
  * Protocolo de sinalização do mesh.
@@ -35,6 +36,11 @@ export const PeerIdSchema = z.string().min(1).max(64);
  * A 5 tornou a aprovação opcional por sala, desligada por padrão (ADR 0028):
  * quem tem o link entra direto. Aba na 4 pediria apelido e esperaria um
  * aceite que não vem mais.
+ *
+ * A `capacidade` do `host` (ADR 0029) NÃO subiu a versão: o campo é opcional,
+ * os schemas não são estritos, e ausente vale `maxViewersSemUmEncode` (5) —
+ * exatamente o teto que o cliente antigo conhecia. Aba na 5 e o app desktop
+ * já instalado continuam iguais; só quem declara ganha as 50 vagas.
  */
 export const PROTOCOL_VERSION = 5;
 
@@ -114,6 +120,14 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
      * link entra direto (ADR 0028). O dono decide ao reivindicar.
      */
     approval: z.boolean().optional(),
+    /**
+     * Quantos espectadores ESTE transmissor aguenta (ADR 0029). O teto do
+     * servidor é o do produto; o do canal é o menor dos dois, e é ele que
+     * volta em `hosting.maxPeers`. Quem codifica uma vez por espectador
+     * declara `P2P_LIMITS.maxViewersSemUmEncode`; quem tem um encode e N
+     * envios declara `P2P_LIMITS.maxViewers`. Ausente = teto do servidor.
+     */
+    capacidade: z.number().int().min(1).max(P2P_LIMITS.maxViewers).optional(),
   }),
   z.object({
     type: z.literal('watch'), slug: z.string().min(1).max(64),
@@ -219,7 +233,16 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
   }),
   z.object({ type: z.literal('peer-left'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('signal'), from: PeerIdSchema, payload: z.unknown() }),
-  z.object({ type: z.literal('error'), code: SignalingErrorCodeSchema }),
+  z.object({
+    type: z.literal('error'),
+    code: SignalingErrorCodeSchema,
+    /**
+     * Só em `CHANNEL_FULL`: o teto REAL do canal, que é o do transmissor e não
+     * o do servidor. Sem ele a tela de "sem vaga" só poderia mostrar o número
+     * do produto — e "sem vaga · 50" numa sala de cinco é mentira.
+     */
+    maxPeers: z.number().int().min(1).optional(),
+  }),
 ]);
 export type ServerMessage = z.infer<typeof ServerMessageSchema>;
 

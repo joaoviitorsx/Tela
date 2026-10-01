@@ -67,8 +67,12 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   }
 
   return {
-    async host(slug, ownerToken) {
-      const opened = await deps.channel.host(slug, ownerToken);
+    async host(slug, ownerToken, opcoes) {
+      const opened = await deps.channel.host(slug, ownerToken, opcoes);
+      // O servidor é quem decide o teto, mas nunca acima do que este
+      // transmissor serve: um servidor antigo ignora `capacidade` e responde
+      // o teto do produto — e a malha admitiria 50 peers num encoder por peer.
+      const maxPeers = Math.min(opened.maxPeers, opcoes?.capacidade ?? Number.POSITIVE_INFINITY);
 
       const recoveryFor = (peerId: string): PeerRecovery => {
         const existing = recoveries.get(peerId);
@@ -91,7 +95,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         iceServers: opened.iceServers,
         send: (payload, to) => deps.channel.send(payload, to),
         createConnection,
-        maxPeers: opened.maxPeers,
+        maxPeers,
         onIssue: (_peerId, code) => console.warn('[peer-link]', code),
         onPeerStateChange: (peerId, state) => recoveryFor(peerId).observe(state),
       });
@@ -158,7 +162,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         }),
       );
 
-      return { maxPeers: opened.maxPeers };
+      return { maxPeers };
     },
 
     async watch(slug, entrada) {

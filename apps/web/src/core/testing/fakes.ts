@@ -22,6 +22,7 @@ import type {
   ChannelEvents,
   ChannelOpened,
   EntradaDeEspectador,
+  OpcoesDeHost,
   SignalingChannel,
 } from '../ports/signaling-channel.js';
 import type { Storage } from '../ports/storage.js';
@@ -260,10 +261,13 @@ export class FakeMediaTransport implements MediaTransport {
 
   /** Teto que este transporte falso reporta como se viesse do servidor. */
   maxPeersDoServidor = 5;
+  /** A capacidade que a sessão declarou ao reivindicar; `null` se não declarou. */
+  capacidadeDeclarada: number | null = null;
 
-  async host(slug: string, ownerToken: string): Promise<{ maxPeers: number }> {
+  async host(slug: string, ownerToken: string, opcoes?: OpcoesDeHost): Promise<{ maxPeers: number }> {
     if (this.hostError !== null) throw this.hostError;
     this.hosted = { slug, ownerToken };
+    this.capacidadeDeclarada = opcoes?.capacidade ?? null;
     return { maxPeers: this.maxPeersDoServidor };
   }
 
@@ -425,8 +429,12 @@ export class FakeSignalingChannel implements SignalingChannel {
     hub?.register(this);
   }
 
-  async host(): Promise<ChannelOpened> {
+  /** A capacidade que chegou no `host`; `null` se não veio. */
+  capacidadeDeclarada: number | null = null;
+
+  async host(_slug: string, _ownerToken: string, opcoes?: OpcoesDeHost): Promise<ChannelOpened> {
     if (this.hostError !== null) throw this.hostError;
+    this.capacidadeDeclarada = opcoes?.capacidade ?? null;
     return {
       role: 'host',
       selfId: this.selfId,

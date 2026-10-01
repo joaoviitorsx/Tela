@@ -9,9 +9,9 @@ type Props = {
   readonly novo: boolean;
   readonly copiado: boolean;
   readonly aoCopiar: () => void;
+  /** Só as ocupadas; `total` é o teto. */
   readonly vagas: readonly Vaga[];
   readonly total: number;
-  readonly ocupadas: number;
 };
 
 /**
@@ -28,7 +28,6 @@ export function FaixaLink({
   aoCopiar,
   vagas,
   total,
-  ocupadas,
 }: Props) {
   const endereco = link.replace(/^https?:\/\//, '');
 
@@ -63,7 +62,6 @@ export function FaixaLink({
         <SalaVagas
           vagas={vagas}
           total={total}
-          ocupadas={ocupadas}
           icone={<IconOlho className="h-3.5 w-3.5 text-accent" />}
         />
       </div>

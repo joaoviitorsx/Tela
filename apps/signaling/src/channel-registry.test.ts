@@ -150,7 +150,8 @@ describe('registro de canais', () => {
       watch();
       watch();
       watch();
-      expect(watch().socket.last()).toEqual({ type: 'error', code: 'CHANNEL_FULL' });
+      // O teto REAL vai junto: a tela de "sem vaga" mostra o do canal, não o do produto.
+      expect(watch().socket.last()).toEqual({ type: 'error', code: 'CHANNEL_FULL', maxPeers: 3 });
       expect(registry.viewerCount(SLUG)).toBe(3);
     });
   });
@@ -303,12 +304,46 @@ describe('registro de canais', () => {
       expect(b.last()).toEqual({ type: 'error', code: 'BAD_MESSAGE' });
     });
 
-    it('limita mensagens por conexão', () => {
+    it('limita mensagens por conexão: o transmissor tem o teto dele, o espectador o seu', () => {
       const h = host();
+      const v = watch();
       for (let i = 0; i < DEFAULT_LIMITS.messageLimit + 10; i += 1) {
+        h.conn.receive(JSON.stringify({ type: 'signal', to: 'v_x', payload: i }));
+        v.conn.receive(JSON.stringify({ type: 'signal', payload: i }));
+      }
+      // O espectador fala com UM peer: 240 bastam. O transmissor fala com todos.
+      expect(v.socket.last()).toEqual({ type: 'error', code: 'RATE_LIMITED' });
+      expect(h.socket.closed).toBe(false);
+      for (let i = 0; i < DEFAULT_LIMITS.hostMessageLimit - DEFAULT_LIMITS.messageLimit; i += 1) {
         h.conn.receive(JSON.stringify({ type: 'signal', to: 'v_x', payload: i }));
       }
       expect(h.socket.last()).toEqual({ type: 'error', code: 'RATE_LIMITED' });
+    });
+
+    it('o F5 do transmissor com a plateia cheia (50) não é derrubado pela rajada de reoferta', () => {
+      // A rajada que escala com o teto: ao reconectar, o transmissor reoferta
+      // para TODOS os espectadores de uma vez. 240 por 10s fechava o socket
+      // dele no meio disso, com 50 vagas.
+      const cheio = makeChannelRegistry(testDeps(clock, { maxPeers: 50 }));
+      const socket = new SpySocket();
+      const conn = cheio.accept(socket, '1.1.1.1');
+      conn.receive(JSON.stringify({ type: 'host', slug: SLUG, ownerToken: OWNER, protocol: PROTOCOL_VERSION, capacidade: 50 }));
+      const ids: string[] = [];
+      for (let i = 0; i < 50; i += 1) {
+        const s = new SpySocket();
+        cheio.accept(s, `7.7.7.${i}`).receive(JSON.stringify({ type: 'watch', slug: SLUG, protocol: PROTOCOL_VERSION }));
+        const entrada = s.ofType('watching')[0];
+        if (entrada !== undefined) ids.push(entrada.peerId);
+      }
+      expect(ids).toHaveLength(50);
+      // 50 peers × (1 oferta + ~40 candidatos) numa janela.
+      for (const id of ids) {
+        for (let msg = 0; msg < 41; msg += 1) {
+          conn.receive(JSON.stringify({ type: 'signal', to: id, payload: { candidate: msg } }));
+        }
+      }
+      expect(socket.closed).toBe(false);
+      expect(socket.ofType('error')).toEqual([]);
     });
 
     it('aguenta três espectadores entrando ao mesmo tempo', () => {

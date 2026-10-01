@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { CONTENT_HINT } from '@tela/shared';
+import { CONTENT_HINT, P2P_LIMITS } from '@tela/shared';
 import {
   FakeAudioCapture,
   FakeAudioGain,
@@ -150,6 +150,55 @@ describe('BroadcastSession — falhas', () => {
     await ctx.session.start(SLUG, TOKEN);
     await ctx.session.start(SLUG, TOKEN);
     expect(ctx.transport.videos).toHaveLength(1);
+  });
+});
+
+describe('BroadcastSession — capacidade (ADR 0029)', () => {
+  function comCapacidade(capacidade: number | undefined, doServidor: number) {
+    const transport = new FakeMediaTransport();
+    transport.maxPeersDoServidor = doServidor;
+    const session = new BroadcastSession({
+      transport,
+      screen: new FakeScreenCapture(),
+      audio: new FakeAudioCapture(),
+      gain: new FakeAudioGain(),
+      scheduler: new FakeScheduler(),
+      shareUrlFor,
+      createStream,
+      ...(capacidade === undefined ? {} : { capacidade }),
+    });
+    return { transport, session };
+  }
+  const maxPeersAoVivo = (session: BroadcastSession) => {
+    const state = session.getState();
+    return state.status === 'live' ? state.maxPeers : null;
+  };
+
+  it('declara ao transporte quantos espectadores consegue servir', async () => {
+    const ctx = comCapacidade(50, 50);
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.transport.capacidadeDeclarada).toBe(50);
+    expect(maxPeersAoVivo(ctx.session)).toBe(50);
+  });
+
+  it('o teto é o MENOR entre o do servidor e o próprio', async () => {
+    // Servidor antigo que ignora a capacidade e responde o teto do produto:
+    // um transmissor que codifica por peer NÃO pode abrir 50 vagas.
+    const porPeer = comCapacidade(5, 50);
+    await porPeer.session.start(SLUG, TOKEN);
+    expect(maxPeersAoVivo(porPeer.session)).toBe(5);
+
+    // Servidor mais apertado que o transmissor: vale o servidor.
+    const apertado = comCapacidade(50, 20);
+    await apertado.session.start(SLUG, TOKEN);
+    expect(maxPeersAoVivo(apertado.session)).toBe(20);
+  });
+
+  it('sem capacidade declarada assume o conservador — um encoder por peer', async () => {
+    const ctx = comCapacidade(undefined, 50);
+    await ctx.session.start(SLUG, TOKEN);
+    expect(ctx.transport.capacidadeDeclarada).toBe(P2P_LIMITS.maxViewersSemUmEncode);
+    expect(maxPeersAoVivo(ctx.session)).toBe(P2P_LIMITS.maxViewersSemUmEncode);
   });
 });
 

@@ -1,7 +1,7 @@
 import type { EncodingPreset, Prioridade, RelayStatus } from '@tela/shared';
 import type { AudioStats } from '../media/audio-stats.js';
 import type { PeerInfo } from '../mesh/mesh-topology.js';
-import type { EntradaDeEspectador, PedidoDeEntrada } from './signaling-channel.js';
+import type { EntradaDeEspectador, OpcoesDeHost, PedidoDeEntrada } from './signaling-channel.js';
 
 /**
  * A fronteira que sustenta a Fase 3 e que já provou o próprio valor.
@@ -271,8 +271,13 @@ export type MediaTransport = {
    * ficava com um palpite local que nada corrigia — o HUD chegava a mostrar
    * "5/3" com cinco espectadores conectados, porque o palpite era 3 e o
    * servidor aceitava 5.
+   *
+   * `opcoes.capacidade` é quantos espectadores ESTE transmissor consegue
+   * servir, e depende de quem implementa a port: o "um encode, N envios"
+   * atende o teto do produto; o mesh puro codifica uma vez por peer e para em
+   * poucos. O servidor recebe o número e devolve o teto efetivo.
    */
-  host(slug: string, ownerToken: string): Promise<{ readonly maxPeers: number }>;
+  host(slug: string, ownerToken: string, opcoes?: OpcoesDeHost): Promise<{ readonly maxPeers: number }>;
   /** Entra num canal como espectador. */
   watch(slug: string, entrada: EntradaDeEspectador): Promise<{ readonly relayStatus: RelayStatus | null }>;
   /**

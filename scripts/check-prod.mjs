@@ -100,7 +100,7 @@ console.warn(`no ar : ${prod.commit}  (${prod.data})${prod.sujo ? '  [árvore su
  * existe: a resposta esperada é `NOT_HOSTING`. Isso atravessa Worker, Durable
  * Object e protocolo sem reservar slug nem gastar credencial TURN.
  */
-const sinal = await new Promise((resolve) => {
+const testarSinal = () => new Promise((resolve) => {
   const slug = `saude${Math.random().toString(36).slice(2, 10)}`;
   const endereco = `${url.replace(/^http/, 'ws')}/signal/${slug}`;
   let ws;
@@ -132,6 +132,18 @@ const sinal = await new Promise((resolve) => {
     resolve('handshake recusado (Worker respondeu sem 101 — ver `wrangler tail`)');
   });
 });
+/*
+  Até três tentativas, 6 s entre elas. Logo depois de um deploy, a borda da
+  Cloudflare ainda serve o Worker anterior por alguns segundos — medido em
+  2026-10-01: a primeira tentativa recebeu PROTOCOL_MISMATCH da versão velha e
+  a seguinte, ok. Queda de verdade falha nas três.
+*/
+let sinal = await testarSinal();
+for (let i = 1; i < 3 && sinal !== 'ok'; i += 1) {
+  console.warn(`sinal : ${sinal} — tentando de novo (${i + 1}/3)`);
+  await new Promise((r) => setTimeout(r, 6_000));
+  sinal = await testarSinal();
+}
 console.warn(`sinal : ${sinal}`);
 
 if (sinal !== 'ok') {

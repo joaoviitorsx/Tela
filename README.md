@@ -282,7 +282,7 @@ trade-off consciente, com página de exportação em `/recuperar`.
 | [`docs/adr/0024`](docs/adr/0024-politica-opus.md) | Estéreo que chega em estéreo, e o que falta decidir no áudio |
 | [`docs/adr/0025`](docs/adr/0025-aprovacao-manual-de-espectador.md) | Aprovação manual de cada espectador e protocolo v3 |
 | [`docs/adr/0026`](docs/adr/0026-link-so-com-o-nome.md) | O link é só o nome do canal; protocolo v4 |
-| [`docs/adr/0027`](docs/adr/0027-tela-desktop-electron.md) | Tela Desktop: Electron (proposta) |
+| [`docs/adr/0027`](docs/adr/0027-tela-desktop-electron.md) | Tela Desktop: Electron, janela única com modo escondido (proposta) |
 | [`docs/adr/0028`](docs/adr/0028-sala-aberta-por-padrao.md) | Sala aberta por padrão; aprovação como opção; protocolo v5 |
 | [`docs/qa/`](docs/qa/) | O que foi executado e o que depende de gente, por tarefa |
 

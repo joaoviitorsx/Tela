@@ -1,11 +1,12 @@
 # Tela Desktop — análise e plano (Windows e Linux)
 
-**Data:** 2026-10-01 · **Estado:** decisões do dono registradas (§13); próximo passo: D0
+**Data:** 2026-10-01 · **Estado:** D0 no Linux medido (`D0-relatorio-linux.md`); falta o Windows
 **Tarefas:** TELA-027 a TELA-034 (plano global §20) · **ADR:** 0027
 
-O desktop é **o transmissor**. Quem assiste continua no navegador, pelo mesmo
-link (`tela.gg/<canal>`, ADR 0026), e entra direto (ADR 0028). Nada no
-protocolo, na sinalização ou nas malhas de qualidade muda por causa do app.
+O desktop transmite **e** assiste. O link continua um só (`tela.gg/<canal>`,
+ADR 0026; entrada direta, ADR 0028): quem tem o app instalado abre no app,
+quem não tem assiste no navegador (§14). Nada no protocolo, na sinalização ou
+nas malhas de qualidade muda por causa do app.
 
 A regra que decide tudo abaixo: **o jogo vem antes da transmissão.** O app roda
 em segundo plano enquanto alguém joga; cada milissegundo de CPU ou GPU que ele
@@ -335,6 +336,7 @@ Um marco por vez (AGENTS.md); cada um termina em relatório e decisão.
 | **D5 — Distribuição** | TELA-032 | NSIS, AppImage, RPM, DEB, atualizador, página de download | Instalar/atualizar/desinstalar em máquina limpa |
 | **D6 — Homologação** | TELA-033 | Relatório por plataforma e modo, contra o orçamento da §1.2 | Liberar, liberar com limitação publicada, ou bloquear |
 | **D7 — Motor nativo** | TELA-034 | Só se D0/D6 provarem limitação e o dono aprovar | — |
+| **D8 — Assistir no app** | — | Esquema `tela://`, tentativa única na página do canal com volta ao navegador, modo espectador no app | Link abre no app com ele instalado e no navegador sem ele, nas duas plataformas |
 
 **O D0 vem antes de qualquer acabamento.** Se o encoder no Linux NVIDIA for
 software e estourar o orçamento, isso muda o produto, e é melhor saber cedo.
@@ -420,7 +422,40 @@ máquina limpa e o aviso do SmartScreen; ICE em redes reais.
 
 ---
 
-## 13. Decisões do dono (2026-10-01)
+## 13. Resultado do D0 no Linux (resumo)
+
+Detalhes em `D0-relatorio-linux.md`. Nesta máquina (RTX 4050, sem iGPU):
+
+- Encode H.264 **em software** (VA-API da NVIDIA só decodifica): 0,57 núcleo
+  em 720p60 e 1,13–1,22 em 1080p60.
+- **Uma codificação por espectador**: CPU da transmissão ×3,3 de 1 para 3
+  amigos. A premissa de encoder compartilhado da R5 não se confirmou aqui.
+- Contra o orçamento (≤ 0,5 núcleo): 1080p60 com 3 amigos fica em ~3,5 núcleos.
+- Caminhos A/B/C no relatório; decisão depois do D0 no Windows.
+
+## 14. Um link, app ou navegador (pedido do dono, 2026-10-01)
+
+Quem clica em `tela.gg/<canal>`: com o app instalado, abre no app; sem o app,
+assiste no navegador como hoje. Não existe API para o site saber se o app está
+instalado, então o fluxo é o dos apps de chamada:
+
+1. O instalador registra o esquema `tela://` (Windows:
+   `app.setAsDefaultProtocolClient`; Linux: `x-scheme-handler/tela` no
+   `.desktop` do RPM/DEB e na integração do AppImage).
+2. A página do canal, ao abrir, tenta `tela://assistir/<canal>` **uma vez**.
+   Com o app, o navegador pergunta "Abrir Tela?" (o usuário pode marcar
+   "sempre"), o app abre no canal e a página mostra "aberto no app".
+3. Sem o app, nada acontece; depois de ~1,5 s com a página ainda em foco, ela
+   segue no navegador e grava `tela.semApp` para não tentar de novo nesse
+   navegador. Um botão **ABRIR NO APP** fica sempre disponível.
+4. No app, o deep link é validado (formato do slug, nada além de assistir) e
+   **nunca** inicia captura nem transmissão.
+5. O app ganha o modo espectador: a rota `Viewer` da web, a `ViewerSession`
+   de hoje, numa janela própria.
+
+Entra como fase **D8 — Assistir no app e abrir pelo link**, depois do D4.
+
+## 15. Decisões do dono (2026-10-01)
 
 | # | Pergunta | Decisão |
 |---|---|---|
@@ -432,6 +467,7 @@ máquina limpa e o aviso do SmartScreen; ICE em redes reais.
 | 6 | Janela compacta abrindo sozinha ao chegar pedido | Sim — mas sem efeito enquanto a sala for aberta (ADR 0028); vale se a aprovação voltar |
 | — | Prioridade | **Qualidade da stream e leveza** são o diferencial (§1) |
 | — | Sala | **Aberta por padrão**; aprovação vira opção (ADR 0028) |
+| — | Link | **Abre no app se instalado, senão no navegador** (§14) |
 
 Em aberto, para o D0: o notebook Fedora tem iGPU ativa além da RTX 4050? O
 próprio D0 responde (`getGPUInfo`), mas saber antes ajuda a montar a matriz.

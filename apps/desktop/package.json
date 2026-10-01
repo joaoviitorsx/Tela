@@ -1,0 +1,15 @@
+{
+  "name": "@tela/desktop",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Tela Desktop (Electron). Por enquanto só a prova técnica D0 — ver docs/desktop/PLANO-desktop.md.",
+  "main": "d0/main.mjs",
+  "scripts": {
+    "d0": "electron d0/main.mjs",
+    "d0:encoder": "electron d0/encoder.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.5.1"
+  }
+}

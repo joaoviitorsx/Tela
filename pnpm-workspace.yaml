@@ -20,3 +20,6 @@ onlyBuiltDependencies:
   # workerd falha só quando alguém tenta rodar o Worker localmente, com uma
   # mensagem que não aponta para cá.
   - workerd
+  # O postinstall do `electron` baixa o binário do Chromium/Electron. Sem ele, o
+  # `apps/desktop` instala e falha só ao abrir, com "Electron failed to install".
+  - electron

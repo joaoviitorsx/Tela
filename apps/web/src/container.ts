@@ -30,13 +30,17 @@ import type { MediaTransport } from './core/ports/media-transport.js';
  * Depois do changeset 001 ele encolheu junto com a arquitetura: não há cliente
  * HTTP porque não há API, e o transporte é um só. Rotas e componentes recebem
  * o que precisam daqui; nenhum deles sabe que WebSocket ou WebRTC existem.
+ *
+ * O app desktop estende este arquivo (`desktop/container.desktop.ts`): as
+ * dependências exportadas abaixo sem uso nas rotas existem para ele montar as
+ * sessões com o MESMO storage, scheduler e identidade — sem duplicar nada.
  */
 const storage = makeLocalStorage();
-const scheduler = makeBrowserScheduler();
+export const scheduler = makeBrowserScheduler();
 const audioCapture = makeBrowserAudioCapture();
-const diagnosticId = (): string => crypto.randomUUID();
+export const diagnosticId = (): string => crypto.randomUUID();
 declare const __TELA_VERSION__: string | null;
-const appVersion = __TELA_VERSION__;
+export const appVersion = __TELA_VERSION__;
 
 /** De onde vem o áudio do jogo depende do sistema. Ver `AudioSourcePicker`. */
 export const platform = makeBrowserPlatform();
@@ -64,7 +68,7 @@ const SIGNAL_URL =
 export const identity = makeIdentity(storage, makeCryptoRandom());
 /** Quem assiste: chave do navegador e apelido (ADR 0025). */
 export const espectador = makeEspectador(storage, makeCryptoRandom());
-const aprovados = makeAprovados(storage);
+export const aprovados = makeAprovados(storage);
 
 export const policy: SlugPolicy = { reserved: RESERVED, offensive: OFFENSIVE };
 
@@ -111,6 +115,9 @@ export function presetSustentavel(): PresetId | null {
   if (!Number.isFinite(lembrado) || lembrado <= 0) return null;
   return suggestPreset(lembrado, 1);
 }
+
+/** A web oferece o app desktop (BAIXAR APP); o próprio app sobrescreve com `false`. */
+export const ofereceApp: boolean = true;
 
 export const shareUrlFor = (slug: string): string => linkDoCanal(window.location.origin, slug);
 

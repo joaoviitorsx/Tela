@@ -1,7 +1,7 @@
 import { type PresetId, type Prioridade } from '@tela/shared';
 import { useState } from 'react';
 import { Abertura } from './components/Abertura.js';
-import { useAbaVisivel } from './react/use-aba-visivel.js';
+import { type FonteDeVisibilidade, useAbaVisivel } from './react/use-aba-visivel.js';
 import { useAbertura } from './react/use-abertura.js';
 import { Broadcast } from './routes/Broadcast.js';
 import { Home } from './routes/Home.js';
@@ -10,11 +10,16 @@ import { Recover } from './routes/Recover.js';
 import { Viewer } from './routes/Viewer.js';
 import { useRoute } from './router.js';
 
-export function App() {
+type Props = {
+  /** Só o app desktop passa: lá é o processo principal que sabe se a janela aparece. */
+  readonly visibilidade?: FonteDeVisibilidade;
+};
+
+export function App({ visibilidade }: Props = {}) {
   const { route, navigate } = useRoute();
   // Pausa as animações CSS com a aba escondida: quem transmite deixa a página
   // atrás do jogo durante horas.
-  useAbaVisivel();
+  useAbaVisivel(visibilidade);
   const [pending, setPending] = useState<{
     slug: string;
     presetId: PresetId;

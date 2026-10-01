@@ -37,7 +37,10 @@ export function useRoute(): { route: Route; navigate: (path: string) => void } {
 
   const navigate = useCallback((path: string) => {
     window.history.pushState({}, '', path);
-    setRoute(parseRoute(path));
+    // Um evento só para toda troca de rota: quem mais observa o caminho (a
+    // moldura do app desktop) ouve o mesmo `popstate` do botão voltar, e o
+    // `setRoute` acontece no ouvinte acima, igual.
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }, []);
 
   return { route, navigate };

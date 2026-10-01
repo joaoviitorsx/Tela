@@ -119,3 +119,24 @@ export function IconSinal({ className }: IconProps) {
     </Pixel>
   );
 }
+
+/** A TV: o item TRANSMITIR do trilho do app. */
+export function IconTv({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M4 0h2v3H4z M10 0h2v3h-2z" opacity="0.7" />
+      <path d="M1 3h14v10H1z M3 5v6h10V5z" fillRule="evenodd" />
+      <path d="M5 13h6v2H5z" />
+    </Pixel>
+  );
+}
+
+/** A chave: o código de recuperação, que é a posse do canal. */
+export function IconChave({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M1 5h6v6H1z M3 7v2h2V7z" fillRule="evenodd" />
+      <path d="M7 7h8v2H7z M13 9h2v3h-2z M10 9h2v2h-2z" />
+    </Pixel>
+  );
+}

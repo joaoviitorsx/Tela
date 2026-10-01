@@ -20,6 +20,7 @@ import type { Vaga } from '../components/SalaVagas.js';
 import {
   createBroadcastSession,
   identity,
+  ofereceApp,
   sondaDeRede,
   volumeTransmissaoPreference,
   audioCue,
@@ -513,7 +514,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             NO AR
             <span className="tabular hidden sm:inline">{tempo}</span>
           </span>
-          <BotoesDoCabecalho aoDiagnostico={() => setDiagAberto(true)} aoBaixarApp={() => setAppAberto(true)} />
+          <BotoesDoCabecalho aoDiagnostico={() => setDiagAberto(true)} aoBaixarApp={ofereceApp ? () => setAppAberto(true) : undefined} />
         </Cabecalho>
 
         {/*

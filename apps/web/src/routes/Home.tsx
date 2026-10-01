@@ -20,6 +20,7 @@ import { Vitrine } from '../components/Vitrine.js';
 import {
   audioCue,
   identity,
+  ofereceApp,
   platform,
   preferences,
   presetSustentavel,
@@ -275,7 +276,7 @@ export function Home({ onStart }: Props) {
       <Cabecalho marcaHref="/">
         <BotoesDoCabecalho
           aoDiagnostico={() => setModal('diagnostico')}
-          aoBaixarApp={() => setModal('app')}
+          aoBaixarApp={ofereceApp ? () => setModal('app') : undefined}
         />
         <LinkTecla href="/recuperar">
           <span className="hidden lg:inline">CÓDIGO DE RECUPERAÇÃO</span>

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { useAbaVisivel } from './use-aba-visivel.js';
+import { type FonteDeVisibilidade, useAbaVisivel } from './use-aba-visivel.js';
 
 afterEach(cleanup);
 
@@ -30,5 +30,28 @@ describe('useAbaVisivel', () => {
     unmount();
 
     expect(document.documentElement.dataset['aba']).toBeUndefined();
+  });
+
+  it('aceita outra fonte: o app desktop é avisado pelo processo principal', () => {
+    let visivel = true;
+    const ouvintes = new Set<() => void>();
+    const fonte: FonteDeVisibilidade = {
+      visivel: () => visivel,
+      assinar: (o) => {
+        ouvintes.add(o);
+        return () => ouvintes.delete(o);
+      },
+    };
+    const { unmount } = renderHook(() => useAbaVisivel(fonte));
+    expect(document.documentElement.dataset['aba']).toBe('visivel');
+
+    act(() => {
+      visivel = false;
+      ouvintes.forEach((o) => o());
+    });
+    expect(document.documentElement.dataset['aba']).toBe('oculta');
+
+    unmount();
+    expect(ouvintes.size).toBe(0);
   });
 });

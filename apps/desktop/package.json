@@ -17,7 +17,7 @@
     "lint": "eslint src",
     "test": "vitest run",
     "start": "electron dist/main/main.js",
-    "dev": "node scripts/dev.mjs",
+    "dev:app": "node scripts/dev.mjs",
     "d0": "electron d0/main.mjs",
     "d0:encoder": "electron d0/encoder.mjs",
     "d0:injecao": "electron d0/injecao.mjs",

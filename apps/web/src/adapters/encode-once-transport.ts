@@ -1,6 +1,7 @@
 import { type EncodingPreset, type Prioridade, bitsPorPixel } from '@tela/shared';
 import { alvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import type { MediaStats, MediaTransport } from '../core/ports/media-transport.js';
+import type { CodificadorUnico, DepsDoCodificador } from './codificador-unico.js';
 import type { AvisoDoWorker } from './injecao-worker.js';
 import { type MeshTransportDeps, makeMeshTransport } from './mesh-transport.js';
 import { CodificadorWebCodecs } from './webcodecs-codificador.js';
@@ -26,6 +27,8 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
 export type EncodeOnceDeps = MeshTransportDeps & {
   /** O worker de injeção. Fábrica: o Vite precisa ver o `new Worker(new URL(...))`. */
   readonly criarWorker: () => Worker;
+  /** Quem codifica. Padrão: WebCodecs sobre a trilha capturada. */
+  readonly criarCodificador?: (deps: DepsDoCodificador) => CodificadorUnico;
 };
 
 /**
@@ -70,11 +73,13 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   worker.postMessage({ tipo: 'porta', porta: canal.port2 }, [canal.port2]);
 
   const isca = criarIsca();
-  const codificador = new CodificadorWebCodecs(
-    (chunk, transferir) => canal.port1.postMessage(chunk, transferir),
-    () => performance.now(),
-    isca.tique,
-  );
+  const criarCodificador =
+    deps.criarCodificador ?? ((d: DepsDoCodificador) => new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar));
+  const codificador = criarCodificador({
+    entregar: (chunk, transferir) => canal.port1.postMessage(chunk, transferir),
+    aoCapturar: isca.tique,
+    aoMudarFonte: () => recalcular(),
+  });
   canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
     if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo);
     else codificador.definirAtraso(m.data.quadros);
@@ -116,7 +121,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
 
   const alvo = () => {
     if (preset === null) return null;
-    const a = alvoDoCodificador({ preset, orcamento, prioridade, fonte, piorEstimativa });
+    const a = alvoDoCodificador({ preset, orcamento, prioridade, fonte: codificador.fonte() ?? fonte, piorEstimativa });
     limitadoPelaEstimativa = a.limitadoPelaEstimativa;
     return a;
   };
@@ -187,7 +192,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         // O WebCodecs não expõe QP; o tempo por quadro é a leitura de carga.
         qp: null,
         msPorQuadro: c.msPorQuadro,
-        encoderImplementation: c.hardware === null ? 'WebCodecs' : c.hardware ? 'WebCodecs·hardware' : 'WebCodecs·software',
+        encoderImplementation: c.implementacao,
         /*
           Os motivos que as malhas leem, com a mesma semântica do Chromium:
           `cpu` quando o encoder não dá conta, `bandwidth` quando a estimativa

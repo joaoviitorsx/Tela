@@ -1,4 +1,5 @@
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
+import type { CodificadorUnico, EstatisticasDoCodificador } from './codificador-unico.js';
 import type { ChunkInjetado } from './injecao-worker.js';
 
 /**
@@ -27,24 +28,7 @@ const INTERVALO_MINIMO_DE_CHAVE_MS = 500;
 /** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */
 const ATRASO_TOLERADO = 2;
 
-export type EstatisticasDoCodificador = {
-  readonly width: number;
-  readonly height: number;
-  /** Quadros codificados por segundo, medidos desde a última leitura. */
-  readonly fps: number;
-  /** Tempo médio entre entregar o quadro ao encoder e receber o resultado. */
-  readonly msPorQuadro: number | null;
-  readonly bitrateAlvo: number;
-  /** `true`/`false` quando o navegador diz; `null` quando não dá para afirmar. */
-  readonly hardware: boolean | null;
-  /** O encoder não está dando conta (fila própria cheia): é CPU/GPU, não rede. */
-  readonly sobrecarregado: boolean;
-  readonly idrs: number;
-  /** Pedidos de quadro-chave recebidos, por motivo — diagnóstico. */
-  readonly pedidosDeChave: Readonly<Record<string, number>>;
-};
-
-export class CodificadorWebCodecs {
+export class CodificadorWebCodecs implements CodificadorUnico {
   private encoder: VideoEncoder | null = null;
   private leitor: ReadableStreamDefaultReader<VideoFrame> | null = null;
   private alvo: AlvoDoCodificador | null = null;
@@ -134,7 +118,14 @@ export class CodificadorWebCodecs {
       sobrecarregado,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
+      implementacao:
+        this.hardware === null ? 'WebCodecs' : this.hardware ? 'WebCodecs·hardware' : 'WebCodecs·software',
     };
+  }
+
+  /** A trilha diz o tamanho da captura. */
+  fonte(): null {
+    return null;
   }
 
   parar(): void {

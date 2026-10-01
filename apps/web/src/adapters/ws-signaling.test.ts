@@ -197,3 +197,16 @@ it('transmissor recebe pedidos e responde com admit/deny', async () => {
   ]);
   channel.close();
 });
+
+it('sala aberta: sem apelido nem chave, o hello não manda campos vazios (ADR 0028)', async () => {
+  vi.stubGlobal('WebSocket', FakeSocket);
+  vi.stubGlobal('window', { setTimeout, clearTimeout });
+  const channel = makeWsSignaling('ws://test/signal');
+  void channel.watch('joao', { nome: '', chave: '' }).catch(() => undefined);
+  const socket = FakeSocket.created[0]!;
+  socket.emit('open');
+  const hello = JSON.parse(socket.sent[0]!);
+  expect(hello).not.toHaveProperty('name');
+  expect(hello).not.toHaveProperty('viewerKey');
+  channel.close();
+});

@@ -18,8 +18,8 @@ type Props = {
  * A faixa do link: o que o transmissor mais precisa e mais faz — copiar e
  * mandar para os amigos.
  *
- * O link é só o nome do canal, e dá para ditar na call: quem entra é quem
- * você aceitar (ADR 0025/0026), não quem tem um segredo.
+ * O link é só o nome do canal, e dá para ditar na call: quem tem o link entra
+ * direto (ADR 0026/0028).
  */
 export function FaixaLink({
   link,
@@ -46,7 +46,7 @@ export function FaixaLink({
       <div className="flex min-w-[220px] flex-1 flex-col justify-center gap-1 px-4 py-2.5">
         <span className="flex items-center gap-1.5 font-[family-name:var(--font-pixel)] text-[11px] text-ok">
           <IconOk className="h-3 w-3" />
-          LINK NO AR. QUEM ABRIR PEDE PARA ENTRAR
+          LINK NO AR. QUEM ABRIR JÁ ESTÁ ASSISTINDO
         </span>
         <span className="numeral min-w-0 truncate text-[clamp(24px,3vw,32px)] text-accent-hi [text-shadow:0_0_10px_rgb(242_169_59_/_0.4)]">
           {endereco}

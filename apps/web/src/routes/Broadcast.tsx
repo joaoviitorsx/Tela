@@ -676,15 +676,15 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             </PainelOsd>
 
             {/*
-              Quem entra: o link é só o nome (ADR 0026), então a porta é a
-              aprovação. Desconectar todos tira quem está dentro E esquece os
-              aceitos — quem voltar pede de novo.
+              Quem entra: sala aberta (ADR 0028) — quem tem o link assiste.
+              Desconectar todos tira quem está dentro; quem tiver o link pode
+              voltar.
             */}
             <PainelOsd titulo="SALA ▸ QUEM ENTRA">
               <div className="flex flex-col gap-3 p-3.5">
                 <p className="m-0 text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
-                  Quem abre o link pede para entrar, e você aceita cada pessoa. Quem você aceitou
-                  volta sem pedir até você desconectar todos.
+                  Quem tem o link entra direto, até {vivo.maxPeers} pessoas. Mande só para quem
+                  você quer: desconectar todos tira todo mundo, mas quem tiver o link pode voltar.
                 </p>
                 {vivo.peers.length > 0 && (
                   <div className="flex flex-wrap gap-2">

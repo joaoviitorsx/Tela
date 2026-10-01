@@ -343,8 +343,9 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       return new Promise<ChannelOpened>((resolve, reject) => {
         const hello: ClientMessage = {
           type: 'watch', protocol: PROTOCOL_VERSION, slug,
-          name: entrada.nome,
-          viewerKey: entrada.chave,
+          // Vazios não vão: sala aberta não pede nenhum dos dois (ADR 0028).
+          ...(entrada.nome.trim() === '' ? {} : { name: entrada.nome }),
+          ...(entrada.chave === '' ? {} : { viewerKey: entrada.chave }),
           ...(entrada.participantId === undefined ? {} : { participantId: entrada.participantId }),
           ...(entrada.attemptId === undefined ? {} : { attemptId: entrada.attemptId }),
         };

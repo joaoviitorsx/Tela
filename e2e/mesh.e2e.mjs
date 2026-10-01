@@ -16,8 +16,9 @@ import { chromium } from 'playwright';
 const CHROME = process.env.CHROME ?? chromium.executablePath();
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const SLUG = process.env.SLUG ?? 'joao';
-// Protocolo v4: o link é só o nome (ADR 0026) e cada espectador pede para
-// entrar (ADR 0025).
+// Protocolo v5: o link é só o nome (ADR 0026) e a sala é aberta por padrão —
+// quem tem o link entra direto (ADR 0028). A aprovação (ADR 0025) segue
+// coberta pela suíte de conformidade do servidor.
 
 const ok = (cond, msg) => {
   console.log(`${cond ? '  ok  ' : ' FALHA'} ${msg}`);
@@ -158,31 +159,11 @@ ok(resultado.hosted, 'transmissor reivindicou o canal pelo signaling real');
 ok(resultado.contentHint === 'motion', 'contentHint=motion aplicado na trilha');
 ok(resultado.temAudio, 'trilha de áudio publicada depois do vídeo');
 
-// O espectador já estava na página, em polling. Ele acha a transmissão sozinho
-// e PEDE para entrar (ADR 0025): nada de vídeo até o transmissor aceitar.
-console.log('   ...esperando o pedido do espectador chegar (polling de 5s)');
-let pedido = null;
-for (let i = 0; i < 20 && pedido === null; i += 1) {
-  await viewer.waitForTimeout(1000);
-  pedido = await host.evaluate(() => window.__pedidos.find((p) => p.nome === 'viewer') ?? null);
-}
-ok(pedido !== null, `transmissor recebeu o pedido com o apelido (${JSON.stringify(pedido)})`);
-ok(
-  typeof pedido?.impressao === 'string' && pedido.impressao.length === 64,
-  'o pedido traz a impressão (sha256) da chave, não a chave',
-);
-const esperando = await viewer.textContent('body');
-ok(esperando.includes('pedido enviado'), `espectador vê que o pedido está com o transmissor (${JSON.stringify(esperando.slice(0, 60))})`);
-const semVideoAntes = await viewer.evaluate(() => !document.querySelector('video'));
-ok(semVideoAntes, 'antes do aceite, nenhum vídeo');
-const naMalhaAntes = await host.evaluate(() => window.__transport.peers().length);
-ok(naMalhaAntes === 0, `pedido não ocupa vaga na malha (${naMalhaAntes})`);
-await host.evaluate((peerId) => {
-  window.__transport.responderPedido(peerId, true);
-  window.__autoAceitar = true;
-}, pedido?.peerId ?? '');
-
-console.log('   ...esperando o espectador conectar depois do aceite');
+// O espectador já estava na página, em polling: acha a transmissão sozinho e
+// entra direto, sem formulário nem pedido (sala aberta, ADR 0028).
+const semFormulario = !(await viewer.textContent('body')).includes('SEU APELIDO');
+ok(semFormulario, 'sala aberta: ninguém pergunta apelido antes de entrar');
+console.log('   ...esperando o espectador conectar sozinho (polling de 5s)');
 let conectou = false;
 for (let i = 0; i < 20; i += 1) {
   await viewer.waitForTimeout(1000);
@@ -434,53 +415,21 @@ console.log('\n3b. Grafo de ganho em Chrome real (TELA-009)');
   ok(grafo.mudoNoFallback && grafo.voltou && !grafo.ativoFallback, 'sem Web Audio, o mudo desliga a trilha crua');
 }
 
-console.log('\n3c. Link só com o nome (ADR 0026): quem abre pede, e link antigo com #k= também');
+console.log('\n3c. Link antigo com #k= ainda abre, e entra direto (ADR 0026/0028)');
 {
-  await host.evaluate(() => { window.__autoAceitar = false; });
-  const soNome = await newPage('so-nome');
-  await soNome.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
-  const antigo = await newPage('link-antigo');
+  const antigo = await newPage('link-antigo', { apelido: null });
   await antigo.goto(`${WEB}/${SLUG}#k=${'x'.repeat(22)}`, { waitUntil: 'domcontentloaded' });
-  await soNome.waitForTimeout(3000);
-  const t1 = await soNome.textContent('body');
-  ok(t1.includes('pedido enviado'), `link só com o nome chega ao pedido (${JSON.stringify(t1.slice(0, 60))})`);
-  const t2 = await antigo.textContent('body');
-  ok(t2.includes('pedido enviado'), `link antigo com #k= é aceito e o fragmento ignorado (${JSON.stringify(t2.slice(0, 60))})`);
-  const nomes = await host.evaluate(() => window.__pedidos.map((p) => p.nome));
-  ok(nomes.includes('so-nome') && nomes.includes('link-antigo'), `os dois pedidos chegaram ao transmissor (${nomes.join(', ')})`);
-  const naMalhaAinda = await host.evaluate(() => window.__transport.peers().length);
-  ok(naMalhaAinda === 1, `pedido sem resposta não ocupa vaga na malha (${naMalhaAinda})`);
-  await soNome.close();
-  await antigo.close();
-  await host.evaluate(() => { window.__autoAceitar = true; });
-}
-
-console.log('\n3d. Aprovação manual: apelido pedido uma vez, e recusa é estado próprio (ADR 0025)');
-{
-  const novo = await newPage('sem-apelido', { apelido: null });
-  await novo.goto(`${WEB}/${SLUG}`, { waitUntil: 'domcontentloaded' });
-  await novo.waitForTimeout(1500);
-  const form = await novo.textContent('body');
-  ok(form.includes('SEU APELIDO'), `sem apelido guardado, pergunta antes de pedir (${JSON.stringify(form.slice(0, 60))})`);
-  await host.evaluate(() => { window.__autoAceitar = false; });
-  await novo.fill('input', 'ana');
-  await novo.click('button:has-text("PEDIR PARA ASSISTIR")');
-  let pedidoAna = null;
-  for (let i = 0; i < 10 && pedidoAna === null; i += 1) {
-    await novo.waitForTimeout(500);
-    pedidoAna = await host.evaluate(() => window.__pedidos.find((p) => p.nome === 'ana') ?? null);
+  let entrou = false;
+  for (let i = 0; i < 15 && !entrou; i += 1) {
+    await antigo.waitForTimeout(1000);
+    entrou = await antigo.evaluate(() => {
+      const v = document.querySelector('video');
+      return Boolean(v && v.srcObject && v.videoWidth > 0);
+    });
   }
-  ok(pedidoAna !== null, 'o apelido digitado chega ao transmissor');
-  const guardado = await novo.evaluate(() => localStorage.getItem('tela.apelido'));
-  ok(guardado === 'ana', 'o apelido fica guardado para a próxima vez');
-  await host.evaluate((peerId) => window.__transport.responderPedido(peerId, false), pedidoAna?.peerId ?? '');
-  await novo.waitForTimeout(1500);
-  const recusado = await novo.textContent('body');
-  ok(recusado.includes('pedido recusado'), `recusado vê estado próprio (${JSON.stringify(recusado.slice(0, 60))})`);
-  const naMalhaRecusa = await host.evaluate(() => window.__transport.peers().length);
-  ok(naMalhaRecusa === 1, `recusado não ocupou vaga (${naMalhaRecusa})`);
-  await host.evaluate(() => { window.__autoAceitar = true; });
-  await novo.close();
+  ok(entrou, 'link antigo com #k= entra e recebe vídeo, sem pedir apelido');
+  await antigo.close();
+  await viewer.waitForTimeout(1500);
 }
 
 console.log('\n4. Teto de espectadores é aplicado de verdade');

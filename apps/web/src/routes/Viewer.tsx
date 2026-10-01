@@ -186,7 +186,13 @@ export function Viewer({ slug }: Props) {
    */
   const [nome, setNome] = useState<string | null>(() => espectador.apelido());
   const [rascunho, setRascunho] = useState(() => espectador.apelido() ?? '');
-  const precisaNome = nome === null;
+  /*
+    Sala aberta (ADR 0028): ninguém pergunta o apelido antes de entrar. O
+    formulário só volta a aparecer se a pessoa pedir para trocá-lo numa sala
+    com aprovação (ADR 0025), que hoje está desligada.
+  */
+  const [editandoNome, setEditandoNome] = useState(false);
+  const precisaNome = editandoNome;
 
   useEffect(() => {
     if (precisaNome) return;
@@ -351,7 +357,10 @@ export function Viewer({ slug }: Props) {
           pronto={apelidoValido(rascunho) !== null}
           aoEnviar={() => {
             const guardado = espectador.lembrarApelido(rascunho);
-            if (guardado !== null) setNome(guardado);
+            if (guardado !== null) {
+              setNome(guardado);
+              setEditandoNome(false);
+            }
           }}
         />
       </main>
@@ -394,7 +403,7 @@ export function Viewer({ slug }: Props) {
             ? {
                 nome: state.nome,
                 // Trocar o apelido refaz o pedido com o nome novo.
-                acaoSecundaria: { rotulo: 'trocar apelido', aoClicar: () => setNome(null) },
+                acaoSecundaria: { rotulo: 'trocar apelido', aoClicar: () => setEditandoNome(true) },
               }
             : {})}
           diagnostico={

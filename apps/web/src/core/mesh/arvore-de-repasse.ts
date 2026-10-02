@@ -61,7 +61,12 @@ export const SUBIDA_A_CADA_MS = 10_000;
 export const FOLGA_PARA_SUBIR = 1.25;
 /** Abaixo disto × o bitrate, a pior aresta não aguenta: devolve um filho. */
 export const FOLGA_PARA_DESCER = 0.85;
-/** Falhas seguidas que tiram um repassador do jogo por um tempo. */
+/**
+ * Filhos DIFERENTES que falharam com o mesmo repassador e o tiram do jogo por
+ * um tempo. Uma aresta que não fecha costuma ser culpa do par (o NAT de um
+ * dos dois), não do repassador: o filho passa a evitar aquele pai, e o pai
+ * só sai quando falha com dois filhos distintos.
+ */
 export const FALHAS_PARA_BLOQUEAR = 2;
 export const BLOQUEIO_MS = 60_000;
 /**
@@ -88,7 +93,10 @@ type Espectador = {
   ultimaSubida: number;
   /** Última vez que a árvore deste repassador mudou: um filho entrou ou confirmou. */
   mudouEm: number;
-  falhas: number;
+  /** Como repassador: filhos que falharam com ele, e quando. */
+  readonly falhas: Map<string, number>;
+  /** Como filho: pais com quem a aresta falhou, e até quando evitá-los. */
+  readonly evitar: Map<string, number>;
   bloqueadoAte: number;
 };
 
@@ -160,7 +168,8 @@ export class ArvoreDeRepasse {
             relatorioEm: 0,
             ultimaSubida: 0,
             mudouEm: 0,
-            falhas: 0,
+            falhas: new Map(),
+            evitar: new Map(),
             bloqueadoAte: 0,
           });
           return;
@@ -187,7 +196,7 @@ export class ArvoreDeRepasse {
         // O primeiro filho de verdade conta como sucesso do repassador.
         const pai = this.espectadores.get(e.pai);
         if (pai !== undefined) {
-          pai.falhas = 0;
+          pai.falhas.clear();
           pai.mudouEm = agora;
         }
         this.deps.pausarVideo(de, true);
@@ -198,7 +207,7 @@ export class ArvoreDeRepasse {
         if (e === undefined || e.pai === null) return;
         const pai = this.espectadores.get(e.pai);
         this.devolver(e, true);
-        if (pai !== undefined) this.registrarFalha(pai, agora);
+        if (pai !== undefined) this.registrarFalha(pai, e, agora);
         return;
       }
       case 'via': {
@@ -243,7 +252,7 @@ export class ArvoreDeRepasse {
       if (e.pai === null || e.confirmado || agora - e.ligadoEm < PRAZO_DO_FILHO_MS) continue;
       const pai = this.espectadores.get(e.pai);
       this.devolver(e, true);
-      if (pai !== undefined) this.registrarFalha(pai, agora);
+      if (pai !== undefined) this.registrarFalha(pai, e, agora);
     }
 
     if (this.precisa()) this.ligarUm(agora);
@@ -267,6 +276,7 @@ export class ArvoreDeRepasse {
   private ligarUm(agora: number): void {
     const assentado = (e: Espectador) => agora - e.desde >= ESTABILIZAR_MS;
     const livre = (e: Espectador) => agora >= e.bloqueadoAte;
+    const evita = (filho: Espectador, pai: Espectador) => (filho.evitar.get(pai.id) ?? 0) > agora;
 
     // Folhas candidatas: diretas, sem filhos, sem vaga de repassador. Primeiro
     // quem não pode repassar (não vai servir para outra coisa).
@@ -274,27 +284,36 @@ export class ArvoreDeRepasse {
       .filter((e) => e.pai === null && e.k === 0 && assentado(e))
       .sort((a, b) => Number(a.podeRepassar) - Number(b.podeRepassar) || (b.rttMs ?? 0) - (a.rttMs ?? 0));
     if (folhas.length === 0) return;
+    const folhaPara = (pai: Espectador) => folhas.find((f) => f.id !== pai.id && !evita(f, pai));
 
     const porRtt = (a: Espectador, b: Espectador) =>
       (a.rttMs ?? Number.POSITIVE_INFINITY) - (b.rttMs ?? Number.POSITIVE_INFINITY);
-    let pai = [...this.espectadores.values()]
-      .filter((e) => e.k > e.filhos.size && livre(e))
-      .sort(porRtt)[0];
-
-    if (pai === undefined) {
-      // Ninguém com vaga: promove o candidato de menor RTT, se sobrar folha
-      // para ele (promover alguém para ser pai de ninguém não alivia nada).
-      const candidato = [...this.espectadores.values()]
-        .filter((e) => e.podeRepassar && e.pai === null && e.k === 0 && assentado(e) && livre(e))
-        .sort(porRtt)[0];
-      if (candidato === undefined || !folhas.some((f) => f.id !== candidato.id)) return;
-      candidato.k = 1;
-      candidato.ultimaSubida = agora;
-      pai = candidato;
+    const comVaga = [...this.espectadores.values()].filter((e) => e.k > e.filhos.size && livre(e)).sort(porRtt);
+    for (const pai of comVaga) {
+      const filho = folhaPara(pai);
+      if (filho !== undefined) {
+        this.ligar(pai, filho, agora);
+        return;
+      }
     }
 
-    const filho = folhas.find((f) => f.id !== pai.id);
-    if (filho === undefined) return;
+    // Ninguém com vaga para quem sobrou: promove o candidato de menor RTT que
+    // tenha alguma folha que não o evite (promover alguém para ser pai de
+    // ninguém não alivia nada).
+    const candidatos = [...this.espectadores.values()]
+      .filter((e) => e.podeRepassar && e.pai === null && e.k === 0 && assentado(e) && livre(e))
+      .sort(porRtt);
+    for (const candidato of candidatos) {
+      const filho = folhaPara(candidato);
+      if (filho === undefined) continue;
+      candidato.k = 1;
+      candidato.ultimaSubida = agora;
+      this.ligar(candidato, filho, agora);
+      return;
+    }
+  }
+
+  private ligar(pai: Espectador, filho: Espectador, agora: number): void {
     filho.pai = pai.id;
     filho.confirmado = false;
     filho.ligadoEm = agora;
@@ -354,18 +373,18 @@ export class ArvoreDeRepasse {
     e.k = 0;
   }
 
-  private registrarFalha(e: Espectador, agora: number): void {
-    e.falhas += 1;
-    if (e.falhas < FALHAS_PARA_BLOQUEAR) {
-      // Religar na hora repetiria a mesma aresta com o mesmo ICE: um prazo de
-      // espera antes de tentar de novo.
-      e.k = Math.max(e.filhos.size, Math.min(e.k, 1));
-      e.bloqueadoAte = agora + PRAZO_DO_FILHO_MS;
-      return;
-    }
-    this.aposentar(e);
-    e.falhas = 0;
-    e.bloqueadoAte = agora + BLOQUEIO_MS;
+  /**
+   * A aresta entre `pai` e `filho` falhou. O filho evita aquele pai por um
+   * tempo; o pai só sai do jogo quando falha com filhos diferentes.
+   */
+  private registrarFalha(pai: Espectador, filho: Espectador, agora: number): void {
+    filho.evitar.set(pai.id, agora + BLOQUEIO_MS);
+    for (const [id, quando] of pai.falhas) if (agora - quando > BLOQUEIO_MS) pai.falhas.delete(id);
+    pai.falhas.set(filho.id, agora);
+    if (pai.falhas.size < FALHAS_PARA_BLOQUEAR) return;
+    this.aposentar(pai);
+    pai.falhas.clear();
+    pai.bloqueadoAte = agora + BLOQUEIO_MS;
   }
 
   private anunciar(): void {

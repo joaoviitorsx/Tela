@@ -178,27 +178,63 @@ describe('ArvoreDeRepasse — falhas', () => {
     expect(t.arvore.paiDe('f')).toBeNull();
   });
 
-  it('filho que não confirma no prazo volta direto; duas falhas bloqueiam o repassador', () => {
-    const t = ligado();
-    t.passa(PRAZO_DO_FILHO_MS);
-    t.arvore.tique();
-    expect(t.arvore.paiDe('f')).toBeNull();
-    // Nunca pausou: nada a despausar.
-    expect(t.pausas).toEqual([]);
-    // Espera um prazo, religa e falha de novo.
-    t.passa(PRAZO_DO_FILHO_MS);
+  it('aresta que não fecha: o filho evita aquele pai e o pai tenta outro filho', () => {
+    const t = montar();
+    t.arvore.forcar();
+    t.entra('r', true, 10);
+    t.entra('f', false, 30);
+    t.entra('g', false, 30);
+    t.passa(ESTABILIZAR_MS);
     t.arvore.tique();
     expect(t.arvore.paiDe('f')).toBe('r');
+
     t.passa(PRAZO_DO_FILHO_MS);
     t.arvore.tique();
+    // Nunca pausou: nada a despausar. E no mesmo tique o pai tenta outro filho.
+    expect(t.pausas).toEqual([]);
     expect(t.arvore.paiDe('f')).toBeNull();
+    expect(t.arvore.paiDe('g')).toBe('r');
+  });
+
+  it('falhar com dois filhos diferentes tira o repassador por um tempo', () => {
+    const t = montar();
+    t.arvore.forcar();
+    t.entra('r', true, 10);
+    t.entra('f', false, 30);
+    t.entra('g', false, 30);
+    t.passa(ESTABILIZAR_MS);
+    t.arvore.tique();
+    t.passa(PRAZO_DO_FILHO_MS);
+    t.arvore.tique(); // f falha, g entra
+    t.passa(PRAZO_DO_FILHO_MS);
+    t.arvore.tique(); // g falha: duas falhas distintas
+    expect(t.arvore.paiDe('g')).toBeNull();
     expect(t.arvore.vagas()).toBe(0);
+
     t.passa(BLOQUEIO_MS - 1);
     t.arvore.tique();
     expect(t.arvore.paiDe('f')).toBeNull();
+    expect(t.arvore.paiDe('g')).toBeNull();
     t.passa(1);
     t.arvore.tique();
+    // Passou o bloqueio e o "evitar" de f (o mais antigo): tenta de novo.
     expect(t.arvore.paiDe('f')).toBe('r');
+  });
+
+  it('um filho que evita o único repassador não impede que outro candidato seja promovido', () => {
+    const t = montar();
+    t.arvore.forcar();
+    t.entra('r', true, 10);
+    t.entra('s', true, 20);
+    t.entra('f', false, 30);
+    t.passa(ESTABILIZAR_MS);
+    t.arvore.tique();
+    expect(t.arvore.paiDe('f')).toBe('r');
+    t.passa(PRAZO_DO_FILHO_MS);
+    t.arvore.tique();
+    // f evita r. r tem vaga mas só serve a s (repassável, sem filhos); s vira filho de r.
+    expect(t.arvore.paiDe('f')).toBeNull();
+    expect(t.arvore.paiDe('s')).toBe('r');
   });
 
   it('o repassador sai: os filhos voltam ao anfitrião sem mensagem para quem saiu', () => {

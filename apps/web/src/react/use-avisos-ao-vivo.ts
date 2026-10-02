@@ -1,3 +1,4 @@
+import { PRESETS, type PresetId } from '@tela/shared';
 import { useMemo } from 'react';
 import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { BroadcastState } from '../core/media/broadcast-session.js';
@@ -5,6 +6,8 @@ import type { BroadcastState } from '../core/media/broadcast-session.js';
 type EstadoAoVivo = Extract<BroadcastState, { status: 'live' }>;
 
 export type AvisoAoVivo = { readonly chave: string; readonly texto: string };
+
+const rotuloDoDegrau = (id: PresetId): string => PRESETS[id].label.replace(' econômico', ' eco');
 
 /**
  * Só os estados do som que pedem ação de quem transmite.
@@ -63,15 +66,23 @@ export function montarAvisos(estado: EstadoAoVivo, avisoMomentaneo: string | nul
     },
     estado.presetForced && {
       chave: 'degradado',
+      // Diz PARA O QUÊ e por quê (C-06): a resposta não fica duas camadas abaixo, no diagnóstico.
       texto:
         estado.motivoDegradacao === 'cpu'
-          ? 'Qualidade reduzida: o encode está pesando na máquina. Confira se a aceleração por hardware está ligada em chrome://gpu; em software, o jogo perde quadros.'
+          ? `Sua máquina não sustenta ${rotuloDoDegrau(estado.presetEscolhido)}: enviando ${rotuloDoDegrau(estado.presetId)}. Confira se a aceleração por hardware está ligada em chrome://gpu; em software, o jogo perde quadros.`
           : estado.motivoDegradacao === 'bandwidth'
-            ? 'Qualidade reduzida: sua subida não comporta o que estava configurado. Volta sozinha quando a rede sobrar.'
-            : 'Qualidade reduzida automaticamente.',
+            ? `Seu upload não sustenta ${rotuloDoDegrau(estado.presetEscolhido)}: enviando ${rotuloDoDegrau(estado.presetId)}. Volta sozinho quando a rede sobrar.`
+            : `Qualidade reduzida: enviando ${rotuloDoDegrau(estado.presetId)}. Volta sozinha quando der.`,
     },
     !estado.presetForced &&
-      avisoMomentaneo !== null && { chave: 'aviso', texto: avisoMomentaneo },
+      avisoMomentaneo !== null && {
+        chave: 'aviso',
+        // Diz o que está saindo agora (C-06), não só que algo aperta.
+        texto:
+          estado.stats !== null && estado.stats.width > 0
+            ? `${avisoMomentaneo}: enviando ${estado.stats.width}×${estado.stats.height}. Volta sozinho quando der.`
+            : avisoMomentaneo,
+      },
   ];
   return avisos.filter((a): a is AvisoAoVivo => a !== false);
 }

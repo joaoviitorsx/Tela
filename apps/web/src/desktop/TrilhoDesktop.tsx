@@ -1,4 +1,4 @@
-import { IconChave, IconEngrenagem, IconOlho, IconTv } from '../components/Icon.js';
+import { IconChave, IconEngrenagem, IconOlho, IconSinal, IconTv } from '../components/Icon.js';
 import { Led } from '../components/Led.js';
 
 export type ItemDoTrilho = 'transmitir' | 'assistir' | 'canal';
@@ -10,6 +10,8 @@ type Props = {
   readonly aoEscolher: (item: ItemDoTrilho) => void;
   /** AJUSTES: um painel, não uma rota — por isso responde mesmo ao vivo. Sem ele, o item não aparece. */
   readonly aoAjustes?: () => void;
+  /** DIAGNÓSTICO: também um painel, não uma rota — responde ao vivo (D-04). */
+  readonly aoDiagnostico?: () => void;
 };
 
 const ITENS: ReadonlyArray<{
@@ -45,12 +47,24 @@ const ID_DICA = 'trilho-dica';
  *
  * Rótulos em 10px, num trilho de 104px: em 9px num trilho de 76px o
  * "TRANSMITIR" saía cortado (D-01).
+ *
+ * # Janela estreita (D-05)
+ *
+ * Abaixo de 760px de largura o trilho encolhe para 56px e fica só com os
+ * ícones: o nome continua no `title` e para o leitor de tela (`sr-only`), e o
+ * conteúdo ganha os 48px de volta.
+ *
+ * # DIAG (D-04)
+ *
+ * O cabeçalho do site não existe no app; o DIAGNÓSTICO que ele trazia mora
+ * aqui, junto de AJUSTES, e abre o mesmo painel por `painel-diagnostico`.
  */
-export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes }: Props) {
+const ESTREITO = 'max-[759px]';
+export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes, aoDiagnostico }: Props) {
   return (
     <nav
       aria-label="Tela Desktop"
-      className="flex w-[104px] shrink-0 flex-col items-center gap-2 border-r-2 border-line bg-bar px-1 py-3"
+      className={`flex w-[104px] ${ESTREITO}:w-14 shrink-0 flex-col items-center gap-2 border-r-2 border-line bg-bar px-1 py-3`}
     >
       {ITENS.map(({ id, rotulo, nome, Icone }) => {
         const atual = id === ativo;
@@ -73,7 +87,7 @@ export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes }: Props) 
             ].join(' ')}
           >
             {noAr ? <Led pisca /> : <Icone className="h-5 w-5" />}
-            {noAr ? 'NO AR' : rotulo}
+            <span className={`${ESTREITO}:sr-only`}>{noAr ? 'NO AR' : rotulo}</span>
           </button>
         );
       })}
@@ -82,10 +96,21 @@ export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes }: Props) 
         {travado && (
           <p
             id={ID_DICA}
-            className="m-0 px-0.5 text-center font-[family-name:var(--font-pixel)] text-[10px] leading-snug text-muted"
+            className={`m-0 px-0.5 text-center font-[family-name:var(--font-pixel)] text-[10px] leading-snug text-muted ${ESTREITO}:sr-only`}
           >
             NO AR. ENCERRE PARA SAIR DAQUI
           </p>
+        )}
+        {aoDiagnostico !== undefined && (
+          <button
+            type="button"
+            title="Diagnóstico de rede e conexões"
+            onClick={aoDiagnostico}
+            className="tecla min-h-[64px] w-full flex-col gap-1.5 px-0 text-[10px]"
+          >
+            <IconSinal className="h-5 w-5" />
+            <span className={`${ESTREITO}:sr-only`}>DIAG</span>
+          </button>
         )}
         {aoAjustes !== undefined && (
           <button
@@ -95,7 +120,7 @@ export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes }: Props) 
             className="tecla min-h-[64px] w-full flex-col gap-1.5 px-0 text-[10px]"
           >
             <IconEngrenagem className="h-5 w-5" />
-            AJUSTES
+            <span className={`${ESTREITO}:sr-only`}>AJUSTES</span>
           </button>
         )}
       </div>

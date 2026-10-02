@@ -38,7 +38,17 @@ export class FakePeerConnection {
 
   readonly senders: FakeSender[] = [];
   readonly candidatesAdded: RTCIceCandidateInit[] = [];
-  readonly transceivers: { sender: FakeSender; setCodecPreferences?: unknown }[] = [];
+  readonly transceivers: {
+    sender: FakeSender;
+    setCodecPreferences?: unknown;
+    extensoes: { uri: string; direction: string }[];
+    getHeaderExtensionsToNegotiate: () => { uri: string; direction: string }[];
+    setHeaderExtensionsToNegotiate: (e: { uri: string; direction: string }[]) => void;
+  }[] = [];
+  /** O que `getReceivers()` devolve; o teste de captura preenche. */
+  receivers: unknown[] = [];
+  /** Linhas de `getStats()`. */
+  statsLinhas: Record<string, unknown>[] = [];
 
   onnegotiationneeded: (() => void) | null = null;
   onicecandidate: ((event: { candidate: RTCIceCandidate | null }) => void) | null = null;
@@ -60,7 +70,18 @@ export class FakePeerConnection {
   addTrack(track: MediaStreamTrack): FakeSender {
     const sender = new FakeSender(track);
     this.senders.push(sender);
-    this.transceivers.push({ sender });
+    const t = {
+      sender,
+      extensoes: [
+        { uri: 'urn:ietf:params:rtp-hdrext:toffset', direction: 'sendrecv' },
+        { uri: 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time', direction: 'stopped' },
+      ],
+      getHeaderExtensionsToNegotiate: () => t.extensoes.map((e) => ({ ...e })),
+      setHeaderExtensionsToNegotiate: (e: { uri: string; direction: string }[]) => {
+        t.extensoes = e;
+      },
+    };
+    this.transceivers.push(t);
     queueMicrotask(() => this.onnegotiationneeded?.());
     return sender;
   }
@@ -69,7 +90,7 @@ export class FakePeerConnection {
     return this.senders;
   }
   getReceivers(): unknown[] {
-    return [];
+    return this.receivers;
   }
   getTransceivers(): { sender: FakeSender }[] {
     return this.transceivers;
@@ -101,7 +122,7 @@ export class FakePeerConnection {
   }
 
   async getStats(): Promise<RTCStatsReport> {
-    return statsReport([]);
+    return statsReport(this.statsLinhas);
   }
 
   close(): void {

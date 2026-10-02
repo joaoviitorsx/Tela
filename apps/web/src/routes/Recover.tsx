@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
 import { Botao } from '../components/Botao.js';
-import { Cabecalho } from '../components/Cabecalho.js';
 import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
 import { VidroCrt } from '../components/EfeitosTv.js';
 import { PainelOsd } from '../components/PainelOsd.js';
@@ -10,6 +9,7 @@ import { mascararCodigo } from '../core/identity/mascara.js';
 import { useCopia } from '../react/use-copia.js';
 import { useDialogo } from '../react/use-dialogo.js';
 import { useRevelar } from '../react/use-revelar.js';
+import { CabecalhoDaRota } from './CabecalhoDaRota.js';
 
 type Props = { readonly onBack: () => void };
 
@@ -57,9 +57,9 @@ export function Recover({ onBack }: Props) {
   return (
     <div className="flex min-h-dvh flex-col bg-void">
       <VidroCrt />
-      <Cabecalho marcaHref="/">
+      <CabecalhoDaRota marcaHref="/">
         <Botao onClick={onBack}>VOLTAR PARA O INÍCIO</Botao>
-      </Cabecalho>
+      </CabecalhoDaRota>
 
       <main className="mx-auto flex w-full max-w-[980px] flex-1 flex-col gap-5 px-4 py-6 sm:px-6 sm:py-8">
         <div className="flex flex-col gap-2.5">

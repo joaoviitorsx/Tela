@@ -22,6 +22,7 @@
  * | key           | tecla secundária                        | —          | —             |
  * | line          | divisor DECORATIVO (invisível de prop.) | 1,25       | 1,19          |
  * | edge          | contorno de controle INTERATIVO         | 3,26       | 3,12          |
+ * | edge-key      | contorno sobre `key` e opção não marcada| 4,3        | 4,0 (3,64 key)|
  * | faint         | desabilitado / decoração                | 2,68       | 2,57          |
  * | dim           | rótulo pequeno legível                  | 7,34       | 7,03          |
  * | muted         | texto secundário                        | 8,60       | 8,23          |
@@ -56,6 +57,8 @@
 
   --color-line: #26231b;
   --color-edge: #6b6252;
+  /* W-03: `edge` sobre `key` dava 2,83 (< 3:1, WCAG 1.4.11). Este dá 3,64. */
+  --color-edge-key: #7d7360;
   --color-faint: #5c5648;
   --color-dim: #a69e8a;
   --color-muted: #b5ab96;
@@ -220,7 +223,7 @@
     padding: 0 16px;
     background: var(--color-key);
     border: 2px solid;
-    border-color: var(--color-edge) var(--color-shade) var(--color-shade) var(--color-edge);
+    border-color: var(--color-edge-key) var(--color-shade) var(--color-shade) var(--color-edge-key);
     color: var(--color-text);
     font-family: var(--font-pixel);
     font-size: 12px;
@@ -235,7 +238,7 @@
   }
 
   .tecla:active:not(:disabled) {
-    border-color: var(--color-shade) var(--color-edge) var(--color-edge) var(--color-shade);
+    border-color: var(--color-shade) var(--color-edge-key) var(--color-edge-key) var(--color-shade);
     transform: translateY(1px);
   }
 

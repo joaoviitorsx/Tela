@@ -454,3 +454,35 @@ Implementação do top 15 (exceto o item 15, decisão do dono). Capturas "depois
 **Conferido pelos testes unitários e por Chromium headless; falta um humano:** o popover da Sala em Firefox e Safari reais; o rótulo do trilho em escalas de 125% e 150% no Windows; a barra compacta em iOS Safari e Chrome Android reais; o bipe do V-04 com a aba em segundo plano (depende de `navigator.userActivation` e da política de autoplay de cada navegador).
 
 **Dívida preexistente fora desta tarefa:** `pnpm --filter @tela/web run lint` falha em `src/viewer-sobre-o-video.test.tsx:170` (`import()` type annotation), arquivo ainda não rastreado e que não é deste trabalho.
+
+---
+
+## 10b. Aplicado (2ª passada)
+
+Itens que não dependiam de decisão do dono. Capturas "depois" em `capturas/depois/` (sufixo `-2`, 2,2 MB no total da pasta); mesma verificação visual com Chromium headless e `getDisplayMedia` trocado por canvas. O app desktop foi visto só como layout (`dist-desktop` servido em `:5175`, sem ponte do Electron).
+
+| ID | O que mudou | Onde |
+|---|---|---|
+| W-03 | Novo token `--color-edge-key: #7d7360` (3,64:1 sobre `key`, 4,0 sobre `surface`) para o relevo claro das teclas e para as opções não marcadas de resolução e quadros (antes `line`, 1,25:1). | `styles/globals.css`, `components/SeletorDeResolucao.tsx`, `components/AbasDeResolucao.tsx` |
+| B-04 | Uma frase por regra quebrada (`Faltam 2 caracteres (mínimo 3).`, `Não pode começar com hífen.`, `Não pode terminar com hífen.`, `Só letras, números e hífen.`). Campo inválido mantém a borda vermelha com foco; o foco vira um anel externo. | `core/domain/motivo-do-slug.ts`, `react/use-slug-check.ts`, `components/CampoCanal.tsx` |
+| B-08 | Passos renomeados para `02 IMAGEM` e `03 SOM`. No passo 3, acima de IR AO AR: `PRÓXIMA JANELA ▸ …`, por sistema (Windows manda marcar "Compartilhar áudio do sistema"; Linux diz que o som vem da entrada escolhida; app e macOS têm texto próprio). | `core/media/aviso-da-proxima-janela.ts`, `routes/Home.tsx` |
+| B-09 | Optei por anunciar o modelo, não por uma parada de Tab por linha (quebraria o roving focus do OSD): os grupos de resolução, quadros e as linhas do menu têm `aria-describedby` com "Use as setas para cima e para baixo para trocar de linha…". | `components/dica-do-menu-osd.ts`, `SeletorDeResolucao`, `AbasDeResolucao`, `MenuOsd` |
+| H-02 | TRANSMITIR nunca nasce desabilitado: sem nome (clique ou Enter) foca o campo e mostra `Digite um nome para o canal.` com a borda de erro; some ao digitar. | `routes/Home.tsx` |
+| H-03 | Rótulo `ÚLTIMO CANAL · TROQUE SE QUISER` só enquanto o nome é o que veio do `localStorage`. | `routes/Home.tsx`, `components/CampoCanal.tsx` |
+| C-04 | Dica `MOVA O MOUSE PARA ABRIR O CONSOLE` na plaqueta. O foco por teclado já acordava o console (`focusin` em `useAutoHide`); ficou como estava. | `routes/Broadcast.tsx` |
+| C-06 | O banner diz para quê: `Seu upload não sustenta 1080p60: enviando 720p60. Volta sozinho quando a rede sobrar.` (e o equivalente para CPU). O aviso momentâneo ganha `enviando 1280×720`. | `react/use-avisos-ao-vivo.ts` |
+| C-08 | Botão `TIRAR` por pessoa na lista da Sala (o servidor já aceitava `remove-viewers` com `peerId`). Quem sai deixa de estar aprovado neste aparelho. | `core/media/broadcast-session.ts` (`removerEspectador`), `components/SalaVagas.tsx`, `components/FaixaLink.tsx` |
+| V-05 | `Sem conexão com o Tela. Verifique sua internet. Se usa Brave, desligue os escudos…`: o óbvio antes do específico. | `components/OfflineState.tsx` |
+| V-09 | O overlay de som bloqueado escurece 55% (era 70%). | `components/AudioUnlock.tsx` |
+| V-10 | Sem vaga espera com LED âmbar (verde fica para "tudo certo") e diz `seguimos tentando`. | `components/Led.tsx` (`ambar`), `components/OfflineState.tsx` |
+| R-03 | 404 começa pela ação: `Confira o endereço que te mandaram.` + `IR PARA O INÍCIO`; as regras do nome ficam abaixo, em texto secundário. | `routes/NotFound.tsx` |
+| D-04 | No app o cabeçalho do site não existe (`dentroDoApp`, definido pelo container desktop; `routes/CabecalhoDaRota.tsx`). DIAGNÓSTICO vai ao trilho como `DIAG`, sempre disponível. O estado do painel é uma bandeira única (`react/painel-diagnostico.ts`), lida pelo trilho e pelas rotas: fora do ar a moldura abre o painel pré-ar (`desktop/DiagnosticoDoApp.tsx`); ao vivo, quem abre é o diagnóstico real da rota de transmissão. A web não muda. `e2e/desktop-ao-vivo.e2e.mjs` aceita `DIAG` como item que não trava. | `desktop/*`, `routes/*`, `container.ts` |
+| D-05 | Abaixo de 760 px de largura o trilho encolhe para 56 px, só com ícones (nomes em `title` e `sr-only`; a dica de "NO AR" continua ligada por `aria-describedby`). | `desktop/TrilhoDesktop.tsx`, `desktop/MolduraDesktop.tsx` |
+
+**Não aplicado nesta passada.**
+
+- **V-06 e V-07** (barra do espectador: "assistindo sem cadastro" e ícone de esconder): moram em `BarraEspectador.tsx` e `BarraEspectadorCompacta.tsx`, que estão com outra frente (leitura de latência no HUD). Mudança pronta de uma linha cada: trocar o texto por `{N} assistindo` (ou tirá-lo, já há o campo JUNTO) e subir `IconOlhoRisco` de `h-[18px]` para `h-5 w-5`.
+- **V-05, parte "Nova tentativa em 8 s"**: o estado `sem-servidor` não expõe o tempo da próxima tentativa (`nextPollMs` só existe em `offline`), e `viewer-session.ts` está com outra frente. O texto ficou sem prometer contagem.
+- **C-04, link da plaqueta copiável**: a plaqueta é `pointer-events-none` de propósito (nada clicável por cima do jogo capturado).
+- **C-08, "entrou há N min"**: a sessão não guarda a hora de entrada por pessoa; o botão TIRAR saiu sem ela.
+- Decisões do dono, sem mudança: B-05 (atalho de retorno), notificação ao esperar (7.2) e lista de recentes em ASSISTIR (R6).

@@ -118,8 +118,8 @@ try {
   ok(noAr.texto.includes(`${new URL(WEB).host}/${slug}`), 'o link mostrado é a origem pública, não app://');
   // Ao vivo a tecla da transmissão vira "NO AR"; as outras ficam aria-disabled
   // (focáveis, com a explicação lida por teclado e toque — auditoria D-02).
-  // AJUSTES (D4) abre um painel, não uma rota: nunca trava.
-  const travadoAoVivo = (t) => t.some((i) => /NO AR/.test(i.texto)) && t.filter((i) => !/NO AR|AJUSTES/.test(i.texto)).every((i) => i.travado);
+  // AJUSTES (D4) e DIAG (D-04) abrem painéis, não rotas: nunca travam.
+  const travadoAoVivo = (t) => t.some((i) => /NO AR/.test(i.texto)) && t.filter((i) => !/NO AR|AJUSTES|DIAG/.test(i.texto)).every((i) => i.travado);
   ok(travadoAoVivo(noAr.trilho), `trilho travado ao vivo (${JSON.stringify(noAr.trilho)})`);
   // E clicar numa tecla travada não tira a pessoa da transmissão.
   await host.getByRole('button', { name: /ASSISTIR/ }).first().click({ force: true });

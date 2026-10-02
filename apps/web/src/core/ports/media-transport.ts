@@ -1,5 +1,6 @@
 import type { EncodingPreset, Prioridade, RelayStatus } from '@tela/shared';
 import type { AudioStats } from '../media/audio-stats.js';
+import type { ReferenciaDeCaptura } from '../media/relogio-de-captura.js';
 import type { PeerInfo } from '../mesh/mesh-topology.js';
 import type { EntradaDeEspectador, OpcoesDeHost, PedidoDeEntrada } from './signaling-channel.js';
 
@@ -301,6 +302,13 @@ export type MediaTransport = {
    * já está. Opcional: o transporte que não sinaliza (teste, simulador) ignora.
    */
   atualizarCapacidade?(valor: number): void;
+
+  /**
+   * Só no espectador: o instante de captura (`abs-capture-time`) do pacote de
+   * vídeo mais recente e o último Sender Report, para a sessão calcular o
+   * atraso ponta a ponta. `null` sem vídeo, sem a extensão ou sem SR.
+   */
+  referenciaDeCaptura?(): Promise<ReferenciaDeCaptura | null>;
 
   publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void>;
   publishAudio(track: MediaStreamTrack): Promise<void>;

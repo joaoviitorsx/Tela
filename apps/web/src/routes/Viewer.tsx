@@ -477,14 +477,22 @@ export function Viewer({ slug }: Props) {
     canal: slug,
     viewers: watching ? state.viewers : null,
     reconectando,
-    latencia: medida.ms === null ? stats.latencia : formatarMs(medida.ms),
+    // Mediana dos últimos quadros (p95 no título); sem janela, a média do vigia.
+    latencia:
+      medida.janela !== null
+        ? formatarMs(medida.janela.mediana)
+        : medida.ms === null
+          ? stats.latencia
+          : formatarMs(medida.ms),
     latenciaAlta: medida.alta,
     latenciaTitulo:
       medida.ms === null
         ? `rede ${stats.rtt}`
-        : `rede ${stats.rtt} · medido no quadro (${
-            medida.origem === 'captura' ? 'ponta a ponta' : 'só a recepção'
-          })`,
+        : `rede ${stats.rtt} · ${
+            medida.janela?.origem === 'captura' || medida.origem === 'captura'
+              ? 'captura até a tela'
+              : 'só a recepção (sem captura)'
+          }${medida.janela === null ? '' : ` · mediana de ${medida.janela.amostras} quadros · p95 ${formatarMs(medida.janela.p95)}`}`,
     imagem: stats.resolution,
     travado: stats.travou ? stats.congelado : null,
     avisoAudio,

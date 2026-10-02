@@ -1149,6 +1149,18 @@ export class BroadcastSession {
     this.deps.transport.removeViewers();
   }
 
+  /**
+   * Tira UM espectador (C-08). Quem foi tirado deixa de estar aprovado neste
+   * aparelho: se voltar pelo link, pede de novo, como no "desconectar todos".
+   * Os outros seguem assistindo.
+   */
+  removerEspectador(peerId: string): void {
+    if (this.state.status !== 'live') return;
+    const quem = this.quem.get(peerId);
+    if (quem !== undefined) this.aprovados.revogar(quem.impressao);
+    this.deps.transport.removeViewers(peerId);
+  }
+
   /* ─────────────── aprovação manual (ADR 0025) ─────────────── */
 
   private get aprovados(): Aprovados {

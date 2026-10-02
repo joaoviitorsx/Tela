@@ -1,4 +1,5 @@
 import type { AmostraLatencia } from '../ports/frame-timing.js';
+import { JanelaDeLatencia, type ResumoDaJanela } from './janela-de-latencia.js';
 
 /**
  * O teto duro de latência — a única defesa possível no navegador contra o caso
@@ -66,6 +67,13 @@ export type EstadoLatencia = {
   readonly origem: AmostraLatencia['origem'] | null;
   /** `true` enquanto ela está acima do limite. */
   readonly alta: boolean;
+  /**
+   * Mediana e p95 dos últimos quadros, na melhor origem disponível — o que o
+   * HUD mostra. `ms`/`origem` acima são a média do VIGIA e não a exibição:
+   * o limiar de 500 ms foi calibrado nela, e erro de relógio entre máquinas
+   * não pode reiniciar uma transmissão boa.
+   */
+  readonly janela: ResumoDaJanela | null;
 };
 
 export class LatencyWatch {
@@ -73,12 +81,14 @@ export class LatencyWatch {
   private origem: AmostraLatencia['origem'] | null = null;
   private acima = 0;
   private jaAgiu = false;
+  private readonly janela = new JanelaDeLatencia();
 
   get estado(): EstadoLatencia {
     return {
       ms: this.media,
       origem: this.origem,
       alta: this.media !== null && this.media > LATENCIA_LIMITE_MS,
+      janela: this.janela.resumo(),
     };
   }
 
@@ -101,6 +111,12 @@ export class LatencyWatch {
     this.media = null;
     this.origem = null;
     this.acima = 0;
+    this.janela.reset();
+  }
+
+  /** Alimenta só a janela de exibição (mediana/p95), não o vigia. */
+  registrarJanela(amostra: AmostraLatencia): void {
+    this.janela.registrar(amostra.ms, amostra.origem);
   }
 
   /** Uma medida vinda do quadro. Barata de propósito: roda a 60 Hz. */

@@ -1,6 +1,7 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from '../App.js';
+import { DiagnosticoDoApp } from './DiagnosticoDoApp.js';
 import { parseRoute } from '../router.js';
 import '../styles/globals.css';
 import { seletorDeFontes } from './container.desktop.js';
@@ -34,7 +35,13 @@ if (pathname === '/desktop.html' || parseRoute(pathname).name === 'broadcast' ||
 const ponte = window.telaDesktop;
 const modo = ponte === undefined ? undefined : criarModoDaJanela(ponte);
 const visibilidade = ponte === undefined ? undefined : fonteDeVisibilidadeDesktop(ponte, undefined, modo);
-const seletor = ponte === undefined ? undefined : <SeletorDeFontesDesktop seletor={seletorDeFontes} plataforma={ponte.plataforma} />;
+// O DIAGNÓSTICO do trilho (D-04) vale também no navegador de dev, sem ponte.
+const sobreposicao = (
+  <>
+    <DiagnosticoDoApp />
+    {ponte === undefined ? null : <SeletorDeFontesDesktop seletor={seletorDeFontes} plataforma={ponte.plataforma} />}
+  </>
+);
 
 const root = document.getElementById('root');
 if (root === null) throw new Error('#root não existe no desktop.html');
@@ -48,7 +55,7 @@ function Raiz() {
   if (queda !== null) return <TelaDeQueda motivo={queda} aoVoltar={() => setQueda(null)} />;
   return (
     <MolduraDesktop
-      {...(seletor === undefined ? {} : { sobreposicao: seletor })}
+      sobreposicao={sobreposicao}
       {...(ponte === undefined ? {} : { ponte })}
       {...(modo === undefined ? {} : { modo })}
       {...(visibilidade === undefined ? {} : { visibilidade })}

@@ -54,4 +54,25 @@ describe('TrilhoDesktop', () => {
     fireEvent.click(ajustes);
     expect(aoAjustes).toHaveBeenCalledTimes(1);
   });
+
+  it('D-04: DIAG é um painel, não uma rota: responde ao vivo e só existe com a ação', () => {
+    const aoDiagnostico = vi.fn();
+    const { rerender } = render(<TrilhoDesktop ativo="transmitir" travado={false} aoEscolher={() => undefined} />);
+    expect(screen.queryByRole('button', { name: /DIAG/ })).toBeNull();
+
+    rerender(<TrilhoDesktop ativo="transmitir" travado aoEscolher={() => undefined} aoDiagnostico={aoDiagnostico} />);
+    const diag = screen.getByRole('button', { name: /DIAG/ });
+    expect(diag.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(diag);
+    expect(aoDiagnostico).toHaveBeenCalledTimes(1);
+  });
+
+  it('D-05: abaixo de 760px o trilho encolhe para 56px e os nomes ficam só para o leitor de tela', () => {
+    render(<TrilhoDesktop ativo={null} travado={false} aoEscolher={() => undefined} aoAjustes={() => undefined} aoDiagnostico={() => undefined} />);
+    expect(screen.getByRole('navigation').className).toContain('max-[759px]:w-14');
+    for (const nome of ['TRANSMITIR', 'ASSISTIR', 'CÓDIGO', 'DIAG', 'AJUSTES']) {
+      const rotulo = screen.getByText(nome);
+      expect(rotulo.className).toContain('max-[759px]:sr-only');
+    }
+  });
 });

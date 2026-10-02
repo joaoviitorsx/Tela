@@ -114,3 +114,21 @@ electron-builder --linux dir` e `TELA_EXE=apps/desktop/release/linux-unpacked/te
 No ao vivo, só a captura é sintética (`getDisplayMedia` no Wayland abre o
 diálogo do sistema); container desktop, worker do "um encode" servido pelo
 `app://`, CSP de produção e o espectador são o caminho real.
+
+---
+
+## Latência captura→tela — `latencia.e2e.mjs`
+
+```bash
+node e2e/latencia.e2e.mjs      # MODOS=mesh,um-encode SEGUNDOS=20
+```
+
+Mede, nos dois transportes, o atraso REAL de cada quadro: `abs-capture-time`
+negociada pelo transmissor (`PeerLink.negociarCapturaAbsoluta`),
+`captureTimestamp` lido no espectador por `getSynchronizationSources()` (o
+`captureTime` do rVFC o Chromium não preenche em vídeo remoto — o script conta
+isso), offset de relógio estimado por RTCP (SR e RTT/2). Afirma cobertura de
+`captureTimestamp` em ao menos 95% dos quadros, offset estimado perto de zero
+(mesma máquina) e que o HUD de produção usa a origem "captura". Mesma máquina,
+headless, codec de software: é o piso do pipeline de software, não a latência
+glass-to-glass.

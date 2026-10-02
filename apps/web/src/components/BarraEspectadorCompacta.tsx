@@ -69,7 +69,7 @@ export function BarraEspectadorCompacta(p: PropsDaBarra) {
             </button>
           )}
           <BotaoBarra rotulo="Esconder controles (H)" aoClicar={p.aoEsconder} largo>
-            <IconOlhoRisco className="h-[18px] w-[18px] text-text" />
+            <IconOlhoRisco className="h-5 w-5 text-text" />
           </BotaoBarra>
         </div>
       )}

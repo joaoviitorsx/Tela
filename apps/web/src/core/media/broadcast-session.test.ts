@@ -1730,6 +1730,13 @@ describe('BroadcastSession — sala e link (ADR 0026)', () => {
     expect(ctx.transport.removidos).toEqual([null]);
   });
 
+  it('remover um espectador pede ao transporte para tirar só aquele peer', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    ctx.session.removerEspectador('peer-2');
+    expect(ctx.transport.removidos).toEqual(['peer-2']);
+  });
+
   it('servidor de outra versão vira OUTDATED', async () => {
     const ctx = build();
     ctx.transport.hostError = { code: 'PROTOCOL_MISMATCH' };

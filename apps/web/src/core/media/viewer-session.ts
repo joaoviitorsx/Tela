@@ -4,6 +4,7 @@ import { CODIGO_AUDIO, type Diagnostico, Diario, idLocal } from './diagnostico.j
 import { JITTER_MINIMO_MS } from '../mesh/peer-link.js';
 import { JitterGovernor } from './jitter-governor.js';
 import { type EstadoLatencia, LatencyWatch } from './latency-watch.js';
+import { RelogioDeCaptura } from './relogio-de-captura.js';
 import type { MediaStats, MediaTransport } from '../ports/media-transport.js';
 import type { AmostraLatencia } from '../ports/frame-timing.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
@@ -181,6 +182,8 @@ export class ViewerSession {
    * depois que o ajuste barato falhou.
    */
   private readonly latencia = new LatencyWatch();
+  /** Instante de captura do RTP + offset de relógio: fecha o atraso ponta a ponta. */
+  private readonly relogioDeCaptura = new RelogioDeCaptura();
 
   private epoch = 0;
   /** Última contagem de plateia recebida. Fora do `attempt` porque a
@@ -212,7 +215,25 @@ export class ViewerSession {
    * é barata de propósito: só alimenta uma média móvel.
    */
   registrarLatencia(amostra: AmostraLatencia): void {
+    // O vigia segue com a amostra do adapter, como sempre: o limiar de 500 ms
+    // foi calibrado nela e erro de relógio entre máquinas não pode reiniciar
+    // uma transmissão boa.
     this.latencia.registrar(amostra);
+    // A exibição prefere o atraso de CAPTURA, refeito com o `captureTimestamp`
+    // do RTP; sem referência (ou sem SR para o offset) fica a amostra de
+    // recepção, sempre rotulada como tal.
+    if (amostra.rtpTimestamp !== undefined && amostra.exibicaoEpochMs !== undefined) {
+      const ms = this.relogioDeCaptura.latenciaMs(
+        amostra.rtpTimestamp,
+        amostra.exibicaoEpochMs,
+        this.deps.scheduler.now(),
+      );
+      if (ms !== null && ms >= 0) {
+        this.latencia.registrarJanela({ ms, origem: 'captura' });
+        return;
+      }
+    }
+    this.latencia.registrarJanela(amostra);
   }
 
   /** A latência ponta a ponta que o espectador está sentindo. */
@@ -308,6 +329,7 @@ export class ViewerSession {
     this.cancelRetry();
     this.jitter.reset();
     this.latencia.reset();
+    this.relogioDeCaptura.reset();
     this.classificadorAudio.reiniciar();
     this.diario.iniciar((this.deps.diagnosticId ?? idLocal)(), this.deps.appVersion ?? null);
     this.diario.evento('session', 'START', this.deps.scheduler.now());
@@ -643,6 +665,7 @@ export class ViewerSession {
     });
     if (audio !== this.state.audio) this.diario.evento('audio', CODIGO_AUDIO[audio], agora);
     this.setState({ ...this.state, stats, audio });
+    void this.lerReferenciaDeCaptura();
 
     // Devolve latência quando a conexão prova que aguenta, e a retoma no
     // primeiro sinal de que não aguentava.
@@ -667,6 +690,16 @@ export class ViewerSession {
     */
     const podeDescer = this.jitter.atual > JITTER_MINIMO_MS && !this.jitter.noTeto;
     if (this.latencia.deveReconectar(podeDescer)) void this.reabrirPorLatencia(this.epoch);
+  }
+
+  /** Renova a referência de captura (1 Hz basta: a extrapolação usa o relógio RTP). */
+  private async lerReferenciaDeCaptura(): Promise<void> {
+    const transport = this.transport;
+    if (transport?.referenciaDeCaptura === undefined) return;
+    const epoch = this.epoch;
+    const leitura = await transport.referenciaDeCaptura();
+    if (leitura === null || this.stale(epoch)) return;
+    this.relogioDeCaptura.observar(leitura, this.deps.scheduler.now());
   }
 
   private onReconnected(epoch: number): void {
@@ -736,6 +769,7 @@ export class ViewerSession {
      */
     this.jitter.reset();
     this.latencia.esquecerMedida();
+    this.relogioDeCaptura.reset();
 
     /**
      * `reconnecting` COM o stream, e `attempt` avisado para não regredir.

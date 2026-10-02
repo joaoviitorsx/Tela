@@ -1,10 +1,11 @@
 type Props = {
-  readonly cor?: 'vivo' | 'branco' | 'ok';
+  readonly cor?: 'vivo' | 'branco' | 'ok' | 'ambar';
   /** Pisca em laço de 1s. Só para o que está AO VIVO, e para com a aba oculta. */
   readonly pisca?: boolean;
 };
 
-const COR = { vivo: 'bg-live-hi', branco: 'bg-white', ok: 'bg-ok' } as const;
+/** `ambar` é a espera que não se resolve sozinha agora (sem vaga): nunca verde, que é "tudo certo". */
+const COR = { vivo: 'bg-live-hi', branco: 'bg-white', ok: 'bg-ok', ambar: 'bg-accent' } as const;
 
 /**
  * O LED quadrado de 8px. É o único elemento que anima em laço contínuo no

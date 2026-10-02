@@ -421,3 +421,48 @@ describe('PeerLink — o receptor pede estéreo na própria resposta (TELA-011)'
     expect(ctx.fatals).toEqual([]);
   });
 });
+
+describe('PeerLink — abs-capture-time (latência ponta a ponta)', () => {
+  const URI = 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time';
+
+  it('liga a extensão no sender de vídeo, e só nele', () => {
+    const ctx = build(false);
+    ctx.link.addTrack(fakeTrack('video'), fakeStream());
+    ctx.link.addTrack(fakeTrack('audio'), fakeStream());
+    const [video, audio] = ctx.pc.transceivers;
+    expect(video?.extensoes.find((e) => e.uri === URI)?.direction).toBe('sendrecv');
+    // O resto da lista não é tocado.
+    expect(video?.extensoes.find((e) => e.uri.endsWith('toffset'))?.direction).toBe('sendrecv');
+    expect(audio?.extensoes.find((e) => e.uri === URI)?.direction).toBe('stopped');
+  });
+
+  it('referenciaDeCaptura devolve captureTimestamp, rtp e o último SR com o RTT', async () => {
+    const ctx = build(true);
+    ctx.pc.receivers = [
+      {
+        track: { kind: 'video' },
+        getSynchronizationSources: () => [
+          { rtpTimestamp: 90_000, captureTimestamp: 3_999_913_073_210, source: 1, timestamp: 1 },
+        ],
+      },
+    ];
+    ctx.pc.statsLinhas = [
+      { id: 'cp', type: 'candidate-pair', nominated: true, currentRoundTripTime: 0.04 },
+      { id: 'sr', type: 'remote-outbound-rtp', kind: 'video', timestamp: 2_000, remoteTimestamp: 1_900 },
+    ];
+    const ref = await ctx.link.referenciaDeCaptura();
+    expect(ref).toEqual({
+      rtpTimestamp: 90_000,
+      captureTimestamp: 3_999_913_073_210,
+      relogio: { remotoMs: 1_900, recebidoMs: 2_000, rttMs: 40 },
+    });
+  });
+
+  it('sem a extensão no quadro (captureTimestamp ausente) não há referência', async () => {
+    const ctx = build(true);
+    ctx.pc.receivers = [
+      { track: { kind: 'video' }, getSynchronizationSources: () => [{ rtpTimestamp: 1, source: 1, timestamp: 1 }] },
+    ];
+    expect(await ctx.link.referenciaDeCaptura()).toBeNull();
+  });
+});

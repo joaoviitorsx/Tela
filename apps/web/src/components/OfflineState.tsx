@@ -75,7 +75,7 @@ export function OfflineState({
   diagnostico,
   encerradaEm = '',
 }: Props) {
-  const { rotulo, corpo, tom, espera } = TEXTO[motivo](maxPeers, nome, encerradaEm);
+  const { rotulo, corpo, tom, espera, led = 'ok' } = TEXTO[motivo](maxPeers, nome, encerradaEm);
   const sintonizando = motivo === 'conectando';
 
   return (
@@ -101,7 +101,7 @@ export function OfflineState({
               tom === 'alerta' ? 'text-accent-hi' : 'text-muted',
             ].join(' ')}
           >
-            {tom === 'alerta' ? <span aria-hidden="true">!</span> : espera ? <Led cor="ok" pisca /> : null}
+            {tom === 'alerta' ? <span aria-hidden="true">!</span> : espera ? <Led cor={led} pisca /> : null}
             <span>{sintonizando ? `sintonizando` : rotulo}</span>
           </p>
 
@@ -156,6 +156,8 @@ type Conteudo = {
   readonly tom: 'muted' | 'alerta';
   /** Se resolve sozinho: mostra o LED piscando, "estou escutando". */
   readonly espera: boolean;
+  /** Cor do LED de espera. Verde é "tudo certo"; sem vaga é âmbar (V-10). */
+  readonly led?: 'ok' | 'ambar';
 };
 
 /**
@@ -199,9 +201,10 @@ const TEXTO: Record<Motivo, (maxPeers: number, nome: string, hora: string) => Co
   }),
   cheio: (maxPeers) => ({
     rotulo: `sem vaga · ${maxPeers}/${maxPeers}`,
-    corpo: `Esta transmissão comporta ${maxPeers} pessoas ao mesmo tempo. Você entra sozinho quando alguém sair.`,
+    corpo: `Esta transmissão comporta ${maxPeers} pessoas ao mesmo tempo. Você entra sozinho quando alguém sair: seguimos tentando.`,
     tom: 'muted',
     espera: true,
+    led: 'ambar',
   }),
   /*
     Os dois textos abaixo afirmam só o que foi comprovado. "Sem rota" dizia
@@ -262,7 +265,7 @@ const TEXTO: Record<Motivo, (maxPeers: number, nome: string, hora: string) => Co
   'sem-servidor': () => ({
     rotulo: 'sem servidor',
     corpo:
-      'Não foi possível abrir a conexão. No Brave, desligue os escudos para este site: eles bloqueiam o endereço da transmissão. Extensão de privacidade e proxy de rede também derrubam.',
+      'Sem conexão com o Tela. Verifique sua internet. Se usa Brave, desligue os escudos para este site; extensões de privacidade e proxy também bloqueiam.',
     tom: 'alerta',
     espera: false,
   }),

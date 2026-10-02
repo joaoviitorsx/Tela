@@ -115,3 +115,21 @@ describe('LatencyWatch', () => {
     expect(w.estado.origem).toBe('recepcao');
   });
 });
+
+describe('LatencyWatch — janela de exibição', () => {
+  it('registrarJanela alimenta mediana/p95 sem mexer no vigia', () => {
+    const w = new LatencyWatch();
+    for (let i = 0; i < 40; i += 1) w.registrarJanela({ ms: 45, origem: 'captura' });
+    expect(w.estado.janela).toMatchObject({ mediana: 45, origem: 'captura' });
+    expect(w.estado.ms).toBeNull();
+    expect(w.deveReconectar(false)).toBe(false);
+  });
+
+  it('esquecerMedida limpa a janela (outra conexão, outra linha do tempo)', () => {
+    const w = new LatencyWatch();
+    w.registrarJanela({ ms: 45, origem: 'captura' });
+    w.esquecerMedida();
+    expect(w.estado.janela).toBeNull();
+  });
+});
+

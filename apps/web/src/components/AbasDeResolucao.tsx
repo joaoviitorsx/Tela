@@ -1,3 +1,5 @@
+import { DICA_DO_MENU_OSD } from './dica-do-menu-osd.js';
+
 export type AbaDeResolucao = { readonly id: string; readonly rotulo: string };
 
 type Props = {
@@ -29,11 +31,14 @@ export function AbasDeResolucao({ opcoes, escolhido, noAr, ajuda, aoEscolher, pr
   return (
     <div className="flex flex-col gap-2 border-b-2 border-line px-3.5 pb-3 pt-3">
       <span className="rotulo">RESOLUÇÃO</span>
+      <span id="dica-menu-osd-abas" className="sr-only">
+        {DICA_DO_MENU_OSD}
+      </span>
       <div
         {...propsGrupo}
         role="radiogroup"
         aria-label="Resolução"
-        aria-describedby="ajuda-resolucao-ao-vivo"
+        aria-describedby="ajuda-resolucao-ao-vivo dica-menu-osd-abas"
         className="grid grid-cols-3 gap-1.5 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         {opcoes.map((o) => {
@@ -53,7 +58,7 @@ export function AbasDeResolucao({ opcoes, escolhido, noAr, ajuda, aoEscolher, pr
                   ? 'border-accent bg-accent text-ink shadow-[0_0_14px_rgb(242_169_59_/_0.3)]'
                   : saindo
                     ? 'border-warn text-warn'
-                    : 'border-line bg-surface text-text hover:border-accent-lo hover:text-accent-hi',
+                    : 'border-edge-key bg-surface text-text hover:border-accent-lo hover:text-accent-hi',
               ].join(' ')}
             >
               {o.rotulo}

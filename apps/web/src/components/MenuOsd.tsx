@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { DICA_DO_MENU_OSD } from './dica-do-menu-osd.js';
 
 export type LinhaMenu =
   | {
@@ -66,6 +67,7 @@ export function MenuOsd({
   rotulo,
 }: Props) {
   const idAjuda = useId();
+  const idDica = useId();
   const linhaAtiva = linhas.find((l) => l.id === ativo) ?? null;
 
   return (
@@ -76,7 +78,7 @@ export function MenuOsd({
           const comuns = {
             ...propsLinha(linha.id),
             'aria-label': linha.rotulo,
-            'aria-describedby': selecionada ? idAjuda : undefined,
+            'aria-describedby': selecionada ? `${idAjuda} ${idDica}` : undefined,
           };
 
           return (
@@ -162,6 +164,9 @@ export function MenuOsd({
         })}
       </div>
 
+      <span id={idDica} className="sr-only">
+        {DICA_DO_MENU_OSD}
+      </span>
       <p
         id={idAjuda}
         className="min-h-[76px] border-t-2 border-line px-5 py-3 text-[12px] leading-relaxed text-muted [text-wrap:pretty]"

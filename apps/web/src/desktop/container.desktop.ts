@@ -79,6 +79,9 @@ export const aberturaVista = (): void => {
 /** Dentro do app, BAIXAR APP não faz sentido. */
 export const ofereceApp: boolean = false;
 
+/** O trilho e o painel NO AR da moldura substituem o cabeçalho do site (D-04). */
+export const dentroDoApp: boolean = true;
+
 export const shareUrlFor = (slug: string): string => {
   // Bug de build, não erro esperado (R4): sem origem pública não há link que
   // preste, e inventar um `app://` mandaria os amigos para lugar nenhum.

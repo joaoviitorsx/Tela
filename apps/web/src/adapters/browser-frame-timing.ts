@@ -33,6 +33,8 @@ type MetadadosDeQuadro = {
    */
   readonly captureTime?: number;
   readonly receiveTime?: number;
+  /** Para casar o quadro com o `captureTimestamp` do RTP. */
+  readonly rtpTimestamp?: number;
 };
 
 type VideoComCallback = HTMLVideoElement & {
@@ -93,7 +95,12 @@ function medir(meta: MetadadosDeQuadro): AmostraLatencia | null {
     const ms = exibicao - instante;
     // Negativo é relógio fora de sincronia entre as pontas, não adiantamento.
     if (ms < 0) continue;
-    return { ms, origem };
+    return {
+      ms,
+      origem,
+      ...(meta.rtpTimestamp !== undefined ? { rtpTimestamp: meta.rtpTimestamp } : {}),
+      exibicaoEpochMs: performance.timeOrigin + exibicao,
+    };
   }
   return null;
 }

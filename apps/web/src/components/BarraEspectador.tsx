@@ -85,7 +85,6 @@ export function BarraEspectador(p: PropsDaBarra) {
           <span className="truncate text-[13px] font-medium text-text">
             {p.canal}
           </span>
-          <span className="text-[11px] text-dim">assistindo sem cadastro</span>
         </div>
 
         {p.viewers !== null && (
@@ -184,7 +183,7 @@ export function BarraEspectador(p: PropsDaBarra) {
 
         <div className="ml-auto flex items-center border-l-2 border-edge">
           <BotaoBarra rotulo="Esconder controles (H)" aoClicar={p.aoEsconder} largo>
-            <IconOlhoRisco className="h-[18px] w-[18px] text-text" />
+            <IconOlhoRisco className="h-5 w-5 text-text" />
           </BotaoBarra>
           {p.pip !== null && (
             <BotaoBarra

@@ -3,6 +3,8 @@ import { posicaoDoPopover } from './posicao-do-popover.js';
 
 /** Uma vaga OCUPADA. As livres não viram objeto: são `total − vagas.length`. */
 export type Vaga = {
+  /** O `peerId`: o que `aoRemover` recebe. */
+  readonly id?: string;
   readonly n: string;
   readonly nome: string;
   readonly estado: string;
@@ -13,6 +15,8 @@ type Props = {
   readonly vagas: readonly Vaga[];
   readonly total: number;
   readonly icone: ReactNode;
+  /** Tira uma pessoa só (C-08). */
+  readonly aoRemover?: ((id: string) => void) | undefined;
 };
 
 const COR = { ok: 'text-ok', alerta: 'text-warn' } as const;
@@ -56,7 +60,7 @@ const temPopover = (): boolean =>
  * Não há contas: o nome é o apelido que a pessoa deu ao entrar, ou a ordem de
  * chegada, e a linha diz o que se sabe — assistindo, conectando, via TURN.
  */
-export function SalaVagas({ vagas, total, icone }: Props) {
+export function SalaVagas({ vagas, total, icone, aoRemover }: Props) {
   const ocupadas = vagas.length;
   const livres = Math.max(0, total - ocupadas);
   const listaCompleta = total <= LISTA_COMPLETA_ATE;
@@ -143,16 +147,29 @@ export function SalaVagas({ vagas, total, icone }: Props) {
           {vagas.map((v) => (
             <li
               key={v.n}
-              className="grid min-h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5 bg-key px-2.5"
+              className="flex min-h-10 items-center gap-2.5 bg-key pl-2.5"
             >
-              <span className="numeral text-[20px] text-dim">{v.n}</span>
-              <span className="truncate font-[family-name:var(--font-pixel)] text-[11px] text-text">
+              <span className="numeral w-[22px] shrink-0 text-[20px] text-dim">{v.n}</span>
+              <span className="min-w-0 flex-1 truncate font-[family-name:var(--font-pixel)] text-[11px] text-text">
                 {v.nome}
               </span>
-              <span className={`font-[family-name:var(--font-pixel)] text-[11px] ${COR[v.tom]}`}>
+              <span className={`shrink-0 font-[family-name:var(--font-pixel)] text-[11px] ${COR[v.tom]}`}>
                 {v.tom === 'alerta' ? '! ' : ''}
                 {v.estado}
               </span>
+              {aoRemover !== undefined && v.id !== undefined ? (
+                <button
+                  type="button"
+                  onClick={() => aoRemover(v.id as string)}
+                  aria-label={`Tirar ${v.nome} da sala`}
+                  title="Tira só esta pessoa. Quem tiver o link pode voltar."
+                  className="flex min-h-10 min-w-11 shrink-0 cursor-pointer items-center justify-center border-0 border-l-2 border-line bg-transparent px-2 font-[family-name:var(--font-pixel)] text-[11px] text-danger hover:bg-danger-bg"
+                >
+                  TIRAR
+                </button>
+              ) : (
+                <span className="w-2.5 shrink-0" />
+              )}
             </li>
           ))}
           {listaCompleta ? (

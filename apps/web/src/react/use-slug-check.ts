@@ -1,5 +1,6 @@
 import { SLUG_RE } from '@tela/shared';
 import { useMemo } from 'react';
+import { motivoDoSlugInvalido } from '../core/domain/motivo-do-slug.js';
 import { parseSlug } from '../core/domain/slug.js';
 import { policy } from '../container.js';
 
@@ -8,11 +9,7 @@ export type SlugCheck =
   | { status: 'invalid'; message: string }
   | { status: 'ok' };
 
-const MENSAGENS: Record<string, string> = {
-  SLUG_INVALID:
-    '3 a 25 caracteres: letras minúsculas, números e hífen. Não pode começar nem terminar com hífen.',
-  SLUG_RESERVED: 'Esse nome não está disponível.',
-};
+const MENSAGEM_RESERVADO = 'Esse nome não está disponível.';
 
 /**
  * Validação de slug enquanto o usuário digita.
@@ -33,9 +30,10 @@ export function useSlugCheck(raw: string): SlugCheck {
 
     const parsed = parseSlug(slug, policy);
     if (parsed.ok) return { status: 'ok' };
+    // Uma frase por regra quebrada (B-04); reservado é outra decisão.
     return {
       status: 'invalid',
-      message: MENSAGENS[parsed.error] ?? MENSAGENS['SLUG_INVALID']!,
+      message: motivoDoSlugInvalido(slug) ?? MENSAGEM_RESERVADO,
     };
   }, [raw]);
 }

@@ -22,6 +22,7 @@ export type BroadcastControls = {
   /** Retoma o áudio suspenso pelo navegador. Chamar dentro do clique. */
   retomarAudio: () => Promise<void>;
   desconectarTodos: () => void;
+  removerEspectador: (peerId: string) => void;
   /** Aprovação manual (ADR 0025). */
   aceitarPedido: (peerId: string) => void;
   recusarPedido: (peerId: string) => void;
@@ -82,6 +83,7 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
 
   const retomarAudio = useCallback(() => session.retomarAudio(), [session]);
   const desconectarTodos = useCallback(() => session.desconectarTodos(), [session]);
+  const removerEspectador = useCallback((peerId: string) => session.removerEspectador(peerId), [session]);
   const aceitarPedido = useCallback((peerId: string) => session.aceitarPedido(peerId), [session]);
   const recusarPedido = useCallback((peerId: string) => session.recusarPedido(peerId), [session]);
   const pausar = useCallback(
@@ -100,6 +102,7 @@ export function useBroadcast(session: BroadcastSession): BroadcastControls {
     setVolumeTransmissao,
     retomarAudio,
     desconectarTodos,
+    removerEspectador,
     aceitarPedido,
     recusarPedido,
     pausar,

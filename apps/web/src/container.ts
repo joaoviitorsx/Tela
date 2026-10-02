@@ -77,6 +77,13 @@ export const semAppMarca = {
 /** A web oferece o app desktop (BAIXAR APP); o próprio app sobrescreve com `false`. */
 export const ofereceApp: boolean = true;
 
+/**
+ * Esta página roda dentro do app desktop (D-04). A moldura do app já tem
+ * trilho (TRANSMITIR, ASSISTIR, CÓDIGO, DIAG, AJUSTES) e painel NO AR: o
+ * cabeçalho do site repetiria a marca e os botões, então as rotas o omitem.
+ */
+export const dentroDoApp: boolean = false;
+
 /** Pré-lançamento não aparece em `/releases/latest`: o link é a página de lançamentos. */
 export const urlDosLancamentos = 'https://github.com/joaoviitorsx/Tela/releases';
 

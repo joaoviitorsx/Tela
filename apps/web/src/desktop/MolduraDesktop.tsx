@@ -3,6 +3,7 @@ import { Aviso } from '../components/Aviso.js';
 import { DialogoAssistir } from '../components/DialogoAssistir.js';
 import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
 import type { FonteDeVisibilidade } from '../react/use-aba-visivel.js';
+import { useDiagnosticoAberto } from '../react/painel-diagnostico.js';
 import { useDialogo } from '../react/use-dialogo.js';
 import { DialogoAjustes } from './DialogoAjustes.js';
 import { DialogoFechar } from './DialogoFechar.js';
@@ -54,6 +55,8 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
   const porLink = useCanalPorLink(ponte, irPara);
   const sp = useSegundoPlano({ sessao, ponte, ...(modo === undefined ? {} : { modo }), ...(visibilidade === undefined ? {} : { visibilidade }) });
   const ajustes = useAjustes(ponte);
+  // O botão do cabeçalho do site mora no trilho (D-04); quem abre o painel é outro componente.
+  const diagnostico = useDiagnosticoAberto();
 
   const compactoNoAr = sp.compacto && sp.noAr;
 
@@ -97,6 +100,7 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
           ativo={itemAtivo(caminho)}
           travado={travado}
           aoEscolher={(item) => (item === 'assistir' ? assistir.abrir() : irPara(DESTINO[item]))}
+          aoDiagnostico={diagnostico.abrir}
           {...(ponte === undefined ? {} : { aoAjustes: abrirAjustes })}
         />
         <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
@@ -156,7 +160,7 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
         aoFechar={() => setAjustesAbertos(false)}
       />
       {(porLink.aviso !== null || sp.aviso !== null) && (
-        <div className="fixed bottom-4 left-[120px] z-50 flex max-w-[420px] flex-col gap-2">
+        <div className="fixed bottom-4 left-[120px] max-[759px]:left-[72px] z-50 flex max-w-[420px] flex-col gap-2">
           {[
             { chave: 'link', texto: porLink.aviso, dispensar: porLink.dispensar },
             { chave: 'energia', texto: sp.aviso, dispensar: sp.dispensarAviso },

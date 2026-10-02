@@ -2,7 +2,6 @@ import { PRESETS, PRESET_ORDER, type PresetId, type Prioridade } from '@tela/sha
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
 import { Botao } from '../components/Botao.js';
-import { Cabecalho } from '../components/Cabecalho.js';
 import { CapturePreview } from '../components/CapturePreview.js';
 import { Dialogo } from '../components/Dialogo.js';
 import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
@@ -28,12 +27,14 @@ import { useBipeDePedido } from '../react/use-bipe-de-pedido.js';
 import { useBroadcast } from '../react/use-broadcast.js';
 import { useCopia } from '../react/use-copia.js';
 import { useDiagnostico } from '../react/use-diagnostico.js';
+import { useDiagnosticoAberto } from '../react/painel-diagnostico.js';
 import { useDialogo } from '../react/use-dialogo.js';
 import { useEncerrar } from '../react/use-encerrar.js';
 import { BLOCOS_DO_TESTE, medidaDaConexaoDireta, useTesteDeRede } from '../react/use-teste-de-rede.js';
 import { useResumoDaTransmissao } from '../react/use-resumo-da-transmissao.js';
 import { FimDeTransmissao } from '../components/FimDeTransmissao.js';
 import { isPresetId } from '../core/media/presets.js';
+import { CabecalhoDaRota } from './CabecalhoDaRota.js';
 import { ModalApp } from './ModalApp.js';
 import { useMediaStats } from '../react/use-media-stats.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
@@ -102,6 +103,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
     setVolumeTransmissao,
     retomarAudio,
     desconectarTodos,
+    removerEspectador,
     aceitarPedido,
     recusarPedido,
     pausar,
@@ -122,7 +124,12 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   // Aberta por padrão: transmitir às cegas é o que produz "achei que estava
   // funcionando". O usuário fecha se atrapalhar.
   const [previewAberto, setPreviewAberto] = useState(true);
-  const [diagAberto, setDiagAberto] = useState(false);
+  /*
+    O estado do DIAGNÓSTICO é compartilhado (D-04): no app o botão é do trilho,
+    fora desta rota, e os dois precisam abrir o MESMO painel.
+  */
+  const diag = useDiagnosticoAberto();
+  const diagAberto = diag.aberto;
   const [focoNoConsole, setFocoNoConsole] = useState(false);
 
   /**
@@ -140,7 +147,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   const diagnostico = useDiagnostico(vivo, stats);
   const link = useCopia(1_500);
   const diagCopia = useCopia(2_000);
-  const dialogo = useDialogo(diagAberto, useCallback(() => setDiagAberto(false), []));
+  const dialogo = useDialogo(diagAberto, diag.fechar);
   const teste = useTesteDeRede(sondaDeRede);
   const resumo = useResumoDaTransmissao(state, rotuloDoPresetId);
   const [appAberto, setAppAberto] = useState(false);
@@ -157,6 +164,11 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
     live ? `${pedidos.length > 0 ? `(${pedidos.length}) ` : ''}● No ar · Tela` : 'Tela',
   );
   useWakeLock(live);
+  // Fora do ar não há diagnóstico ao vivo: não deixa a bandeira acesa para o próximo painel.
+  const fecharDiag = diag.fechar;
+  useEffect(() => {
+    if (!live) fecharDiag();
+  }, [live, fecharDiag]);
   useBeforeUnload(live, () => void session.stop('USER_STOPPED'));
 
   // Copiar o link ao iniciar remove um passo inteiro do fluxo principal: o
@@ -274,7 +286,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
     return (
       <div className="flex min-h-dvh flex-col bg-void">
         <VidroCrt />
-        <Cabecalho marcaHref="/" />
+        <CabecalhoDaRota marcaHref="/" />
         <main className="flex flex-1 items-center justify-center p-4 sm:p-8">
           <FimDeTransmissao
             tom={ap.tom}
@@ -377,12 +389,13 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   // vale construir 50 objetos para dizer "vaga livre" 45 vezes.
   const vagas: readonly Vaga[] = vivo.peers.map((peer, i): Vaga => {
     const n = String(i + 1).padStart(2, '0');
+    const id = peer.id;
     // O apelido que a pessoa deu ao pedir; sem ele (cliente antigo), o número.
     const nome = vivo.nomes[peer.id]?.toUpperCase() ?? `ESPECTADOR ${i + 1}`;
-    if (peer.connectionState !== 'connected') return { n, nome, estado: 'CONECTANDO', tom: 'alerta' };
+    if (peer.connectionState !== 'connected') return { id, n, nome, estado: 'CONECTANDO', tom: 'alerta' };
     return peer.usingRelay
-      ? { n, nome, estado: 'VIA TURN', tom: 'alerta' }
-      : { n, nome, estado: 'ASSISTINDO', tom: 'ok' };
+      ? { id, n, nome, estado: 'VIA TURN', tom: 'alerta' }
+      : { id, n, nome, estado: 'ASSISTINDO', tom: 'ok' };
   });
 
   const escolhido = PRESETS[presetEscolhido];
@@ -463,6 +476,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
         <p className="m-0 text-[13px] text-muted">
           {conectados} de {vivo.maxPeers} assistindo · {stats.rtt}
         </p>
+        <p className="m-0 text-[11px] text-dim">MOVA O MOUSE PARA ABRIR O CONSOLE</p>
         {/*
           Só a contagem, nunca os nomes: esta placa é o que vai na captura se a
           aba ficar visível. A fila com os botões aparece ao mexer o mouse.
@@ -481,14 +495,14 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
           hud.visible ? 'opacity-100' : 'animacoes-pausadas opacity-0',
         ].join(' ')}
       >
-        <Cabecalho>
+        <CabecalhoDaRota>
           <span className="flex min-h-9 items-center gap-2 border-2 border-danger-edge bg-[#2a0f0b] px-2.5 font-[family-name:var(--font-pixel)] text-[12px] text-danger">
             <Led pisca />
             NO AR
             <span className="tabular hidden sm:inline">{tempo}</span>
           </span>
-          <BotoesDoCabecalho aoDiagnostico={() => setDiagAberto(true)} aoBaixarApp={ofereceApp ? () => setAppAberto(true) : undefined} />
-        </Cabecalho>
+          <BotoesDoCabecalho aoDiagnostico={diag.abrir} aoBaixarApp={ofereceApp ? () => setAppAberto(true) : undefined} />
+        </CabecalhoDaRota>
 
         {/*
           Tela inteira, como no protótipo: a coluna da esquerda é link + prévia
@@ -505,6 +519,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
               aoCopiar={() => copiarLink(vivo.shareUrl)}
               vagas={vagas}
               total={vivo.maxPeers}
+              aoRemover={removerEspectador}
             />
 
             <FilaDePedidos pedidos={pedidos} aoAceitar={aceitarPedido} aoRecusar={recusarPedido} />
@@ -682,7 +697,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
         titulo="DIAGNÓSTICO ▸ REDE E CONEXÕES"
         dialogRef={dialogo.ref}
         aoClicar={dialogo.aoClicar}
-        aoFechar={() => setDiagAberto(false)}
+        aoFechar={diag.fechar}
       >
         {diagnostico !== null && (
           <DiagnosticoConteudo
@@ -729,7 +744,7 @@ function Moldura({ children }: { readonly children: React.ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col bg-void">
       <VidroCrt />
-      <Cabecalho />
+      <CabecalhoDaRota />
       <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
         <div className="w-full max-w-[620px]">{children}</div>
       </main>

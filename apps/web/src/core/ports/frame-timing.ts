@@ -36,6 +36,14 @@ export type OrigemLatencia =
 export type AmostraLatencia = {
   readonly ms: number;
   readonly origem: OrigemLatencia;
+  /**
+   * Identidade do quadro e seu instante de exibição (Unix, ms), para quem
+   * puder refazer a conta com um instante de captura melhor — o Chromium não
+   * preenche `captureTime` em vídeo remoto, e o `captureTimestamp` do RTP
+   * chega por outro caminho (`RelogioDeCaptura`).
+   */
+  readonly rtpTimestamp?: number;
+  readonly exibicaoEpochMs?: number;
 };
 
 export type FrameTiming = {

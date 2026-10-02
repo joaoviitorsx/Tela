@@ -12,6 +12,8 @@ type Props = {
   /** Só as ocupadas; `total` é o teto. */
   readonly vagas: readonly Vaga[];
   readonly total: number;
+  /** Tira uma pessoa só da sala (C-08). Sem ele, a lista não tem o botão. */
+  readonly aoRemover?: ((id: string) => void) | undefined;
 };
 
 /**
@@ -28,6 +30,7 @@ export function FaixaLink({
   aoCopiar,
   vagas,
   total,
+  aoRemover,
 }: Props) {
   const endereco = link.replace(/^https?:\/\//, '');
 
@@ -62,6 +65,7 @@ export function FaixaLink({
         <SalaVagas
           vagas={vagas}
           total={total}
+          aoRemover={aoRemover}
           icone={<IconOlho className="h-3.5 w-3.5 text-accent" />}
         />
       </div>

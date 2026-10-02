@@ -7,12 +7,14 @@ type Props = {
   readonly status: 'idle' | 'free' | 'invalid';
   /** A frase do erro, quando há. Sem ela vale o texto padrão do status. */
   readonly error?: string | null;
+  /** Acima do campo, só quando o nome veio da última visita (H-03). */
+  readonly rotulo?: string | null;
 };
 
 const MENSAGEM = {
   idle: 'Use de 3 a 25 caracteres: letras, números e hífen.',
   free: 'Nome válido. Se outra pessoa estiver no ar com ele, você saberá ao ir ao ar.',
-  invalid: '3 a 25 caracteres: letras minúsculas, números e hífen. Não pode começar nem terminar com hífen.',
+  invalid: 'Esse nome não serve. Use de 3 a 25 caracteres: letras, números e hífen.',
 } as const;
 
 /**
@@ -29,12 +31,17 @@ const MENSAGEM = {
  * `data-vidro`: a abertura mede o campo no DOM vivo para desenhar o contorno
  * dele no tubo (`react/use-abertura.ts`). Atributo inerte fora da tela inicial.
  */
-export function CampoCanal({ value, onChange, onEnter, status, error }: Props) {
+export function CampoCanal({ value, onChange, onEnter, status, error, rotulo = null }: Props) {
   const invalido = status === 'invalid';
   const mensagem = invalido && error ? error : MENSAGEM[status];
 
   return (
     <div className="flex w-full flex-col gap-2.5">
+      {rotulo !== null && (
+        <span data-vidro="texto" className="rotulo">
+          {rotulo}
+        </span>
+      )}
       <label htmlFor="slug" className="sr-only">
         Nome do seu canal: o final do link
       </label>
@@ -42,8 +49,12 @@ export function CampoCanal({ value, onChange, onEnter, status, error }: Props) {
         data-vidro="contorno"
         className={[
           'flex flex-wrap items-baseline gap-x-1 border-2 bg-deep px-5 py-4 shadow-[inset_0_0_30px_rgb(242_169_59_/_0.06),0_0_0_2px_#000]',
-          'focus-within:border-accent',
-          invalido ? 'border-danger-edge' : 'border-edge',
+          /*
+            Inválido mantém a borda de erro mesmo com foco (B-04): o foco vira o
+            anel externo, não a cor da borda, senão o campo errado ficava âmbar.
+          */
+          'focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent-hi',
+          invalido ? 'border-danger-edge' : 'border-edge focus-within:border-accent',
         ].join(' ')}
       >
         <span className="numeral select-none text-[clamp(26px,4vw,44px)] text-dim">tela.gg/</span>

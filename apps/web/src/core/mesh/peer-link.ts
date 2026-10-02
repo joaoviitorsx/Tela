@@ -1,4 +1,5 @@
 import type { IceServerConfig } from '@tela/shared';
+import type { ReferenciaDeCaptura } from '../media/relogio-de-captura.js';
 import { rtcConfiguration } from './ice-config.js';
 import { afinarSdp, pedirEstereo } from './sdp-tuning.js';
 
@@ -55,6 +56,20 @@ export type PeerLinkIssueCode =
   | 'CANDIDATE_QUEUE_FULL' | 'CANDIDATE_EXPIRED' | 'CANDIDATE_AMBIGUOUS'
   | 'ICE_CONFIGURATION_FAILED' | 'ICE_RESTART_UNAVAILABLE';
 export type PeerLinkFatalCode = 'LOCAL_DESCRIPTION_FAILED' | 'REMOTE_DESCRIPTION_FAILED' | 'NEGOTIATION_QUEUE_FULL';
+
+const URI_CAPTURA_ABSOLUTA = 'http://www.webrtc.org/experiments/rtp-hdrext/abs-capture-time';
+
+/** `captureTimestamp` ainda não está no `lib.dom` do TypeScript. */
+type ExtensaoDeCabecalho = {
+  readonly uri: string;
+  readonly direction: 'sendrecv' | 'sendonly' | 'recvonly' | 'stopped';
+};
+/** `setHeaderExtensionsToNegotiate` também falta no `lib.dom`. */
+type TransceiverComExtensoes = RTCRtpTransceiver & {
+  getHeaderExtensionsToNegotiate?: () => readonly ExtensaoDeCabecalho[];
+  setHeaderExtensionsToNegotiate?: (e: readonly ExtensaoDeCabecalho[]) => void;
+};
+type FonteComCaptura = RTCRtpSynchronizationSource & { readonly captureTimestamp?: number };
 
 export class PeerLinkError extends Error {
   constructor(readonly code: PeerLinkFatalCode) { super(code); }
@@ -160,8 +175,95 @@ export class PeerLink {
 
   addTrack(track: MediaStreamTrack, stream: MediaStream): RTCRtpSender {
     const sender = this.pc.addTrack(track, stream);
-    if (track.kind === 'video') this.preferVideoCodec(sender);
+    if (track.kind === 'video') {
+      this.preferVideoCodec(sender);
+      this.negociarCapturaAbsoluta(sender);
+    }
     return sender;
+  }
+
+  /**
+   * Liga a extensão `abs-capture-time` neste sender.
+   *
+   * O Chromium a lista como `stopped`: sem pedir, o SDP não a traz e o
+   * espectador não tem como saber QUANDO o quadro foi capturado. Não é
+   * munging — é a API `setHeaderExtensionsToNegotiate`, e o espectador (que
+   * responde) a aceita sem configuração.
+   *
+   * Não toca nenhuma das quatro configurações da R5: é um cabeçalho de 8 bytes
+   * por quadro, não encoding. Idêntico em todos os peers, então não quebra o
+   * reaproveitamento do encoder.
+   */
+  private negociarCapturaAbsoluta(sender: RTCRtpSender): void {
+    const t = this.pc.getTransceivers().find((x) => x.sender === sender) as
+      | TransceiverComExtensoes
+      | undefined;
+    if (
+      t === undefined ||
+      typeof t.getHeaderExtensionsToNegotiate !== 'function' ||
+      typeof t.setHeaderExtensionsToNegotiate !== 'function'
+    ) {
+      return;
+    }
+    try {
+      t.setHeaderExtensionsToNegotiate(
+        t.getHeaderExtensionsToNegotiate().map((e) =>
+          e.uri === URI_CAPTURA_ABSOLUTA ? { uri: e.uri, direction: 'sendrecv' as const } : e,
+        ),
+      );
+    } catch {
+      // Navegador sem a API (ou que a recusa): a latência cai para `recepcao`.
+    }
+  }
+
+  /**
+   * Instante de captura do pacote de vídeo mais recente, no relógio do
+   * transmissor, e o último Sender Report. Ver `RelogioDeCaptura`.
+   *
+   * `rVFC.captureTime` não serve: o Chromium não o preenche para vídeo remoto.
+   * O mesmo dado sai de `getSynchronizationSources()`.
+   */
+  async referenciaDeCaptura(): Promise<ReferenciaDeCaptura | null> {
+    if (this.closed) return null;
+    try {
+      const rx = this.pc.getReceivers().find((r) => r.track.kind === 'video');
+      if (rx === undefined) return null;
+      const fontes = rx.getSynchronizationSources() as readonly FonteComCaptura[];
+      const fonte = fontes.find((f) => typeof f.captureTimestamp === 'number');
+      if (fonte?.captureTimestamp === undefined) return null;
+
+      let sr: { remotoMs: number; recebidoMs: number } | null = null;
+      let rttMs = 0;
+      const report = await this.pc.getStats();
+      report.forEach((entry) => {
+        const row = entry as {
+          type?: string;
+          kind?: string;
+          timestamp?: number;
+          remoteTimestamp?: number;
+          nominated?: boolean;
+          state?: string;
+          currentRoundTripTime?: number;
+        };
+        if (row.type === 'candidate-pair' && row.nominated === true) {
+          if (typeof row.currentRoundTripTime === 'number') rttMs = row.currentRoundTripTime * 1000;
+        } else if (
+          row.type === 'remote-outbound-rtp' &&
+          row.kind === 'video' &&
+          typeof row.timestamp === 'number' &&
+          typeof row.remoteTimestamp === 'number'
+        ) {
+          sr = { remotoMs: row.remoteTimestamp, recebidoMs: row.timestamp };
+        }
+      });
+      return {
+        rtpTimestamp: fonte.rtpTimestamp,
+        captureTimestamp: fonte.captureTimestamp,
+        relogio: sr === null ? null : { ...(sr as { remotoMs: number; recebidoMs: number }), rttMs },
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**

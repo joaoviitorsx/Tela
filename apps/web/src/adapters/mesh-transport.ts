@@ -400,6 +400,10 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       return null;
     },
 
+    async referenciaDeCaptura() {
+      return (await viewerLink?.referenciaDeCaptura()) ?? null;
+    },
+
     peers(): readonly PeerInfo[] {
       return topology?.peers ?? [];
     },

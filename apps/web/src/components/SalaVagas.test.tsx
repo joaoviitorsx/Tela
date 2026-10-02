@@ -99,4 +99,19 @@ describe('SalaVagas', () => {
     fireEvent.keyDown(painel, { key: 'Escape' });
     expect(painel.hidden).toBe(true);
   });
+
+  it('C-08: com aoRemover cada linha tem TIRAR, que chama com o peerId daquela pessoa', () => {
+    const aoRemover = vi.fn();
+    const vagas = ocupadas(2).map((v, i) => ({ ...v, id: `peer-${i + 1}` }));
+    render(<SalaVagas vagas={vagas} total={5} icone={null} aoRemover={aoRemover} />);
+    const botoes = screen.getAllByRole('button', { name: /Tirar AMIGO/, hidden: true });
+    expect(botoes).toHaveLength(2);
+    fireEvent.click(botoes[1]!);
+    expect(aoRemover).toHaveBeenCalledWith('peer-2');
+  });
+
+  it('C-08: sem aoRemover não há botão para tirar ninguém', () => {
+    render(<SalaVagas vagas={ocupadas(2)} total={5} icone={null} />);
+    expect(screen.queryByRole('button', { name: /Tirar/, hidden: true })).toBeNull();
+  });
 });

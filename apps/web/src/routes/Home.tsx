@@ -5,7 +5,6 @@ import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
 import { BarraAjuda } from '../components/BarraAjuda.js';
 import { Botao, LinkTecla } from '../components/Botao.js';
 import { BotoesDoCabecalho } from '../components/BotoesDoCabecalho.js';
-import { Cabecalho } from '../components/Cabecalho.js';
 import { CampoCanal } from '../components/CampoCanal.js';
 import { CanalFlash, EstaticaTroca, VidroCrt } from '../components/EfeitosTv.js';
 import { IconChave } from '../components/Icon.js';
@@ -20,7 +19,7 @@ import {
   type OpcaoDeResolucao,
 } from '../components/SeletorDeResolucao.js';
 import { Vitrine } from '../components/Vitrine.js';
-import { audioCue, identity, ofereceApp } from '../container.js';
+import { audioCue, dentroDoApp, identity, ofereceApp } from '../container.js';
 import {
   capturaSuportada,
   platform,
@@ -30,14 +29,17 @@ import {
   volumeTransmissaoPreference,
 } from '../container-transmissao.js';
 import { espiarNomeRecusado, limparNomeRecusado, sugerirNomes } from '../core/identity/nome-recusado.js';
+import { avisoDaProximaJanela } from '../core/media/aviso-da-proxima-janela.js';
 import { isPresetId } from '../core/media/presets.js';
 import type { ResumoDoSom } from '../react/som-do-app.js';
+import { useDiagnosticoAberto } from '../react/painel-diagnostico.js';
 import { useAudioSources } from '../react/use-audio-sources.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
 import { useSlugCheck } from '../react/use-slug-check.js';
 import { useTrocaDeCanal } from '../react/use-troca-de-canal.js';
 import { useVitrine } from '../react/use-vitrine.js';
 import { useVolumeTransmissao } from '../react/use-volume-transmissao.js';
+import { CabecalhoDaRota } from './CabecalhoDaRota.js';
 import { ModalApp } from './ModalApp.js';
 import { ModalDiagnosticoPreAr } from './ModalDiagnosticoPreAr.js';
 
@@ -60,7 +62,13 @@ type NumeroDoPasso = 1 | 2 | 3;
 const useResumoDoApp: () => ResumoDoSom | null = somDoApp?.useResumo ?? (() => null);
 const Seletor = somDoApp?.Seletor ?? null;
 
-const NOMES = { 1: 'CANAL', 2: 'TELA OU JOGO', 3: 'ÁUDIO' } as const;
+/**
+ * Os nomes dizem o que se decide em cada passo (B-08): a tela ou o jogo quem
+ * escolhe é o seletor do navegador, depois de IR AO AR.
+ */
+const NOMES = { 1: 'CANAL', 2: 'IMAGEM', 3: 'SOM' } as const;
+
+const AVISO_CAMPO_VAZIO = 'Digite um nome para o canal.';
 
 /** "576p60 econômico" cabe mal numa linha de menu. A 30 fps, o rótulo diz 30. */
 const rotuloDoPreset = (id: PresetId, fps: number): string =>
@@ -114,7 +122,10 @@ const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
  * requisição por tecla e não existe endpoint que sirva para varrer quem existe.
  */
 export function Home({ onStart }: Props) {
-  const [slug, setSlug] = useState(() => identity.savedSlug() ?? '');
+  const [ultimoCanal] = useState(() => identity.savedSlug());
+  const [slug, setSlug] = useState(() => ultimoCanal ?? '');
+  /** TRANSMITIR foi apertado sem um nome (H-02): o campo explica em vez de ficar mudo. */
+  const [tentouSemNome, setTentouSemNome] = useState(false);
   // Sem `getDisplayMedia` (celular) não há o que fazer nos passos: avisa antes (B-06).
   const [podeTransmitir] = useState(capturaSuportada);
   /*
@@ -140,7 +151,12 @@ export function Home({ onStart }: Props) {
   const [audioDeviceId, setAudioDeviceId] = useState<string | null>(null);
   const [prioridade, setPrioridade] = useState<Prioridade>('fluidez');
   const fps = FRAMERATE_POR_PRIORIDADE[prioridade];
-  const [modal, setModal] = useState<'diagnostico' | 'app' | null>(null);
+  const [modal, setModal] = useState<'app' | null>(null);
+  /*
+    No site o DIAGNÓSTICO abre aqui; no app o botão é do trilho e o modal é da
+    moldura (D-04), então esta rota não o monta duas vezes.
+  */
+  const diagnostico = useDiagnosticoAberto();
   /** As instruções de áudio do sistema ficam fechadas até alguém pedir. */
   const [comoAudio, setComoAudio] = useState(false);
   const fecharModal = useCallback(() => setModal(null), []);
@@ -268,6 +284,19 @@ export function Home({ onStart }: Props) {
     [valido, troca],
   );
 
+  /**
+   * TRANSMITIR e Enter no campo. Sem nome válido não fica mudo (H-02): o foco
+   * vai para o campo, que diz o que falta.
+   */
+  const avancarDoCanal = useCallback(() => {
+    if (!valido) {
+      setTentouSemNome(true);
+      focaOCampo();
+      return;
+    }
+    irParaPasso(2);
+  }, [valido, irParaPasso, focaOCampo]);
+
   const confirmar = useCallback(() => {
     if (passo === 2) irParaPasso(3);
     else if (passo === 3) iniciar();
@@ -294,6 +323,10 @@ export function Home({ onStart }: Props) {
   });
   const trilha: readonly Passo[] = [...passos, { n: '04', rotulo: 'NO AR', estado: 'pendente' }];
 
+  /** O nome apareceu preenchido da última visita e ainda não foi mexido (H-03). */
+  const vemDaUltimaVisita = ultimoCanal !== null && slug === ultimoCanal;
+  const avisoVazio = tentouSemNome && slug.trim() === '';
+
   const resumoAudio =
     resumoApp !== null
       ? resumoApp.curto
@@ -308,9 +341,9 @@ export function Home({ onStart }: Props) {
   return (
     <div className="flex min-h-dvh flex-col bg-void">
       <VidroCrt />
-      <Cabecalho marcaHref="/">
+      <CabecalhoDaRota marcaHref="/">
         <BotoesDoCabecalho
-          aoDiagnostico={() => setModal('diagnostico')}
+          aoDiagnostico={diagnostico.abrir}
           aoBaixarApp={ofereceApp ? () => setModal('app') : undefined}
         />
         <LinkTecla href="/recuperar">
@@ -320,7 +353,7 @@ export function Home({ onStart }: Props) {
           <span className="hidden min-[360px]:inline lg:hidden">CÓDIGO</span>
           <span className="sr-only min-[360px]:hidden">Código do canal</span>
         </LinkTecla>
-      </Cabecalho>
+      </CabecalhoDaRota>
 
       <main className="flex flex-1 flex-col bg-[radial-gradient(ellipse_80%_70%_at_50%_40%,#15161a_0%,#0b0c0e_70%)]">
         {/* A troca de passo é anunciada; o chiado e o número são só pintura. */}
@@ -385,10 +418,16 @@ export function Home({ onStart }: Props) {
 
                 <CampoCanal
                   value={slug}
-                  onChange={setSlug}
-                  onEnter={() => irParaPasso(2)}
-                  status={check.status === 'ok' ? 'free' : check.status === 'invalid' ? 'invalid' : 'idle'}
-                  error={check.status === 'invalid' ? check.message : null}
+                  onChange={(valor) => {
+                    setSlug(valor);
+                    if (valor.trim() !== '') setTentouSemNome(false);
+                  }}
+                  onEnter={avancarDoCanal}
+                  status={
+                    check.status === 'ok' ? 'free' : check.status === 'invalid' || avisoVazio ? 'invalid' : 'idle'
+                  }
+                  error={check.status === 'invalid' ? check.message : avisoVazio ? AVISO_CAMPO_VAZIO : null}
+                  rotulo={vemDaUltimaVisita ? 'ÚLTIMO CANAL · TROQUE SE QUISER' : null}
                 />
 
                 <div data-vidro="acento" className="w-full sm:w-auto sm:self-start">
@@ -396,8 +435,7 @@ export function Home({ onStart }: Props) {
                     tom="primaria"
                     grande
                     bloco
-                    onClick={() => irParaPasso(2)}
-                    disabled={!valido}
+                    onClick={avancarDoCanal}
                     icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
                   >
                     TRANSMITIR
@@ -499,6 +537,10 @@ export function Home({ onStart }: Props) {
                   </button>
                 </div>
               )}
+              <p className="m-0 border-t-2 border-line px-4 py-3 text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
+                <span className="font-[family-name:var(--font-pixel)] text-accent-hi">PRÓXIMA JANELA ▸ </span>
+                {avisoDaProximaJanela(modoAudio, Seletor !== null)}
+              </p>
               <RodapeDoPasso>
                 <Botao onClick={() => irParaPasso(2)}>VOLTAR</Botao>
                 <Botao
@@ -544,7 +586,7 @@ export function Home({ onStart }: Props) {
         ]}
       />
 
-      <ModalDiagnosticoPreAr aberto={modal === 'diagnostico'} aoFechar={fecharModal} />
+      {!dentroDoApp && <ModalDiagnosticoPreAr aberto={diagnostico.aberto} aoFechar={diagnostico.fechar} />}
       <ModalApp aberto={modal === 'app'} aoFechar={fecharModal} />
 
       <EstaticaTroca ativa={troca.estatica} />

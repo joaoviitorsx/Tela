@@ -10,6 +10,7 @@ function vivo(sobre: Partial<Vivo> = {}): Vivo {
     shareUrl: 'https://tela.gg/jv#k=abc',
     slug: 'jv',
     presetId: 'p1080p60',
+    presetEscolhido: 'p1080p60',
     presetForced: false,
     peers: [],
     maxPeers: 5,
@@ -53,7 +54,7 @@ describe('montarAvisos', () => {
     const rede = montarAvisos(vivo({ presetForced: true, motivoDegradacao: 'bandwidth' }), null)[0]?.texto;
 
     expect(cpu).toMatch(/chrome:\/\/gpu/);
-    expect(rede).toMatch(/subida/);
+    expect(rede).toMatch(/upload/);
     expect(rede).not.toMatch(/chrome:\/\/gpu/);
   });
 
@@ -72,5 +73,30 @@ describe('montarAvisos', () => {
     expect(chaves(vivo({ audio: 'sem-fonte' }))).toEqual([]);
     expect(chaves(vivo({ audio: 'bloqueado' }))).toEqual(['audio']);
     expect(chaves(vivo({ audio: 'encerrada' }))).toEqual(['audio']);
+  });
+
+  it('qualidade reduzida diz para quê e por quê (C-06)', () => {
+    const banda = montarAvisos(
+      vivo({ presetForced: true, motivoDegradacao: 'bandwidth', presetId: 'p720p60' }),
+      null,
+    ).find((a) => a.chave === 'degradado');
+    expect(banda?.texto).toBe(
+      'Seu upload não sustenta 1080p60: enviando 720p60. Volta sozinho quando a rede sobrar.',
+    );
+    const cpu = montarAvisos(
+      vivo({ presetForced: true, motivoDegradacao: 'cpu', presetId: 'p720p60' }),
+      null,
+    ).find((a) => a.chave === 'degradado');
+    expect(cpu?.texto).toMatch(/^Sua máquina não sustenta 1080p60: enviando 720p60\./);
+  });
+
+  it('aviso momentâneo diz o que está saindo agora (C-06)', () => {
+    const v = vivo({
+      stats: { width: 1280, height: 720 } as Vivo['stats'],
+    });
+    expect(montarAvisos(v, 'Rede no limite — reduzindo qualidade')[0]?.texto).toBe(
+      'Rede no limite — reduzindo qualidade: enviando 1280×720. Volta sozinho quando der.',
+    );
+    expect(montarAvisos(vivo(), 'Rede no limite')[0]?.texto).toBe('Rede no limite');
   });
 });

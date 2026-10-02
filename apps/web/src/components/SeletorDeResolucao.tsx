@@ -1,3 +1,4 @@
+import { DICA_DO_MENU_OSD } from './dica-do-menu-osd.js';
 import { Medidor } from './Medidor.js';
 
 export type OpcaoDeResolucao = {
@@ -67,6 +68,9 @@ export function SeletorDeResolucao({
 
   return (
     <div className="flex flex-col">
+      <span id="dica-menu-osd" className="sr-only">
+        {DICA_DO_MENU_OSD}
+      </span>
       <div className="flex flex-col items-center gap-4 px-4 pb-2 pt-5 sm:px-6">
         {/* O quadro: 1080p tracejado ao fundo, a imagem escolhida por cima. */}
         {/*
@@ -100,7 +104,7 @@ export function SeletorDeResolucao({
         {...propsGrupo}
         role="radiogroup"
         aria-label="Resolução"
-        aria-describedby="ajuda-resolucao"
+        aria-describedby="ajuda-resolucao dica-menu-osd"
         className="mx-3 flex flex-wrap justify-center gap-1.5 p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:mx-4"
       >
         {opcoes.map((o) => {
@@ -117,7 +121,7 @@ export function SeletorDeResolucao({
                 'relative flex min-h-11 min-w-[88px] flex-col items-center justify-center gap-0.5 border-2 px-3 font-[family-name:var(--font-pixel)] text-[12px] transition-colors duration-150',
                 marcado
                   ? 'border-accent bg-accent text-ink shadow-[0_0_16px_rgb(242_169_59_/_0.3)]'
-                  : 'border-line bg-surface text-text hover:border-accent-lo hover:text-accent-hi',
+                  : 'border-edge-key bg-surface text-text hover:border-accent-lo hover:text-accent-hi',
               ].join(' ')}
             >
               {o.rotulo}
@@ -140,7 +144,8 @@ export function SeletorDeResolucao({
           {...propsQuadros}
           role="radiogroup"
           aria-label="Quadros por segundo"
-          className="flex border-2 border-line bg-deep p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          aria-describedby="dica-menu-osd"
+          className="flex border-2 border-edge-key bg-deep p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           {quadros.map((q) => {
             const marcado = q.id === quadroAtual?.id;

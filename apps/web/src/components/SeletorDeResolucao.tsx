@@ -1,5 +1,4 @@
 import { DICA_DO_MENU_OSD } from './dica-do-menu-osd.js';
-import { Medidor } from './Medidor.js';
 
 export type OpcaoDeResolucao = {
   readonly id: string;
@@ -71,13 +70,17 @@ export function SeletorDeResolucao({
       <span id="dica-menu-osd" className="sr-only">
         {DICA_DO_MENU_OSD}
       </span>
-      <div className="flex flex-col items-center gap-4 px-4 pb-2 pt-5 sm:px-6">
-        {/* O quadro: 1080p tracejado ao fundo, a imagem escolhida por cima. */}
+      {/*
+        Deitado, e não em pé: o monitor à esquerda, os controles à direita. Em
+        pé o card passava de 768 px e escondia a ajuda e o CONTINUAR atrás de
+        rolagem. Em tela estreita volta a empilhar.
+      */}
+      <div className="grid gap-4 px-4 pb-4 pt-4 sm:px-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] md:items-center md:gap-6">
         {/*
-          A largura sai da ALTURA disponível (24dvh em 16:9): a prévia é
-          decorativa e, a 1366×768, empurrava CONTINUAR para fora da tela (B-01).
+          O monitor: 1080p tracejado ao fundo, a imagem escolhida por cima e o
+          nome do modo aceso no meio — a prévia e o número viraram uma peça só.
         */}
-        <div className="relative aspect-video w-[min(100%,520px,calc(24dvh*16/9))] border-2 border-dashed border-line bg-deep">
+        <div className="relative mx-auto aspect-video w-full max-w-[440px] border-2 border-dashed border-line bg-deep">
           <div
             className="absolute bottom-0 left-0 flex items-end justify-start border-2 border-accent bg-[radial-gradient(ellipse_at_30%_30%,rgb(242_169_59_/_0.28),rgb(242_169_59_/_0.06))] p-2 shadow-[0_0_24px_rgb(242_169_59_/_0.25)] transition-[width,height] duration-500 ease-[cubic-bezier(.2,.8,.2,1)] motion-reduce:transition-none"
             style={{ width: `${escalaL}%`, height: `${escalaA}%` }}
@@ -89,108 +92,104 @@ export function SeletorDeResolucao({
           <span className="rotulo absolute right-2 top-2">
             {topo.largura}×{topo.altura}
           </span>
+          <p
+            key={`${atual.id}-${atual.fps}`}
+            aria-live="polite"
+            className="numeral entra pointer-events-none absolute inset-0 m-0 flex items-center justify-center text-[clamp(40px,5vw,64px)] leading-none text-accent-hi [text-shadow:0_0_18px_rgb(242_169_59_/_0.45),3px_3px_0_#000]"
+          >
+            {atual.rotulo}
+          </p>
         </div>
 
-        <p
-          key={`${atual.id}-${atual.fps}`}
-          aria-live="polite"
-          className="numeral entra m-0 text-[clamp(48px,7vw,80px)] leading-none text-accent-hi [text-shadow:0_0_18px_rgb(242_169_59_/_0.45),3px_3px_0_#000]"
-        >
-          {atual.rotulo}
-        </p>
-      </div>
+        <div className="flex min-w-0 flex-col gap-3">
+          <span className="rotulo">RESOLUÇÃO</span>
+          <div
+            {...propsGrupo}
+            role="radiogroup"
+            aria-label="Resolução"
+            aria-describedby={ajuda !== '' ? 'ajuda-resolucao dica-menu-osd' : 'dica-menu-osd'}
+            className="-m-1 grid grid-cols-3 gap-1.5 p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {opcoes.map((o) => {
+              const marcado = o.id === atual.id;
+              return (
+                <button
+                  key={o.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={marcado}
+                  tabIndex={-1}
+                  onClick={() => aoEscolher(o.id)}
+                  className={[
+                    'relative flex min-h-11 flex-col items-center justify-center gap-0.5 border-2 px-2 font-[family-name:var(--font-pixel)] text-[12px] transition-colors duration-150',
+                    marcado
+                      ? 'border-accent bg-accent text-ink shadow-[0_0_16px_rgb(242_169_59_/_0.3)]'
+                      : 'border-edge-key bg-surface text-text hover:border-accent-lo hover:text-accent-hi',
+                  ].join(' ')}
+                >
+                  {o.rotulo}
+                  {o.id === sustentavel && (
+                    <span className={`text-[9px] ${marcado ? 'text-ink' : 'text-ok'}`}>✓ JÁ AGUENTOU</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
-      <div
-        {...propsGrupo}
-        role="radiogroup"
-        aria-label="Resolução"
-        aria-describedby="ajuda-resolucao dica-menu-osd"
-        className="mx-3 flex flex-wrap justify-center gap-1.5 p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:mx-4"
-      >
-        {opcoes.map((o) => {
-          const marcado = o.id === atual.id;
-          return (
-            <button
-              key={o.id}
-              type="button"
-              role="radio"
-              aria-checked={marcado}
-              tabIndex={-1}
-              onClick={() => aoEscolher(o.id)}
-              className={[
-                'relative flex min-h-11 min-w-[88px] flex-col items-center justify-center gap-0.5 border-2 px-3 font-[family-name:var(--font-pixel)] text-[12px] transition-colors duration-150',
-                marcado
-                  ? 'border-accent bg-accent text-ink shadow-[0_0_16px_rgb(242_169_59_/_0.3)]'
-                  : 'border-edge-key bg-surface text-text hover:border-accent-lo hover:text-accent-hi',
-              ].join(' ')}
-            >
-              {o.rotulo}
-              {o.id === sustentavel && (
-                <span className={`text-[9px] ${marcado ? 'text-ink' : 'text-ok'}`}>✓ JÁ AGUENTOU</span>
-              )}
-            </button>
-          );
-        })}
+          {/*
+            Quadros por segundo, logo abaixo das resoluções: 60 segura movimento,
+            30 dá o dobro de bits a cada quadro. Chave de duas posições, porque é
+            um pacote (ADR 0015) e não um número solto.
+          */}
+          <span className="rotulo mt-1">QUADROS POR SEGUNDO</span>
+          <div
+            {...propsQuadros}
+            role="radiogroup"
+            aria-label="Quadros por segundo"
+            aria-describedby="dica-menu-osd"
+            className="grid grid-cols-2 border-2 border-edge-key bg-deep p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {quadros.map((q) => {
+              const marcado = q.id === quadroAtual?.id;
+              return (
+                <button
+                  key={q.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={marcado}
+                  tabIndex={-1}
+                  onClick={() => aoEscolherQuadros(q.id)}
+                  className={[
+                    'flex min-h-11 items-center justify-center gap-2 px-3 font-[family-name:var(--font-pixel)] text-[12px] transition-colors duration-150',
+                    marcado
+                      ? 'bg-accent text-ink shadow-[0_0_16px_rgb(242_169_59_/_0.3)]'
+                      : 'text-text hover:text-accent-hi',
+                  ].join(' ')}
+                >
+                  <span className="numeral text-[20px] leading-none">{q.fps}</span>
+                  <span>FPS · {q.nome}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
       {/*
-        Quadros por segundo, logo abaixo das resoluções: 60 segura movimento,
-        30 dá o dobro de bits a cada quadro. Chave de duas posições, porque é
-        um pacote (ADR 0015) e não um número solto.
+        Resolução e quadros já estão escritos no monitor; da medição sobra o que
+        só aqui se lê — quanto cada amigo custa de subida — ao lado da ajuda.
       */}
-      <div className="mt-3 flex flex-col items-center gap-2 px-3 sm:px-4">
-        <span className="rotulo">QUADROS POR SEGUNDO</span>
-        <div
-          {...propsQuadros}
-          role="radiogroup"
-          aria-label="Quadros por segundo"
-          aria-describedby="dica-menu-osd"
-          className="flex border-2 border-edge-key bg-deep p-1 outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          {quadros.map((q) => {
-            const marcado = q.id === quadroAtual?.id;
-            return (
-              <button
-                key={q.id}
-                type="button"
-                role="radio"
-                aria-checked={marcado}
-                tabIndex={-1}
-                onClick={() => aoEscolherQuadros(q.id)}
-                className={[
-                  'flex min-h-11 min-w-[132px] items-center justify-center gap-2 px-4 font-[family-name:var(--font-pixel)] text-[12px] transition-colors duration-150',
-                  marcado
-                    ? 'bg-accent text-ink shadow-[0_0_16px_rgb(242_169_59_/_0.3)]'
-                    : 'text-text hover:text-accent-hi',
-                ].join(' ')}
-              >
-                <span className="numeral text-[20px] leading-none">{q.fps}</span>
-                <span>FPS · {q.nome}</span>
-              </button>
-            );
-          })}
-        </div>
+      <div className="flex flex-col gap-2 border-t-2 border-line px-4 py-3 sm:flex-row sm:items-center sm:gap-5 sm:px-5">
+        <dl aria-label="O que esta resolução pede" className="m-0 flex shrink-0 items-baseline gap-2">
+          <dt className="rotulo">SUBIDA POR AMIGO</dt>
+          <dd className="numeral m-0 text-[18px] leading-none text-accent-hi">~{atual.mbps} Mbps</dd>
+        </dl>
+        {ajuda !== '' && (
+          <p id="ajuda-resolucao" className="m-0 text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
+            {ajuda}
+          </p>
+        )}
       </div>
-
-      <div className="mt-3 border-t-2 border-line">
-        <Medidor
-          rotulo="O que esta resolução pede"
-          colunas={3}
-          tamanho="p"
-          medidas={[
-            { rotulo: 'IMAGEM', valor: `${atual.largura}×${atual.altura}` },
-            { rotulo: 'QUADROS', valor: `${atual.fps} fps` },
-            { rotulo: 'SUBIDA POR AMIGO', valor: `~${atual.mbps} Mbps`, tom: 'destaque' },
-          ]}
-        />
-      </div>
-
-      <p
-        id="ajuda-resolucao"
-        className="m-0 border-t-2 border-line px-4 py-3 text-[12px] leading-relaxed text-muted [text-wrap:pretty] sm:px-5"
-      >
-        {ajuda}
-      </p>
     </div>
   );
 }

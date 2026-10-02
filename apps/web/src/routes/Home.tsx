@@ -221,8 +221,9 @@ export function Home({ onStart }: Props) {
   const preset = PRESETS[presetId];
   const limite = sustentavel === null ? -1 : PRESET_ORDER.indexOf(sustentavel);
 
+  // Resolução, quadros e subida já estão no monitor e na leitura ao lado: a
+  // ajuda só fala quando tem o que acrescentar.
   const ajudaResolucao = [
-    `${preset.width}×${preset.height} a ${fps} quadros. ~${(preset.main.maxBitrate / 1_000_000).toFixed(1).replace('.', ',')} Mbps de subida por espectador.`,
     prioridade === 'nitidez'
       ? 'A 30 fps cada quadro recebe o dobro de bits: texto, mapa e menu ficam nítidos, o movimento rápido perde suavidade.'
       : '',
@@ -456,7 +457,7 @@ export function Home({ onStart }: Props) {
           repetir as três opções aqui era pedir a mesma decisão duas vezes.
         */}
         {passo === 2 && (
-          <section aria-label="Tela ou jogo" className="mx-auto my-auto w-full max-w-[760px] px-4 py-8 sm:px-6">
+          <section aria-label="Tela ou jogo" className="mx-auto my-auto w-full max-w-[960px] px-4 py-8 sm:px-6">
             <PainelOsd titulo="MENU ▸ IMAGEM" direita={`${indice + 1}/${PRESET_ORDER.length}`}>
               <div {...menu.propsContainer}>
                 <SeletorDeResolucao

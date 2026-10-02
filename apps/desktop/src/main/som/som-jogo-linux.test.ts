@@ -112,7 +112,10 @@ function pwFalso(opcoes: { retornoNuncaLiga?: boolean; entradaNuncaLiga?: boolea
     },
     agendar: () => () => undefined,
     esperar: () => Promise.resolve(),
-    matar: (pid) => registro.push(`matar ${pid}`),
+    encerrarOrfaos: () => {
+      registro.push('encerrarOrfaos');
+      return 2;
+    },
     pidsDoTela: () => new Set<number>(),
   };
 
@@ -398,6 +401,44 @@ describe('SomDoJogoLinux: ao vivo', () => {
   });
 });
 
+describe('SomDoJogoLinux: restaurar sem prender o estado (S-13)', () => {
+  it('um alvo anterior que o PipeWire gravou como "-d" não derruba o parar(): o stream volta ao padrão', async () => {
+    const pw = pwFalso();
+    pw.fixarAlvo(97, '-d');
+    const som = new SomDoJogoLinux(pw.efeitos);
+    expect(await som.iniciar('pid:4242', saidas().s)).toMatchObject({ ok: true });
+    await expect(som.parar()).resolves.toBeUndefined();
+    expect(som.fase()).toEqual({ fase: 'ocioso' });
+    expect(pw.sinkVivo()).toBe(false);
+    expect(pw.destinoDoStream(97)).toBe(REAL);
+    // E nunca chegou ao pw-metadata como opção.
+    expect(pw.registro.some((l) => l.includes('target.object -d'))).toBe(false);
+  });
+
+  it('mesmo com o pw-metadata lançando, parar() derruba os nós e volta a ocioso; dá para iniciar de novo', async () => {
+    const pw = pwFalso();
+    const som = new SomDoJogoLinux(pw.efeitos);
+    await som.iniciar('pid:4242', saidas().s);
+    const executar = pw.efeitos.executar;
+    pw.efeitos.executar = (c) => (c.cmd === 'pw-metadata' ? Promise.reject(new Error('boom')) : executar(c));
+    await expect(som.parar()).resolves.toBeUndefined();
+    expect(som.fase()).toEqual({ fase: 'ocioso' });
+    expect(pw.sinkVivo()).toBe(false);
+    pw.efeitos.executar = executar;
+    expect(await som.iniciar('pid:4242', saidas().s)).toMatchObject({ ok: true });
+  });
+
+  it('o kill do processo lançando também não prende o estado', async () => {
+    const pw = pwFalso();
+    const iniciarSink = pw.efeitos.iniciarSink;
+    pw.efeitos.iniciarSink = (c) => ({ ...iniciarSink(c), kill: () => { throw new Error('ESRCH'); } });
+    const som = new SomDoJogoLinux(pw.efeitos);
+    await som.iniciar('pid:4242', saidas().s);
+    await expect(som.parar()).resolves.toBeUndefined();
+    expect(som.fase()).toEqual({ fase: 'ocioso' });
+  });
+});
+
 describe('SomDoJogoLinux: resíduos e ferramentas', () => {
   it('limparResiduos mata o pw-loopback órfão e apaga os metadados que apontam para o sink', async () => {
     const pw = pwFalso();
@@ -406,8 +447,9 @@ describe('SomDoJogoLinux: resíduos e ferramentas', () => {
     // Simula o app morto: um novo SomDoJogoLinux (nova execução) sobre o mesmo PipeWire.
     const nova = new SomDoJogoLinux(pw.efeitos);
     // Dois pw-loopback órfãos (sink e fonte) e um stream ainda apontando para o sink.
-    expect(await nova.limparResiduos()).toBe(3);
-    expect(pw.registro.some((l) => l.startsWith('matar '))).toBe(true);
+    expect(await nova.limparResiduos()).toBe(3); // 2 órfãos do registro + 1 stream
+    // Os órfãos vêm do registro do PRÓPRIO app (efeito), nunca do grafo do PipeWire (S-12).
+    expect(pw.registro).toContain('encerrarOrfaos');
     expect(pw.meta.some((m) => m.key === 'target.object')).toBe(false);
   });
 

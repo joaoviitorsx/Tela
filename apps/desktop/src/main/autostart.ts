@@ -31,15 +31,32 @@ export function pastaDoAutostart(env: Readonly<Record<string, string | undefined
 
 export const NOME_DO_ARQUIVO_AUTOSTART = 'tela.desktop';
 
+/** Caractere de controle (inclui `\n`, `\r`, NUL e DEL): em `Exec=` vira outra linha/chave do arquivo. */
+function temControle(texto: string): boolean {
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
+}
+
 /**
  * Um argumento do `Exec=`: a especificação do Desktop Entry manda aspas duplas
- * em volta de tudo que tem espaço ou caractere reservado, e `\`, `"`, `` ` `` e
- * `$` escapados dentro delas. `%` vira `%%` (senão é código de campo).
+ * em volta de tudo que tem espaço ou caractere reservado, e `"`, `` ` ``, `$` e
+ * `\` escapados dentro delas. `%` vira `%%` (senão é código de campo).
+ *
+ * A barra invertida é a exceção: o valor ainda passa pela regra de escape de
+ * strings do arquivo (`\\` → `\`), aplicada ANTES da de aspas — um `\` literal
+ * precisa de QUATRO no arquivo (S-18). Caractere de controle é recusado, não
+ * escapado: `$APPIMAGE` é variável de ambiente e `\nHidden=true` injetaria chaves
+ * no `.desktop`. Quem chama (`aplicarAutostart`) trata a exceção como "não deu".
  */
 export function argumentoDoExec(arg: string): string {
+  if (temControle(arg)) throw new RangeError('caractere de controle no comando do autostart');
   const semCodigos = arg.replace(/%/g, '%%');
   if (!/[\s"'\\`$<>~|&;*?#()]/.test(semCodigos)) return semCodigos;
-  return `"${semCodigos.replace(/[\\"`$]/g, (c) => `\\${c}`)}"`;
+  const escapado = semCodigos.replace(/[\\"`$]/g, (c) => (c === '\\' ? '\\\\\\\\' : `\\${c}`));
+  return `"${escapado}"`;
 }
 
 /**

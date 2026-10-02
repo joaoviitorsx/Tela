@@ -113,19 +113,20 @@ describe('noDoSink / residuos', () => {
     expect(noDoSink(depois!)?.descricao).toBe('Tela-Jogo');
   });
 
-  it('reconhece o pw-loopback órfão e os streams que ainda apontam para o sink', () => {
-    const r = residuos(depois!);
-    expect(r.pids).toEqual([846094]);
-    expect(r.streamsApontando).toEqual([97]);
-    expect(residuos(antes!)).toEqual({ pids: [], streamsApontando: [] });
+  it('reconhece os streams que ainda apontam para o sink', () => {
+    expect(residuos(depois!).streamsApontando).toEqual([97]);
+    expect(residuos(antes!)).toEqual({ streamsApontando: [] });
   });
 
-  it('não mata o processo de quem não é pw-loopback', () => {
+  it('S-12: um cliente que se declara pw-loopback com um pid qualquer não vira alvo de sinal', () => {
+    // O PoC da revisão: `application.process.binary = pw-loopback`, `application.process.id = 1234`
+    // e um nó `tela_jogo`. O resultado não carrega pid algum.
     const g = lerGrafo([
-      { id: 1, type: 'PipeWire:Interface:Client', info: { props: { 'application.process.binary': 'firefox', 'application.process.id': 5 } } },
+      { id: 1, type: 'PipeWire:Interface:Client', info: { props: { 'application.process.binary': 'pw-loopback', 'application.process.id': 1234 } } },
       { id: 2, type: 'PipeWire:Interface:Node', info: { state: 'running', props: { 'node.name': 'tela_jogo', 'media.class': 'Audio/Sink', 'client.id': 1 } } },
     ]);
-    expect(residuos(g!).pids).toEqual([]);
+    expect(JSON.stringify(residuos(g!))).not.toContain('1234');
+    expect(Object.keys(residuos(g!))).toEqual(['streamsApontando']);
   });
 });
 

@@ -36,6 +36,17 @@ describe('autostart', () => {
     expect(conteudoDoAutostart(['/home/a b/Tela.AppImage'])).toContain('Exec="/home/a b/Tela.AppImage" --oculto');
   });
 
+  it('barra invertida literal vira quatro no arquivo (escape de string + de aspas)', () => {
+    expect(argumentoDoExec('/a/b\\c')).toBe('"/a/b\\\\\\\\c"');
+  });
+
+  it('S-18: caractere de controle no caminho é recusado, não injeta chaves no .desktop', () => {
+    expect(() => conteudoDoAutostart(['/home/u/x.AppImage\nHidden=true\nX-Evil=1'])).toThrow(RangeError);
+    for (const c of ['\n', '\r', '\t', '\0', '\x7f', '\x1b']) {
+      expect(() => argumentoDoExec(`/a${c}b`), JSON.stringify(c)).toThrow(RangeError);
+    }
+  });
+
   it('AppImage: o caminho estável é $APPIMAGE, não o ponto de montagem', () => {
     expect(executavelDoAutostart({ APPIMAGE: '/home/a/Tela.AppImage' }, '/tmp/.mount_x/tela')).toBe('/home/a/Tela.AppImage');
     expect(executavelDoAutostart({}, '/opt/Tela/tela')).toBe('/opt/Tela/tela');

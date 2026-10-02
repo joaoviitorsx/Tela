@@ -7,14 +7,20 @@ name: desktop
 # empacotamento sem publicar nada: os instaladores saem como artefato do run.
 # O caminho humano — subir versão, criar a tag, testar — está em
 # docs/desktop/BETA.md.
+#
+# Menor privilégio (S-04, docs/seguranca/revisao-2026-10-02.md): o workflow
+# inteiro só LÊ. Quem instala dependências e roda o electron-builder
+# (`preparar`, `empacotar`) nunca vê um token com escrita — um script de
+# instalação comprometido não tem como alterar o repositório nem o release.
+# A escrita está em dois jobs que NÃO executam código do projeto:
+# `rascunho` (cria o release) e `publicar` (anexa os arquivos e o publica).
 on:
   push:
     tags: ['desktop-v*']
   workflow_dispatch:
 
-# Só o que o `gh release` precisa: criar o release e anexar arquivos.
 permissions:
-  contents: write
+  contents: read
 
 env:
   # O postinstall do Electron baixa ~100 MB de binário que ninguém aqui abre.
@@ -28,13 +34,7 @@ env:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
-  # Confere a versão e abre o release como RASCUNHO antes de qualquer build.
-  #
-  # Rascunho primeiro, por dois motivos: os dois empacotadores rodam em
-  # paralelo e os dois tentariam criar o release ao mesmo tempo; e um
-  # pré-release pela metade (só Windows, sem hash) não deve aparecer na
-  # página. O electron-builder reaproveita um rascunho cuja tag bate — e a
-  # tag bate porque `tagNamePrefix: desktop-v` está no electron-builder.yml.
+  # Confere a versão e roda o mínimo do app antes de qualquer build. Só lê.
   # ─────────────────────────────────────────────────────────────────────────
   preparar:
     runs-on: ubuntu-latest
@@ -42,37 +42,60 @@ jobs:
       tag: ${{ steps.versao.outputs.tag }}
       versao: ${{ steps.versao.outputs.versao }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
 
       # A tag É a versão. `desktop-v0.1.0-beta.1` com package.json em 0.1.0
       # publicaria um instalador que se apresenta com outro número — e o
       # electron-builder usa a versão do package.json para achar o release.
+      #
+      # `REF_TYPE`/`REF_NAME` entram por `env`, não por `${{ }}` dentro do
+      # script: o nome de uma tag aceita `$`, `(`, `;` e crases, e interpolado
+      # direto viraria comando do shell (S-04).
       - name: a tag é a versão do package.json
         id: versao
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           versao=$(node -p "require('./apps/desktop/package.json').version")
           echo "versao=$versao" >> "$GITHUB_OUTPUT"
           echo "tag=desktop-v$versao" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.ref_type }}" = tag ] && [ "${{ github.ref_name }}" != "desktop-v$versao" ]; then
-            echo "::error::a tag é ${{ github.ref_name }}, mas apps/desktop/package.json está em $versao."
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "desktop-v$versao" ]; then
+            echo "::error::a tag é $REF_NAME, mas apps/desktop/package.json está em $versao."
             echo "Suba a versão no package.json e crie a tag desktop-v<versão> no mesmo commit."
             exit 1
           fi
 
       # Push de tag não passa pelo ci.yml (ele filtra por branch). Verde é a
       # condição de publicar, então o mínimo do app roda aqui.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm turbo lint typecheck test --filter=@tela/desktop...
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # Abre o release como RASCUNHO, antes de qualquer build.
+  #
+  # Rascunho primeiro, por dois motivos: os dois empacotadores rodam em
+  # paralelo e os dois tentariam criar o release ao mesmo tempo; e um
+  # pré-release pela metade (só Windows, sem hash) não deve aparecer na
+  # página. Escrita, mas sem checkout nem código do projeto: só o `gh`.
+  # ─────────────────────────────────────────────────────────────────────────
+  rascunho:
+    needs: preparar
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
       - name: rascunho do release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.versao.outputs.tag }}
-          VERSAO: ${{ steps.versao.outputs.versao }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.preparar.outputs.tag }}
+          VERSAO: ${{ needs.preparar.outputs.versao }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG já existe; os instaladores entram nele"
@@ -80,11 +103,15 @@ jobs:
           fi
           gh release create "$TAG" --draft --prerelease --verify-tag \
             --title "Tela Desktop $VERSAO" \
-            --notes "Beta do Tela Desktop. Como instalar, o aviso do SmartScreen e como conferir o SHA-256: docs/desktop/BETA.md."
+            --notes "Beta do Tela Desktop. Como instalar, o aviso do SmartScreen e como conferir o SHA-256 e a proveniência (gh attestation verify): docs/desktop/BETA.md."
 
   # ─────────────────────────────────────────────────────────────────────────
   # Um runner por sistema: o NSIS precisa de Windows (sem wine), e AppImage,
   # deb e rpm saem do Ubuntu. Sem assinatura em nenhum dos dois (§15).
+  #
+  # Só LÊ o repositório: o electron-builder roda com `--publish never` e os
+  # instaladores seguem como artefato do run para o job `publicar`, que é o
+  # único com token de escrita.
   # ─────────────────────────────────────────────────────────────────────────
   empacotar:
     needs: preparar
@@ -95,14 +122,13 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      TAG: ${{ needs.preparar.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
       # Sem `with: version`: a versão do pnpm vem do "packageManager" do
       # package.json. Nos dois lugares, o action aborta.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
 
@@ -117,11 +143,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y rpm gcc pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libglib2.0-dev
 
+      # `build.sh` compila com as flags de hardening (S-19: canário de pilha,
+      # FORTIFY, PIE, RELRO total); o passo seguinte confere que valeram.
       - name: tela-captura (nativo/linux)
         if: runner.os == 'Linux'
         run: |
           sh apps/desktop/nativo/linux/build.sh
           test -x apps/desktop/nativo/linux/build/tela-captura
+
+      - name: tela-captura com PIE, RELRO total e canário
+        if: runner.os == 'Linux'
+        run: |
+          bin=apps/desktop/nativo/linux/build/tela-captura
+          readelf -h "$bin" | grep -q 'Type:.*DYN'
+          readelf -d "$bin" | grep -q 'BIND_NOW'
+          readelf -lW "$bin" | grep -q 'GNU_RELRO'
+          nm -D "$bin" | grep -q '__stack_chk_fail'
 
       # O addon do "só o jogo" no Windows (D3, docs/desktop/D3-som.md): C++ que
       # captura o áudio de UM processo pelo WASAPI. Compila contra os
@@ -157,15 +194,22 @@ jobs:
       - run: pnpm --filter @tela/web build:desktop
       - run: pnpm --filter @tela/desktop build
 
-      - name: empacotar e anexar ao rascunho
-        if: github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm --filter @tela/desktop exec electron-builder --publish always
-
-      - name: empacotar (ensaio, sem publicar)
-        if: github.ref_type != 'tag'
+      # `--publish never` em tag e fora dela: este job não tem token de escrita.
+      - name: empacotar
         run: pnpm --filter @tela/desktop exec electron-builder --publish never
+
+      # O que o electron-builder gravou no binário tem de ser o que o
+      # `electron-builder.yml` pede (S-03): sem RunAsNode, NODE_OPTIONS e
+      # --inspect, só o asar, sem privilégios de file:. Um fuse que volta ao
+      # padrão de fábrica (upgrade do builder, chave renomeada) falha aqui.
+      - name: fuses do binário empacotado
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            node apps/desktop/scripts/verificar-fuses.mjs apps/desktop/release/win-unpacked/Tela.exe win32
+          else
+            node apps/desktop/scripts/verificar-fuses.mjs apps/desktop/release/linux-unpacked/tela linux
+          fi
 
       # O addon compilado tem de ter ido para dentro do pacote (extraResources
       # do `win` no electron-builder.yml); sem isto o app abriria com "Só o
@@ -178,8 +222,10 @@ jobs:
           test -f apps/desktop/release/win-unpacked/resources/som/utilitario-win.js
           test -f apps/desktop/release/win-unpacked/resources/som/package.json
 
-      # O instalador do Windows não é assinado: o hash é a única forma de quem
-      # baixa saber que recebeu o arquivo que o CI gerou (§7).
+      # O instalador do Windows não é assinado: sem o hash e a proveniência,
+      # quem baixa não tem como saber que recebeu o arquivo que o CI gerou
+      # (§7). O hash segue aqui (útil sem conta no GitHub); a proveniência é
+      # assinada no job `publicar` (`gh attestation verify`, ver BETA.md).
       - name: SHA-256 dos instaladores
         shell: bash
         run: |
@@ -190,17 +236,9 @@ jobs:
           shopt -s nullglob
           arquivos=(*.exe *.AppImage *.deb *.rpm)
           test "${#arquivos[@]}" -gt 0
-          sha256sum "${arquivos[@]}" | tee "SHA256SUMS-${{ runner.os }}.txt"
+          sha256sum "${arquivos[@]}" | tee "SHA256SUMS-${RUNNER_OS}.txt"
 
-      - name: SHA-256 no release
-        if: github.ref_type == 'tag'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$TAG" "apps/desktop/release/SHA256SUMS-${{ runner.os }}.txt" --clobber
-
-      - uses: actions/upload-artifact@v4
-        if: github.ref_type != 'tag'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tela-desktop-${{ runner.os }}
           path: |
@@ -212,19 +250,57 @@ jobs:
           if-no-files-found: error
 
   # ─────────────────────────────────────────────────────────────────────────
-  # Só com os dois sistemas anexados o rascunho vira pré-release visível. Se
-  # um deles falhou, o rascunho fica para inspeção — e ninguém baixa metade.
+  # Só com os dois sistemas empacotados o rascunho recebe os arquivos e vira
+  # pré-release visível. Se um deles falhou, o rascunho fica para inspeção — e
+  # ninguém baixa metade.
+  #
+  # É o ÚNICO job com escrita E o único que assina proveniência — e não roda
+  # nada do projeto: baixa os artefatos, atesta, anexa e publica.
+  #   contents: write      anexar ao release e tirá-lo de rascunho
+  #   id-token: write      o certificado de curta duração da atestação (Sigstore)
+  #   attestations: write  gravar a atestação no repositório
   # ─────────────────────────────────────────────────────────────────────────
   publicar:
-    needs: [preparar, empacotar]
+    needs: [preparar, rascunho, empacotar]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - name: rascunho vira pré-release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: tela-desktop-*
+          path: instaladores
+          merge-multiple: true
+
+      - name: o que vai para o release
+        run: |
+          ls -la instaladores
+          test "$(ls instaladores/*.exe 2>/dev/null | wc -l)" -ge 1
+          test "$(ls instaladores/*.AppImage 2>/dev/null | wc -l)" -ge 1
+
+      # Proveniência (S-04): liga cada instalador ao commit, ao workflow e ao
+      # runner que o gerou. Sem certificado de assinatura de código, é o que
+      # permite conferir a ORIGEM do arquivo — o SHA-256 sozinho só prova que
+      # o arquivo não mudou depois de gerado (quem troca o instalador no
+      # release troca o hash junto).
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: |
+            instaladores/*.exe
+            instaladores/*.AppImage
+            instaladores/*.deb
+            instaladores/*.rpm
+
+      - name: anexar ao release e publicar
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.preparar.outputs.tag }}
         run: |
+          shopt -s nullglob
+          gh release upload "$TAG" instaladores/*.exe instaladores/*.AppImage instaladores/*.deb instaladores/*.rpm instaladores/SHA256SUMS-*.txt --clobber
           gh release edit "$TAG" --draft=false --prerelease
           gh release view "$TAG"

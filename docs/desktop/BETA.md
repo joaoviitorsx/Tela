@@ -36,7 +36,7 @@ release.
 | `Tela-<versão>-linux-x86_64.rpm` | Fedora |
 | `Tela-<versão>-linux-amd64.deb` | Ubuntu/Debian |
 | `SHA256SUMS-Windows.txt`, `SHA256SUMS-Linux.txt` | Hash dos instaladores, gerado no runner que os produziu |
-| `latest.yml`, `latest-linux.yml`, `*.blockmap` | Metadados do electron-builder; ignore |
+| Atestação de proveniência (no repositório, não é um arquivo do release) | Liga cada instalador ao commit e ao workflow que o gerou; confira com `gh attestation verify` (abaixo) |
 
 O renderer é compilado contra o signaling de produção
 (`wss://tela.transmissao.workers.dev/signal`), e o app não tem tela de
@@ -46,6 +46,26 @@ daí o aviso abaixo e o hash.
 
 Os pacotes não trazem o `tela-captura` (áudio só do jogo no Linux, D2). Nesta
 beta, o som no Linux é o que o PipeWire oferecer ao `getDisplayMedia`.
+
+## Como conferir a origem do instalador (proveniência)
+
+O SHA-256 só prova que o arquivo não mudou depois de gerado: quem consegue
+trocar o instalador no release troca o hash junto. Como não há certificado de
+assinatura de código (§15), cada instalador leva uma **atestação de
+proveniência** (`actions/attest-build-provenance`, Sigstore) que o liga ao
+commit, ao workflow `desktop.yml` e ao runner do GitHub que o gerou. Com o
+[GitHub CLI](https://cli.github.com/) (`gh`), na pasta do download:
+
+```sh
+gh attestation verify Tela-0.1.0-beta.1-linux-x64.AppImage --repo joaoviitorsx/Tela
+gh attestation verify .\Tela-0.1.0-beta.1-win-x64.exe --repo joaoviitorsx/Tela
+```
+
+Saída esperada: `✓ Verification succeeded!`, com o repositório
+`joaoviitorsx/Tela` e o workflow `.github/workflows/desktop.yml` numa tag
+`desktop-v…`. Qualquer outra coisa (falha, repositório ou workflow diferente) é
+motivo para não instalar. Faça os dois: o hash (rápido, sem conta) e a
+atestação (a origem).
 
 ## Roteiro de teste no Windows
 
@@ -61,6 +81,7 @@ beta, o som no Linux é o que o PipeWire oferecer ao `getDisplayMedia`.
 
    Os dois hexadecimais têm que ser idênticos (maiúsculas e minúsculas não
    importam). Se diferirem, não instale: o arquivo não é o que o CI gerou.
+   Depois confira a origem (seção acima): `gh attestation verify … --repo joaoviitorsx/Tela`.
 3. Abra o `.exe`. O SmartScreen mostra **"O Windows protegeu o computador"**.
    Clique em **Mais informações → Executar assim mesmo**. É o esperado: o
    instalador não é assinado.
@@ -107,7 +128,8 @@ o Tela é só o vídeo):
 
 AppImage: `chmod +x Tela-*.AppImage && ./Tela-*.AppImage`. No Fedora, se não
 abrir, falta o FUSE 2: `sudo dnf install fuse-libs` — ou instale o RPM. Confira
-o hash com `sha256sum -c SHA256SUMS-Linux.txt --ignore-missing`.
+o hash com `sha256sum -c SHA256SUMS-Linux.txt --ignore-missing` e a origem com
+`gh attestation verify <arquivo> --repo joaoviitorsx/Tela`.
 
 O som do jogo e o do sistema usam `pw-dump`, `pw-loopback` e `pw-metadata`
 (Fedora: `sudo dnf install pipewire-utils`; Debian/Ubuntu: `pipewire-bin`;

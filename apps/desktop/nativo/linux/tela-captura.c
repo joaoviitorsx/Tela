@@ -91,22 +91,45 @@ typedef struct {
   int width, height, fps, bitrate;
 } Alvo;
 
+/*
+ * Tetos do `alvo` — os MESMOS do validador do app (captura-nativa.ts, S-15):
+ * sem eles, uma ordem `alvo 99999 99999 …` pediria dezenas de GB de VRAM ao GL.
+ * Aqui é a segunda linha de defesa: o helper não confia em quem escreve no stdin.
+ */
+#define LADO_MAXIMO 7680
+#define FPS_MAXIMO 240
+#define BITRATE_MAXIMO 200000000
+
+static gboolean alvo_valido(const Alvo *a) {
+  return a->width >= 2 && a->height >= 2 && a->width <= LADO_MAXIMO && a->height <= LADO_MAXIMO && a->fps >= 1 &&
+         a->fps <= FPS_MAXIMO && a->bitrate >= 1 && a->bitrate <= BITRATE_MAXIMO;
+}
+
 static GMainLoop *laco;
 static GstElement *captura, *codificacao, *codificador, *tamanho, *entra;
 static GMutex saida_mutex;
 /* Segura a passagem captura → codificação enquanto a codificação recicla. */
 static GMutex troca_mutex;
+/*
+ * `alvo` só é escrito e lido por inteiro na thread do laço principal; o que
+ * atravessa para a thread do appsink é o fps, e vai por `alvo_fps` (atômico).
+ * Antes, `ao_capturar` lia `alvo.fps` enquanto `ordem` copiava a struct por
+ * cima: leitura rasgada (S-19).
+ */
 static Alvo alvo = {1920, 1080, 60, 12000000};
+static volatile gint alvo_fps = 60;
 static volatile gint atraso = 0;
 static volatile gint chave_pendente = 1;
 /* Teto de fps da captura (ordem `teto`); 0 = sem teto. Lido na thread do appsink. */
 static volatile gint teto_fps = 0;
 static volatile gint encerrando = 0;
+/* Tocado pela thread do appsink (`ao_capturar`) e zerado pela reciclagem (laço principal). */
+static GMutex pts_mutex;
 static guint64 ultimo_pts = GST_CLOCK_TIME_NONE;
 static guint32 seq = 0;
 static int codigo_de_saida = 0;
 static char *token_restaurar = NULL;
-static gboolean pronto_enviado = FALSE;
+static volatile gint pronto_enviado = 0;
 
 /* Medidas, zeradas a cada `stats`. */
 static volatile gint capturados = 0, codificados = 0, descartados = 0;
@@ -171,9 +194,38 @@ static void enviar(guint8 tipo, const guint8 *cabecalho, size_t ncab, const void
 
 static void evento(const char *json) { enviar(MSG_EVENTO, NULL, 0, json, strlen(json)); }
 
+/*
+ * Uma string JSON de verdade, entre aspas (S-19). O `g_strescape` não serve: é
+ * escape de C — vira octal (`\303\243`) o que passa de 0x7f e usa `\a`/`\v`,
+ * que JSON não tem; o `JSON.parse` do app descartava o evento inteiro, e uma
+ * mensagem do GLib em português derrubava o fluxo com `MORREU`. Aqui: UTF-8
+ * inválido vira U+FFFD, `"` `\` e todo controle (< 0x20, 0x7f) são escapados,
+ * o resto passa como está.
+ */
+static char *json_string(const char *s) {
+  g_autofree char *valida = g_utf8_make_valid(s != NULL ? s : "", -1);
+  GString *o = g_string_new("\"");
+  for (const char *p = valida; *p != '\0'; p++) {
+    unsigned char c = (unsigned char)*p;
+    switch (c) {
+      case '"': g_string_append(o, "\\\""); break;
+      case '\\': g_string_append(o, "\\\\"); break;
+      case '\n': g_string_append(o, "\\n"); break;
+      case '\r': g_string_append(o, "\\r"); break;
+      case '\t': g_string_append(o, "\\t"); break;
+      default:
+        if (c < 0x20 || c == 0x7f) g_string_append_printf(o, "\\u%04x", c);
+        else g_string_append_c(o, (gchar)c);
+    }
+  }
+  g_string_append_c(o, '"');
+  return g_string_free(o, FALSE);
+}
+
 static void erro(const char *codigo, const char *detalhe) {
-  g_autofree char *d = g_strescape(detalhe != NULL ? detalhe : "", NULL);
-  g_autofree char *j = g_strdup_printf("{\"evento\":\"erro\",\"codigo\":\"%s\",\"detalhe\":\"%s\"}", codigo, d);
+  g_autofree char *c = json_string(codigo);
+  g_autofree char *d = json_string(detalhe);
+  g_autofree char *j = g_strdup_printf("{\"evento\":\"erro\",\"codigo\":%s,\"detalhe\":%s}", c, d);
   evento(j);
 }
 
@@ -193,7 +245,7 @@ static guint kbps_aplicado = 0;
 
 static gboolean com_teto(void) {
   int teto = g_atomic_int_get(&teto_fps);
-  return teto > 0 && teto < alvo.fps;
+  return teto > 0 && teto < g_atomic_int_get(&alvo_fps);
 }
 
 static void aplicar_bitrate(void) {
@@ -244,7 +296,9 @@ static void aplicar_tamanho(void) {
   /* O NVENC renasce com a configuração das propriedades: reaplicar o bitrate. */
   kbps_aplicado = 0;
   aplicar_bitrate();
+  g_mutex_lock(&pts_mutex);
   ultimo_pts = GST_CLOCK_TIME_NONE;
+  g_mutex_unlock(&pts_mutex);
   g_atomic_int_set(&chave_pendente, 1);
   g_mutex_lock(&medida_mutex);
   g_queue_clear_full(&entradas, g_free);
@@ -268,7 +322,7 @@ static void anunciar_fonte(GstCaps *caps) {
   gst_structure_get_int(s, "height", &h);
   GstCapsFeatures *f = gst_caps_get_features(caps, 0);
   gboolean dmabuf = f != NULL && gst_caps_features_contains(f, "memory:DMABuf");
-  g_autofree char *tok = token_restaurar != NULL ? g_strdup_printf("\"%s\"", token_restaurar) : g_strdup("null");
+  g_autofree char *tok = token_restaurar != NULL ? json_string(token_restaurar) : g_strdup("null");
   g_autofree char *j = g_strdup_printf(
       "{\"evento\":\"pronto\",\"fonte\":{\"width\":%d,\"height\":%d},\"memoria\":\"%s\",\"restaurar\":%s}", w, h,
       dmabuf ? "dmabuf" : "sistema", tok);
@@ -284,10 +338,8 @@ static GstFlowReturn ao_capturar(GstAppSink *sink, gpointer _) {
   (void)_;
   GstSample *amostra = gst_app_sink_pull_sample(sink);
   if (amostra == NULL) return GST_FLOW_OK;
-  if (!pronto_enviado && gst_sample_get_caps(amostra) != NULL) {
+  if (gst_sample_get_caps(amostra) != NULL && g_atomic_int_compare_and_exchange(&pronto_enviado, 0, 1))
     anunciar_fonte(gst_sample_get_caps(amostra));
-    pronto_enviado = TRUE;
-  }
   GstClockTime pts = GST_BUFFER_PTS(gst_sample_get_buffer(amostra));
   g_atomic_int_inc(&capturados);
   gboolean chave = g_atomic_int_get(&chave_pendente);
@@ -303,21 +355,26 @@ static GstFlowReturn ao_capturar(GstAppSink *sink, gpointer _) {
    * ociosa (200 ms a 5 fps) pagaria esse atraso inteiro na imagem de abertura.
    */
   int teto = g_atomic_int_get(&teto_fps);
-  gboolean limitado_por_teto = teto > 0 && teto < alvo.fps;
-  int fps_limite = limitado_por_teto ? teto : alvo.fps;
-  if (GST_CLOCK_TIME_IS_VALID(pts) && GST_CLOCK_TIME_IS_VALID(ultimo_pts) && fps_limite > 0 &&
+  int fps_do_alvo = g_atomic_int_get(&alvo_fps); /* um único retrato: o `alvo` pode mudar no meio da conta */
+  gboolean limitado_por_teto = teto > 0 && teto < fps_do_alvo;
+  int fps_limite = limitado_por_teto ? teto : fps_do_alvo;
+  g_mutex_lock(&pts_mutex);
+  GstClockTime anterior = ultimo_pts;
+  if (GST_CLOCK_TIME_IS_VALID(pts) && GST_CLOCK_TIME_IS_VALID(anterior) && fps_limite > 0 &&
       !(chave && limitado_por_teto)) {
     /* 0,8 do período: a captura tem jitter, e cortar um quadro legítimo custa mais. */
     GstClockTime periodo = GST_SECOND / (GstClockTime)fps_limite;
-    if (pts > ultimo_pts && pts - ultimo_pts < periodo * 8 / 10) {
+    if (pts > anterior && pts - anterior < periodo * 8 / 10) {
+      g_mutex_unlock(&pts_mutex);
       /* Descarte pelo teto não é sobrecarga: não entra em `descartados`. */
-      if (!limitado_por_teto || pts - ultimo_pts < GST_SECOND / (GstClockTime)alvo.fps * 8 / 10)
+      if (!limitado_por_teto || pts - anterior < GST_SECOND / (GstClockTime)fps_do_alvo * 8 / 10)
         g_atomic_int_inc(&descartados);
       gst_sample_unref(amostra);
       return GST_FLOW_OK;
     }
   }
   ultimo_pts = pts;
+  g_mutex_unlock(&pts_mutex);
   /* Codificação reciclando: o quadro se perde, o próximo já vai. */
   g_mutex_lock(&troca_mutex);
   gst_app_src_push_sample(GST_APP_SRC(entra), amostra);
@@ -425,19 +482,20 @@ static void ordem(const char *linha) {
   Alvo a;
   int n;
   if (sscanf(linha, "alvo %d %d %d %d", &a.width, &a.height, &a.fps, &a.bitrate) == 4) {
-    if (a.width < 2 || a.height < 2 || a.fps < 1 || a.bitrate < 1) return;
+    if (!alvo_valido(&a)) return;
     a.width &= ~1;
     a.height &= ~1;
     gboolean mudou_tamanho = a.width != alvo.width || a.height != alvo.height;
     gboolean mudou_bitrate = a.bitrate != alvo.bitrate || a.fps != alvo.fps;
     alvo = a;
+    g_atomic_int_set(&alvo_fps, a.fps);
     /* Tamanho novo renegocia o NVENC, que recomeça num IDR. Bitrate não. */
     if (mudou_bitrate) aplicar_bitrate();
     if (mudou_tamanho) aplicar_tamanho();
   } else if (strcmp(linha, "chave") == 0) {
     pedir_chave();
   } else if (sscanf(linha, "atraso %d", &n) == 1) {
-    g_atomic_int_set(&atraso, n);
+    g_atomic_int_set(&atraso, CLAMP(n, 0, 1000));
   } else if (sscanf(linha, "teto %d", &n) == 1) {
     if (n < 0 || n > 240) return;
     gboolean tinha = com_teto();
@@ -706,13 +764,18 @@ int main(int argc, char **argv) {
       sondar = TRUE;
     else if (g_str_has_prefix(argv[i], "--fonte="))
       fonte = argv[i] + 8;
-    else if (g_str_has_prefix(argv[i], "--restaurar="))
-      token_restaurar = g_strdup(argv[i] + 12);
-    else if (g_str_has_prefix(argv[i], "--alvo="))
-      sscanf(argv[i] + 7, "%d,%d,%d,%d", &alvo.width, &alvo.height, &alvo.fps, &alvo.bitrate);
+    else if (g_str_has_prefix(argv[i], "--restaurar=")) {
+      /* O app já limita a 512; aqui, o mesmo teto vale para quem chamar o helper à mão. */
+      if (strlen(argv[i] + 12) <= 512) token_restaurar = g_strdup(argv[i] + 12);
+    } else if (g_str_has_prefix(argv[i], "--alvo=")) {
+      Alvo a;
+      /* Valor fora dos tetos (ou ilegível): fica o padrão, como se não tivesse vindo. */
+      if (sscanf(argv[i] + 7, "%d,%d,%d,%d", &a.width, &a.height, &a.fps, &a.bitrate) == 4 && alvo_valido(&a)) alvo = a;
+    }
   }
   alvo.width &= ~1;
   alvo.height &= ~1;
+  g_atomic_int_set(&alvo_fps, alvo.fps);
   gst_init(&argc, &argv);
   laco = g_main_loop_new(NULL, FALSE);
 

@@ -8,10 +8,10 @@
  * para o que atravessa o IPC (`protocolo-som.ts`).
  */
 import { release } from 'node:os';
-import { statSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { chmodSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { app, MessageChannelMain, type MessagePortMain, type NativeImage, utilityProcess, type WebContents } from 'electron';
-import { efeitosLinux } from './efeitos-linux.js';
+import { type ArmazemDoRegistro, efeitosLinux } from './efeitos-linux.js';
 import {
   type AppComSomIpc,
   type CapacidadesDeSom,
@@ -76,8 +76,26 @@ export function criarSomDoApp(opcoes: OpcoesDoSom): SomDoApp {
 
 /* ---------------------------------------------------------------- Linux */
 
+/** Os `pw-loopback` que este app subiu (S-12), em `userData`, só do dono. */
+function armazemDoRegistro(): ArmazemDoRegistro {
+  const arquivo = join(app.getPath('userData'), 'som-filhos.json');
+  return {
+    ler: () => {
+      try {
+        return readFileSync(arquivo, 'utf8');
+      } catch {
+        return null;
+      }
+    },
+    gravar: (texto) => {
+      writeFileSync(arquivo, texto, { encoding: 'utf8', mode: 0o600 });
+      chmodSync(arquivo, 0o600);
+    },
+  };
+}
+
 function somLinux(opcoes: OpcoesDoSom): SomDoApp {
-  const som = new SomDoJogoLinux(efeitosLinux(pidsDoTela));
+  const som = new SomDoJogoLinux(efeitosLinux(pidsDoTela, armazemDoRegistro()));
   let disponibilidade: Promise<{ readonly disponivel: boolean; readonly motivo: string | null }> | null = null;
   return {
     // `--version` de três ferramentas: barato, mas não precisa repetir a cada abertura do seletor.

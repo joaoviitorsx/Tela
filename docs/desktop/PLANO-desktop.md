@@ -160,6 +160,13 @@ somDoJogo.start(pid) / stop()  ──► utilityProcess; PCM volta por MessagePo
 navegação e janelas novas negadas; links externos validados. Sem secrets no
 pacote.
 
+Acrescentado pela revisão de 2026-10-02 (`docs/seguranca/revisao-2026-10-02.md`
+§8): fuses do Electron endurecidos no pacote (RunAsNode, `NODE_OPTIONS`,
+`--inspect` e `file:` privilegiado desligados; só `app.asar`); captura exige gesto
+real recente (`input-event`) no main; as `TELA_*` de desenvolvimento são
+ignoradas no app empacotado; navegação negada também em subframes e
+redirecionamentos, e `<webview>` nunca.
+
 ### 3.5 URLs, Origin e identidade (plano §20.6)
 
 - **Link compartilhado** = URL pública HTTPS configurada no build, nunca

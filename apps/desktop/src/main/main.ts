@@ -14,6 +14,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -36,7 +37,11 @@ import {
   shell,
   Tray,
   type WebContents,
+  webContents as todosOsConteudos,
 } from 'electron';
+import { ambienteEfetivo } from './ambiente.js';
+import { gravarArquivoPrivado } from './arquivo-privado.js';
+import { criarPortaoDeGesto, ehGesto } from './gestos.js';
 import {
   type Ajustes,
   AJUSTES_PADRAO,
@@ -165,8 +170,17 @@ const CANAIS = {
   única, que mora em `userData`, deixa de brigar com o app que ela já tem aberto.
   Tem de vir ANTES de qualquer `app.getPath('userData')`.
 */
-const USERDATA_PORTATIL = process.env['TELA_USERDATA'];
+/*
+  Empacotado, as `TELA_*` de desenvolvimento são ignoradas (S-11): `ENV` é o
+  ambiente que o resto do arquivo consulta. Ver `ambiente.ts` para o único
+  subconjunto que passa (só reduz capacidade). O `--user-data-dir` do Chromium
+  é o equivalente por argv que o smoke do binário empacotado usa.
+*/
+const ENV = ambienteEfetivo(process.env, app.isPackaged);
+const USERDATA_PORTATIL = ENV['TELA_USERDATA'];
 if (USERDATA_PORTATIL !== undefined && USERDATA_PORTATIL !== '') app.setPath('userData', USERDATA_PORTATIL);
+/** Dados à parte (e2e, instalação portátil): o autostart e o registro do sistema não são tocados. */
+const DADOS_PORTATEIS = (USERDATA_PORTATIL !== undefined && USERDATA_PORTATIL !== '') || app.commandLine.hasSwitch('user-data-dir');
 
 /**
  * A versão vai para o preload por `additionalArguments` (lido em
@@ -206,10 +220,10 @@ const ARQUIVO_DE_AJUSTES = join(app.getPath('userData'), 'ajustes.json');
 /** O ícone da bandeja: empacotado vai em `resources/icon.png`. */
 const ARQUIVO_DO_ICONE = app.isPackaged ? resolve(process.resourcesPath, 'icon.png') : resolve(AQUI, '../../build/icon.png');
 
-const URL_DE_DESENVOLVIMENTO = process.env['TELA_DESKTOP_URL'];
+const URL_DE_DESENVOLVIMENTO = ENV['TELA_DESKTOP_URL'];
 const ORIGENS = origensPermitidas(URL_DE_DESENVOLVIMENTO);
 const URL_INICIAL = URL_DE_DESENVOLVIMENTO ?? `${ORIGEM_APP}/${PAGINA_UNICA}`;
-const SELETOR_PROPRIO = usaSeletorProprio(process.platform, process.env);
+const SELETOR_PROPRIO = usaSeletorProprio(process.platform, ENV);
 
 /**
  * `standard` dá a `app://tela` uma origem de verdade — `localStorage` (o
@@ -382,7 +396,7 @@ function lerAjustesDoDisco(): Ajustes {
 
 function gravarAjustes(): void {
   try {
-    writeFileSync(ARQUIVO_DE_AJUSTES, serializarAjustes(ajustes), 'utf8');
+    gravarArquivoPrivado(ARQUIVO_DE_AJUSTES, serializarAjustes(ajustes));
   } catch (erro: unknown) {
     console.error('[tela] não deu para gravar os ajustes:', erro);
   }
@@ -396,11 +410,12 @@ function gravarAjustes(): void {
  */
 function aplicarAutostart(ligado: boolean): boolean {
   try {
-    const portatil = USERDATA_PORTATIL !== undefined && USERDATA_PORTATIL !== '';
+    const portatil = DADOS_PORTATEIS;
     if (process.platform === 'linux') {
       // Fora do pacote o executável seria o do Electron solto: um autostart quebrado.
       if (ligado && !app.isPackaged && !portatil && (process.env['XDG_CONFIG_HOME'] ?? '') === '') return false;
-      const pasta = pastaDoAutostart(process.env, homedir());
+      // Dados portáteis: o autostart vai junto, para o teste jamais tocar o real.
+      const pasta = pastaDoAutostart(portatil ? { ...ENV, TELA_USERDATA: app.getPath('userData') } : ENV, homedir());
       const arquivo = join(pasta, NOME_DO_ARQUIVO_AUTOSTART);
       if (!ligado) {
         rmSync(arquivo, { force: true });
@@ -425,7 +440,7 @@ function aplicarAutostart(ligado: boolean): boolean {
 /* ------------------------------------------------------------ bandeja */
 
 function sondarBandeja(): Promise<boolean> {
-  const forcada = bandejaForcada(process.env);
+  const forcada = bandejaForcada(ENV);
   if (forcada !== null) return Promise.resolve(forcada);
   const plataforma = plataformaTemBandeja(process.platform);
   if (plataforma !== 'sondar') return Promise.resolve(plataforma);
@@ -687,7 +702,7 @@ function abrirCanal(slug: string): void {
 }
 
 function registrarEsquema(): void {
-  if (!deveRegistrarEsquema(app.isPackaged, process.env)) return;
+  if (!deveRegistrarEsquema(app.isPackaged, ENV)) return;
   const args = argumentosDoRegistro(process.defaultApp === true, process.argv, (c) => resolve(c));
   if (args === null && process.defaultApp === true) return;
   const registrou =
@@ -696,6 +711,9 @@ function registrarEsquema(): void {
       : app.setAsDefaultProtocolClient(ESQUEMA_LINK, process.execPath, [...args]);
   if (!registrou) console.error('[tela] não foi possível registrar o esquema tela://');
 }
+
+/** Gestos reais por conteúdo (S-05), em relógio monotônico. */
+const gestos = criarPortaoDeGesto(() => performance.now());
 
 /**
  * A política de todo `WebContents` (§3.4): navegar só dentro da interface,
@@ -707,6 +725,27 @@ function blindar(conteudo: WebContents): void {
   conteudo.on('will-navigate', (evento, url) => {
     if (!podeNavegar(url, ORIGENS)) evento.preventDefault();
   });
+  // S-21: `will-navigate` não cobre subframes nem redirecionamentos de servidor.
+  // A mesma política: só dentro da interface, em qualquer frame e a cada salto.
+  conteudo.on('will-frame-navigate', (evento) => {
+    if (!podeNavegar(evento.url, ORIGENS)) evento.preventDefault();
+  });
+  conteudo.on('will-redirect', (evento) => {
+    if (!podeNavegar(evento.url, ORIGENS)) evento.preventDefault();
+  });
+  // O Tela não usa `<webview>`: nenhum guest, nunca.
+  conteudo.on('will-attach-webview', (evento) => evento.preventDefault());
+
+  // S-05: o que o Chromium recebeu do SISTEMA (mouse/teclado). Código da página
+  // não consegue forjar isto — é o que autoriza a captura.
+  const id = conteudo.id;
+  conteudo.on('input-event', (_evento, entrada) => {
+    if (ehGesto(entrada.type)) gestos.registrar(id);
+  });
+  conteudo.on('before-input-event', (_evento, entrada) => {
+    if (entrada.type === 'keyDown') gestos.registrar(id);
+  });
+  conteudo.once('destroyed', () => gestos.esquecer(id));
   conteudo.setWindowOpenHandler(({ url }) => {
     if (decidirJanelaNova(url) === 'abrir-no-navegador') void shell.openExternal(url);
     return { action: 'deny' };
@@ -773,6 +812,14 @@ function configurarPermissoes(): void {
       responder({});
       return;
     }
+    // S-05: sem gesto real recente, nenhuma captura — nem a escolha já feita.
+    const dono = pedido.frame === null || pedido.frame === undefined ? null : todosOsConteudos.fromFrame(pedido.frame);
+    if (dono === null || dono === undefined || !gestos.recente(dono.id)) {
+      escolhaPendente = null;
+      console.warn('[tela] captura negada: sem gesto recente do usuário');
+      responder({});
+      return;
+    }
     if (SELETOR_PROPRIO) {
       const escolha = escolhaPendente;
       escolhaPendente = null;
@@ -832,7 +879,7 @@ async function sondarCapacidades(): Promise<void> {
     captura sintética, e o portal do Wayland (que só uma pessoa clica) não
     pode abrir no meio dele. Também serve para comparar NVENC × WebCodecs.
   */
-  if (process.env['TELA_NATIVO'] === '0') {
+  if (ENV['TELA_NATIVO'] === '0') {
     capacidades = { ...capacidades, nvencDetalhe: 'DESLIGADO' };
     return;
   }
@@ -852,7 +899,7 @@ function lerToken(): string | null {
 function guardarToken(token: string | null): void {
   if (token === null) return;
   try {
-    writeFileSync(ARQUIVO_DO_TOKEN, serializarTokenDoPortal(token), 'utf8');
+    gravarArquivoPrivado(ARQUIVO_DO_TOKEN, serializarTokenDoPortal(token));
   } catch (erro: unknown) {
     console.error('[tela] não deu para guardar o token do portal:', erro);
   }
@@ -998,8 +1045,18 @@ function registrarIpc(): void {
     if (daInterface(evento)) portaoDeParada?.confirmar();
   });
 
+  /**
+   * S-05: capturar exige gesto real recente NO frame que pede. Sem ele a
+   * resposta é a mesma de "não deu"; o aviso no terminal diz o motivo.
+   */
+  const comGesto = (evento: Electron.IpcMainInvokeEvent, operacao: string): boolean => {
+    if (gestos.recente(evento.sender.id)) return true;
+    console.warn(`[tela] ${operacao} negado: sem gesto recente do usuário`);
+    return false;
+  };
+
   ipcMain.handle(CANAIS.listarFontes, async (evento) => {
-    if (!daInterface(evento) || !SELETOR_PROPRIO) return [];
+    if (!daInterface(evento) || !SELETOR_PROPRIO || !comGesto(evento, 'listar fontes')) return [];
     try {
       return await listarFontes();
     } catch (erro: unknown) {
@@ -1016,6 +1073,7 @@ function registrarIpc(): void {
       escolhaPendente = null;
       return true;
     }
+    if (!comGesto(evento, 'escolher fonte')) return false;
     const fonte = ultimaListagem.get(escolha.id);
     const tipo = tipoDaFonte(escolha.id);
     if (fonte === undefined || tipo === null) return false;
@@ -1056,9 +1114,14 @@ function registrarIpc(): void {
     daInterface(evento) ? somDoApp.iniciarSistema(evento.sender) : { ok: false, erro: 'INDISPONIVEL' },
   );
 
-  ipcMain.handle(CANAIS.capturaNativaIniciar, (evento, payload: unknown) =>
-    daInterface(evento) ? iniciarCapturaNativa(evento.sender, payload) : { ok: false, erro: 'INDISPONIVEL' },
-  );
+  ipcMain.handle(CANAIS.capturaNativaIniciar, (evento, payload: unknown) => {
+    if (!daInterface(evento)) return { ok: false, erro: 'INDISPONIVEL' } as const;
+    // `CANCELADO` (não `INDISPONIVEL`): a página não deve cair para sempre no
+    // WebCodecs só porque um pedido veio sem gesto. Isto também fecha o token
+    // do portal reapresentado em silêncio, que o portal não pergunta de novo.
+    if (!comGesto(evento, 'captura nativa')) return { ok: false, erro: 'CANCELADO' } as const;
+    return iniciarCapturaNativa(evento.sender, payload);
+  });
 
   ipcMain.on(CANAIS.capturaNativaParar, (evento, id: unknown) => {
     if (!daInterface(evento) || typeof id !== 'number') return;

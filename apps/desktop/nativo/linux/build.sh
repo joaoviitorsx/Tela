@@ -8,6 +8,11 @@ set -eu
 cd "$(dirname "$0")"
 mkdir -p build
 PKGS="${PKGS_EXTRA:-}gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0 gio-2.0 gio-unix-2.0"
+# Hardening (S-19): canário de pilha, _FORTIFY_SOURCE, PIE e RELRO total. O
+# -O2 abaixo é o que liga o _FORTIFY_SOURCE de verdade; sem ele o glibc o ignora.
+# `-U` antes de `-D`: algumas distros já definem o macro em outro nível.
 # shellcheck disable=SC2046
-${CC:-cc} -O2 -Wall -Wextra -Wno-unused-parameter -std=gnu11 -o build/tela-captura tela-captura.c -lm $(pkg-config ${PKG_CONFIG_FLAGS:-} --cflags --libs $PKGS)
+${CC:-cc} -O2 -Wall -Wextra -Wno-unused-parameter -Wformat -Wformat-security -std=gnu11 \
+  -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2 -fPIE -pie -Wl,-z,relro,-z,now \
+  -o build/tela-captura tela-captura.c -lm $(pkg-config ${PKG_CONFIG_FLAGS:-} --cflags --libs $PKGS)
 echo "build/tela-captura"

@@ -290,11 +290,6 @@ export function noDoSink(g: GrafoPw): NoPw | undefined {
   return g.nos.find((n) => n.classe === CLASSE_DE_SINK && n.nome === NOME_DO_SINK);
 }
 
-/**
- * Resíduos de uma execução anterior que morreu sem limpar: o pid do
- * `pw-loopback` órfão (só se o dono do nosso sink for mesmo um `pw-loopback`)
- * e os streams que ainda apontam para o nosso sink pelo metadado.
- */
 /** A fonte virtual `nome` existe e a captura dela (`captura`) está ligada a algo — pronta para a página capturar. */
 export function entradaPronta(g: GrafoPw, nome: string, captura: string): boolean {
   const fonte = g.nos.find((n) => n.classe === CLASSE_DE_FONTE && n.nome === nome);
@@ -302,15 +297,15 @@ export function entradaPronta(g: GrafoPw, nome: string, captura: string): boolea
   return fonte !== undefined && cap !== undefined && g.links.some((l) => l.entrada === cap.id);
 }
 
-export function residuos(g: GrafoPw): { readonly pids: readonly number[]; readonly streamsApontando: readonly number[] } {
-  const pids = new Set<number>();
-  for (const n of g.nos) {
-    if (!ehNomeNosso(n.nome) || n.clienteId === null) continue;
-    const c = g.clientes.get(n.clienteId);
-    if (c?.binario === 'pw-loopback' && c.pid !== null) pids.add(c.pid);
-  }
+/**
+ * O que ficou de uma execução anterior: os streams que ainda apontam para o
+ * nosso sink pelo metadado. Os PROCESSOS órfãos NÃO saem daqui (S-12): o pid de
+ * um cliente é propriedade que ele mesmo declara, então nunca vira alvo de
+ * sinal — ver `filhos-registrados.ts`.
+ */
+export function residuos(g: GrafoPw): { readonly streamsApontando: readonly number[] } {
   const apontando = g.metadados
     .filter((e) => e.chave === 'target.object' && e.valor === NOME_DO_SINK && e.sujeito !== 0)
     .map((e) => e.sujeito);
-  return { pids: [...pids], streamsApontando: apontando };
+  return { streamsApontando: apontando };
 }

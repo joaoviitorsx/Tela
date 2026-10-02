@@ -91,6 +91,8 @@ export type Result<T, E> = { readonly ok: true; readonly value: T } | { readonly
 /** Limites que cabem em `u16` do protocolo e no que um monitor entrega. */
 const LADO_MAXIMO = 7680;
 const FPS_MAXIMO = 240;
+/** Teto de bitrate do `alvo`: 200 Mbps, bem acima do que o codificador da página pede. */
+const BITRATE_MAXIMO = 200_000_000;
 
 /**
  * O payload de `capturaNativa.iniciar` vindo do renderer. Inteiros pares no
@@ -141,6 +143,14 @@ export function ordemValida(linha: unknown): string | null {
   // `\d{1,3}` aceita até 999; o processo só entende o que cabe num monitor.
   const teto = /^teto (\d+)$/.exec(linha);
   if (teto !== null && Number(teto[1]) > FPS_MAXIMO) return null;
+  // `alvo` com os MESMOS tetos do `iniciar` (S-15): sem isto uma ordem
+  // `alvo 99999 99999 …` chegava ao helper, que pediria dezenas de GB de VRAM ao GL.
+  const alvo = /^alvo (\d+) (\d+) (\d+) (\d+)$/.exec(linha);
+  if (alvo !== null) {
+    const [largura, altura, fps, bitrate] = [alvo[1], alvo[2], alvo[3], alvo[4]].map(Number) as [number, number, number, number];
+    if (largura < 2 || altura < 2 || largura > LADO_MAXIMO || altura > LADO_MAXIMO) return null;
+    if (fps < 1 || fps > FPS_MAXIMO || bitrate < 1 || bitrate > BITRATE_MAXIMO) return null;
+  }
   return linha;
 }
 

@@ -137,6 +137,54 @@ describe('iniciar / parar', () => {
     expect(som.idAtivo()).toBe(r.ok ? r.value.id : null);
   });
 
+  it('S-08: o pid foi reciclado por outro executável entre a listagem e o iniciar: recusa e não sobe a captura', async () => {
+    let listagens = 0;
+    const { som, processos } = montar({
+      utilitario: (p) => {
+        if (p.t === 'sondar') return [{ t: 'sonda', ok: true, versao: '1' }];
+        if (p.t === 'listar') {
+          listagens += 1;
+          // 1ª: o jogo no pid 100. 2ª: o pid 100 agora é o Discord.
+          return [{ t: 'sessoes', sessoes: listagens === 1 ? SESSOES : [{ pid: 100, nome: 'Discord', caminho: 'C:\\Discord.exe', ativa: true }] }];
+        }
+        return [{ t: 'capturando' }];
+      },
+    });
+    await som.listar();
+    expect(await som.iniciar('pid:100', { encerrou: () => undefined })).toEqual({ ok: false, error: 'APP_NAO_ENCONTRADO' });
+    expect(processos.some((x) => x.pedidos.some((q) => q.t === 'capturar'))).toBe(false);
+    expect(som.idAtivo()).toBeNull();
+    // E o pid sai da lista oferecida: nova tentativa sem listar de novo também recusa.
+    expect(await som.iniciar('pid:100', { encerrou: () => undefined })).toEqual({ ok: false, error: 'APP_NAO_ENCONTRADO' });
+  });
+
+  it('S-08: o pid sumiu da segunda listagem: recusa; mesmo executável (caixa diferente) segue', async () => {
+    let listagens = 0;
+    const { som } = montar({
+      utilitario: (p) => {
+        if (p.t === 'sondar') return [{ t: 'sonda', ok: true, versao: '1' }];
+        if (p.t === 'listar') {
+          listagens += 1;
+          return [{ t: 'sessoes', sessoes: listagens === 1 ? SESSOES : [] }];
+        }
+        return [{ t: 'capturando' }];
+      },
+    });
+    await som.listar();
+    expect(await som.iniciar('pid:100', { encerrou: () => undefined })).toEqual({ ok: false, error: 'APP_NAO_ENCONTRADO' });
+
+    const igual = montar({
+      utilitario: (p) =>
+        p.t === 'sondar'
+          ? [{ t: 'sonda', ok: true, versao: '1' }]
+          : p.t === 'listar'
+            ? [{ t: 'sessoes', sessoes: [{ pid: 100, nome: 'Jogo', caminho: 'c:\\jogos\\JOGO.EXE', ativa: true }] }]
+            : [{ t: 'capturando' }],
+    });
+    await igual.som.listar();
+    expect((await igual.som.iniciar('pid:100', { encerrou: () => undefined })).ok).toBe(true);
+  });
+
   it('uma sessão por vez', async () => {
     const { som } = montar();
     await som.listar();

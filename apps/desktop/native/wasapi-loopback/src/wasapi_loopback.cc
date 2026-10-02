@@ -72,6 +72,16 @@ constexpr uint32_t kCanais = 2;
 constexpr uint32_t kQuadrosPorBloco = 480;  // 10 ms
 constexpr size_t kFloatsPorBloco = static_cast<size_t>(kQuadrosPorBloco) * kCanais;
 constexpr DWORD kPrazoDaAtivacaoMs = 5000;
+// S-16: a fila para o JS é finita. 64 blocos de 10 ms = 640 ms de áudio; se o
+// consumidor (event loop do utility, MessagePort) travar, o que passa disso é
+// DESCARTADO (o mais novo) e contado, em vez de crescer ~380 KB/s sem limite.
+constexpr size_t kFilaMaxima = 64;
+// Depois de uma pausa do relógio (suspensão, thread parada) o silêncio devido
+// pode ser de segundos: preenche no máximo 200 ms por volta e re-ancora o resto.
+constexpr int kMaxBlocosDeSilencioPorVolta = 20;
+// Quanto `Parar()` espera a thread sair antes de soltá-la (detach), para não
+// travar o event loop do utility (a ativação pode levar até kPrazoDaAtivacaoMs).
+constexpr auto kPrazoDoParar = std::chrono::milliseconds(500);
 // Quanto o relógio real pode andar à frente do que já foi emitido antes de a
 // thread inserir silêncio: dois blocos. Abaixo disso é jitter do agendador, e
 // preencher aí só criaria silêncio que a captura real logo contradiria.
@@ -345,6 +355,16 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
     parar_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   }
   ~Sessao() {
+    // `std::thread` joinable no destrutor é `std::terminate`. Dois caminhos
+    // chegam aqui com a thread ainda "dona": a ativação que falhou (ninguém
+    // chamou `Parar`) e a thread soltando a última referência de si mesma.
+    if (thread_.joinable()) {
+      if (std::this_thread::get_id() == thread_.get_id()) {
+        thread_.detach();
+      } else {
+        thread_.join();
+      }
+    }
     if (parar_ != nullptr) CloseHandle(parar_);
   }
 
@@ -359,13 +379,28 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
       Parar();
       return "FALHOU: a ativação não respondeu";
     }
-    return resposta.get();
+    std::string erro = resposta.get();
+    // Ativação que falhou: a thread já está só limpando. Sai de cena agora.
+    if (!erro.empty()) Parar();
+    return erro;
   }
 
+  // Pede a parada e espera NO MÁXIMO `kPrazoDoParar`: o `join()` sem prazo
+  // bloqueava o event loop do utility por até 3 × 5 s de ativação pendente
+  // (S-16). Passado o prazo a thread é solta; ela guarda `shared_from_this`,
+  // então a `Sessao` vive até ela terminar e solta os `Release` sozinha.
   void Parar() {
     if (parar_ != nullptr) SetEvent(parar_);
-    if (thread_.joinable() && std::this_thread::get_id() != thread_.get_id()) thread_.join();
+    if (!thread_.joinable() || std::this_thread::get_id() == thread_.get_id()) return;
+    if (terminou_.wait_for(kPrazoDoParar) == std::future_status::ready) {
+      thread_.join();
+    } else {
+      thread_.detach();
+    }
   }
+
+  // Quantos blocos o descarte da fila cheia já jogou fora (diagnóstico).
+  uint64_t Descartados() const { return descartados_.load(); }
 
  private:
   void EmitirBloco(const float* dados) {
@@ -381,7 +416,11 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
         // Uma exceção do JS não pode atravessar a fronteira do N-API.
       }
     });
-    if (st != napi_ok) delete v;  // a fila já fechou: ninguém vai consumir
+    if (st != napi_ok) {
+      // Fila cheia (`napi_queue_full`) ou já fechada: ninguém vai consumir este bloco.
+      delete v;
+      if (st == napi_queue_full) descartados_.fetch_add(1);
+    }
   }
 
   void EmitirFim(const std::string& motivo) {
@@ -475,6 +514,8 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
     if (aberta_ok && motivo != "PARADO") EmitirFim(motivo);
     blocos_.Release();
     fim_.Release();
+    // Por último: depois disto `Parar()` pode dar `join()` sem esperar.
+    terminou_p_.set_value();
   }
 
   // O laço: acorda a cada pacote ou a cada 10 ms, esvazia o que chegou e
@@ -532,9 +573,17 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
       // O relógio real manda no fluxo: o que falta vira silêncio.
       const auto decorrido = std::chrono::steady_clock::now() - inicio;
       const uint64_t devido = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(decorrido).count()) * kTaxa / 1000000ull;
+      int silencio = 0;
       while (quadros_total + kQuadrosPorBloco + kMargemDoRelogioEmQuadros <= devido) {
+        if (silencio == kMaxBlocosDeSilencioPorVolta) {
+          // Pausa longa do relógio: o resto do atraso não é recuperável (já
+          // passou), e emitir tudo de uma vez inundaria a fila. Re-ancora.
+          quadros_total = devido;
+          break;
+        }
         acumulado.resize(acumulado.size() + kFloatsPorBloco, 0.0f);
         quadros_total += kQuadrosPorBloco;
+        ++silencio;
       }
       despachar();
     }
@@ -545,6 +594,10 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
   std::thread thread_;
   Napi::ThreadSafeFunction blocos_;
   Napi::ThreadSafeFunction fim_;
+  std::atomic<uint64_t> descartados_{0};
+  // Sinalizada pelo fim de `Rodar`; `terminou_` é o lado de quem espera.
+  std::promise<void> terminou_p_;
+  std::shared_future<void> terminou_ = terminou_p_.get_future().share();
 };
 
 // ------------------------------------------------------------ exportado
@@ -588,9 +641,10 @@ Napi::Value Capturar(const Napi::CallbackInfo& info) {
   }
   const DWORD pid = static_cast<DWORD>(pidNum);
 
-  // Fila ilimitada (0) e uma thread usando: os blocos são pequenos e o JS os
-  // consome em ordem; o descarte, se um dia for preciso, é do lado do anel.
-  auto blocos = Napi::ThreadSafeFunction::New(env, info[1].As<Napi::Function>(), "tela-wasapi-blocos", 0, 1);
+  // Fila FINITA de blocos (S-16): cheia, `NonBlockingCall` devolve
+  // `napi_queue_full` e o bloco é descartado e contado. A de fim fica sem teto:
+  // leva uma mensagem só, e perdê-la deixaria o app achando que ainda captura.
+  auto blocos = Napi::ThreadSafeFunction::New(env, info[1].As<Napi::Function>(), "tela-wasapi-blocos", kFilaMaxima, 1);
   auto fim = Napi::ThreadSafeFunction::New(env, info[2].As<Napi::Function>(), "tela-wasapi-fim", 0, 1);
   auto sessao = std::make_shared<Sessao>(pid, blocos, fim);
 
@@ -601,6 +655,9 @@ Napi::Value Capturar(const Napi::CallbackInfo& info) {
   }
 
   Napi::Object handle = Napi::Object::New(env);
+  handle.Set("descartados", Napi::Function::New(env, [sessao](const Napi::CallbackInfo& i) -> Napi::Value {
+    return Napi::Number::New(i.Env(), static_cast<double>(sessao->Descartados()));
+  }));
   handle.Set("parar", Napi::Function::New(env, [sessao](const Napi::CallbackInfo& i) -> Napi::Value {
     sessao->Parar();
     return i.Env().Undefined();

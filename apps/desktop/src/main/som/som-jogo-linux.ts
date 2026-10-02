@@ -78,7 +78,11 @@ export type EfeitosLinux = {
   iniciarSink(c: Comando): ProcessoDoSink;
   agendar(fn: () => void, ms: number): () => void;
   esperar(ms: number): Promise<void>;
-  matar(pid: number): void;
+  /**
+   * Encerra os `pw-loopback` que ESTE app subiu numa execução anterior e que o
+   * `/proc` ainda confirma (S-12). Devolve quantos. Nunca usa pid do PipeWire.
+   */
+  encerrarOrfaos(): number;
   /** Pids do próprio Tela: o áudio dele não é "o jogo". */
   pidsDoTela(): ReadonlySet<number>;
 };
@@ -160,12 +164,14 @@ export class SomDoJogoLinux {
    */
   async limparResiduos(): Promise<number> {
     if (this.estado.fase !== 'ocioso') return 0;
+    // Antes de tudo, e sem depender do PipeWire responder: com o dono do sink
+    // morto o stream já volta ao padrão; a chave apagada é só a limpeza.
+    const orfaos = this.efeitos.encerrarOrfaos();
     const g = await this.grafo();
-    if (g === null) return 0;
+    if (g === null) return orfaos;
     const r = residuos(g);
-    for (const pid of r.pids) this.efeitos.matar(pid);
     for (const s of r.streamsApontando) await this.efeitos.executar(restaurarStream(s, null));
-    return r.pids.length + r.streamsApontando.length;
+    return orfaos + r.streamsApontando.length;
   }
 
   async iniciar(appId: string, saidas: SaidasDoJogoLinux): Promise<Result<{ readonly app: string; readonly descricao: string }, ErroSomJogo>> {
@@ -360,36 +366,71 @@ export class SomDoJogoLinux {
     const estavaAtivo = this.estado.fase === 'ativo';
     this.cancelarVarredura?.();
     this.cancelarVarredura = null;
-    await this.restaurarTudo();
-    // Se só um dos dois processos morreu, o outro ainda guarda um nó: derruba.
-    await this.derrubarNos();
-    this.estado = { fase: 'ocioso' };
-    this.saidas = null;
+    try {
+      await this.restaurarTudo();
+    } finally {
+      try {
+        // Se só um dos dois processos morreu, o outro ainda guarda um nó: derruba.
+        await this.derrubarNos();
+      } finally {
+        this.estado = { fase: 'ocioso' };
+        this.saidas = null;
+      }
+    }
     if (estavaAtivo) saidas?.encerrou({ motivo: 'SINK_CAIU' });
   }
 
-  /** Devolve cada stream ao alvo que tinha — só os que ainda existem. */
+  /**
+   * Devolve cada stream ao alvo que tinha — só os que ainda existem. NUNCA
+   * lança (S-13): é chamado em `parar()` e na queda do sink, e uma exceção aqui
+   * deixaria os streams num sink que some e o estado preso. Cada stream é
+   * tratado à parte; um valor que `restaurarStream` recusa (metadado que outro
+   * cliente gravou) cai para "apagar a chave", que devolve o stream ao padrão.
+   */
   private async restaurarTudo(): Promise<void> {
-    const g = await this.grafo();
-    const existentes = g === null ? null : new Set(g.nos.map((n) => n.id));
-    for (const m of this.movidos.values()) {
+    const movidos = [...this.movidos.values()];
+    this.movidos = new Map();
+    let existentes: Set<number> | null = null;
+    try {
+      const g = await this.grafo();
+      existentes = g === null ? null : new Set(g.nos.map((n) => n.id));
+    } catch {
+      // sem dump, tenta todos
+    }
+    for (const m of movidos) {
       // Stream que já saiu não tem o que restaurar; sem dump, tenta todos.
       if (existentes !== null && !existentes.has(m.stream)) continue;
-      await this.efeitos.executar(restaurarStream(m.stream, m.anterior));
+      try {
+        let comando: Comando;
+        try {
+          comando = restaurarStream(m.stream, m.anterior);
+        } catch {
+          comando = restaurarStream(m.stream, null);
+        }
+        await this.efeitos.executar(comando);
+      } catch {
+        // um stream que não voltou não impede os outros
+      }
     }
-    this.movidos = new Map();
   }
 
   private async derrubarNos(): Promise<void> {
     const filhos = this.filhos;
     if (filhos.length === 0) return;
     this.derrubando = true;
+    const sinal = (f: Filho, s: 'SIGTERM' | 'SIGKILL'): void => {
+      try {
+        f.p.kill(s);
+      } catch {
+        // o processo já tinha ido
+      }
+    };
     try {
       // A fonte primeiro: ela lê do sink, e sumir o sink antes a deixaria órfã por um instante.
-      for (const f of [...filhos].reverse()) if (!f.saiu) f.p.kill('SIGTERM');
+      for (const f of [...filhos].reverse()) if (!f.saiu) sinal(f, 'SIGTERM');
       const passos = PRAZO_DO_SIGTERM_MS / PASSO_DA_ESPERA_MS;
       for (let i = 0; i < passos && filhos.some((f) => !f.saiu); i++) await this.efeitos.esperar(PASSO_DA_ESPERA_MS);
-      for (const f of filhos) if (!f.saiu) f.p.kill('SIGKILL');
+      for (const f of filhos) if (!f.saiu) sinal(f, 'SIGKILL');
     } finally {
       this.filhos = [];
       this.derrubando = false;
@@ -403,10 +444,18 @@ export class SomDoJogoLinux {
     this.cancelarVarredura?.();
     this.cancelarVarredura = null;
     // Restaurar ANTES de derrubar: com o sink ainda de pé, o stream volta
-    // direto à saída real, sem passar um instante sem destino.
-    await this.restaurarTudo();
-    await this.derrubarNos();
-    this.estado = { fase: 'ocioso' };
-    this.saidas = null;
+    // direto à saída real, sem passar um instante sem destino. `finally` em
+    // cada degrau (S-13): passe o que passar, os nós caem e o estado volta a
+    // `ocioso` — um `parar()` que lançasse deixaria todo `iniciar` seguinte em `OCUPADO`.
+    try {
+      await this.restaurarTudo();
+    } finally {
+      try {
+        await this.derrubarNos();
+      } finally {
+        this.estado = { fase: 'ocioso' };
+        this.saidas = null;
+      }
+    }
   }
 }

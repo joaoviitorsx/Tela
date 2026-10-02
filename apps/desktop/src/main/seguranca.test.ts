@@ -154,3 +154,17 @@ describe('permissaoConcedida', () => {
     }
   });
 });
+
+describe('navegação de frames e redirecionamentos (S-21)', () => {
+  // `will-frame-navigate` e `will-redirect` usam `podeNavegar` com a URL do salto.
+  it('um salto para fora da interface é negado, em qualquer esquema', () => {
+    for (const u of ['https://evil.example/', 'http://app.tela/', 'file:///etc/passwd', 'data:text/html,x', 'javascript:alert(1)', 'about:blank', 'blob:app://tela/x']) {
+      expect(podeNavegar(u, SO_APP), u).toBe(false);
+    }
+  });
+  it('um redirecionamento de volta à interface passa; ao Vite só em dev', () => {
+    expect(podeNavegar('app://tela/transmitir', SO_APP)).toBe(true);
+    expect(podeNavegar('http://localhost:5174/x', SO_APP)).toBe(false);
+    expect(podeNavegar('http://localhost:5174/x', COM_DEV)).toBe(true);
+  });
+});

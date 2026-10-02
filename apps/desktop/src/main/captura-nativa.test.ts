@@ -171,6 +171,21 @@ describe('validação do IPC', () => {
       expect(ordemValida(l), String(l)).toBeNull();
     }
   });
+  it('ordemValida aplica ao `alvo` os mesmos tetos do `iniciar` (S-15)', () => {
+    expect(ordemValida('alvo 7680 4320 240 200000000')).toBe('alvo 7680 4320 240 200000000');
+    for (const l of [
+      'alvo 99999 99999 999 999999999',
+      'alvo 7682 1080 60 1000000',
+      'alvo 1920 7682 60 1000000',
+      'alvo 1920 1080 241 1000000',
+      'alvo 1920 1080 0 1000000',
+      'alvo 1920 1080 60 200000001',
+      'alvo 0 0 60 1000000',
+      'alvo 1 1080 60 1000000',
+    ]) {
+      expect(ordemValida(l), l).toBeNull();
+    }
+  });
   it('argumentos do helper: portal, alvo com 0,1 bpp e o token quando há', () => {
     const p = { width: 1920, height: 1080, fps: 60 };
     expect(bitrateInicial(p)).toBe(12_441_600);

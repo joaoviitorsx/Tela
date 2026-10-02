@@ -18,9 +18,17 @@ describe('criarSink', () => {
     expect(retorno).toContain('target.object=bluez_output.00_00_00_00_00_00.1');
   });
 
-  it('recusa um nome que abriria outra propriedade', () => {
-    expect(() => criarSink('x node.name=y')).toThrow(RangeError);
-    expect(() => criarSink('a"b')).toThrow(RangeError);
+  it('um nome de dispositivo real, com espaço, vai entre aspas: não abre outra propriedade (S-14)', () => {
+    expect(criarSink('Fone USB').args.at(-1)).toBe('node.name=tela_jogo_retorno target.object="Fone USB"');
+    // Tenta injetar `node.name=y`: continua UM valor, entre aspas.
+    expect(criarSink('x node.name=y').args.at(-1)).toBe('node.name=tela_jogo_retorno target.object="x node.name=y"');
+    expect(criarSink('a"b\\c').args.at(-1)).toBe('node.name=tela_jogo_retorno target.object="a\\"b\\\\c"');
+  });
+
+  it('recusa o que não é nome: controle, vazio, longo demais, `-` inicial', () => {
+    for (const ruim of ['', 'a\nb', 'a\0b', '-d', '--help', 'x'.repeat(201)]) {
+      expect(() => criarSink(ruim), JSON.stringify(ruim)).toThrow(RangeError);
+    }
   });
 });
 
@@ -64,6 +72,14 @@ describe('moverParaSink / restaurarStream', () => {
   it('restaurar com alvo anterior grava de volta o mesmo par', () => {
     expect(restaurarStream(97, { valor: 'fone.x', tipo: 'Spa:String' }).args).toEqual(['-n', 'default', '97', 'target.object', 'fone.x', 'Spa:String']);
     expect(restaurarStream(97, { valor: '55', tipo: 'Spa:Id' }).args.at(-1)).toBe('Spa:Id');
+  });
+
+  it('S-14: um valor iniciado em `-` não vira opção do pw-metadata; "Fone USB" passa como UM argumento', () => {
+    for (const v of ['-d', '--help', '-n', '-']) {
+      expect(() => restaurarStream(5, { valor: v, tipo: 'Spa:String' }), v).toThrow(RangeError);
+    }
+    expect(restaurarStream(5, { valor: 'Fone USB', tipo: 'Spa:String' }).args).toEqual(['-n', 'default', '5', 'target.object', 'Fone USB', 'Spa:String']);
+    expect(restaurarStream(5, { valor: 'alsa_output.usb-Fone_USB-00.analog-stereo', tipo: 'Spa:String' }).args[4]).toBe('alsa_output.usb-Fone_USB-00.analog-stereo');
   });
 
   it('só aceita ids de nó inteiros', () => {

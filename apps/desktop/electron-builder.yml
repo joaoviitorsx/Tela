@@ -53,6 +53,36 @@ extraResources:
 # do Windows — o node-gyp deles roda no CI, não aqui.
 npmRebuild: false
 
+# Fuses do Electron (S-03): o binário vem com tudo ligado "por compatibilidade".
+# O que o Tela NÃO usa e que serviria a quem já executa código do mesmo usuário:
+#  - runAsNode: `ELECTRON_RUN_AS_NODE=1 tela …` vira um interpretador Node com a
+#    identidade do app. O som do Windows usa `utilityProcess`, que não depende dele;
+#  - enableNodeOptionsEnvironmentVariable / enableNodeCliInspectArguments:
+#    `NODE_OPTIONS=--require x.js` e `--inspect` injetam código no main, que tem
+#    o preload e as permissões de captura;
+#  - grantFileProtocolExtraPrivileges: a interface vem de `app://`, nunca de `file:`
+#    (o `net.fetch('file://…')` do `protocol.handle` é do main e não depende disto).
+# E o que PRENDE o código ao pacote:
+#  - onlyLoadAppFromAsar: só `resources/app.asar` (sem uma pasta `app/` ao lado);
+#  - enableEmbeddedAsarIntegrityValidation: o asar é conferido contra o hash
+#    gravado no executável (Windows/macOS; no Linux o fuse não tem efeito). NÃO cobre
+#    o que está FORA do asar — `resources/som/*.js` e `resources/native/*.node`
+#    (por que estão fora: ver `win.extraResources`). Esses são o risco que sobra,
+#    para o qual `docs/seguranca/revisao-2026-10-02.md` S-03 propõe hash no main.
+#  - enableCookieEncryption: o app não usa cookies; ligado, os que existirem
+#    ficam cifrados com a chave do SO (transição de mão única).
+# `.github/workflows/desktop.yml` lê os fuses do binário empacotado e falha se algum
+# destes voltar ao padrão (`scripts/verificar-fuses.mjs`).
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
+
 # O link `tela://assistir/<canal>` (D8, PLANO-desktop §14). O NSIS grava o
 # esquema no registro do Windows; no Linux o electron-builder acrescenta
 # `MimeType=x-scheme-handler/tela;` ao .desktop do deb e do rpm e o `%U` ao

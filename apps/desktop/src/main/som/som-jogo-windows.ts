@@ -82,6 +82,8 @@ export class SomDoJogoWindows<P> {
   /** Os pids da última listagem: só um deles pode ser capturado (o renderer é uma página web). */
   private listados = new Set<number>();
   private nomes = new Map<number, string>();
+  /** O executável de cada pid na última listagem: o pid sozinho não identifica o processo no tempo (S-08). */
+  private caminhos = new Map<number, string>();
 
   constructor(private readonly deps: DepsDoSomWindows<P>) {}
 
@@ -142,6 +144,7 @@ export class SomDoJogoWindows<P> {
     const apps = appsDasSessoes(r ?? [], this.deps.pidsDoTela());
     this.listados = new Set(apps.map((a) => a.pid));
     this.nomes = new Map(apps.map((a) => [a.pid, a.nome]));
+    this.caminhos = new Map(apps.map((a) => [a.pid, a.caminho]));
     return apps;
   }
 
@@ -158,6 +161,26 @@ export class SomDoJogoWindows<P> {
     if (!(await this.disponibilidade()).disponivel) return { ok: false, error: 'INDISPONIVEL' };
 
     this.iniciando = true;
+    /*
+      S-08: o seletor pode ficar aberto por minutos. Se o jogo fechou e o
+      Windows reaproveitou o pid (para a call de voz, por exemplo), capturar
+      esse pid transmitiria o áudio de OUTRO programa. Logo antes de capturar,
+      pergunta de novo: o pid ainda tem sessão de áudio E o MESMO executável
+      da listagem? Senão, recusa. É mitigação, não fechamento: sobra a janela
+      de milissegundos entre esta pergunta e o `OpenProcess` do addon, e o
+      mesmo executável reaberto com o mesmo pid (o mesmo jogo) é inofensivo. O
+      fechamento é conferir o tempo de criação no addon (`GetProcessTimes`,
+      PLANO/revisão S-08), que pede Windows para compilar e testar.
+    */
+    const esperado = this.caminhos.get(pid);
+    const fresca = await this.perguntar({ t: 'listar' }, PRAZO_DA_LISTAGEM_MS, (x) => (x.t === 'sessoes' ? x.sessoes : null));
+    const agora = fresca?.find((x) => x.pid === pid);
+    if (agora === undefined || esperado === undefined || !mesmoExecutavel(agora.caminho, esperado)) {
+      this.iniciando = false;
+      this.listados.delete(pid);
+      return { ok: false, error: 'APP_NAO_ENCONTRADO' };
+    }
+
     let proc: ProcessoUtilitario;
     let canal: CanalDePcm<P>;
     try {
@@ -239,4 +262,9 @@ export class SomDoJogoWindows<P> {
   idAtivo(): number | null {
     return this.ativa?.id ?? null;
   }
+}
+
+/** Caminhos do Windows não diferenciam caixa. */
+function mesmoExecutavel(a: string, b: string): boolean {
+  return a !== '' && a.toLowerCase() === b.toLowerCase();
 }

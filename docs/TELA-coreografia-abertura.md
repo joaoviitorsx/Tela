@@ -270,23 +270,30 @@ Preserva a identidade visual sem nada que dispare enjoo vestibular. Movimento de
 
 A abertura é **muda**. Sem exceção, sem truque.
 
-Depois do primeiro gesto do usuário, o chiado entra como recompensa da ação:
+Depois do primeiro gesto do usuário, o som entra como recompensa da ação:
 
 | Evento | Som |
 |---|---|
-| Clique em "Transmitir" | Burst de ruído, 180ms, `-18 dBFS`, envelope decaindo |
+| Clique em "Ir ao ar" | A TV ligando, ~0,6 s, pico perto de `-18 dBFS` |
 | Transmissão iniciada | Silêncio — o produto assumiu |
 
-Gere o ruído com Web Audio, não com arquivo:
+> **Trocado em 02/10/2026, a pedido do dono.** O original era um burst de
+> ruído branco de 180 ms (passa-baixa em 4 kHz). Soava áspero — "um barulhinho"
+> — logo no momento que devia ser a recompensa. O chiado continua, mas como
+> textura, e o que se ouve é um aparelho ligando.
+
+Gerado com Web Audio, não com arquivo (`adapters/web-audio-cue.ts`):
 
 ```
-AudioBufferSourceNode (ruído branco, 0.5s, em loop)
-  → BiquadFilter lowpass @ 4kHz, Q 0.7
-  → GainNode com envelope: 0 → 0.12 em 20ms → 0 em 160ms
-  → destination
+baque:  seno 140 → 55 Hz em 120 ms, pico 0.16, queda exponencial
+chiado: ruído 250 ms → bandpass 1,8 kHz Q 0.8 → pico 0.025
+arpejo: lá maior subindo (mi5 lá5 dó#6 mi6), 70 ms entre notas,
+        triangular (pico 0.07) + seno uma oitava acima (0.015);
+        a última nota segura 420 ms
+tudo → ganho mestre 0.8 → destination
 ```
 
-Custo: **zero bytes**. Um WAV de chiado pesaria 40KB para soar igual.
+Custo: **zero bytes**. Um WAV pesaria dezenas de KB para soar igual.
 
 Respeite um mute global persistido em `localStorage`.
 

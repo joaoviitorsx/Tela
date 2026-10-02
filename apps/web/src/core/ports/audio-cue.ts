@@ -2,16 +2,18 @@
  * Os sons do produto (§10 da coreografia, e ADR 0025).
  *
  * A abertura é MUDA — sem exceção, sem truque. Depois do primeiro gesto do
- * usuário, o chiado entra como recompensa da ação: um estouro curto ao apertar
- * TRANSMITIR, e silêncio quando a transmissão sobe, porque aí o produto
- * assumiu.
+ * usuário, o som entra como recompensa da ação: a TV ligando ao apertar IR AO
+ * AR, e silêncio quando a transmissão sobe, porque aí o produto assumiu.
  *
  * É uma porta e não uma chamada direta ao Web Audio porque o `core/` não
  * conhece navegador (R3) e porque o mudo global tem de valer para qualquer
  * implementação futura.
  */
 export type AudioCue = {
-  /** Estouro de ruído, 180 ms, envelope decaindo. Silencioso se estiver mudo. */
+  /**
+   * A TV ligando: baque grave, um resto de chiado e um arpejo maior subindo,
+   * ~0,6 s. Silencioso se estiver mudo.
+   */
   readonly estouro: () => void;
   /**
    * Dois tons curtos: alguém pediu para assistir. Quem transmite está no jogo,

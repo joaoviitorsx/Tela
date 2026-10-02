@@ -18,6 +18,7 @@ import { makeCapturaDesktop } from './captura-desktop.js';
 import { CodificadorComutavel } from './codificador-comutavel.js';
 import { makeLigacaoNativa } from './porta-nativa.js';
 import { makeSeletorDeFontes } from './seletor-de-fontes.js';
+import { sessaoAoVivo } from './sessao-ao-vivo.js';
 import { criarTrilhaFantasma } from './trilha-fantasma.js';
 
 /**
@@ -153,8 +154,13 @@ export const umEncode = (): boolean => true;
 export const pecasAusentesDoUmEncode = (): readonly string[] => [];
 export const capacidadeDeEspectadores = (): number => P2P_LIMITS.maxViewers;
 
+/**
+ * A sessão de quem transmite nasce aqui e é registrada em `sessaoAoVivo`: é
+ * por ali que a moldura (painel NO AR, modo compacto, bandeja) a enxerga, sem
+ * a rota saber que ela existe (D4).
+ */
 export function createBroadcastSession(): BroadcastSession {
-  return new BroadcastSession({
+  const sessao = new BroadcastSession({
     transport: createTransport(),
     capacidade: capacidadeDeEspectadores(),
     screen,
@@ -169,6 +175,8 @@ export function createBroadcastSession(): BroadcastSession {
     diagnosticId,
     appVersion,
   });
+  sessaoAoVivo.registrar(sessao);
+  return sessao;
 }
 
 export function createViewerSession(): ViewerSession {

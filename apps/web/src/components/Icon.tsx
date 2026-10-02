@@ -140,3 +140,12 @@ export function IconChave({ className }: IconProps) {
     </Pixel>
   );
 }
+
+/** A engrenagem: AJUSTES, no pé do trilho do app. */
+export function IconEngrenagem({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M6 1h4v2h2v2h2v4h-2v2h-2v2H6v-2H4v-2H2V5h2V3h2z M6 6h4v4H6z" fillRule="evenodd" />
+    </Pixel>
+  );
+}

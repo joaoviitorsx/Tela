@@ -19,7 +19,10 @@
  *
  * Abre UMA janela na tela por ~1 min.
  */
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron, chromium } from 'playwright';
 
@@ -69,14 +72,20 @@ function prepararHost() {
   };
 }
 
+// Dados à parte (ajustes, autostart): o e2e nunca toca os da pessoa.
+const DADOS = mkdtempSync(join(tmpdir(), 'tela-e2e-'));
+// `BANDEJA=0` testa o app SEM bandeja: fechar ao vivo vira o modo compacto.
+const BANDEJA = process.env.BANDEJA ?? '1';
+const AMBIENTE = { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0', TELA_USERDATA: DADOS, TELA_BANDEJA: BANDEJA };
+
 let app;
 let navegador;
 try {
   const exe = process.env.TELA_EXE;
   app = await _electron.launch(
     exe
-      ? { executablePath: exe, args: [], env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0' } }
-      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0' } },
+      ? { executablePath: exe, args: [], env: AMBIENTE }
+      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: AMBIENTE },
   );
   const host = await app.firstWindow();
   const erros = [];
@@ -109,7 +118,8 @@ try {
   ok(noAr.texto.includes(`${new URL(WEB).host}/${slug}`), 'o link mostrado é a origem pública, não app://');
   // Ao vivo a tecla da transmissão vira "NO AR"; as outras ficam aria-disabled
   // (focáveis, com a explicação lida por teclado e toque — auditoria D-02).
-  const travadoAoVivo = (t) => t.some((i) => /NO AR/.test(i.texto)) && t.filter((i) => !/NO AR/.test(i.texto)).every((i) => i.travado);
+  // AJUSTES (D4) abre um painel, não uma rota: nunca trava.
+  const travadoAoVivo = (t) => t.some((i) => /NO AR/.test(i.texto)) && t.filter((i) => !/NO AR|AJUSTES/.test(i.texto)).every((i) => i.travado);
   ok(travadoAoVivo(noAr.trilho), `trilho travado ao vivo (${JSON.stringify(noAr.trilho)})`);
   // E clicar numa tecla travada não tira a pessoa da transmissão.
   await host.getByRole('button', { name: /ASSISTIR/ }).first().click({ force: true });
@@ -176,11 +186,89 @@ try {
     return out;
   });
   ok(iscas.length > 0 && iscas.every((w) => w <= 160), `os senders codificam só a isca (${iscas.join(', ')} px)`);
+  console.log('\n4. Segundo plano (D4): painel NO AR, compacto, fechar, suspensão');
+  const janelaInfo = () => app.evaluate(({ BrowserWindow }) => {
+    const j = BrowserWindow.getAllWindows()[0];
+    return { visivel: j.isVisible(), largura: j.getSize()[0], altura: j.getSize()[1], resizavel: j.isResizable() };
+  });
+  const painel = host.getByRole('region', { name: 'Transmissão no ar' });
+  ok(await painel.isVisible(), 'o painel NO AR aparece no pé da janela');
+  const textoDoPainel = (await painel.textContent()) ?? '';
+  ok(/NO AR/.test(textoDoPainel) && /\d+\/\d+/.test(textoDoPainel), `painel mostra NO AR e n/N (${textoDoPainel.replace(/\s+/g, ' ').slice(0, 120)})`);
+  ok(/direta|TURN|mista|—/.test(textoDoPainel) && /ENCODER/.test(textoDoPainel), 'painel mostra rota e encoder');
+
+  // Compacto pelo IPC: a MESMA janela encolhe; a transmissão e a rota seguem.
+  const grande = await janelaInfo();
+  await host.evaluate(() => window.telaDesktop.pedirModo('compacto'));
+  await esperar(1200);
+  const compacto = await janelaInfo();
+  ok(compacto.largura <= 480 && compacto.altura <= 160, `a janela encolheu (${grande.largura}x${grande.altura} → ${compacto.largura}x${compacto.altura})`);
+  ok(!compacto.resizavel, 'compacto não é redimensionável');
+  ok(await host.getByRole('region', { name: /janela compacta/ }).isVisible(), 'a faixa compacta aparece');
+  ok((await host.evaluate(() => document.documentElement.dataset.aba)) === 'oculta', 'compacto usa o modo escondido (animações paradas)');
+  ok((await host.evaluate(() => location.pathname)) === '/transmitir', 'a rota da transmissão continua montada');
+  await host.getByRole('button', { name: 'EXPANDIR' }).click();
+  await esperar(1200);
+  const volta = await janelaInfo();
+  ok(volta.largura === grande.largura && volta.altura === grande.altura && volta.resizavel, `EXPANDIR devolve o tamanho (${volta.largura}x${volta.altura})`);
+  ok(await painel.isVisible(), 'o painel NO AR volta');
+
+  // O "Encerrar" da bandeja pede à interface o fluxo dela: com plateia, a confirmação.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('tela:pedir-encerrar'));
+  // Por papel: só o diálogo ABERTO entra na árvore (o da rota e o da moldura ficam fechados).
+  const confirmacao = host.getByRole('heading', { name: 'ENCERRAR A TRANSMISSÃO?' });
+  await confirmacao.waitFor({ state: 'visible', timeout: 3000 }).catch(() => undefined);
+  ok(await confirmacao.isVisible(), 'encerrar pela bandeja abre a confirmação (há espectador)');
+  await host.getByRole('button', { name: 'CONTINUAR NO AR' }).last().click();
+  await esperar(500);
+  ok((await host.evaluate(() => location.pathname)) === '/transmitir' && (await painel.isVisible()), 'continuar no ar mantém a transmissão');
+
+  // Fechar a janela ao vivo: pergunta; continuar esconde (bandeja) ou vira compacto (sem ela).
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  const pergunta = host.getByText('CONTINUAR TRANSMITINDO EM SEGUNDO PLANO?');
+  await pergunta.waitFor({ state: 'visible', timeout: 3000 }).catch(() => undefined);
+  ok(await pergunta.isVisible(), 'fechar ao vivo pergunta "Continuar transmitindo em segundo plano?"');
+  await host.keyboard.press('Escape');
+  await esperar(500);
+  ok((await janelaInfo()).visivel && !(await pergunta.isVisible()), 'Esc cancela: a janela fica como está');
+
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await pergunta.waitFor({ state: 'visible', timeout: 3000 }).catch(() => undefined);
+  await host.getByRole('checkbox', { name: /Lembrar minha escolha/ }).check();
+  await host.getByRole('button', { name: 'CONTINUAR NO AR' }).last().click();
+  await esperar(1200);
+  const aposFechar = await janelaInfo();
+  if (BANDEJA === '1') {
+    ok(!aposFechar.visivel, 'com bandeja: a janela ESCONDE (não destrói) e a transmissão segue');
+    ok((await host.evaluate(() => document.documentElement.dataset.aba)) === 'oculta', 'escondida: modo escondido avisado à página');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
+  } else {
+    ok(aposFechar.visivel && aposFechar.largura <= 480, 'SEM bandeja: vira o modo compacto, nunca some');
+    await host.getByRole('button', { name: 'EXPANDIR' }).click();
+  }
+  await esperar(1200);
+  ok((await host.evaluate(() => location.pathname)) === '/transmitir', 'a transmissão sobreviveu a fechar a janela');
+  ok(JSON.parse(readFileSync(join(DADOS, 'ajustes.json'), 'utf8')).aoFecharAoVivo === 'segundo-plano', 'a escolha foi lembrada em userData');
+  // Lembrada: fechar de novo não pergunta mais.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await esperar(1200);
+  ok(!(await pergunta.isVisible()), 'lembrada: fechar de novo não pergunta');
+  if (BANDEJA === '1') await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
+  else await host.getByRole('button', { name: 'EXPANDIR' }).click().catch(() => undefined);
+  await esperar(1200);
+
+  // Suspensão: encerra com o motivo explícito, que fica à vista na volta.
+  await app.evaluate(({ powerMonitor }) => powerMonitor.emit('suspend'));
+  await host.getByText(/entrou em suspensão/).waitFor({ state: 'visible', timeout: 5000 }).catch(() => undefined);
+  ok(await host.getByText('A transmissão foi encerrada porque o computador entrou em suspensão.').isVisible(), 'suspender encerra com o motivo explícito');
+  ok(!(await painel.isVisible().catch(() => false)), 'o painel NO AR some: não está mais no ar');
+
   ok(erros.length === 0, `página sem erro (${erros.join(' | ').slice(0, 200) || 'nenhum'})`);
 } catch (e) {
   ok(false, `interrompido: ${e.message.split('\n')[0]}`);
 } finally {
   await navegador?.close().catch(() => undefined);
   await app?.close().catch(() => undefined);
+  rmSync(DADOS, { recursive: true, force: true });
 }
 console.log(process.exitCode ? '\n=== AO VIVO NO APP FALHOU ===' : '\n=== AO VIVO NO APP PASSOU ===');

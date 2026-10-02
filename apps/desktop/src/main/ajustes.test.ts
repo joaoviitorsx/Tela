@@ -1,0 +1,42 @@
+import { describe, expect, it } from 'vitest';
+import { AJUSTES_PADRAO, lerAjustes, mesclarAjustes, mesmosAjustes, serializarAjustes } from './ajustes.js';
+
+describe('ajustes', () => {
+  it('sem arquivo, JSON quebrado ou de outro tipo: o padrão', () => {
+    expect(lerAjustes(null)).toEqual(AJUSTES_PADRAO);
+    expect(lerAjustes('{quebrado')).toEqual(AJUSTES_PADRAO);
+    expect(lerAjustes('[1,2]')).toEqual(AJUSTES_PADRAO);
+    expect(lerAjustes('"x"')).toEqual(AJUSTES_PADRAO);
+  });
+
+  it('o padrão nunca inicia com o sistema nem lembra escolhas', () => {
+    expect(AJUSTES_PADRAO.iniciarComSistema).toBe(false);
+    expect(AJUSTES_PADRAO.aoFecharAoVivo).toBe('perguntar');
+  });
+
+  it('o que grava, lê de volta', () => {
+    const a = { ...AJUSTES_PADRAO, iniciarComSistema: true, aoFecharAoVivo: 'segundo-plano' as const };
+    expect(lerAjustes(serializarAjustes(a))).toEqual(a);
+  });
+
+  it('campo com tipo errado volta ao padrão, os bons ficam', () => {
+    const lido = lerAjustes(
+      JSON.stringify({ iniciarComSistema: 'sim', fecharEmSegundoPlano: true, aoFecharAoVivo: 'tchau', extra: 1 }),
+    );
+    expect(lido).toEqual({ ...AJUSTES_PADRAO, fecharEmSegundoPlano: true });
+    expect(Object.keys(lido)).not.toContain('extra');
+  });
+
+  it('mesclar muda só o que veio e ignora o que não é objeto', () => {
+    const base = { ...AJUSTES_PADRAO, sempreNoTopoNoCompacto: true };
+    expect(mesclarAjustes(base, { iniciarComSistema: true })).toEqual({ ...base, iniciarComSistema: true });
+    expect(mesclarAjustes(base, null)).toBe(base);
+    expect(mesclarAjustes(base, 'x')).toBe(base);
+    expect(mesclarAjustes(base, { aoFecharAoVivo: 'encerrar' }).aoFecharAoVivo).toBe('encerrar');
+  });
+
+  it('mesmosAjustes compara campo a campo', () => {
+    expect(mesmosAjustes(AJUSTES_PADRAO, { ...AJUSTES_PADRAO })).toBe(true);
+    expect(mesmosAjustes(AJUSTES_PADRAO, { ...AJUSTES_PADRAO, iniciarComSistema: true })).toBe(false);
+  });
+});

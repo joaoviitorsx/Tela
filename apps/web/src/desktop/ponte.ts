@@ -73,6 +73,46 @@ export type FimDaCapturaNativa = {
   readonly codigo: number | null;
 };
 
+/** O que o renderer conta ao main sobre a transmissão (D4): bandeja e política de fechar. */
+export type EstadoAoVivo = {
+  readonly noAr: boolean;
+  /** `Date.now()` de quando foi ao ar; `null` fora do ar. */
+  readonly inicioMs: number | null;
+  readonly assistindo: number;
+  readonly capacidade: number;
+  /** O link público (https), ou `null`. */
+  readonly link: string | null;
+};
+
+export type AoFecharAoVivo = 'perguntar' | 'segundo-plano' | 'encerrar';
+
+/** Os ajustes do app, guardados pelo main em `userData`. */
+export type AjustesDesktop = {
+  readonly iniciarComSistema: boolean;
+  readonly fecharEmSegundoPlano: boolean;
+  readonly sempreNoTopoNoCompacto: boolean;
+  readonly aoFecharAoVivo: AoFecharAoVivo;
+};
+
+export type RespostaDeAjustes = {
+  readonly ajustes: AjustesDesktop;
+  /** Há ícone de bandeja neste sistema? Sem ele, "segundo plano" vira a janela compacta. */
+  readonly bandeja: boolean;
+  /** Gravar o autostart falhou; o ajuste voltou ao valor anterior. */
+  readonly autostartFalhou: boolean;
+};
+
+export type ModoDaJanela = 'normal' | 'compacto';
+
+/** A resposta do diálogo "Continuar transmitindo em segundo plano?". */
+export type RespostaDeFechar = {
+  readonly acao: 'segundo-plano' | 'encerrar' | 'cancelar';
+  readonly lembrar: boolean;
+};
+
+/** Por que o main mandou parar: `sair` (Sair/Ctrl+Q/bandeja) ou `suspensao` (o sistema vai dormir). */
+export type MotivoDeParada = 'sair' | 'suspensao';
+
 export interface PonteDesktop {
   readonly plataforma: PlataformaDesktop;
   /** Versão do app (`app.getVersion()`), para o diagnóstico. */
@@ -94,6 +134,31 @@ export interface PonteDesktop {
   aoAbrirCanal(ouvinte: (slug: string) => void): () => void;
 
   capacidades(): Promise<CapacidadesDesktop>;
+
+  /**
+   * Segundo plano (D4). O estado da transmissão, para a bandeja e para a
+   * política de fechar. O renderer manda no máximo 1 Hz e só na mudança; o
+   * main valida e ignora o que não for um estado.
+   */
+  enviarEstadoAoVivo(estado: EstadoAoVivo): void;
+  ajustes(): Promise<RespostaDeAjustes>;
+  /** Só os campos que mudaram; o main valida, grava, aplica o autostart e devolve o resultado. */
+  salvarAjustes(parcial: Partial<AjustesDesktop>): Promise<RespostaDeAjustes>;
+  /** Pede o modo compacto ou o normal. O main decide e responde por `aoMudarModo`. */
+  pedirModo(modo: ModoDaJanela): void;
+  /**
+   * O modo da janela. Entrega o valor atual na hora, se já se sabe — a janela
+   * pode ter nascido compacta ou ter recarregado depois de uma queda.
+   */
+  aoMudarModo(ouvinte: (modo: ModoDaJanela) => void): () => void;
+  /** A janela foi fechada ao vivo e não há escolha lembrada: perguntar. */
+  aoPerguntarFechar(ouvinte: () => void): () => void;
+  responderFechar(resposta: RespostaDeFechar): void;
+  /** "Encerrar transmissão" da bandeja: roda o fluxo de encerrar da própria interface, com a confirmação. */
+  aoPedirEncerrar(ouvinte: () => void): () => void;
+  /** Parar SEM perguntar (sair, suspensão): `stop()` da sessão, e então `paradaConcluida()`. */
+  aoPedirParar(ouvinte: (motivo: MotivoDeParada) => void): () => void;
+  paradaConcluida(): void;
 
   /**
    * Telas e janelas com miniaturas. Custa uma captura de cada janela: só
@@ -143,6 +208,26 @@ export const CANAIS = {
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
   /** main → renderer, `string` (slug já validado) */
   abrirCanal: 'tela:abrir-canal',
+  /** renderer → main, `EstadoAoVivo` */
+  estadoAoVivo: 'tela:estado-ao-vivo',
+  /** renderer → main (invoke) → `RespostaDeAjustes` */
+  ajustes: 'tela:ajustes',
+  /** renderer → main (invoke), `Partial<AjustesDesktop>` → `RespostaDeAjustes` */
+  salvarAjustes: 'tela:salvar-ajustes',
+  /** renderer → main, `ModoDaJanela` */
+  pedirModo: 'tela:pedir-modo',
+  /** main → renderer, `ModoDaJanela` */
+  modo: 'tela:modo',
+  /** main → renderer */
+  perguntarFechar: 'tela:perguntar-fechar',
+  /** renderer → main, `RespostaDeFechar` */
+  responderFechar: 'tela:responder-fechar',
+  /** main → renderer */
+  pedirEncerrar: 'tela:pedir-encerrar',
+  /** main → renderer, `MotivoDeParada` */
+  parar: 'tela:parar',
+  /** renderer → main */
+  paradaConcluida: 'tela:parada-concluida',
 } as const;
 
 /**

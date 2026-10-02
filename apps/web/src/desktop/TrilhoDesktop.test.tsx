@@ -42,4 +42,16 @@ describe('TrilhoDesktop', () => {
     expect(screen.getByRole('navigation').className).toContain('w-[104px]');
     expect(screen.getByRole('button', { name: /TRANSMITIR/ }).className).toContain('text-[10px]');
   });
+
+  it('AJUSTES só aparece com o painel disponível e responde mesmo ao vivo', () => {
+    const aoAjustes = vi.fn();
+    const { rerender } = render(<TrilhoDesktop ativo="transmitir" travado={false} aoEscolher={() => undefined} />);
+    expect(screen.queryByRole('button', { name: /AJUSTES/ })).toBeNull();
+
+    rerender(<TrilhoDesktop ativo="transmitir" travado aoEscolher={() => undefined} aoAjustes={aoAjustes} />);
+    const ajustes = screen.getByRole('button', { name: /AJUSTES/ });
+    expect(ajustes.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(ajustes);
+    expect(aoAjustes).toHaveBeenCalledTimes(1);
+  });
 });

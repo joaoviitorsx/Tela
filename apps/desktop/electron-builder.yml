@@ -41,6 +41,8 @@ files:
 # O renderer é o site, compilado com `pnpm --filter @tela/web build:desktop`.
 # main.ts o serve de `process.resourcesPath/web` quando empacotado.
 extraResources:
+  - from: build/icon.png
+    to: icon.png
   - from: ../web/dist-desktop
     to: web
 

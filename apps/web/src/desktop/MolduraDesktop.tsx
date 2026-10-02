@@ -1,40 +1,117 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
 import { DialogoAssistir } from '../components/DialogoAssistir.js';
+import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
+import type { FonteDeVisibilidade } from '../react/use-aba-visivel.js';
+import { useDialogo } from '../react/use-dialogo.js';
+import { DialogoAjustes } from './DialogoAjustes.js';
+import { DialogoFechar } from './DialogoFechar.js';
+import { ModoCompacto } from './ModoCompacto.js';
+import { PainelNoAr } from './PainelNoAr.js';
+import type { ModoDaJanelaStore } from './modo-da-janela.js';
 import type { PonteDesktop } from './ponte.js';
+import { type SessaoAoVivo, sessaoAoVivo } from './sessao-ao-vivo.js';
 import { TrilhoDesktop } from './TrilhoDesktop.js';
+import { useAjustes } from './use-ajustes.js';
 import { useAssistir } from './use-assistir.js';
 import { useCanalPorLink } from './use-canal-por-link.js';
 import { DESTINO, itemAtivo, useNavegacaoDesktop } from './use-navegacao-desktop.js';
+import { type PonteDoSegundoPlano, useSegundoPlano } from './use-segundo-plano.js';
+
+type PonteDaMoldura = Pick<PonteDesktop, 'aoAbrirCanal'> &
+  PonteDoSegundoPlano &
+  Pick<PonteDesktop, 'ajustes' | 'salvarAjustes'>;
 
 type Props = {
   readonly children: ReactNode;
   /** O que fica por cima de tudo: o seletor de fontes (D2). Opcional, porque em dev no navegador não há ponte. */
   readonly sobreposicao?: ReactNode;
-  /** A ponte do preload: sem ela (dev no navegador) não chega `tela://`. */
-  readonly ponte?: Pick<PonteDesktop, 'aoAbrirCanal'>;
+  /** A ponte do preload: sem ela (dev no navegador) não chega `tela://` nem há bandeja. */
+  readonly ponte?: PonteDaMoldura;
+  /** Onde a moldura enxerga a transmissão (D4). Padrão: a do container do app. */
+  readonly sessao?: SessaoAoVivo;
+  readonly modo?: ModoDaJanelaStore;
+  readonly visibilidade?: FonteDeVisibilidade;
 };
 
 /**
  * A moldura do app em volta das telas do site: trilho à esquerda, a tela à
- * direita, rolando sozinha. As rotas continuam `min-h-dvh`; aqui elas são
- * a altura da coluna, e a coluna é a janela.
+ * direita, rolando sozinha, e — ao vivo — o painel NO AR no pé. As rotas
+ * continuam `min-h-dvh`; aqui elas são a altura da coluna, e a coluna é a janela.
  *
  * Também é daqui que entram os canais (D8): o painel ASSISTIR e o link
  * `tela://assistir/<canal>` terminam na mesma navegação para `/<canal>`.
+ *
+ * # Compacto (D4)
+ *
+ * No modo compacto a árvore das rotas CONTINUA MONTADA, só escondida
+ * (`hidden`): a `BroadcastSession` vive na rota `/transmitir`, e desmontá-la
+ * derrubaria a transmissão. Esconder não é desmontar.
  */
-export function MolduraDesktop({ children, sobreposicao, ponte }: Props) {
+export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoAoVivo, modo, visibilidade }: Props) {
   const { caminho, travado, irPara } = useNavegacaoDesktop();
   const assistir = useAssistir(irPara);
   const porLink = useCanalPorLink(ponte, irPara);
+  const sp = useSegundoPlano({ sessao, ponte, ...(modo === undefined ? {} : { modo }), ...(visibilidade === undefined ? {} : { visibilidade }) });
+  const ajustes = useAjustes(ponte);
+
+  const compactoNoAr = sp.compacto && sp.noAr;
+
+  // ENCERRAR do painel: a confirmação do Tela, a mesma da rota. No compacto
+  // a pergunta vem inline (a janela é pequena demais para um diálogo).
+  const seguroRef = useRef<HTMLButtonElement>(null);
+  const dialogoEncerrar = useDialogo(sp.encerrar.confirmando && !compactoNoAr, sp.encerrar.cancelar, seguroRef);
+
+  const continuarRef = useRef<HTMLButtonElement>(null);
+  const dialogoFechar = useDialogo(sp.fechar.perguntando, () => sp.fechar.responder('cancelar'), continuarRef);
+
+  const [ajustesAbertos, setAjustesAbertos] = useState(false);
+  const fecharRef = useRef<HTMLButtonElement>(null);
+  const dialogoAjustes = useDialogo(ajustesAbertos, () => setAjustesAbertos(false), fecharRef);
+
+  const abrirAjustes = () => {
+    ajustes.recarregar();
+    setAjustesAbertos(true);
+  };
+
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-void">
-      <TrilhoDesktop
-        ativo={itemAtivo(caminho)}
-        travado={travado}
-        aoEscolher={(item) => (item === 'assistir' ? assistir.abrir() : irPara(DESTINO[item]))}
-      />
-      <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
+    <div className="flex h-dvh w-full flex-col overflow-hidden bg-void">
+      {compactoNoAr && (
+        <ModoCompacto
+          link={sp.painel.link}
+          tempo={sp.painel.tempo}
+          assistindo={sp.painel.assistindo}
+          capacidade={sp.painel.capacidade}
+          copiado={sp.copiado}
+          aoCopiar={sp.copiarLink}
+          confirmando={sp.encerrar.confirmando}
+          textoConfirmar={sp.encerrar.texto}
+          aoEncerrar={sp.encerrar.pedir}
+          aoConfirmar={sp.encerrar.confirmar}
+          aoCancelar={sp.encerrar.cancelar}
+          aoExpandir={sp.expandir}
+        />
+      )}
+      <div className={compactoNoAr ? 'hidden' : 'flex min-h-0 flex-1'}>
+        <TrilhoDesktop
+          ativo={itemAtivo(caminho)}
+          travado={travado}
+          aoEscolher={(item) => (item === 'assistir' ? assistir.abrir() : irPara(DESTINO[item]))}
+          {...(ponte === undefined ? {} : { aoAjustes: abrirAjustes })}
+        />
+        <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
+      </div>
+      {sp.noAr && !compactoNoAr && (
+        <PainelNoAr
+          tempo={sp.painel.tempo}
+          assistindo={sp.painel.assistindo}
+          capacidade={sp.painel.capacidade}
+          rota={sp.painel.rota}
+          encoder={sp.painel.encoder}
+          aoCompactar={sp.compactar}
+          aoEncerrar={sp.encerrar.pedir}
+        />
+      )}
       {sobreposicao}
       <DialogoAssistir
         dialogRef={assistir.dialogo.ref}
@@ -46,21 +123,61 @@ export function MolduraDesktop({ children, sobreposicao, ponte }: Props) {
         aoEnviar={assistir.enviar}
         aoCancelar={assistir.fechar}
       />
-      {porLink.aviso !== null && (
-        <div className="fixed bottom-4 left-[120px] z-50 max-w-[420px]">
-          <Aviso tom="alerta" anuncia>
-            <span className="flex items-start gap-3">
-              <span>{porLink.aviso}</span>
-              <button
-                type="button"
-                onClick={porLink.dispensar}
-                aria-label="Dispensar aviso"
-                className="font-[family-name:var(--font-pixel)] text-accent hover:text-accent-hi"
-              >
-                ×
-              </button>
-            </span>
-          </Aviso>
+      <DialogoConfirmar
+        titulo="ENCERRAR A TRANSMISSÃO?"
+        dialogRef={dialogoEncerrar.ref}
+        aoClicarNoFundo={dialogoEncerrar.aoClicar}
+        rotuloSeguro="CONTINUAR NO AR"
+        seguroRef={seguroRef}
+        aoSeguro={sp.encerrar.cancelar}
+        rotuloAcao="ENCERRAR"
+        aoAcao={sp.encerrar.confirmar}
+      >
+        {sp.encerrar.texto}
+      </DialogoConfirmar>
+      <DialogoFechar
+        dialogRef={dialogoFechar.ref}
+        aoClicarNoFundo={dialogoFechar.aoClicar}
+        bandeja={ajustes.bandeja}
+        lembrar={sp.fechar.lembrar}
+        aoMudarLembrar={sp.fechar.mudarLembrar}
+        continuarRef={continuarRef}
+        aoContinuar={() => sp.fechar.responder('segundo-plano')}
+        aoEncerrar={() => sp.fechar.responder('encerrar')}
+      />
+      <DialogoAjustes
+        dialogRef={dialogoAjustes.ref}
+        aoClicarNoFundo={dialogoAjustes.aoClicar}
+        ajustes={ajustes.ajustes}
+        bandeja={ajustes.bandeja}
+        autostartFalhou={ajustes.autostartFalhou}
+        aoMudar={ajustes.mudar}
+        fecharRef={fecharRef}
+        aoFechar={() => setAjustesAbertos(false)}
+      />
+      {(porLink.aviso !== null || sp.aviso !== null) && (
+        <div className="fixed bottom-4 left-[120px] z-50 flex max-w-[420px] flex-col gap-2">
+          {[
+            { chave: 'link', texto: porLink.aviso, dispensar: porLink.dispensar },
+            { chave: 'energia', texto: sp.aviso, dispensar: sp.dispensarAviso },
+          ].map(
+            (a) =>
+              a.texto !== null && (
+                <Aviso key={a.chave} tom="alerta" anuncia>
+                  <span className="flex items-start gap-3">
+                    <span>{a.texto}</span>
+                    <button
+                      type="button"
+                      onClick={a.dispensar}
+                      aria-label="Dispensar aviso"
+                      className="font-[family-name:var(--font-pixel)] text-accent hover:text-accent-hi"
+                    >
+                      ×
+                    </button>
+                  </span>
+                </Aviso>
+              ),
+          )}
         </div>
       )}
     </div>

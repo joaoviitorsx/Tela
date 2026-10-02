@@ -1,4 +1,4 @@
-import { IconChave, IconOlho, IconTv } from '../components/Icon.js';
+import { IconChave, IconEngrenagem, IconOlho, IconTv } from '../components/Icon.js';
 import { Led } from '../components/Led.js';
 
 export type ItemDoTrilho = 'transmitir' | 'assistir' | 'canal';
@@ -8,6 +8,8 @@ type Props = {
   /** Ao vivo: só o item ativo responde. Sair da rota derrubaria a transmissão. */
   readonly travado: boolean;
   readonly aoEscolher: (item: ItemDoTrilho) => void;
+  /** AJUSTES: um painel, não uma rota — por isso responde mesmo ao vivo. Sem ele, o item não aparece. */
+  readonly aoAjustes?: () => void;
 };
 
 const ITENS: ReadonlyArray<{
@@ -30,8 +32,9 @@ const ID_DICA = 'trilho-dica';
  *
  * Só desenho: quem sabe o caminho e a trava é `useNavegacaoDesktop`. ASSISTIR
  * (D8) não é uma rota: abre o painel onde se cola o link, e acende enquanto a
- * rota do espectador está aberta. Sala, Diagnóstico e Ajustes chegam com o estado
- * que precisam (D2/D4), não como botão morto.
+ * rota do espectador está aberta. AJUSTES (D4) é
+ * o mesmo caso: abre um painel, e por isso nunca trava. Sala e Diagnóstico
+ * chegam com o estado que precisam, não como botão morto.
  *
  * # Ao vivo (D-03)
  *
@@ -43,7 +46,7 @@ const ID_DICA = 'trilho-dica';
  * Rótulos em 10px, num trilho de 104px: em 9px num trilho de 76px o
  * "TRANSMITIR" saía cortado (D-01).
  */
-export function TrilhoDesktop({ ativo, travado, aoEscolher }: Props) {
+export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes }: Props) {
   return (
     <nav
       aria-label="Tela Desktop"
@@ -75,14 +78,27 @@ export function TrilhoDesktop({ ativo, travado, aoEscolher }: Props) {
         );
       })}
 
-      {travado && (
-        <p
-          id={ID_DICA}
-          className="mt-auto m-0 px-0.5 text-center font-[family-name:var(--font-pixel)] text-[10px] leading-snug text-muted"
-        >
-          NO AR. ENCERRE PARA SAIR DAQUI
-        </p>
-      )}
+      <div className="mt-auto flex w-full flex-col items-center gap-2">
+        {travado && (
+          <p
+            id={ID_DICA}
+            className="m-0 px-0.5 text-center font-[family-name:var(--font-pixel)] text-[10px] leading-snug text-muted"
+          >
+            NO AR. ENCERRE PARA SAIR DAQUI
+          </p>
+        )}
+        {aoAjustes !== undefined && (
+          <button
+            type="button"
+            title="Ajustes do app"
+            onClick={aoAjustes}
+            className="tecla min-h-[64px] w-full flex-col gap-1.5 px-0 text-[10px]"
+          >
+            <IconEngrenagem className="h-5 w-5" />
+            AJUSTES
+          </button>
+        )}
+      </div>
     </nav>
   );
 }

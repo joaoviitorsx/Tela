@@ -39,6 +39,25 @@ type FimDaCapturaNativa = {
   readonly codigo: number | null;
 };
 
+type EstadoAoVivo = {
+  readonly noAr: boolean;
+  readonly inicioMs: number | null;
+  readonly assistindo: number;
+  readonly capacidade: number;
+  readonly link: string | null;
+};
+type AoFecharAoVivo = 'perguntar' | 'segundo-plano' | 'encerrar';
+type AjustesDesktop = {
+  readonly iniciarComSistema: boolean;
+  readonly fecharEmSegundoPlano: boolean;
+  readonly sempreNoTopoNoCompacto: boolean;
+  readonly aoFecharAoVivo: AoFecharAoVivo;
+};
+type RespostaDeAjustes = { readonly ajustes: AjustesDesktop; readonly bandeja: boolean; readonly autostartFalhou: boolean };
+type ModoDaJanela = 'normal' | 'compacto';
+type RespostaDeFechar = { readonly acao: 'segundo-plano' | 'encerrar' | 'cancelar'; readonly lembrar: boolean };
+type MotivoDeParada = 'sair' | 'suspensao';
+
 /** Cópia de `PonteDesktop` em `apps/web/src/desktop/ponte.ts`. */
 interface PonteDesktop {
   readonly plataforma: PlataformaDesktop;
@@ -47,6 +66,16 @@ interface PonteDesktop {
   abrirNoNavegador(url: string): void;
   aoAbrirCanal(ouvinte: (slug: string) => void): () => void;
   capacidades(): Promise<CapacidadesDesktop>;
+  enviarEstadoAoVivo(estado: EstadoAoVivo): void;
+  ajustes(): Promise<RespostaDeAjustes>;
+  salvarAjustes(parcial: Partial<AjustesDesktop>): Promise<RespostaDeAjustes>;
+  pedirModo(modo: ModoDaJanela): void;
+  aoMudarModo(ouvinte: (modo: ModoDaJanela) => void): () => void;
+  aoPerguntarFechar(ouvinte: () => void): () => void;
+  responderFechar(resposta: RespostaDeFechar): void;
+  aoPedirEncerrar(ouvinte: () => void): () => void;
+  aoPedirParar(ouvinte: (motivo: MotivoDeParada) => void): () => void;
+  paradaConcluida(): void;
   listarFontes(): Promise<readonly FonteDeCaptura[]>;
   escolherFonte(id: string | null): Promise<boolean>;
   readonly capturaNativa: {
@@ -68,6 +97,16 @@ const CANAIS = {
   capturaNativaPorta: 'tela:captura-nativa-porta',
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
   abrirCanal: 'tela:abrir-canal',
+  estadoAoVivo: 'tela:estado-ao-vivo',
+  ajustes: 'tela:ajustes',
+  salvarAjustes: 'tela:salvar-ajustes',
+  pedirModo: 'tela:pedir-modo',
+  modo: 'tela:modo',
+  perguntarFechar: 'tela:perguntar-fechar',
+  responderFechar: 'tela:responder-fechar',
+  pedirEncerrar: 'tela:pedir-encerrar',
+  parar: 'tela:parar',
+  paradaConcluida: 'tela:parada-concluida',
 } as const;
 
 /** Cópia de `MARCA_DA_PORTA` em `ponte.ts`. */
@@ -109,6 +148,19 @@ ipcRenderer.on(CANAIS.abrirCanal, (_evento, slug: unknown) => {
   else for (const ouvinte of ouvintesDeCanal) ouvinte(slug);
 });
 
+/*
+  O modo da janela chega no `did-finish-load`, antes de o React assinar. Guarda
+  o último e entrega na hora a quem assina — como o `abrirCanal`, mas por valor
+  corrente: o modo é estado, não evento.
+*/
+let modoAtual: ModoDaJanela | null = null;
+const ouvintesDeModo = new Set<(modo: ModoDaJanela) => void>();
+ipcRenderer.on(CANAIS.modo, (_evento, modo: unknown) => {
+  if (modo !== 'normal' && modo !== 'compacto') return;
+  modoAtual = modo;
+  for (const ouvinte of ouvintesDeModo) ouvinte(modo);
+});
+
 const ponte: PonteDesktop = {
   plataforma: plataforma(),
   versao: versao(),
@@ -136,6 +188,24 @@ const ponte: PonteDesktop = {
   },
 
   capacidades: () => ipcRenderer.invoke(CANAIS.capacidades) as Promise<CapacidadesDesktop>,
+
+  enviarEstadoAoVivo: (estado) => ipcRenderer.send(CANAIS.estadoAoVivo, estado),
+  ajustes: () => ipcRenderer.invoke(CANAIS.ajustes) as Promise<RespostaDeAjustes>,
+  salvarAjustes: (parcial) => ipcRenderer.invoke(CANAIS.salvarAjustes, parcial) as Promise<RespostaDeAjustes>,
+  pedirModo: (modo) => ipcRenderer.send(CANAIS.pedirModo, modo),
+  aoMudarModo(ouvinte) {
+    ouvintesDeModo.add(ouvinte);
+    if (modoAtual !== null) ouvinte(modoAtual);
+    return () => {
+      ouvintesDeModo.delete(ouvinte);
+    };
+  },
+  aoPerguntarFechar: (ouvinte) => assinar<unknown>(CANAIS.perguntarFechar, () => ouvinte()),
+  responderFechar: (resposta) => ipcRenderer.send(CANAIS.responderFechar, resposta),
+  aoPedirEncerrar: (ouvinte) => assinar<unknown>(CANAIS.pedirEncerrar, () => ouvinte()),
+  aoPedirParar: (ouvinte) =>
+    assinar<unknown>(CANAIS.parar, (motivo) => ouvinte(motivo === 'suspensao' ? 'suspensao' : 'sair')),
+  paradaConcluida: () => ipcRenderer.send(CANAIS.paradaConcluida),
 
   listarFontes: () => ipcRenderer.invoke(CANAIS.listarFontes) as Promise<readonly FonteDeCaptura[]>,
 

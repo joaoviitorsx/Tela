@@ -68,3 +68,31 @@ describe('fonteDeVisibilidadeDesktop', () => {
     expect(document.documentElement.dataset['aba']).toBeUndefined();
   });
 });
+
+describe('fonteDeVisibilidadeDesktop com o modo compacto', () => {
+  it('compacto conta como oculto: a interface grande não corre', () => {
+    visibilidadeDoDocumento('visible');
+    const ponte = ponteFalsa();
+    let atual: 'normal' | 'compacto' = 'normal';
+    let ouvinte: (() => void) | null = null;
+    const modo = {
+      atual: () => atual,
+      assinar: (o: () => void) => {
+        ouvinte = o;
+        return () => {
+          ouvinte = null;
+        };
+      },
+    };
+    renderHook(() => useAbaVisivel(fonteDeVisibilidadeDesktop(ponte, undefined, modo)));
+    expect(document.documentElement.dataset['aba']).toBe('visivel');
+
+    atual = 'compacto';
+    act(() => ouvinte?.());
+    expect(document.documentElement.dataset['aba']).toBe('oculta');
+
+    atual = 'normal';
+    act(() => ouvinte?.());
+    expect(document.documentElement.dataset['aba']).toBe('visivel');
+  });
+});

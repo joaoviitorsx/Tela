@@ -12,13 +12,15 @@
  * Em desenvolvimento, `TELA_DESKTOP_URL` aponta para o Vite
  * (`scripts/dev.mjs`); sem ela, o `app://` serve `apps/web/dist-desktop`.
  */
-import { spawn } from 'node:child_process';
-import { readFileSync, statSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  clipboard,
   desktopCapturer,
   type DesktopCapturerSource,
   ipcMain,
@@ -26,12 +28,60 @@ import {
   MessageChannelMain,
   type MessagePortMain,
   type NativeImage,
+  nativeImage,
   net,
+  powerMonitor,
   protocol,
   session,
   shell,
+  Tray,
   type WebContents,
 } from 'electron';
+import {
+  type Ajustes,
+  AJUSTES_PADRAO,
+  lerAjustes,
+  mesclarAjustes,
+  mesmosAjustes,
+  serializarAjustes,
+} from './ajustes.js';
+import {
+  ARGUMENTO_OCULTO,
+  conteudoDoAutostart,
+  executavelDoAutostart,
+  iniciaOculto,
+  NOME_DO_ARQUIVO_AUTOSTART,
+  pastaDoAutostart,
+} from './autostart.js';
+import {
+  bandejaForcada,
+  COMANDO_DA_SONDA,
+  monocromaAmbar,
+  plataformaTemBandeja,
+  watcherPresenteNaSaida,
+} from './bandeja.js';
+import {
+  estadoAoVivoValido,
+  FORA_DO_AR,
+  type EstadoAoVivo,
+  mesmoEstado,
+  modeloDoMenu,
+  rotuloDoEstado,
+} from './estado-ao-vivo.js';
+import { criarPortaoDeParada, type PortaoDeParada } from './parada.js';
+import {
+  type DecisaoDeFechar,
+  decidirFechar,
+  escolhaParaLembrar,
+  MINIMO_NORMAL,
+  modoValido,
+  type ModoDaJanela,
+  motivoDeQueda,
+  registrarQueda,
+  respostaDeFecharValida,
+  TAMANHO_COMPACTO,
+  urlDaRecuperacao,
+} from './politica-de-fechar.js';
 import {
   CapturaNativa,
   lerTokenDoPortal,
@@ -88,7 +138,26 @@ const CANAIS = {
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
   /** main → renderer, `string` (slug já validado) */
   abrirCanal: 'tela:abrir-canal',
+  estadoAoVivo: 'tela:estado-ao-vivo',
+  ajustes: 'tela:ajustes',
+  salvarAjustes: 'tela:salvar-ajustes',
+  pedirModo: 'tela:pedir-modo',
+  modo: 'tela:modo',
+  perguntarFechar: 'tela:perguntar-fechar',
+  responderFechar: 'tela:responder-fechar',
+  pedirEncerrar: 'tela:pedir-encerrar',
+  parar: 'tela:parar',
+  paradaConcluida: 'tela:parada-concluida',
 } as const;
+
+/*
+  `TELA_USERDATA` põe os dados do app (ajustes, token do portal, autostart) numa
+  pasta à parte — o e2e roda sem tocar os da pessoa, e a trava de instância
+  única, que mora em `userData`, deixa de brigar com o app que ela já tem aberto.
+  Tem de vir ANTES de qualquer `app.getPath('userData')`.
+*/
+const USERDATA_PORTATIL = process.env['TELA_USERDATA'];
+if (USERDATA_PORTATIL !== undefined && USERDATA_PORTATIL !== '') app.setPath('userData', USERDATA_PORTATIL);
 
 /**
  * A versão vai para o preload por `additionalArguments` (lido em
@@ -122,6 +191,11 @@ const CAMINHO_DO_HELPER =
 
 /** O token do portal, para a próxima transmissão não perguntar de novo (D0c). */
 const ARQUIVO_DO_TOKEN = join(app.getPath('userData'), 'captura-portal.json');
+
+/** Onde ficam os ajustes (D4). */
+const ARQUIVO_DE_AJUSTES = join(app.getPath('userData'), 'ajustes.json');
+/** O ícone da bandeja: empacotado vai em `resources/icon.png`. */
+const ARQUIVO_DO_ICONE = app.isPackaged ? resolve(process.resourcesPath, 'icon.png') : resolve(AQUI, '../../build/icon.png');
 
 const URL_DE_DESENVOLVIMENTO = process.env['TELA_DESKTOP_URL'];
 const ORIGENS = origensPermitidas(URL_DE_DESENVOLVIMENTO);
@@ -166,7 +240,8 @@ function visivel(j: BrowserWindow): boolean {
 }
 
 function avisarVisibilidade(j: BrowserWindow, valor: boolean): void {
-  if (!j.isDestroyed()) j.webContents.send(CANAIS.visibilidade, valor);
+  // Renderer caído: não há quadro para receber, e o Electron registra erro ao tentar.
+  if (!j.isDestroyed() && !j.webContents.isCrashed()) j.webContents.send(CANAIS.visibilidade, valor);
 }
 
 function criarJanela(): BrowserWindow {
@@ -183,6 +258,7 @@ function criarJanela(): BrowserWindow {
     fullscreenable: true,
     backgroundColor: '#000000',
     // Aparece pronta: sem o flash branco antes do primeiro quadro da página.
+    // Aberto pelo autostart, só aparece se não houver bandeja para controlá-lo.
     show: false,
     webPreferences: {
       preload: PRELOAD,
@@ -205,16 +281,36 @@ function criarJanela(): BrowserWindow {
     },
   });
 
-  j.once('ready-to-show', () => j.show());
+  j.once('ready-to-show', () => {
+    void bandejaPronta.then(() => {
+      if (!j.isDestroyed() && !(INICIO_OCULTO && temBandeja)) j.show();
+    });
+  });
 
   // Visibilidade (§3.2): a página pausa animação e prévia quando some.
   j.on('minimize', () => avisarVisibilidade(j, false));
-  j.on('hide', () => avisarVisibilidade(j, false));
+  j.on('hide', () => {
+    avisarVisibilidade(j, false);
+    atualizarBandeja();
+  });
   j.on('restore', () => avisarVisibilidade(j, true));
-  j.on('show', () => avisarVisibilidade(j, true));
+  j.on('show', () => {
+    avisarVisibilidade(j, true);
+    atualizarBandeja();
+  });
+  j.on('close', (evento) => aoFecharJanela(evento));
   // Ao carregar, a página recebe o estado atual — pode ter nascido minimizada.
   j.webContents.on('did-finish-load', () => {
     avisarVisibilidade(j, visivel(j));
+    // O modo também: a janela pode ter recarregado (queda) enquanto compacta.
+    j.webContents.send(CANAIS.modo, modo);
+    // Página nova = nada no ar ainda. A página só conta o "fora do ar" inicial
+    // por omissão, então o que o main guardava de antes não vale mais.
+    if (estado.noAr) {
+      estado = FORA_DO_AR;
+      atualizarBandeja();
+      if (modo === 'compacto') definirModo('normal');
+    }
     paginaPronta = true;
     // Um link que chegou antes da página existir (lançamento a frio pelo link).
     if (canalPendente !== null) {
@@ -224,13 +320,7 @@ function criarJanela(): BrowserWindow {
     }
   });
 
-  j.webContents.on('render-process-gone', (_evento, detalhes) => {
-    // D4 mostra "transmissão caiu" e preserva o diagnóstico (§3.1, §5). Por
-    // ora só registra: nunca fingir continuidade. O `tela-captura` não pode
-    // ficar codificando para ninguém.
-    console.error(`[tela] renderer caiu: ${detalhes.reason} (código ${detalhes.exitCode})`);
-    capturaNativa.pararTudo();
-  });
+  j.webContents.on('render-process-gone', (_evento, detalhes) => aoCairORenderer(j, detalhes.reason, detalhes.exitCode));
 
   j.on('closed', () => {
     janela = null;
@@ -249,6 +339,312 @@ function mostrarJanela(): void {
   if (janela.isMinimized()) janela.restore();
   janela.show();
   janela.focus();
+}
+
+/* ------------------------------------------- segundo plano (D4, §5) */
+
+const INICIO_OCULTO = iniciaOculto(process.argv);
+
+let ajustes: Ajustes = AJUSTES_PADRAO;
+let estado: EstadoAoVivo = FORA_DO_AR;
+let modo: ModoDaJanela = 'normal';
+/** A geometria do modo normal, para o "expandir" devolvê-la. */
+let geometriaNormal: Electron.Rectangle | null = null;
+let tray: Tray | null = null;
+let temBandeja = false;
+/** `true` assim que o app decidiu sair: o `close` e o `before-quit` deixam passar. */
+let saindo = false;
+let encerrando = false;
+/** Há um "Continuar em segundo plano?" esperando resposta da página. */
+let perguntando = false;
+let portaoDeParada: PortaoDeParada | null = null;
+let suspensaoPendente = false;
+let quedas: readonly number[] = [];
+let tiqueDaBandeja: ReturnType<typeof setInterval> | null = null;
+let rotuloDaBandeja = '';
+
+function lerAjustesDoDisco(): Ajustes {
+  try {
+    return lerAjustes(readFileSync(ARQUIVO_DE_AJUSTES, 'utf8'));
+  } catch {
+    return AJUSTES_PADRAO;
+  }
+}
+
+function gravarAjustes(): void {
+  try {
+    writeFileSync(ARQUIVO_DE_AJUSTES, serializarAjustes(ajustes), 'utf8');
+  } catch (erro: unknown) {
+    console.error('[tela] não deu para gravar os ajustes:', erro);
+  }
+}
+
+/**
+ * Liga ou desliga o "iniciar com o sistema". `false` quando não deu — o ajuste
+ * então volta ao valor anterior, em vez de mostrar uma caixa marcada que não
+ * vale. Com `TELA_USERDATA` (e2e) o Windows nunca mexe no registro e o Linux
+ * escreve na pasta temporária.
+ */
+function aplicarAutostart(ligado: boolean): boolean {
+  try {
+    const portatil = USERDATA_PORTATIL !== undefined && USERDATA_PORTATIL !== '';
+    if (process.platform === 'linux') {
+      // Fora do pacote o executável seria o do Electron solto: um autostart quebrado.
+      if (ligado && !app.isPackaged && !portatil && (process.env['XDG_CONFIG_HOME'] ?? '') === '') return false;
+      const pasta = pastaDoAutostart(process.env, homedir());
+      const arquivo = join(pasta, NOME_DO_ARQUIVO_AUTOSTART);
+      if (!ligado) {
+        rmSync(arquivo, { force: true });
+        return true;
+      }
+      mkdirSync(pasta, { recursive: true });
+      const comando = app.isPackaged
+        ? [executavelDoAutostart(process.env, process.execPath)]
+        : [process.execPath, app.getAppPath()];
+      writeFileSync(arquivo, conteudoDoAutostart(comando), 'utf8');
+      return true;
+    }
+    if (portatil || !app.isPackaged) return !ligado || portatil;
+    app.setLoginItemSettings({ openAtLogin: ligado, args: [ARGUMENTO_OCULTO] });
+    return true;
+  } catch (erro: unknown) {
+    console.error('[tela] autostart falhou:', erro);
+    return false;
+  }
+}
+
+/* ------------------------------------------------------------ bandeja */
+
+function sondarBandeja(): Promise<boolean> {
+  const forcada = bandejaForcada(process.env);
+  if (forcada !== null) return Promise.resolve(forcada);
+  const plataforma = plataformaTemBandeja(process.platform);
+  if (plataforma !== 'sondar') return Promise.resolve(plataforma);
+  return new Promise((resolver) => {
+    execFile(COMANDO_DA_SONDA.arquivo, [...COMANDO_DA_SONDA.args], { timeout: 1500 }, (erro, saida) => {
+      // Sem `dbus-send` ou sem resposta: na dúvida, não há bandeja — o app cai
+      // no compacto, que é seguro; esconder numa bandeja que não existe, não.
+      resolver(erro === null && watcherPresenteNaSaida(saida));
+    });
+  });
+}
+
+function iconeDaBandeja(): NativeImage {
+  const lado = process.platform === 'win32' ? 32 : 24;
+  const original = nativeImage.createFromPath(ARQUIVO_DO_ICONE);
+  if (original.isEmpty()) return original;
+  const pequeno = original.resize({ width: lado, height: lado, quality: 'best' });
+  const { width, height } = pequeno.getSize();
+  return nativeImage.createFromBitmap(Buffer.from(monocromaAmbar(pequeno.toBitmap())), { width, height });
+}
+
+function janelaVisivelAgora(): boolean {
+  return janela !== null && !janela.isDestroyed() && visivel(janela);
+}
+
+function alternarJanela(): void {
+  if (janelaVisivelAgora() && janela !== null) janela.hide();
+  else mostrarJanela();
+}
+
+function aoEscolherNoMenu(id: string): void {
+  switch (id) {
+    case 'copiar':
+      if (estado.link !== null) clipboard.writeText(estado.link);
+      break;
+    case 'mostrar':
+      alternarJanela();
+      break;
+    case 'encerrar':
+      // O fluxo de encerrar é o da interface, com a confirmação de quem
+      // assiste: a janela aparece para a pergunta ser vista.
+      if (janela !== null && !janela.isDestroyed()) {
+        mostrarJanela();
+        janela.webContents.send(CANAIS.pedirEncerrar);
+      }
+      break;
+    case 'sair':
+      void sairEncerrando();
+      break;
+  }
+}
+
+/** Texto e menu da bandeja. Só reescreve o que mudou: o D-Bus não precisa de ruído. */
+function atualizarBandeja(): void {
+  if (tray === null) return;
+  const agora = Date.now();
+  const visivelAgora = janelaVisivelAgora();
+  const modelo = modeloDoMenu(estado, visivelAgora, agora);
+  const chave = JSON.stringify(modelo);
+  if (chave === rotuloDaBandeja) return;
+  rotuloDaBandeja = chave;
+  tray.setToolTip(`Tela — ${rotuloDoEstado(estado, agora)}`);
+  tray.setContextMenu(
+    Menu.buildFromTemplate(
+      modelo.map((item) =>
+        item.tipo === 'separador'
+          ? { type: 'separator' as const }
+          : { label: item.rotulo, enabled: item.habilitado, click: () => aoEscolherNoMenu(item.id) },
+      ),
+    ),
+  );
+}
+
+function iniciarBandeja(): Promise<void> {
+  return sondarBandeja().then((tem) => {
+    if (!tem) return;
+    try {
+      tray = new Tray(iconeDaBandeja());
+      // Windows: o clique esquerdo alterna a janela; no Linux o ícone abre o menu.
+      tray.on('click', alternarJanela);
+      temBandeja = true;
+      atualizarBandeja();
+    } catch (erro: unknown) {
+      console.error('[tela] bandeja indisponível:', erro);
+      tray = null;
+    }
+  });
+}
+
+/** A bandeja existe? Resolve depois da sonda; a janela espera por ela para decidir se nasce oculta. */
+let resolverBandeja: () => void = () => undefined;
+const bandejaPronta: Promise<void> = new Promise((resolver) => {
+  resolverBandeja = resolver;
+});
+
+/* ------------------------------------------------------ modo compacto */
+
+function definirModo(novo: ModoDaJanela): void {
+  const j = janela;
+  if (j === null || j.isDestroyed()) return;
+  if (novo !== modo) {
+    if (novo === 'compacto') {
+      if (j.isFullScreen()) j.setFullScreen(false);
+      if (j.isMaximized()) j.unmaximize();
+      geometriaNormal = j.getBounds();
+      // O tamanho ANTES de travar: em vários gerenciadores do Linux uma janela
+      // não redimensionável ignora `setSize`.
+      j.setMinimumSize(TAMANHO_COMPACTO.width, TAMANHO_COMPACTO.height);
+      j.setSize(TAMANHO_COMPACTO.width, TAMANHO_COMPACTO.height);
+      j.setResizable(false);
+      j.setAlwaysOnTop(ajustes.sempreNoTopoNoCompacto, 'floating');
+    } else {
+      j.setAlwaysOnTop(false);
+      j.setResizable(true);
+      j.setMinimumSize(MINIMO_NORMAL.width, MINIMO_NORMAL.height);
+      if (geometriaNormal !== null) j.setBounds(geometriaNormal);
+      else j.setSize(1280, 800);
+      geometriaNormal = null;
+    }
+    modo = novo;
+  }
+  if (!j.webContents.isCrashed()) j.webContents.send(CANAIS.modo, modo);
+}
+
+/* ------------------------------------------------- fechar, sair, parar */
+
+function decisaoDeFechar(): DecisaoDeFechar {
+  return decidirFechar({
+    noAr: estado.noAr,
+    aoFecharAoVivo: ajustes.aoFecharAoVivo,
+    fecharEmSegundoPlano: ajustes.fecharEmSegundoPlano,
+    temBandeja,
+    modoCompacto: modo === 'compacto',
+  });
+}
+
+function executarDecisao(decisao: DecisaoDeFechar): void {
+  const j = janela;
+  if (j === null || j.isDestroyed()) return;
+  switch (decisao) {
+    case 'esconder':
+      j.hide();
+      break;
+    case 'compacto':
+      definirModo('compacto');
+      break;
+    case 'minimizar':
+      j.minimize();
+      break;
+    case 'perguntar':
+      // Sempre reenvia: a página pode ter perdido a pergunta (recarregou).
+      perguntando = true;
+      j.webContents.send(CANAIS.perguntarFechar);
+      break;
+    case 'encerrar-e-sair':
+      void sairEncerrando();
+      break;
+    case 'sair':
+      break;
+  }
+}
+
+function aoFecharJanela(evento: Electron.Event): void {
+  if (saindo) return;
+  const decisao = decisaoDeFechar();
+  // Fora do ar e sem "fechar = segundo plano": deixa o `close` seguir e o app sai.
+  if (decisao === 'sair') return;
+  evento.preventDefault();
+  executarDecisao(decisao);
+}
+
+/**
+ * Sair com a transmissão no ar: a página roda `stop()` (libera trilhas e peers
+ * e avisa a sala) e confirma; com prazo, para um renderer travado não prender
+ * o app. Só então o app sai.
+ */
+async function sairEncerrando(): Promise<void> {
+  if (saindo || encerrando) return;
+  encerrando = true;
+  const j = janela;
+  if (estado.noAr && j !== null && !j.isDestroyed()) {
+    portaoDeParada = criarPortaoDeParada(agendar);
+    const espera = portaoDeParada.aguardar();
+    j.webContents.send(CANAIS.parar, 'sair');
+    await espera;
+  }
+  saindo = true;
+  capturaNativa.pararTudo();
+  app.quit();
+}
+
+function aoCairORenderer(j: BrowserWindow, razao: string, codigo: number): void {
+  // Saída limpa (código 0) não é queda.
+  if (razao === 'clean-exit') return;
+  console.error(`[tela] renderer caiu: ${razao} (código ${codigo})`);
+  // O `tela-captura` não pode ficar codificando para ninguém, e o estado
+  // "no ar" que o main guardava já não é verdade.
+  capturaNativa.pararTudo();
+  const estavaNoAr = estado.noAr;
+  estado = FORA_DO_AR;
+  perguntando = false;
+  portaoDeParada?.confirmar();
+  atualizarBandeja();
+  if (modo === 'compacto') definirModo('normal');
+  const registro = registrarQueda(quedas, Date.now());
+  quedas = registro.quedas;
+  // Em laço (a própria página de recuperação caindo): não insiste.
+  if (!registro.recarregar || j.isDestroyed()) return;
+  mostrarJanela();
+  paginaPronta = false;
+  void j.loadURL(urlDaRecuperacao(URL_INICIAL, motivoDeQueda(razao), estavaNoAr));
+}
+
+function registrarEnergia(): void {
+  powerMonitor.on('suspend', () => {
+    // Não dá para segurar a suspensão: encerra e deixa o motivo para a volta.
+    if (!estado.noAr || janela === null || janela.isDestroyed()) return;
+    suspensaoPendente = true;
+    janela.webContents.send(CANAIS.parar, 'suspensao');
+  });
+  powerMonitor.on('resume', () => {
+    if (!suspensaoPendente) return;
+    suspensaoPendente = false;
+    capturaNativa.pararTudo();
+    // A página pode ter congelado antes de ouvir o primeiro aviso: repete, e
+    // é ela quem mostra o motivo a quem volta.
+    if (janela !== null && !janela.isDestroyed()) janela.webContents.send(CANAIS.parar, 'suspensao');
+  });
 }
 
 /* ------------------------------------------------- link profundo (D8) */
@@ -504,6 +900,80 @@ function registrarIpc(): void {
 
   ipcMain.handle(CANAIS.capacidades, (evento) => (daInterface(evento) ? capacidades : null));
 
+  /* ---- D4: segundo plano */
+
+  ipcMain.on(CANAIS.estadoAoVivo, (evento, payload: unknown) => {
+    if (!daInterface(evento)) return;
+    const novo = estadoAoVivoValido(payload);
+    if (novo === null || mesmoEstado(novo, estado)) return;
+    const eraNoAr = estado.noAr;
+    estado = novo;
+    if (eraNoAr && !novo.noAr) {
+      portaoDeParada?.confirmar();
+      // Acabou a transmissão: o compacto não tem mais o que mostrar.
+      if (modo === 'compacto') definirModo('normal');
+    }
+    if (novo.noAr && tiqueDaBandeja === null) {
+      // O tempo no menu anda a cada 10 s: a bandeja não precisa de segundos.
+      tiqueDaBandeja = setInterval(atualizarBandeja, 10_000);
+    } else if (!novo.noAr && tiqueDaBandeja !== null) {
+      clearInterval(tiqueDaBandeja);
+      tiqueDaBandeja = null;
+    }
+    atualizarBandeja();
+  });
+
+  const respostaDeAjustes = (autostartFalhou: boolean) => ({ ajustes, bandeja: temBandeja, autostartFalhou });
+
+  ipcMain.handle(CANAIS.ajustes, (evento) => (daInterface(evento) ? respostaDeAjustes(false) : null));
+
+  ipcMain.handle(CANAIS.salvarAjustes, (evento, payload: unknown) => {
+    if (!daInterface(evento)) return null;
+    let novo = mesclarAjustes(ajustes, payload);
+    let falhou = false;
+    if (novo.iniciarComSistema !== ajustes.iniciarComSistema && !aplicarAutostart(novo.iniciarComSistema)) {
+      falhou = true;
+      novo = { ...novo, iniciarComSistema: ajustes.iniciarComSistema };
+    }
+    if (!mesmosAjustes(novo, ajustes)) {
+      ajustes = novo;
+      gravarAjustes();
+      if (modo === 'compacto' && janela !== null && !janela.isDestroyed()) {
+        janela.setAlwaysOnTop(ajustes.sempreNoTopoNoCompacto, 'floating');
+      }
+    }
+    return respostaDeAjustes(falhou);
+  });
+
+  ipcMain.on(CANAIS.pedirModo, (evento, valor: unknown) => {
+    if (!daInterface(evento)) return;
+    const pedido = modoValido(valor);
+    // Compacto só ao vivo: sem transmissão não há o que mostrar nele.
+    if (pedido === null || (pedido === 'compacto' && !estado.noAr)) return;
+    definirModo(pedido);
+  });
+
+  ipcMain.on(CANAIS.responderFechar, (evento, payload: unknown) => {
+    if (!daInterface(evento) || !perguntando) return;
+    const resposta = respostaDeFecharValida(payload);
+    if (resposta === null) return;
+    perguntando = false;
+    const lembrada = escolhaParaLembrar(resposta);
+    if (lembrada !== null && lembrada !== ajustes.aoFecharAoVivo) {
+      ajustes = { ...ajustes, aoFecharAoVivo: lembrada };
+      gravarAjustes();
+    }
+    if (resposta.acao === 'segundo-plano') {
+      executarDecisao(temBandeja ? 'esconder' : 'compacto');
+    } else if (resposta.acao === 'encerrar') {
+      void sairEncerrando();
+    }
+  });
+
+  ipcMain.on(CANAIS.paradaConcluida, (evento) => {
+    if (daInterface(evento)) portaoDeParada?.confirmar();
+  });
+
   ipcMain.handle(CANAIS.listarFontes, async (evento) => {
     if (!daInterface(evento) || !SELETOR_PROPRIO) return [];
     try {
@@ -547,6 +1017,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', (_evento, argv) => {
+    // Um autostart que chega com o app já aberto não traz janela nenhuma.
+    if (iniciaOculto(argv) && canalDoArgv(argv) === null) return;
     const slug = canalDoArgv(argv);
     if (slug === null) mostrarJanela();
     else abrirCanal(slug);
@@ -569,6 +1041,11 @@ if (!app.requestSingleInstanceLock()) {
     configurarPermissoes();
     registrarIpc();
     registrarEsquema();
+    ajustes = lerAjustesDoDisco();
+    // O caminho do executável pode ter mudado (AppImage movido, atualização).
+    if (ajustes.iniciarComSistema) aplicarAutostart(true);
+    registrarEnergia();
+    void iniciarBandeja().finally(resolverBandeja);
     // Lançado pelo link (primeira instância): o canal espera a página carregar.
     canalPendente = canalPendente ?? canalDoArgv(process.argv);
     janela = criarJanela();
@@ -583,8 +1060,17 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(1);
   });
 
-  // D4 muda isto: fechar ao vivo esconde (bandeja ou modo compacto, §5). No D1
-  // fechar a janela encerra o app, em todas as plataformas.
+  // Fechar ao vivo esconde ou vira compacto (`aoFecharJanela`); a janela só é
+  // destruída quando a política decidiu sair — então, sem janelas, sai.
   app.on('window-all-closed', () => app.quit());
-  app.on('before-quit', () => capturaNativa.pararTudo());
+  app.on('before-quit', (evento) => {
+    // Ctrl+Q, desligar o sistema, `app.quit()` de qualquer lugar: ao vivo, a
+    // sessão para primeiro (`stop()` avisa a sala), e só depois sai.
+    if (!saindo && estado.noAr && janela !== null && !janela.isDestroyed()) {
+      evento.preventDefault();
+      void sairEncerrando();
+      return;
+    }
+    capturaNativa.pararTudo();
+  });
 }

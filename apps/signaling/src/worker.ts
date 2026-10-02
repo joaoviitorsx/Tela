@@ -250,6 +250,8 @@ export class ChannelRoom {
   /** `maxPeers` só acompanha `CHANNEL_FULL`: o teto real, para a tela de "sem vaga". */
   private fail(socket: HibernatableSocket, code: SignalingErrorCode, maxPeers?: number): void {
     this.send(socket, { type: 'error', code, ...(maxPeers === undefined ? {} : { maxPeers }) });
+    // Sai do índice já: o runtime pode demorar a entregar o `webSocketClose`.
+    this.esquecer(socket);
     socket.close(1008, code);
   }
 
@@ -269,11 +271,89 @@ export class ChannelRoom {
     return Math.min(this.deps.limits.maxPeers, capacidade ?? P2P_LIMITS.maxViewersSemUmEncode);
   }
 
+  /** Leitura crua do attachment: uma desserialização, só do socket pedido. */
   private attachmentOf(socket: HibernatableSocket): Attachment | null {
     const raw = socket.deserializeAttachment();
     if (typeof raw !== 'object' || raw === null) return null;
     const value = raw as Attachment;
     return typeof value.peerId === 'string' ? value : null;
+  }
+
+  /*
+    Índice em memória dos attachments (ADR 0031, C2).
+
+    ESTADO DERIVADO, nunca fonte da verdade: a verdade continua sendo
+    `getWebSockets()` mais `serializeAttachment`. Antes, cada consulta
+    desserializava o attachment de TODOS os sockets, e `relay()` fazia isso
+    duas vezes por sinal — O(N) por mensagem, O(N²) numa entrada em massa.
+    Agora a varredura acontece UMA vez (`indice()` na primeira consulta de uma
+    instância nova, que é exatamente o que a hibernação produz) e daí em diante
+    o índice acompanha cada escrita (`gravar`) e cada saída (`esquecer`).
+
+    Regra de ouro: nenhum `serializeAttachment` de attachment completo fora de
+    `gravar`. Quem esquecer deixa o índice mentir.
+  */
+  private porSocket: Map<HibernatableSocket, Attachment> | null = null;
+  /** peerId -> socket; sem duplicata em regime, só durante a troca de socket do mesmo peer. */
+  private porPeer = new Map<string, HibernatableSocket>();
+  /** O host mais antigo, como o `find` sobre `getWebSockets()` devolvia. */
+  private socketDoHost: HibernatableSocket | null = null;
+
+  private indice(): Map<HibernatableSocket, Attachment> {
+    if (this.porSocket !== null) return this.porSocket;
+    const mapa = new Map<HibernatableSocket, Attachment>();
+    this.porSocket = mapa;
+    this.porPeer = new Map();
+    this.socketDoHost = null;
+    for (const socket of this.ctx.getWebSockets()) {
+      const at = this.attachmentOf(socket);
+      if (at !== null) this.indexar(socket, at);
+    }
+    return mapa;
+  }
+
+  private indexar(socket: HibernatableSocket, at: Attachment): void {
+    const mapa = this.porSocket;
+    if (mapa === null) return;
+    mapa.set(socket, at);
+    this.porPeer.set(at.peerId, socket);
+    if (at.role === 'host' && this.socketDoHost === null) this.socketDoHost = socket;
+  }
+
+  /** Único ponto de escrita de attachment completo: grava e mantém o índice. */
+  private gravar(socket: HibernatableSocket, at: Attachment): void {
+    socket.serializeAttachment(at);
+    // Índice ainda não construído: a próxima consulta lê tudo do zero.
+    if (this.porSocket !== null) this.indexar(socket, at);
+  }
+
+  /** Socket que fechou (ou está fechando): sai do índice. Idempotente. */
+  private esquecer(socket: HibernatableSocket): void {
+    const mapa = this.porSocket;
+    const at = mapa?.get(socket);
+    if (mapa === null || at === undefined) return;
+    mapa.delete(socket);
+    if (this.porPeer.get(at.peerId) === socket) {
+      this.porPeer.delete(at.peerId);
+      // O mesmo peer pode ter outro socket (retomada): ele passa a valer.
+      for (const [outro, o] of mapa) {
+        if (o.peerId === at.peerId) this.porPeer.set(at.peerId, outro);
+      }
+    }
+    if (this.socketDoHost === socket) {
+      this.socketDoHost = null;
+      for (const [outro, o] of mapa) {
+        if (o.role === 'host') {
+          this.socketDoHost = outro;
+          break;
+        }
+      }
+    }
+  }
+
+  /** Attachment atual do socket, em O(1). `null` = ainda não se apresentou. */
+  private atual(socket: HibernatableSocket): Attachment | null {
+    return this.indice().get(socket) ?? null;
   }
 
   /**
@@ -298,15 +378,15 @@ export class ChannelRoom {
 
   private peers(): { socket: HibernatableSocket; at: Attachment }[] {
     const out: { socket: HibernatableSocket; at: Attachment }[] = [];
-    for (const socket of this.ctx.getWebSockets()) {
-      const at = this.attachmentOf(socket);
-      if (at !== null) out.push({ socket, at });
-    }
+    for (const [socket, at] of this.indice()) out.push({ socket, at });
     return out;
   }
 
   private host(): { socket: HibernatableSocket; at: Attachment } | null {
-    return this.peers().find((p) => p.at.role === 'host') ?? null;
+    const indice = this.indice();
+    const socket = this.socketDoHost;
+    const at = socket === null ? undefined : indice.get(socket);
+    return socket === null || at === undefined ? null : { socket, at };
   }
 
   private viewers(): { socket: HibernatableSocket; at: Attachment }[] {
@@ -344,7 +424,7 @@ export class ChannelRoom {
   }
 
   private preAttachmentOf(socket: HibernatableSocket): PreAttachment | null {
-    if (this.attachmentOf(socket) !== null) return null;
+    if (this.atual(socket) !== null) return null;
     const raw = socket.deserializeAttachment();
     return typeof raw === 'object' && raw !== null ? (raw as PreAttachment) : {};
   }
@@ -401,7 +481,7 @@ export class ChannelRoom {
     if (!parsed.success) return this.fail(socket, 'BAD_MESSAGE');
 
     const message = parsed.data;
-    const at = this.attachmentOf(socket);
+    const at = this.atual(socket);
 
     /*
       Uma saudação por socket, também durante o `await`. Sem isto, três
@@ -449,7 +529,7 @@ export class ChannelRoom {
         return this.relay(socket, at, message);
       case 'leave':
         // Marca ANTES de fechar: separa "eu parei" de "meu socket caiu".
-        if (at !== null) socket.serializeAttachment({ ...at, saiuDeProposito: true });
+        if (at !== null) this.gravar(socket, { ...at, saiuDeProposito: true });
         socket.close(1000, 'leave');
         return;
     }
@@ -466,14 +546,14 @@ export class ChannelRoom {
    * pensado para tráfego constante derrubaria transmissões legítimas.
    */
   private dentroDoLimite(socket: HibernatableSocket): boolean {
-    const at = this.attachmentOf(socket);
+    const at = this.atual(socket);
     if (at === null) return true; // ainda não se apresentou; `claim`/`join` limitam
 
     const agora = Date.now();
     const reiniciou = agora - at.janelaInicio >= this.deps.limits.messageWindowMs;
     const contagem = reiniciou ? 1 : at.janelaContagem + 1;
 
-    socket.serializeAttachment({
+    this.gravar(socket, {
       ...at,
       janelaInicio: reiniciou ? agora : at.janelaInicio,
       janelaContagem: contagem,
@@ -593,7 +673,7 @@ export class ChannelRoom {
        * espectadores. Quem dava F5 perdia a audiência.
        */
       const anterior = this.host();
-      socket.serializeAttachment({
+      this.gravar(socket, {
         peerId,
         role: 'host',
         ownerHash: hash,
@@ -610,6 +690,7 @@ export class ChannelRoom {
 
     // Mesmo dono reconectando (refresh, troca de rede): derruba o antigo.
     // Se voltou com teto menor, ninguém é expulso: só não entra mais.
+    if (assumido.anterior !== null) this.esquecer(assumido.anterior.socket);
     assumido.anterior?.socket.close(1000, 'substituido');
 
     this.send(socket, {
@@ -718,7 +799,8 @@ export class ChannelRoom {
     const peerId = repetido?.at.peerId ?? this.deps.newPeerId('v');
     if (repetido !== undefined) {
       // Marca antes de fechar: o `webSocketClose` dele não pode cancelar o pedido novo.
-      repetido.socket.serializeAttachment({ ...repetido.at, removido: true } satisfies Attachment);
+      this.gravar(repetido.socket, { ...repetido.at, removido: true } satisfies Attachment);
+      this.esquecer(repetido.socket);
       repetido.socket.close(1000, 'substituido');
     }
     const pedido: Attachment = {
@@ -733,7 +815,7 @@ export class ChannelRoom {
       janelaInicio: Date.now(),
       janelaContagem: 0,
     };
-    socket.serializeAttachment(pedido);
+    this.gravar(socket, pedido);
     this.send(socket, { type: 'awaiting-approval' });
     this.send(hostDoPedido.socket, this.pedidoParaHost(pedido));
   }
@@ -746,12 +828,12 @@ export class ChannelRoom {
     const alvo = this.pedidos().find((p) => p.at.peerId === peerId);
     if (alvo === undefined) return;
     if (!aceitar) {
-      alvo.socket.serializeAttachment({ ...alvo.at, removido: true } satisfies Attachment);
+      this.gravar(alvo.socket, { ...alvo.at, removido: true } satisfies Attachment);
       return this.fail(alvo.socket, 'DENIED');
     }
     // A vaga é conferida de novo: pode ter enchido enquanto esperava.
     if (this.viewers().length >= this.teto()) {
-      alvo.socket.serializeAttachment({ ...alvo.at, removido: true } satisfies Attachment);
+      this.gravar(alvo.socket, { ...alvo.at, removido: true } satisfies Attachment);
       this.send(socket, { type: 'join-cancelled', peerId });
       return this.fail(alvo.socket, 'CHANNEL_FULL', this.teto());
     }
@@ -766,7 +848,7 @@ export class ChannelRoom {
     socket: HibernatableSocket, peerId: string, name: string | undefined, fingerprint: string | undefined,
     participantId: string | undefined, attemptId: string | undefined, anterior: HibernatableSocket | null,
   ): Promise<void> {
-    socket.serializeAttachment({
+    this.gravar(socket, {
       peerId,
       role: 'viewer',
       ...(name === undefined ? {} : { name }),
@@ -777,15 +859,16 @@ export class ChannelRoom {
       janelaInicio: Date.now(),
       janelaContagem: 0,
     } satisfies Attachment);
+    if (anterior !== null) this.esquecer(anterior);
     anterior?.close(1000, 'substituido');
 
     const ice = await this.deps.iceServersFor(peerId);
-    const current = this.attachmentOf(socket);
+    const current = this.atual(socket);
     if (!this.ctx.getWebSockets().includes(socket) || current?.peerId !== peerId ||
       current.attemptId !== attemptId) return;
     const currentHost = this.host();
     if (currentHost === null) return this.fail(socket, 'NOT_HOSTING');
-    socket.serializeAttachment({ ...current, ready: true } satisfies Attachment);
+    this.gravar(socket, { ...current, ready: true } satisfies Attachment);
     this.send(socket, {
       type: 'watching',
       peerId,
@@ -815,7 +898,7 @@ export class ChannelRoom {
     if (at.role !== 'host' || this.host()?.socket !== socket) return this.fail(socket, 'BAD_MESSAGE');
     const alvo = this.viewers().filter((v) => peerId === undefined || v.at.peerId === peerId);
     for (const viewer of alvo) {
-      viewer.socket.serializeAttachment({ ...viewer.at, removido: true } satisfies Attachment);
+      this.gravar(viewer.socket, { ...viewer.at, removido: true } satisfies Attachment);
       this.send(viewer.socket, { type: 'error', code: 'REMOVED' });
       viewer.socket.close(1008, 'REMOVED');
       if (viewer.at.ready !== false) this.send(socket, { type: 'peer-left', peerId: viewer.at.peerId });
@@ -831,13 +914,13 @@ export class ChannelRoom {
   private atualizarCapacidade(socket: HibernatableSocket, at: Attachment, valor: number): void {
     if (at.role !== 'host' || this.host()?.socket !== socket) return this.fail(socket, 'BAD_MESSAGE');
     const tetoPelaBanda = Math.min(this.tetoPara(at.capacidade), valor);
-    socket.serializeAttachment({ ...at, tetoPelaBanda } satisfies Attachment);
+    this.gravar(socket, { ...at, tetoPelaBanda } satisfies Attachment);
   }
 
   private async refreshIce(socket: HibernatableSocket, at: Attachment, requestId: string): Promise<void> {
     const ice = await this.deps.iceServersFor(at.peerId);
     if (!this.ctx.getWebSockets().includes(socket)) return;
-    const current = this.attachmentOf(socket);
+    const current = this.atual(socket);
     if (current?.peerId !== at.peerId || current.role !== at.role) return;
     if (at.role === 'host' ? this.host()?.socket !== socket :
       !this.viewers().some((viewer) => viewer.socket === socket)) return;
@@ -863,23 +946,36 @@ export class ChannelRoom {
     }
   }
 
+  /**
+   * O(1): índice por socket, por peerId e o host em cache (ADR 0031).
+   * Mesma semântica da varredura que havia aqui — espectador só fala com o
+   * host, host endereça por `to`, e removido/pendente/não-pronto não recebe.
+   */
   private relay(socket: HibernatableSocket, from: Attachment, message: Extract<ClientMessage, { type: 'signal' }>): void {
     if (from.ready === false) return;
-    if (from.role === 'host' ? this.host()?.socket !== socket :
-      !this.viewers().some((viewer) => viewer.socket === socket)) return;
-    // Espectador só fala com o transmissor; transmissor endereça por `to`.
-    const target =
-      from.role === 'viewer'
-        ? this.host()
-        : (this.viewers().find((v) => v.at.peerId === message.to && v.at.ready !== false) ?? null);
-    if (target === null) return;
+    const indice = this.indice();
+    let target: HibernatableSocket | undefined;
+    if (from.role === 'host') {
+      if (this.socketDoHost !== socket) return;
+      const alvo = this.porPeer.get(message.to ?? '');
+      const at = alvo === undefined ? undefined : indice.get(alvo);
+      if (alvo === undefined || at === undefined) return;
+      if (at.role !== 'viewer' || at.removido === true || at.pendente === true || at.ready === false) return;
+      target = alvo;
+    } else {
+      if (from.removido === true || from.pendente === true) return;
+      target = this.socketDoHost ?? undefined;
+    }
+    if (target === undefined) return;
 
     // `payload` atravessa sem ser lido. R8.
-    this.send(target.socket, { type: 'signal', from: from.peerId, payload: message.payload });
+    this.send(target, { type: 'signal', from: from.peerId, payload: message.payload });
   }
 
   /** Chamado por `webSocketClose` e `webSocketError`. */
   handleClose(socket: HibernatableSocket): void {
+    // Antes de qualquer consulta: as checagens abaixo assumem que o socket que sai já não conta.
+    this.esquecer(socket);
     const at = this.attachmentOf(socket);
     if (at === null) return;
 
@@ -934,7 +1030,7 @@ export class ChannelRoom {
       }
       // Quem esperava resposta não vai ter: não há mais transmissão.
       for (const p of this.pedidos()) {
-        p.socket.serializeAttachment({ ...p.at, removido: true } satisfies Attachment);
+        this.gravar(p.socket, { ...p.at, removido: true } satisfies Attachment);
         this.fail(p.socket, 'NOT_HOSTING');
       }
       return;

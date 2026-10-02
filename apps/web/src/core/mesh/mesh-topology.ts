@@ -8,6 +8,7 @@ import {
   tetoDeBitrate,
 } from '@tela/shared';
 import { Emitter } from '../emitter.js';
+import { RodizioDeLeitura } from './rodizio-de-leitura.js';
 import { PeerLink, PeerLinkError, type PeerLinkFatalCode, type PeerLinkIssueCode } from './peer-link.js';
 
 /**
@@ -38,6 +39,12 @@ import { PeerLink, PeerLinkError, type PeerLinkFatalCode, type PeerLinkIssueCode
 export type RelatorioDePeer = {
   readonly peerId: string;
   readonly report: RTCStatsReport;
+  /**
+   * `false` = leitura RETIDA de um tique anterior (rodízio, B2): reentregue só
+   * para que máximos e somas entre peers não oscilem. Quem conta amostras ou
+   * suaviza não pode tratá-la como medida nova. Ausente = `true`.
+   */
+  readonly fresco?: boolean;
 };
 
 export type PeerInfo = {
@@ -157,6 +164,9 @@ export class MeshTopology {
   private readonly links = new Map<string, PeerLink>();
   private readonly senders = new Map<string, RTCRtpSender[]>();
   private readonly relayed = new Set<string>();
+  /** Quem lê `getStats()` neste tique (B2); a leitura retida mora em `retidos`. */
+  private readonly rodizio = new RodizioDeLeitura();
+  private readonly retidos = new Map<string, RTCStatsReport>();
 
   /** Trilhas publicadas, reaplicadas em todo peer que entra depois. */
   private stream: MediaStream | null = null;
@@ -375,6 +385,8 @@ export class MeshTopology {
     }
     this.senders.delete(peerId);
     this.relayed.delete(peerId);
+    this.rodizio.esquecer(peerId);
+    this.retidos.delete(peerId);
     if (notify) this.emitter.emit('dropped', { peerId });
     this.announce();
   }
@@ -1074,10 +1086,22 @@ export class MeshTopology {
       if (preset !== null) void this.enqueue(() => this.adaptAll(preset));
     }
 
+    // Rodízio (B2): só alguns peers por tique; o resto reentrega a leitura
+    // retida. Até 5 peers lê todo mundo — ver `rodizio-de-leitura.ts`.
+    const vivos = [...this.links.keys()];
+    const lerAgora = this.rodizio.escolher(vivos);
     const colhidos = await Promise.all(
       [...this.links.values()].map(async (link) => {
+        if (!lerAgora.has(link.peerId)) {
+          const retido = this.retidos.get(link.peerId);
+          return retido === undefined ? null : { peerId: link.peerId, report: retido, fresco: false };
+        }
         try {
-          return { peerId: link.peerId, report: await link.stats() };
+          const report = await link.stats();
+          if (!this.links.has(link.peerId)) return null; // saiu durante a leitura
+          this.retidos.set(link.peerId, report);
+          this.rodizio.registrar(link.peerId, report);
+          return { peerId: link.peerId, report, fresco: true };
         } catch {
           return null; // peer saindo
         }
@@ -1089,7 +1113,8 @@ export class MeshTopology {
     for (const colhido of colhidos) {
       if (colhido === null) continue;
       reports.push(colhido);
-      if (isRelayed === undefined) continue;
+      // `isRelayed` só olha o relatório novo: o retido já foi examinado.
+      if (isRelayed === undefined || !colhido.fresco) continue;
 
       const agora = isRelayed(colhido.report);
       if (agora === this.relayed.has(colhido.peerId)) continue;

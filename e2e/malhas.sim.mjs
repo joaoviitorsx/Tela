@@ -372,6 +372,8 @@ class SimTransport {
     this.pcPorPeer = new Map();
     this.t = 0;
     this.cpuAtiva = false;
+    /** `getStats()` que a topologia de fato chamou em peers conectados (rodízio, B2). */
+    this.leiturasStats = 0;
     /** O teto que a sessão mandou ao servidor (ADR 0030), e o histórico dele. */
     this.teto = CAPACIDADE;
     this.capacidades = [];
@@ -534,7 +536,10 @@ class SimTransport {
           availableOutgoingBitrate: Math.round(this.rede.reportado(peer)),
         },
       ];
-      pc.getStats = async () => statsReport(entradas);
+      pc.getStats = async () => {
+        this.leiturasStats += 1;
+        return statsReport(entradas);
+      };
     }
   }
 }
@@ -625,6 +630,7 @@ async function rodarCenario(cfg) {
   const serie = [];
   let anterior = null;
   let reconfigs = 0;
+  let peerTiques = 0;
   let ultimaMudanca = 0;
   /**
    * Quando o PRIMEIRO orçamento chegou ao encoder.
@@ -674,6 +680,7 @@ async function rodarCenario(cfg) {
       return 'none';
     });
 
+    peerTiques += rede.peers.filter((p) => p.conectado).length;
     scheduler.advance(1_000);
     await assentar(3);
 
@@ -781,6 +788,8 @@ async function rodarCenario(cfg) {
     bppMedido: ultimo.bppMedido,
     escala: ultimo.escala,
     reconfigs,
+    leiturasStats: transport.leiturasStats,
+    peerTiques,
     tEstabiliza: ultimaMudanca,
     roundsSetParams: transport.orcamentos.length + transport.presetsAplicados.length,
     ideal,
@@ -1188,6 +1197,13 @@ async function main() {
       return `N=${n}:${mediana(g.map((r) => r.reconfigs))}`;
     });
     console.log(`  reconfigurações medianas por nº de espectadores: ${porN.join('  ')}`);
+    // Rodízio de getStats (B2): leituras reais / leituras que havia antes (1 por peer por tique).
+    const lidos = ESPECTADORES.map((n) => {
+      const g = resultados.filter((r) => r.cfg.n === n && r.peerTiques > 0);
+      const razoes = g.map((r) => r.leiturasStats / r.peerTiques);
+      return `N=${n}:${mediana(razoes).toFixed(2)} (p10 ${percentil(razoes, 0.1).toFixed(2)}, p90 ${percentil(razoes, 0.9).toFixed(2)})`;
+    });
+    console.log(`  getStats por peer por tique, mediana (1,00 = sem rodízio): ${lidos.join('  ')}`);
   }
   console.log(
     `  sobreuso em regime: mediana ${mediana(resultados.map((r) => r.pctSobreuso)).toFixed(1)}%` +

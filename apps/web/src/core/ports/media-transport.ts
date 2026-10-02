@@ -139,6 +139,13 @@ export type MediaStats = {
    */
   readonly availablePorPeer: Readonly<Record<string, number>>;
   /**
+   * Quem foi LIDO neste tique, dentre os de `availablePorPeer` (rodízio, B2).
+   * Os demais trazem a leitura retida: valem como estado, não como amostra
+   * nova — o governador não os suaviza nem os conta no aquecimento por
+   * caminho. Ausente = todos frescos.
+   */
+  readonly frescosPorPeer?: readonly string[];
+  /**
    * Bits por pixel do fluxo que está saindo POR ESPECTADOR. `0` sem leitura.
    *
    * É o número que prevê a imagem borrada antes de ela aparecer, e o único que

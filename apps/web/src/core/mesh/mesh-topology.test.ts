@@ -397,6 +397,56 @@ describe('MeshTopology — roteamento e limpeza', () => {
     void statsReport;
   });
 
+  it('rodízio (B2): até 5 peers lê todos; com 20 lê menos e reentrega a leitura retida', async () => {
+    const pequena = build(5);
+    await pequena.mesh.publish(pequena.stream, [pequena.video], PRESET_1080P60);
+    for (let i = 0; i < 5; i += 1) pequena.mesh.admit(`v_${i}`);
+    await settle();
+    const lidos = (ctx: ReturnType<typeof build>) => {
+      let n = 0;
+      for (const pc of ctx.factory.created) {
+        const original = pc.getStats.bind(pc);
+        pc.getStats = async () => {
+          n += 1;
+          return original();
+        };
+      }
+      return () => n;
+    };
+    const contaPequena = lidos(pequena);
+    const r1 = await pequena.mesh.collectStats();
+    expect(contaPequena()).toBe(5);
+    expect(r1.every((r) => r.fresco === true)).toBe(true);
+
+    const grande = build(20);
+    await grande.mesh.publish(grande.stream, [grande.video], PRESET_1080P60);
+    for (let i = 0; i < 20; i += 1) grande.mesh.admit(`v_${i}`);
+    await settle(30);
+    // Relatório de caminho assentado, para o aquecimento passar.
+    for (const pc of grande.factory.created) {
+      pc.getStats = async () =>
+        statsReport([
+          { type: 'outbound-rtp', kind: 'video', qualityLimitationReason: 'none', bytesSent: 1, timestamp: 1 },
+          { type: 'candidate-pair', state: 'succeeded', nominated: true, availableOutgoingBitrate: 50_000_000 },
+        ]);
+    }
+    const contaGrande = lidos(grande);
+    for (let t = 0; t < 12; t += 1) await grande.mesh.collectStats(); // aquecimento
+    const antes = contaGrande();
+    const tiques = 12;
+    let frescos = 0;
+    let retidos = 0;
+    for (let t = 0; t < tiques; t += 1) {
+      const reports = await grande.mesh.collectStats();
+      expect(reports).toHaveLength(20); // os retidos voltam: o consumidor vê a sala inteira
+      frescos += reports.filter((r) => r.fresco === true).length;
+      retidos += reports.filter((r) => r.fresco === false).length;
+    }
+    expect(retidos).toBeGreaterThan(0);
+    expect(contaGrande() - antes).toBe(frescos);
+    expect(frescos / tiques).toBeLessThan(10); // 20 → ≈ ⌈20/4⌉ + piores
+  });
+
   it('close derruba todas as conexões', async () => {
     const ctx = build();
     await ctx.mesh.publish(ctx.stream, [ctx.video], PRESET_1080P60);

@@ -214,3 +214,62 @@ describe('StatsSampler — aquecimento por caminho (ADR 0030)', () => {
     expect(stats?.limitation).toBe('bandwidth');
   });
 });
+
+/** Rodízio de getStats (B2): leitura retida não é amostra nova. */
+describe('StatsSampler — leitura retida do rodízio', () => {
+  const par = (banda: number) => ({
+    type: 'candidate-pair', state: 'succeeded', nominated: true, availableOutgoingBitrate: banda, currentRoundTripTime: 0.02,
+  });
+
+  it('o bitrate do peer não lido neste tique continua somando, na última taxa real', () => {
+    const sampler = new StatsSampler('outbound');
+    const a0 = report([outbound(0, 1_000, {}, 1), par(9e6)]);
+    const b0 = report([outbound(0, 1_000, {}, 2), par(9e6)]);
+    sampler.readMany([{ peerId: 'a', report: a0 }, { peerId: 'b', report: b0 }]);
+    const a1 = report([outbound(1_000_000, 2_000, {}, 1), par(9e6)]);
+    const b1 = report([outbound(1_000_000, 2_000, {}, 2), par(9e6)]);
+    const lido = sampler.readMany([{ peerId: 'a', report: a1 }, { peerId: 'b', report: b1 }]);
+    expect(lido?.bitrateBps).toBe(16_000_000);
+    // Tique seguinte: só `a` é lido; `b` volta retido (mesmo objeto, mesmo timestamp).
+    const a2 = report([outbound(2_000_000, 3_000, {}, 1), par(9e6)]);
+    const retido = sampler.readMany([{ peerId: 'a', report: a2 }, { peerId: 'b', report: b1, fresco: false }]);
+    expect(retido?.bitrateBps).toBe(16_000_000);
+    expect(retido?.frescosPorPeer).toEqual(['a']);
+  });
+
+  it('o aquecimento por caminho conta LEITURAS, não tiques', () => {
+    const sampler = new StatsSampler('outbound');
+    const fresca = (t: number) => report([outbound(t * 1000, t * 1000, {}, 2), par(5e6)]);
+    // `b` é lido uma vez a cada 3 tiques; `a` assenta (10 leituras) antes dele.
+    let b = fresca(1);
+    for (let t = 1; t <= 30; t += 1) {
+      const lerB = t % 3 === 1;
+      if (lerB) b = fresca(t);
+      sampler.readMany([
+        { peerId: 'a', report: report([outbound(t * 1000, t * 1000, {}, 1), par(30e6)]) },
+        { peerId: 'b', report: b, ...(lerB ? {} : { fresco: false }) },
+      ]);
+    }
+    // `b` foi lido 10 vezes (> 8): assentou. Se contasse tiques, teria 30; se
+    // contasse mal, teria menos. O que importa: ele só votou depois da 9ª leitura.
+    const antes = new StatsSampler('outbound');
+    let c = fresca(1);
+    let ultima = null;
+    for (let t = 1; t <= 24; t += 1) {
+      const lerC = t % 3 === 1;
+      if (lerC) c = fresca(t);
+      ultima = antes.readMany([
+        { peerId: 'a', report: report([outbound(t * 1000, t * 1000, {}, 1), par(30e6)]) },
+        { peerId: 'c', report: c, ...(lerC ? {} : { fresco: false }) },
+      ]);
+    }
+    // Aos 24 tiques `c` tem 8 leituras: ainda em aquecimento, não vota (o pior caminho é o de `a`).
+    expect(ultima?.piorAvailableBps).toBe(30e6);
+    ultima = antes.readMany([
+      { peerId: 'a', report: report([outbound(25_000, 25_000, {}, 1), par(30e6)]) },
+      { peerId: 'c', report: fresca(25) },
+    ]);
+    // 9ª leitura: assentou, e o pior caminho passa a ser o dele.
+    expect(ultima?.piorAvailableBps).toBe(5e6);
+  });
+});

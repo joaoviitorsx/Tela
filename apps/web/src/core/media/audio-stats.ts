@@ -150,11 +150,14 @@ function codecDe(report: RTCStatsReport, codecId: unknown): CodecDeAudio | null 
 
 export class AudioStatsSampler {
   private anteriores = new Map<string, Leitura>();
+  /** Última taxa de cada fluxo: a leitura retida do rodízio (B2) não tem tempo decorrido. */
+  private taxas = new Map<string, number>();
 
   constructor(private readonly direcao: 'outbound' | 'inbound') {}
 
   reset(): void {
     this.anteriores.clear();
+    this.taxas.clear();
   }
 
   /** `null` quando nenhum relatório traz fluxo de áudio: não há áudio nesta sessão. */
@@ -233,13 +236,23 @@ export class AudioStatsSampler {
     let energia = 0;
     let duracao = 0;
 
+    const taxas = new Map<string, number>();
     for (const [chave, agora] of atuais) {
       const antes = anteriores.get(chave);
       if (antes === undefined) continue; // fluxo novo: sem delta, sem número
 
       const segundos = (agora.t - antes.t) / 1000;
       const dBytes = delta(agora.bytes, antes.bytes);
-      if (dBytes !== null && segundos > 0) bits = (bits ?? 0) + (dBytes * 8) / segundos;
+      if (dBytes !== null && segundos > 0) {
+        const taxa = (dBytes * 8) / segundos;
+        taxas.set(chave, taxa);
+        bits = (bits ?? 0) + taxa;
+      } else if (segundos === 0 && this.taxas.has(chave)) {
+        // Leitura retida (rodízio, B2): vale a última taxa real do fluxo.
+        const taxa = this.taxas.get(chave)!;
+        taxas.set(chave, taxa);
+        bits = (bits ?? 0) + taxa;
+      }
 
       const dRec = delta(agora.recebidos, antes.recebidos);
       const dPerd = delta(agora.perdidos, antes.perdidos);
@@ -273,6 +286,7 @@ export class AudioStatsSampler {
       }
     }
 
+    this.taxas = taxas;
     const esperados = recebidos + perdidos;
     return {
       fluxos,

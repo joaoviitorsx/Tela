@@ -111,3 +111,151 @@ describe('Worker endurecido (TELA-019)', () => {
     expect(v.sent[0]?.type).toBe('awaiting-approval');
   });
 });
+
+/**
+ * Índice de attachments (ADR 0031, C2): o relay deixou de varrer a sala.
+ * O índice é estado derivado — estes testes provam as duas metades: que ele
+ * evita as desserializações e que ele nunca é a fonte da verdade.
+ */
+class SocketContado extends FakeHibernatableSocket {
+  leituras = 0;
+  override deserializeAttachment(): unknown {
+    this.leituras += 1;
+    return super.deserializeAttachment();
+  }
+}
+
+function salaGrande(maxPeers: number) {
+  const env: Env = { CHANNELS: null as never, MAX_PEERS: String(maxPeers) };
+  const deps = makeChannelDeps(env, webcrypto as unknown as WebCryptoLike);
+  const ctx = new FakeDurableContext();
+  const ref = { room: new ChannelRoom(ctx, deps) };
+  const todos: SocketContado[] = [];
+  const abrir = () => {
+    const socket = new SocketContado();
+    socket.aoFechar = () => ref.room.handleClose(socket);
+    ref.room.accept(socket);
+    todos.push(socket);
+    return socket;
+  };
+  const mandar = (socket: FakeHibernatableSocket, msg: unknown) =>
+    ref.room.handleMessage(socket, SLUG, JSON.stringify(msg));
+  /** O objeto é despejado e reconstruído sobre os mesmos sockets. */
+  const hibernar = () => { ref.room = new ChannelRoom(ctx, deps); };
+  const peerIdDe = (socket: FakeHibernatableSocket): string => {
+    const w = socket.sent.find((m) => m.type === 'watching');
+    if (w?.type !== 'watching') throw new Error('sem watching');
+    return w.peerId;
+  };
+  const entrar = async (n: number) => {
+    const out: SocketContado[] = [];
+    for (let i = 0; i < n; i += 1) {
+      const v = abrir();
+      await mandar(v, saudar({ type: 'watch', slug: SLUG }, undefined, `viewer-${i}`));
+      out.push(v);
+    }
+    return out;
+  };
+  const host = async () => {
+    const h = abrir();
+    // Sem `capacidade` o teto seria o de quem codifica por espectador (5).
+    await mandar(h, saudar({ type: 'host', slug: SLUG, ownerToken: OWNER, capacidade: maxPeers }));
+    return h;
+  };
+  return { ctx, ref, abrir, mandar, hibernar, peerIdDe, entrar, host, todos };
+}
+
+const sinaisRecebidos = (s: FakeHibernatableSocket) => s.sent.filter((m) => m.type === 'signal');
+
+describe('índice de attachments (C2)', () => {
+  it('entrada em massa de 50: cada sinal toca O(1) attachments, não O(N)', async () => {
+    const s = salaGrande(50);
+    const h = await s.host();
+    const viewers = await s.entrar(50);
+    expect(viewers.every((v) => v.sent.some((m) => m.type === 'watching'))).toBe(true);
+
+    for (const v of s.todos) v.leituras = 0;
+    for (const v of viewers) await s.mandar(h, { type: 'signal', to: s.peerIdDe(v), payload: 'oferta' });
+    for (const v of viewers) await s.mandar(v, { type: 'signal', payload: 'resposta' });
+
+    for (const v of viewers) expect(sinaisRecebidos(v)).toHaveLength(1);
+    expect(sinaisRecebidos(h)).toHaveLength(50);
+    // 100 sinais; antes eram ~2(N+1) = 102 leituras por sinal em todos os sockets somados.
+    const leituras = s.todos.reduce((soma, v) => soma + v.leituras, 0);
+    expect(leituras).toBeLessThanOrEqual(0);
+  });
+
+  it('depois da hibernação o índice nasce vazio e é reconstruído uma única vez', async () => {
+    const s = salaGrande(10);
+    const h = await s.host();
+    const viewers = await s.entrar(10);
+    s.hibernar();
+    for (const v of s.todos) v.leituras = 0;
+
+    await s.mandar(h, { type: 'signal', to: s.peerIdDe(viewers[3]!), payload: 'a' });
+    expect(sinaisRecebidos(viewers[3]!)).toHaveLength(1);
+    const primeira = s.todos.reduce((soma, v) => soma + v.leituras, 0);
+    // Uma varredura (11 sockets) mais a leitura do rate limit do próprio remetente.
+    expect(primeira).toBeLessThanOrEqual(11);
+
+    for (const v of s.todos) v.leituras = 0;
+    for (const v of viewers) await s.mandar(v, { type: 'signal', payload: 'b' });
+    expect(sinaisRecebidos(h)).toHaveLength(10);
+    expect(s.todos.reduce((soma, v) => soma + v.leituras, 0)).toBe(0);
+  });
+
+  it('espectador que sai some do índice: sinal para ele é descartado, o resto segue', async () => {
+    const s = salaGrande(5);
+    const h = await s.host();
+    const [a, b] = await s.entrar(2) as [SocketContado, SocketContado];
+    const idA = s.peerIdDe(a);
+    await s.mandar(a, { type: 'leave' });
+    expect(a.closed).toBe(true);
+
+    await s.mandar(h, { type: 'signal', to: idA, payload: 'x' });
+    expect(sinaisRecebidos(a)).toHaveLength(0);
+    await s.mandar(h, { type: 'signal', to: s.peerIdDe(b), payload: 'y' });
+    expect(sinaisRecebidos(b)).toHaveLength(1);
+    // A hibernação não ressuscita quem saiu.
+    s.hibernar();
+    await s.mandar(h, { type: 'signal', to: idA, payload: 'z' });
+    expect(sinaisRecebidos(a)).toHaveLength(0);
+  });
+
+  it('sinal para peer desconhecido é silêncio, como antes: sem erro e sem fechar', async () => {
+    const s = salaGrande(5);
+    const h = await s.host();
+    const [a] = await s.entrar(1) as [SocketContado];
+    const antes = h.sent.length;
+    await s.mandar(h, { type: 'signal', to: 'v-inexistente', payload: 'x' });
+    await s.mandar(h, { type: 'signal', payload: 'sem destino' });
+    expect(h.sent.length).toBe(antes);
+    expect(h.closed).toBe(false);
+    expect(sinaisRecebidos(a)).toHaveLength(0);
+  });
+
+  it('host substituído: o índice passa a rotear para o host novo', async () => {
+    const s = salaGrande(5);
+    const velho = await s.host();
+    const [a] = await s.entrar(1) as [SocketContado];
+    const novo = await s.host();
+    expect(velho.closed).toBe(true);
+    await s.mandar(a, { type: 'signal', payload: 'p' });
+    expect(sinaisRecebidos(novo)).toHaveLength(1);
+    expect(sinaisRecebidos(velho)).toHaveLength(0);
+    s.hibernar();
+    await s.mandar(a, { type: 'signal', payload: 'q' });
+    expect(sinaisRecebidos(novo)).toHaveLength(2);
+  });
+
+  it('espectador removido pelo host não recebe mais sinal, nem depois de hibernar', async () => {
+    const s = salaGrande(5);
+    const h = await s.host();
+    const [a] = await s.entrar(1) as [SocketContado];
+    const id = s.peerIdDe(a);
+    await s.mandar(h, { type: 'remove-viewers', peerId: id });
+    s.hibernar();
+    await s.mandar(h, { type: 'signal', to: id, payload: 'x' });
+    expect(sinaisRecebidos(a)).toHaveLength(0);
+  });
+});

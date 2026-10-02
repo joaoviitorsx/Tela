@@ -292,6 +292,14 @@ export class UplinkGovernor {
       readonly permitirQueda?: boolean;
       /** O que sai POR caminho agora: a régua do que é absurdo num caminho novo. */
       readonly enviadoPorCaminho?: number;
+      /**
+       * Quem foi lido neste tique (rodízio de `getStats`, B2). Quem não está
+       * aqui entrega a leitura RETIDA: continua vivo e votando com o último
+       * suavizado, mas não é suavizado de novo nem ganha amostra de
+       * aquecimento — senão a mesma medida contaria várias vezes. Ausente =
+       * todos frescos (o comportamento de sempre).
+       */
+      readonly frescos?: readonly string[];
     } = {},
   ): DecisaoOrcamento {
     const validas = Object.entries(leituras).filter(
@@ -307,8 +315,10 @@ export class UplinkGovernor {
       this.amostrasPorPeer.delete(id);
     }
 
+    const frescos = opcoes.frescos === undefined ? null : new Set(opcoes.frescos);
     for (const [id, valor] of validas) {
       const antes = this.porPeer.get(id);
+      if (antes !== undefined && frescos !== null && !frescos.has(id)) continue; // retida
       this.porPeer.set(id, antes === undefined ? valor : antes + SUAVIZACAO * (valor - antes));
       this.amostrasPorPeer.set(id, (this.amostrasPorPeer.get(id) ?? 0) + 1);
     }

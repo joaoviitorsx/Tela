@@ -46,7 +46,7 @@ const SONDA_FOLGA = 1.3;
 
 /** O que a malha precisa saber a cada segundo. Tudo vem da sessão. */
 export type LeituraDaMalha = {
-  readonly stats: Pick<MediaStats, 'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer'>;
+  readonly stats: Pick<MediaStats, 'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer' | 'frescosPorPeer'>;
   /** O degrau que está no ar agora — dele sai o teto de pixel. */
   readonly presetEfetivo: PresetId;
   /** O que o usuário pediu: teto da sonda. */
@@ -223,6 +223,7 @@ export class MalhaDeBanda {
     const decisao = this.governor.observe(stats.availablePorPeer, {
       permitirQueda: colapso || (!limitadosPorPixel && !ocioso),
       enviadoPorCaminho: enviado,
+      ...(stats.frescosPorPeer === undefined ? {} : { frescos: stats.frescosPorPeer }),
     });
     // `null` na maioria das leituras: o governador só fala quando a mudança
     // compensa reconfigurar o encoder.

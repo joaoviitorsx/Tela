@@ -67,6 +67,13 @@ function taxa(agora: ParAcumulado, antes: ParAcumulado | undefined): number | nu
 export class StatsSampler {
   private readonly previous = new Map<string, Reading>();
   /**
+   * Último bitrate calculado de cada fluxo. O rodízio (B2) reentrega a leitura
+   * RETIDA de quem não foi lido neste tique: ela tem o mesmo `timestamp`, o
+   * delta de tempo é zero e o fluxo sumiria da soma. Vale a taxa do último
+   * intervalo real.
+   */
+  private taxas = new Map<string, number>();
+  /**
    * Leituras de cada caminho desde que ele nominou um par ICE (ADR 0030).
    *
    * O pior caminho e o motivo `bandwidth` saem só de quem passou do
@@ -90,6 +97,7 @@ export class StatsSampler {
 
   reset(): void {
     this.previous.clear();
+    this.taxas.clear();
     this.acumuladores = {};
     this.amostrasPorPeer.clear();
     this.audio.reset();
@@ -145,10 +153,13 @@ export class StatsSampler {
     let found = false;
 
     const availablePorPeer: Record<string, number> = {};
+    /** Peers lidos de verdade neste tique; o resto é leitura retida (B2). */
+    const frescos = new Set<string>();
     /** O motivo de cada caminho, para descartar `bandwidth` de quem ainda sobe. */
     const limitacaoPorPeer = new Map<string, QualityLimitation>();
 
-    entradas.forEach(({ peerId, report }) => {
+    entradas.forEach(({ peerId, report, fresco }) => {
+      if (fresco !== false) frescos.add(peerId);
       report.forEach((entry, key) => {
         const stat = entry as Record<string, unknown>;
 
@@ -279,16 +290,22 @@ export class StatsSampler {
 
     let bitrateBps = 0;
     let fluxosContados = 0;
+    const taxas = new Map<string, number>();
     for (const [id, reading] of current) {
       const before = this.previous.get(id);
       if (before === undefined) continue; // fonte nova: sem delta, sem pico
       fluxosContados += 1;
       const deltaBytes = reading.bytes - before.bytes;
       const deltaSeconds = (reading.timestamp - before.timestamp) / 1000;
-      if (deltaBytes > 0 && deltaSeconds > 0) {
-        bitrateBps += Math.round((deltaBytes * 8) / deltaSeconds);
-      }
+      // Sem tempo decorrido = leitura retida: vale a última taxa real.
+      const taxa =
+        deltaSeconds > 0
+          ? deltaBytes > 0 ? Math.round((deltaBytes * 8) / deltaSeconds) : 0
+          : (this.taxas.get(id) ?? 0);
+      taxas.set(id, taxa);
+      bitrateBps += taxa;
     }
+    this.taxas = taxas;
 
     // Substitui o mapa inteiro: fonte que sumiu não deixa resíduo.
     this.previous.clear();
@@ -308,7 +325,9 @@ export class StatsSampler {
     const assentados: string[] = [];
     const afogando: string[] = [];
     for (const [id, banda] of Object.entries(availablePorPeer)) {
-      const n = (this.amostrasPorPeer.get(id) ?? 0) + 1;
+      // Leitura retida não é amostra: o aquecimento conta LEITURAS do caminho,
+      // não tiques (ADR 0030 + rodízio).
+      const n = (this.amostrasPorPeer.get(id) ?? 0) + (frescos.has(id) ? 1 : 0);
       this.amostrasPorPeer.set(id, n);
       if (n > AQUECIMENTO_POR_CAMINHO) assentados.push(id);
       else if (enviadoPorCaminho > 0 && banda < ABSURDO_POR_CAMINHO * enviadoPorCaminho) afogando.push(id);
@@ -404,6 +423,7 @@ export class StatsSampler {
       piorAvailableBps: pior,
       paresMedidos,
       availablePorPeer,
+      frescosPorPeer: Object.keys(availablePorPeer).filter((id) => frescos.has(id)),
       bpp,
       encoderImplementation,
       qp: noIntervalo('qp'),

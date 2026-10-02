@@ -325,3 +325,31 @@ describe('UplinkGovernor — aquecimento por caminho (ADR 0030)', () => {
     expect(decisao).not.toBeNull();
   });
 });
+
+describe('UplinkGovernor — leitura retida (rodízio, B2)', () => {
+  it('quem não foi lido não é suavizado de novo: o valor retido é ignorado', () => {
+    const g = new UplinkGovernor();
+    for (let i = 0; i < 12; i += 1) g.observe({ v_1: 40_000_000, v_2: 40_000_000 });
+    // `v_2` passa a vir RETIDO; o número que acompanha é lixo e não pode puxar a média.
+    let ultima = null;
+    for (let i = 0; i < 12; i += 1) {
+      ultima = g.observe({ v_1: 40_000_000, v_2: 1_000_000 }, { frescos: ['v_1'] });
+    }
+    expect(ultima === null || ultima.bps > 20_000_000).toBe(true);
+    // Se tivesse sido suavizado, o mínimo teria caído para ~1 Mbps e cortado a sala.
+    const controle = new UplinkGovernor();
+    for (let i = 0; i < 12; i += 1) controle.observe({ v_1: 40_000_000, v_2: 40_000_000 });
+    let cortou = null;
+    for (let i = 0; i < 12; i += 1) cortou = controle.observe({ v_1: 40_000_000, v_2: 1_000_000 }) ?? cortou;
+    expect(cortou?.bps).toBeLessThan(5_000_000);
+  });
+
+  it('peer retido continua vivo: não é tratado como quem saiu', () => {
+    const g = new UplinkGovernor();
+    for (let i = 0; i < 12; i += 1) g.observe({ v_1: 40_000_000, v_2: 4_000_000 });
+    // v_2 (fraco) só é retido a partir de agora; o mínimo continua sendo dele.
+    let ultima = null;
+    for (let i = 0; i < 12; i += 1) ultima = g.observe({ v_1: 40_000_000, v_2: 4_000_000 }, { frescos: ['v_1'] });
+    expect(ultima === null || ultima.bps <= 4_000_000).toBe(true);
+  });
+});

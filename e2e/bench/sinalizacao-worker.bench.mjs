@@ -19,7 +19,12 @@
  *   node e2e/bench/sinalizacao-worker.bench.mjs
  */
 import { serialize, deserialize } from 'node:v8';
-import { cabecalho, medir, fmt, linha, JSON_SAIDA } from './comum.mjs';
+import { webcrypto } from 'node:crypto';
+import { join } from 'node:path';
+import { cabecalho, medir, fmt, linha, JSON_SAIDA, RAIZ, sobTsx } from './comum.mjs';
+
+// A parte "Worker real" importa o TypeScript de apps/signaling (ChannelRoom).
+sobTsx(import.meta.url);
 
 function socketFalso(at) {
   let guardado = serialize(at);
@@ -127,4 +132,76 @@ for (const n of [5, 20, 50]) {
 if (!JSON_SAIDA) {
   console.log('\n* índice: "por mensagem" reconstrói o Map a cada sinal (N desserializações, 1 vez); "cache" mantém o Map entre mensagens.');
   console.log(`  "entrada de N" = N espectadores entrando juntos × ${SINAIS_POR_ENTRADA} sinais cada, só o custo de relay no DO.`);
+}
+
+/* ───────────── o ChannelRoom REAL (ADR 0031) ─────────────
+ *
+ * Acima, o proxy. Aqui, a classe de verdade de `worker.ts` com sockets cujo
+ * attachment passa por `v8.serialize/deserialize` (custo próximo ao da
+ * serialização estruturada da plataforma; no Worker real pode ser maior).
+ * `WORKER_TS=<caminho>` aponta para outra versão do arquivo (para medir o
+ * "antes" a partir de `git show`). Mede só o relay: sala já cheia, host e
+ * espectadores trocam sinais.
+ */
+const { ChannelRoom, makeChannelDeps } = await import(process.env['WORKER_TS'] ?? join(RAIZ, 'apps/signaling/src/worker.ts'));
+
+function socketReal() {
+  let guardado = null;
+  let leituras = 0;
+  return {
+    sent: [],
+    closed: false,
+    get leituras() { return leituras; },
+    send(d) { this.sent.push(d); },
+    close() { if (!this.closed) { this.closed = true; this.aoFechar?.(); } },
+    serializeAttachment(v) { guardado = serialize(v); },
+    deserializeAttachment() { leituras += 1; return guardado === null ? null : deserialize(guardado); },
+  };
+}
+
+async function salaReal(n) {
+  const deps = makeChannelDeps({ CHANNELS: null, MAX_PEERS: String(n) }, webcrypto);
+  const sockets = [];
+  const ctx = {
+    acceptWebSocket(s) { sockets.push(s); },
+    getWebSockets() { return sockets.filter((s) => !s.closed); },
+    blockConcurrencyWhile: (fn) => fn(),
+  };
+  const room = new ChannelRoom(ctx, deps);
+  const abrir = () => { const s = socketReal(); s.aoFechar = () => room.handleClose(s); room.accept(s); return s; };
+  const slug = 'bench-sala';
+  const host = abrir();
+  await room.handleMessage(host, slug, JSON.stringify({ type: 'host', slug, ownerToken: 'o'.repeat(43), protocol: 5, capacidade: n }));
+  const viewers = [];
+  const t0 = process.hrtime.bigint();
+  for (let i = 0; i < n; i += 1) {
+    const v = abrir();
+    await room.handleMessage(v, slug, JSON.stringify({ type: 'watch', slug, protocol: 5, participantId: `participante-${i}`.padEnd(20, 'p'), name: `amigo ${i}`, viewerKey: `k${i}`.padEnd(22, 'k') }));
+    viewers.push(v);
+  }
+  const entradaMs = Number(process.hrtime.bigint() - t0) / 1e6;
+  const ids = viewers.map((v) => JSON.parse(v.sent.find((m) => JSON.parse(m).type === 'watching')).peerId);
+  return { room, slug, host, viewers, ids, entradaMs, sockets };
+}
+
+if (!JSON_SAIDA) console.log('\nChannelRoom real: relay por sinal (sala já cheia) e entrada em massa (N watch seguidos)');
+for (const n of [5, 20, 50]) {
+  const s = await salaReal(n);
+  let lidas = 0;
+  const m = medir(() => {
+    const antes = s.sockets.reduce((a, x) => a + x.leituras, 0);
+    for (let i = 0; i < n; i += 1) {
+      void s.room.handleMessage(s.host, s.slug, JSON.stringify({ type: 'signal', to: s.ids[i], payload: 'x' }));
+      void s.room.handleMessage(s.viewers[i], s.slug, JSON.stringify({ type: 'signal', payload: 'y' }));
+    }
+    lidas = s.sockets.reduce((a, x) => a + x.leituras, 0) - antes;
+    for (const x of s.sockets) x.sent.length = 0;
+    return lidas;
+  });
+  const usPorSinal = (m.medianaMs * 1000) / (2 * n);
+  const deserPorSinal = lidas / (2 * n);
+  if (!JSON_SAIDA) {
+    console.log(`N=${String(n).padStart(2)}   ${fmt(usPorSinal, 1).padStart(7)} µs/sinal   ${fmt(deserPorSinal, 1).padStart(6)} desserializações/sinal   entrada em massa: ${fmt(s.entradaMs, 1)} ms`);
+  }
+  linha({ bench: 'sinalizacao-worker-real', n, usPorSinal, deserPorSinal, entradaMs: s.entradaMs });
 }

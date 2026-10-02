@@ -58,7 +58,7 @@ async function medirSala(n) {
     const host = await (await hostBrowser.newContext()).newPage();
     await host.goto(`${WEB}/@@bench`, { waitUntil: 'networkidle' });
     const slug = `bn${Math.random().toString(36).slice(2, 8)}`;
-    const subiu = await host.evaluate(async (canal) => {
+    const subiu = await host.evaluate(async ([canal, preset]) => {
       const W = 1280;
       const H = 720;
       const canvas = document.createElement('canvas');
@@ -95,9 +95,9 @@ async function medirSala(n) {
         createStream: (tracks) => new MediaStream([...tracks]),
       });
       window.__sessao = session;
-      await session.start(canal, `bn${'b'.repeat(41)}`, { presetId: 'p720p60' });
+      await session.start(canal, `bn${'b'.repeat(41)}`, { presetId: preset });
       return session.getState().status;
-    }, slug);
+    }, [slug, process.env.PRESET ?? 'p720p60']);
     if (subiu !== 'live') throw new Error(`host não subiu: ${subiu}`);
 
     const ctx = await espectadores.newContext();

@@ -613,7 +613,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
                   },
                   {
                     rotulo: 'CODIFICA',
-                    valor: stats.msPorQuadro === '—' ? stats.encoder : stats.msPorQuadro,
+                    valor: stats.codifica,
                     tom: stats.encoderLento ? 'alerta' : 'neutro',
                   },
                   /*

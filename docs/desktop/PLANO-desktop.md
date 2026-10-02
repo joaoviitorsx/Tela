@@ -289,7 +289,10 @@ escondido.
   H.264 do WebRTC tende a cair no OpenH264, em software, na CPU do jogo.
   Notebook híbrido pode codificar pela iGPU Intel/AMD — **a provar no D0**.
 - No Windows, o caminho é Media Foundation (NVENC/Quick Sync/AMF). Expectativa
-  de hardware, também verificada no D0.
+  de hardware, também verificada no D0. **Investigado no D9**
+  (`D9-gpu-windows.md`): o `VideoEncoder` do Chromium no Windows só usa MFT de
+  hardware (ou OpenH264); o app pede `prefer-hardware`, cai para software se a
+  GPU falhar no meio e volta. O helper nativo fica atrás de medição humana.
 - Detecção no app: `app.getGPUInfo('complete')` (perfis de encode acelerado —
   confirmar no D0 que o campo existe e é confiável) mais `msPorQuadro` (já
   medido; acima de 16,7 ms em 1080p60 é quase sempre software).
@@ -346,6 +349,7 @@ Um marco por vez (AGENTS.md); cada um termina em relatório e decisão.
 | **D6 — Homologação** | TELA-033 | Relatório por plataforma e modo, contra o orçamento da §1.2 | Liberar, liberar com limitação publicada, ou bloquear |
 | **D7 — Motor nativo** | TELA-034 | Só se D0/D6 provarem limitação e o dono aprovar | — |
 | **D8 — Assistir no app** | — | **Feito em código** (`D8-assistir.md`): esquema `tela://assistir/<canal>` (argv, `second-instance`, `open-url`), item ASSISTIR no trilho, tentativa única na página do canal com volta ao navegador, botão ABRIR NO APP | Link abre no app com ele instalado e no navegador sem ele, nas duas plataformas — **falta a validação humana** com o app instalado (Windows e Linux; lista em `D8-assistir.md` §6) |
+| **D9 — GPU no Windows** | — | **Feito em código** (`D9-gpu-windows.md`): investigação no código do Chromium 152; `prefer-hardware` no app com queda para software (erro ou trava) e volta; CODIFICA diz GPU/CPU; helper nativo atrás de portão de medição | `WebCodecs·hardware` e queda de FPS do jogo ≤ 3% — **falta a validação humana** (lista em `D9-gpu-windows.md` §7) |
 
 **O D0 vem antes de qualquer acabamento.** Se o encoder no Linux NVIDIA for
 software e estourar o orçamento, isso muda o produto, e é melhor saber cedo.

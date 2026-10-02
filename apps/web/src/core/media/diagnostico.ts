@@ -171,7 +171,9 @@ function navegadorSeguro(valor: string): string {
 function implementacaoSegura(valor: string | null): string | null {
   if (valor === null) return null;
   if (/\b\d{1,3}(?:\.\d{1,3}){3}\b/.test(valor)) return null;
-  return /^[a-zA-Z][a-zA-Z0-9 _.-]{0,63}$/.test(valor) ? valor : null;
+  // `·` e parênteses: os rótulos do codificador único (`WebCodecs·hardware`,
+  // `nativo·falhou(PORTAL)`) — sem eles o diagnóstico do app saía sem encoder.
+  return /^[a-zA-Z][a-zA-Z0-9 _.,·()-]{0,63}$/.test(valor) ? valor : null;
 }
 
 /** Silêncio digital vira o piso de -100 dB, e não `-Infinity`, que JSON não representa. */

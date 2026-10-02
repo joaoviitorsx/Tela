@@ -616,6 +616,11 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
                     valor: stats.msPorQuadro === '—' ? stats.encoder : stats.msPorQuadro,
                     tom: stats.encoderLento ? 'alerta' : 'neutro',
                   },
+                  /*
+                    A cascata (ADR 0031): amigos com boa subida repassando a
+                    imagem. Só quantos, para quantos — nada de endereço.
+                  */
+                  ...(stats.repasse === null ? [] : [{ rotulo: 'AMIGOS REPASSAM', valor: stats.repasse }]),
                 ]}
               />
 

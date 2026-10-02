@@ -132,6 +132,17 @@ export class ArvoreDeRepasse {
     return total;
   }
 
+  /** Quantos repassam agora, e para quantos (só arestas confirmadas). */
+  resumo(): { readonly repassadores: number; readonly filhos: number } {
+    let repassadores = 0;
+    let filhos = 0;
+    for (const e of this.espectadores.values()) {
+      if (e.pai !== null && e.confirmado) filhos += 1;
+      if ([...e.filhos].some((id) => this.espectadores.get(id)?.confirmado === true)) repassadores += 1;
+    }
+    return { repassadores, filhos };
+  }
+
   /** O pai de cada filho, para diagnóstico e teste. */
   paiDe(peerId: string): string | null {
     return this.espectadores.get(peerId)?.pai ?? null;

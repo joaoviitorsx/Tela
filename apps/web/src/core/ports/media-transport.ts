@@ -131,6 +131,11 @@ export type MediaStats = {
    */
   readonly paresMedidos: number;
   /**
+   * A cascata de repasse (ADR 0031), vista do anfitrião: quantos espectadores
+   * repassam e para quantos. Ausente fora do anfitrião ou sem cascata.
+   */
+  readonly repasse?: { readonly repassadores: number; readonly filhos: number };
+  /**
    * A estimativa CRUA de cada caminho, por peer.
    *
    * O governador precisa suavizar cada uma separadamente antes de tirar o

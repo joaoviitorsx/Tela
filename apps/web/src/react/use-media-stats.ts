@@ -30,6 +30,11 @@ export type ReadableStats = {
    * Era a única pergunta de desempenho que só se respondia em `chrome://gpu`.
    */
   readonly encoder: string;
+  /**
+   * A cascata (ADR 0031): "2 → 4" = dois espectadores repassam para quatro.
+   * `null` sem repasse. Nunca fala de endereço: só quantos.
+   */
+  readonly repasse: string | null;
   /** QP médio formatado, ou `—`. Acima de 37 o Chromium derruba resolução. */
   readonly qp: string;
   /**
@@ -107,6 +112,7 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         warning: null,
         bpp: '—',
         bppBaixo: false,
+        repasse: null,
         encoder: '—',
         qp: '—',
         qpAlto: false,
@@ -127,6 +133,10 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
       bpp: formatarBpp(stats.bpp),
       // Só acusa com leitura de verdade: `0` é ausência de medida, não fome.
       bppBaixo: stats.bpp > 0 && stats.bpp < BPP_PISO,
+      repasse:
+        stats.repasse !== undefined && stats.repasse.filhos > 0
+          ? `${stats.repasse.repassadores} → ${stats.repasse.filhos}`
+          : null,
       encoder: impl === null ? '—' : EM_SOFTWARE.test(impl) ? 'software' : 'hardware',
       qp: stats.qp === null ? '—' : stats.qp.toFixed(0),
       // `kHighH264QpThreshold = 37` no libwebrtc: é onde o quality scaler age.

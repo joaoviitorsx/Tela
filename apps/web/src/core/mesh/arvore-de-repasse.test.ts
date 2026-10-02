@@ -330,3 +330,17 @@ describe('ArvoreDeRepasse — vagas pela banda medida', () => {
     expect(t.vagas()).toBe(2);
   });
 });
+
+describe('ArvoreDeRepasse — resumo', () => {
+  it('conta só arestas confirmadas', () => {
+    const t = montar();
+    t.arvore.forcar();
+    t.entra('r', true, 10);
+    t.entra('f', false, 30);
+    t.passa(ESTABILIZAR_MS);
+    t.arvore.tique();
+    expect(t.arvore.resumo()).toEqual({ repassadores: 0, filhos: 0 });
+    t.arvore.receber('f', { repasse: 'com-pai' });
+    expect(t.arvore.resumo()).toEqual({ repassadores: 1, filhos: 1 });
+  });
+});

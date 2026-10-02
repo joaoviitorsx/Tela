@@ -588,8 +588,11 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         // relatório — eram duas em série por segundo, por espectador.
         const reports = await topology.collectStats(isRelayed);
         if (reports.length === 0) return null;
-        const stats = outbound.readMany(reports);
-        if (stats === null || stats.audio === null) return stats;
+        const lido = outbound.readMany(reports);
+        if (lido === null) return null;
+        const resumo = arvore?.resumo();
+        const stats = resumo !== undefined && resumo.filhos > 0 ? { ...lido, repasse: resumo } : lido;
+        if (stats.audio === null) return stats;
         return {
           ...stats,
           audio: { ...stats.audio, configuracao: topology.resumoConfigAudio() },

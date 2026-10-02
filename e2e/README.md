@@ -106,6 +106,8 @@ node e2e/desktop-ao-vivo.e2e.mjs    # vai ao ar DE DENTRO do app; espectador web
 node e2e/um-encode.e2e.mjs          # "um encode, N envios" em Chrome headless
 ```
 
+O app EMPACOTADO tem os fuses do Electron ligados (sem `--inspect`/RunAsNode), então o Playwright não dirige o processo principal dele: `TELA_EXE=apps/desktop/release/linux-unpacked/tela node e2e/desktop-empacotado.e2e.mjs` confere a página pela porta de depuração do Chromium e prova que o binário não vira Node.
+
 Os dois `desktop*` abrem a janela do app na tela (não há Electron headless) e
 precisam do binário do Electron — por isso não estão na CI, que pula o
 download. Para o app EMPACOTADO: `pnpm --filter @tela/desktop exec

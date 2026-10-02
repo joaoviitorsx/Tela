@@ -53,7 +53,8 @@ try {
   const exe = process.env.TELA_EXE;
   app = await _electron.launch(
     exe
-      ? { executablePath: exe, args: [], env: AMBIENTE }
+      // Empacotado ignora TELA_USERDATA (S-11): os dados à parte vão pela flag do Chromium.
+      ? { executablePath: exe, args: [`--user-data-dir=${DADOS}`], env: AMBIENTE }
       : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: AMBIENTE },
   );
   const page = await app.firstWindow();

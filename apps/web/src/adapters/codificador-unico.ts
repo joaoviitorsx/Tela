@@ -23,6 +23,11 @@ export type EstatisticasDoCodificador = {
   readonly idrs: number;
   /** Quadros de captura deixados de lado por fila dos senders, desde a última leitura. */
   readonly segurados: number;
+  /**
+   * Quadros por segundo que a CAPTURA soltou (o `fps` é o que o encoder
+   * produziu, e inclui o reenvio do último quadro). `undefined` = não sabe.
+   */
+  readonly fpsDaCaptura?: number;
   /** Pedidos de quadro-chave recebidos, por motivo — diagnóstico. */
   readonly pedidosDeChave: Readonly<Record<string, number>>;
   /** Rótulo para o console da transmissão (`encoderImplementation`). */
@@ -38,6 +43,8 @@ export interface CodificadorUnico {
   pedirChave(motivo?: string, senders?: number): void;
   /** Fila dos senders, em quadros: acima do tolerado, pula quadro de captura. */
   definirAtraso(quadros: number): void;
+  /** Reenvia o último quadro se a captura parou (ver `SEM_CAPTURA_MS`). ~10 Hz. */
+  manterVivo?(): void;
   estatisticas(): EstatisticasDoCodificador;
   /**
    * Tamanho da captura, quando quem codifica sabe melhor que a trilha — o

@@ -144,6 +144,11 @@ export type MediaStats = {
    */
   readonly fila?: { readonly seguradosPorSegundo: number; readonly soltos: number };
   /**
+   * Quadros por segundo que a CAPTURA solta, quando difere do que sai do
+   * encoder ("um encode" reenvia o último quadro com a captura parada).
+   */
+  readonly fpsDaCaptura?: number;
+  /**
    * A estimativa CRUA de cada caminho, por peer.
    *
    * O governador precisa suavizar cada uma separadamente antes de tirar o

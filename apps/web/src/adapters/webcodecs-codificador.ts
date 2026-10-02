@@ -44,6 +44,20 @@ declare class MediaStreamTrackProcessor<T> {
 export const CODEC = 'avc1.42e02a';
 /** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */
 const ATRASO_TOLERADO = 2;
+/**
+ * Sem quadro novo da captura por este tempo, o último é codificado de novo —
+ * no máximo a cada `REENVIO_MS`, ou já, se alguém pediu quadro-chave.
+ *
+ * A captura só solta quadro quando a imagem muda, e para de vez quando o jogo
+ * minimiza (Alt+Tab num jogo em tela cheia). Como a isca só gera vaga a cada
+ * quadro capturado, nada saía: quem assistia congelava, quem entrava nessa
+ * hora ficava no preto, e os pedidos de quadro-chave dos espectadores não
+ * tinham como ser atendidos (relato de 02/10: "dá Alt+Tab e volta e a tela
+ * fica travada"; o diagnóstico do espectador mostrava 0 kbps com a ligação
+ * viva). Reenviar o último quadro custa um P quase vazio a 2 fps.
+ */
+export const SEM_CAPTURA_MS = 500;
+export const REENVIO_MS = 500;
 
 export class CodificadorWebCodecs implements CodificadorUnico {
   private encoder: VideoEncoder | null = null;
@@ -63,6 +77,12 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private parado = false;
   private marca = { t: 0, quadros: 0 };
   private quadros = 0;
+  /** O último quadro capturado (um clone: mesmo buffer, sem cópia), para reenviar. */
+  private ultimo: VideoFrame | null = null;
+  private ultimaCaptura = -Infinity;
+  private ultimoReenvio = -Infinity;
+  private capturados = 0;
+  private marcaDaCaptura = { t: 0, quadros: 0 };
 
   constructor(
     private readonly entregar: (chunk: ChunkInjetado, transferir: Transferable[]) => void,
@@ -103,6 +123,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   /** Troca a captura sem derrubar ninguém: o próximo quadro é IDR. */
   trocarFonte(track: MediaStreamTrack): void {
     void this.leitor?.cancel();
+    this.esquecerUltimo();
     this.pedirChave();
     this.lerDe(track);
   }
@@ -122,6 +143,29 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.atraso = quadros;
   }
 
+  /**
+   * Chamado ~10 vezes por segundo pelo worker (que não é estrangulado com a
+   * aba escondida). Ver `SEM_CAPTURA_MS`.
+   */
+  manterVivo(): void {
+    const ultimo = this.ultimo;
+    if (ultimo === null || this.parado || typeof VideoFrame !== 'function') return;
+    const agora = this.agora();
+    if (agora - this.ultimaCaptura < SEM_CAPTURA_MS) return;
+    if (agora - this.ultimoReenvio < REENVIO_MS && !this.pedirChaveAgora) return;
+    this.ultimoReenvio = agora;
+    let quadro: VideoFrame;
+    try {
+      // Tempo andando a partir do último capturado: o encoder não vê o
+      // relógio voltar quando a captura recomeçar.
+      quadro = new VideoFrame(ultimo, { timestamp: ultimo.timestamp + Math.round((agora - this.ultimaCaptura) * 1000) });
+    } catch {
+      return;
+    }
+    this.aoCapturar();
+    this.codificar(quadro);
+  }
+
   estatisticas(): EstatisticasDoCodificador {
     const agora = this.agora();
     const dt = Math.max(0.001, (agora - this.marca.t) / 1000);
@@ -132,6 +176,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.descartesPorSobrecarga = 0;
     const segurados = this.segurados;
     this.segurados = 0;
+    const dtCaptura = Math.max(0.001, (agora - this.marcaDaCaptura.t) / 1000);
+    const fpsDaCaptura = (this.capturados - this.marcaDaCaptura.quadros) / dtCaptura;
+    this.marcaDaCaptura = { t: agora, quadros: this.capturados };
     const c = this.configurado;
     const classe = this.aceleracao.classe();
     return {
@@ -143,6 +190,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       hardware: classe === 'desconhecido' ? null : classe === 'hardware',
       sobrecarregado,
       segurados,
+      fpsDaCaptura,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
       implementacao: this.aceleracao.rotulo(),
@@ -158,6 +206,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.parado = true;
     void this.leitor?.cancel();
     this.leitor = null;
+    this.esquecerUltimo();
     this.descartar();
   }
 
@@ -238,6 +287,23 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     if (mudouTamanho) this.pedirChaveAgora = true;
   }
 
+  private guardarUltimo(quadro: VideoFrame): void {
+    if (typeof quadro.clone !== 'function') return;
+    const anterior = this.ultimo;
+    try {
+      this.ultimo = quadro.clone();
+    } catch {
+      this.ultimo = null;
+    }
+    anterior?.close();
+  }
+
+  private esquecerUltimo(): void {
+    this.ultimo?.close();
+    this.ultimo = null;
+    this.ultimaCaptura = -Infinity;
+  }
+
   private lerDe(track: MediaStreamTrack): void {
     const leitor = new MediaStreamTrackProcessor<VideoFrame>({ track }).readable.getReader();
     this.leitor = leitor;
@@ -245,6 +311,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       for (;;) {
         const { value: quadro, done } = await leitor.read();
         if (done || quadro === undefined) return;
+        this.capturados += 1;
+        this.ultimaCaptura = this.agora();
+        this.guardarUltimo(quadro);
         this.aoCapturar();
         this.codificar(quadro);
       }

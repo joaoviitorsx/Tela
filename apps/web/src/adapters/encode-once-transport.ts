@@ -76,7 +76,11 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     });
     canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
       if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo, m.data.senders);
-      else if (m.data.tipo === 'atraso') codificador.definirAtraso(m.data.quadros);
+      else if (m.data.tipo === 'atraso') {
+        codificador.definirAtraso(m.data.quadros);
+        // O relógio do worker (~10 Hz) não para com a aba escondida.
+        codificador.manterVivo?.();
+      }
       else if (m.data.tipo === 'arrasto') soltosDesdeALeitura += m.data.soltos;
     };
     recursos = { worker, isca, codificador };
@@ -227,6 +231,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         msPorQuadro: c.msPorQuadro,
         encoderImplementation: c.implementacao,
         fila,
+        ...(c.fpsDaCaptura === undefined ? {} : { fpsDaCaptura: c.fpsDaCaptura }),
         /*
           Os motivos que as malhas leem, com a mesma semântica do Chromium:
           `cpu` quando o encoder não dá conta, `bandwidth` quando a estimativa

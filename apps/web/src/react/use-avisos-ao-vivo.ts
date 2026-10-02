@@ -44,7 +44,7 @@ export function montarAvisos(estado: EstadoAoVivo, avisoMomentaneo: string | nul
     estado.capturaSemImagem && {
       chave: 'sem-sinal',
       texto:
-        'A captura não está produzindo imagem: os amigos estão vendo preto. Pare e escolha a tela de novo.',
+        'A captura parou de mandar imagem nova: seus amigos estão vendo a última imagem parada. Se é um jogo em tela cheia, volte para ele (ou use o modo janela sem bordas); se continuar parado, pare e escolha a tela de novo.',
     },
     estado.semSinalizacao && {
       chave: 'sem-sinalizacao',

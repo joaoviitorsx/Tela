@@ -731,7 +731,9 @@ export class BroadcastSession {
     this.applyUplinkCeiling(stats);
     this.ajustarPorta(stats);
     this.trackPressure(stats.limitation);
-    this.trackCapturaMorta(stats.fps);
+    // O que a CAPTURA solta, não o que o encoder produz: o "um encode" reenvia
+    // o último quadro quando ela para, e o encoder nunca chega a 0.
+    this.trackCapturaMorta(stats.fpsDaCaptura ?? stats.fps);
     this.vigiarNitidez(stats.fps, stats.limitation);
     this.lembrarBanda();
   }

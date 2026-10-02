@@ -186,7 +186,11 @@ escopo.onrtctransform = ({ transformer }) => {
         quadro-chave nela depois do primeiro só nasce de PLI/FIR do espectador:
         é o pedido de quadro-chave dele, chegando por aqui.
       */
-      if (quadro.type === 'key' && vistos > 1) {
+      // No repassador, não: a isca dele é reconfigurada (teto da aresta) e
+      // cada reconfiguração gera uma chave que pararia o filho até o próximo
+      // IDR periódico — e um filho quebrado de verdade espera esse mesmo IDR,
+      // porque ninguém pede chave ao anfitrião por ele (ADR 0031).
+      if (quadro.type === 'key' && vistos > 1 && papel === 'anfitriao') {
         fila.pediuChave(id);
         motivo = 'pli';
       }

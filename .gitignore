@@ -39,3 +39,6 @@ apps/desktop/native/wasapi-loopback/build/
 # Instaladores do Tela Desktop (apps/desktop/electron-builder.yml). Saem do
 # CI, com hash; o repositório não carrega binário de 100 MB.
 apps/desktop/release/
+
+# Estado local do `wrangler dev`.
+.wrangler/

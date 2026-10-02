@@ -181,6 +181,23 @@ Esforço: 3–5 semanas de uma pessoa [H], sem base de medição. **Recomendaç�
 4. **Repassador é opt-in explícito ("ajudar a transmitir") ou automático para quem mede ≥ 25 Mbps?** O estudo supõe opt-in; o ganho cai quando poucos aceitam (sensibilidade acima). Em ambos os casos, um botão "parar de ajudar" é obrigatório.
 5. *(menor)* A cascata liga **sozinha** quando a malha não basta, ou o anfitrião liga à mão ("sala grande")? Automático esconde a mudança de modelo de privacidade da pessoa que não a escolheu.
 
+## Respostas do dono (2026-10-02)
+
+1. **IP entre espectadores: oculto.** Conexão direta revela o IP aos dois
+   lados — o repasse só esconde passando por TURN. Opções levadas ao dono:
+   (a) TURN da Cloudflare só nas arestas de repasse (~160 GB/h numa sala de 50
+   a ~8 Mbps: a cota grátis de 1 TB acaba em ~6 h de sala cheia, depois
+   ~US$ 8/h); (b) direto só entre quem tem o app, com aviso; (c) **TURN
+   próprio (coturn)**, custo fixo — recomendado. *Aguardando a escolha.*
+2. **Repassador: app e navegador** (Chromium, onde o Encoded Transform de
+   recepção existe).
+3. **Atraso: o mínimo possível.** Profundidade máxima de UM repassador entre
+   o host e qualquer espectador; pai escolhido pelo menor RTT medido; quadro
+   repassado ao chegar, sem fila. Estimativa revista: +10 a +25 ms na mesma
+   região (a medir no E2 antes de construir).
+4. **Automático** para quem mede upload bom.
+5. **Liga sozinha** quando a malha não basta (porta da ADR 0030 cheia).
+
 ## O que continua sem verificação
 
 - **Humano:** latência glass-to-glass com a câmera a 240 fps (E2 mede um proxy por relógio comum); FPS do jogo do repassador com MangoHud; taxa de sucesso de ICE entre espectadores atrás de CGNAT brasileiro, com amigos em operadoras diferentes — **a hipótese que mais pode quebrar o ganho**.

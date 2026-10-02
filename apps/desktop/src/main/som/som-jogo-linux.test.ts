@@ -12,7 +12,7 @@ type Meta = { subject: number; key: string; type: string | null; value: unknown 
  * devolve ao padrão, o `pw-loopback` cria sink e retorno, e o sink some
  * quando o processo sai.
  */
-function pwFalso(opcoes: { retornoNuncaLiga?: boolean; entradaNuncaLiga?: boolean; semDump?: boolean; ignoraSigterm?: boolean } = {}) {
+function pwFalso(opcoes: { retornoNuncaLiga?: boolean; entradaNuncaLiga?: boolean; semDump?: boolean; ignoraSigterm?: boolean; pidsDoTela?: readonly number[] } = {}) {
   const base = JSON.parse(readFileSync(new URL('./fixtures/pw-dump-antes.json', import.meta.url), 'utf8')) as Array<
     No & { metadata?: Meta[]; props?: Record<string, unknown> }
   >;
@@ -65,23 +65,21 @@ function pwFalso(opcoes: { retornoNuncaLiga?: boolean; entradaNuncaLiga?: boolea
       const no = (nome: string, classe: string): No => ({ id: proximoId++, type: 'PipeWire:Interface:Node', info: { state: 'running', props: { 'node.name': nome, 'media.class': classe, 'client.id': cliente.id } } });
       const criados: No[] = [cliente as unknown as No];
       const argumentos = c.args.join(' ');
+      // O `node.name` que o `pw-loopback` daria a cada lado (`-i` e `-o`).
+      const nomeEm = (flag: string): string => /node\.name=(\S+)/.exec(c.args[c.args.indexOf(flag) + 1] ?? '')?.[1] ?? '';
       if (argumentos.includes('media.class=Audio/Sink')) {
-        const sink = no('tela_jogo', 'Audio/Sink');
-        sink.info.props['node.description'] = 'Tela-Jogo';
-        const retorno = no('tela_jogo_retorno', 'Stream/Output/Audio');
+        const sink = no(nomeEm('-i'), 'Audio/Sink');
+        sink.info.props['node.description'] = /node\.description=(\S+)/.exec(argumentos)?.[1];
+        const retorno = no(nomeEm('-o'), 'Stream/Output/Audio');
         criados.push(sink, retorno);
         if (!opcoes.retornoNuncaLiga) links.push({ id: proximoId++, saida: retorno.id, entrada: saidaReal });
-      } else if (argumentos.includes('tela_jogo_mic')) {
-        const fonte = no('tela_jogo_mic', 'Audio/Source');
-        const cap = no('tela_jogo_mic_cap', 'Stream/Input/Audio');
-        criados.push(fonte, cap);
-        const sink = nos.find((n) => n.info.props['node.name'] === 'tela_jogo');
-        if (sink !== undefined && !opcoes.entradaNuncaLiga) links.push({ id: proximoId++, saida: sink.id, entrada: cap.id });
       } else {
-        const fonte = no('tela_sistema_mic', 'Audio/Source');
-        const cap = no('tela_sistema_cap', 'Stream/Input/Audio');
+        const fonte = no(nomeEm('-o'), 'Audio/Source');
+        const cap = no(nomeEm('-i'), 'Stream/Input/Audio');
         criados.push(fonte, cap);
-        if (!opcoes.entradaNuncaLiga) links.push({ id: proximoId++, saida: saidaReal, entrada: cap.id });
+        const alvo = c.args.includes('-C') ? c.args[c.args.indexOf('-C') + 1] : undefined;
+        const sink = alvo === undefined ? undefined : nos.find((n) => n.info.props['node.name'] === alvo);
+        if (sink !== undefined && !opcoes.entradaNuncaLiga) links.push({ id: proximoId++, saida: sink.id, entrada: cap.id });
       }
       nos.push(...criados);
       let vivo = true;
@@ -116,7 +114,7 @@ function pwFalso(opcoes: { retornoNuncaLiga?: boolean; entradaNuncaLiga?: boolea
       registro.push('encerrarOrfaos');
       return 2;
     },
-    pidsDoTela: () => new Set<number>(),
+    pidsDoTela: () => new Set<number>(opcoes.pidsDoTela ?? []),
   };
 
   return {
@@ -136,6 +134,12 @@ function pwFalso(opcoes: { retornoNuncaLiga?: boolean; entradaNuncaLiga?: boolea
     destinoDoStream: (stream: number) => {
       const l = links.find((x) => x.saida === stream);
       return nos.find((n) => n.id === l?.entrada)?.info.props['node.name'];
+    },
+    /** Uma saída a mais, além da real (um fone USB). */
+    novaSaida(nome: string): number {
+      const id = proximoId++;
+      nos.push({ id, type: 'PipeWire:Interface:Node', info: { state: 'running', props: { 'node.name': nome, 'media.class': 'Audio/Sink' } } });
+      return id;
     },
     novoStream(app: string, pid: number, binario?: string): number {
       const id = proximoId++;
@@ -253,23 +257,89 @@ describe('SomDoJogoLinux: a fonte virtual', () => {
   });
 });
 
-describe('SomDoJogoLinux.iniciarSistema', () => {
-  it('cria só a fonte virtual do monitor da saída padrão e não move ninguém', async () => {
-    const pw = pwFalso();
+describe('SomDoJogoLinux.iniciarSistema: tudo menos a call', () => {
+  /** O Discord nativo: o stream da call se chama "WEBRTC VoiceEngine" e o binário é `Discord`. */
+  const comDiscord = (opcoes: Parameters<typeof pwFalso>[0] = {}) => {
+    const pw = pwFalso(opcoes);
+    const discord = pw.novoStream('WEBRTC VoiceEngine', 5555, 'Discord');
+    return { pw, discord };
+  };
+
+  it('move para o sink Tela-Sistema tudo que toca na saída padrão, menos a call', async () => {
+    const { pw, discord } = comDiscord();
     const som = new SomDoJogoLinux(pw.efeitos);
     expect(await som.iniciarSistema(saidas().s)).toEqual({ ok: true, value: { descricao: 'Tela-Sistema-Entrada' } });
-    expect(pw.nosNossos()).toEqual(expect.arrayContaining(['tela_sistema_mic', 'tela_sistema_cap']));
-    expect(pw.nosNossos()).not.toContain('tela_jogo');
-    expect(pw.registro.some((l) => l.startsWith('pw-metadata'))).toBe(false);
+    expect(pw.destinoDoStream(97)).toBe('tela_sistema');
+    // "Chamada-Voz" é só um nome: não é app de voz conhecido, vai junto.
+    expect(pw.destinoDoStream(85)).toBe('tela_sistema');
+    expect(pw.destinoDoStream(discord)).toBe(REAL);
     expect(som.fase()).toEqual({ fase: 'ativo', app: 'sistema', tocando: true, modo: 'sistema' });
   });
 
-  it('parar remove a fonte', async () => {
+  it('monta o mesmo grafo do "só o jogo", com nomes próprios: sink, retorno na saída real e fonte do sink', async () => {
+    const { pw } = comDiscord();
+    await new SomDoJogoLinux(pw.efeitos).iniciarSistema(saidas().s);
+    expect(pw.registro.filter((l) => l.startsWith('spawn'))).toEqual(['spawn pw-loopback tela_sistema_lb', 'spawn pw-loopback tela_sistema_mic_lb']);
+    expect(pw.nosNossos()).toEqual(expect.arrayContaining(['tela_sistema', 'tela_sistema_retorno', 'tela_sistema_mic', 'tela_sistema_cap']));
+    expect(pw.nosNossos()).not.toContain('tela_jogo');
+    // Quem joga segue ouvindo tudo: o retorno chega na saída real…
+    expect(pw.destinoPorNome('tela_sistema_retorno')).toBe(REAL);
+    // …e a fonte que a página captura lê o sink do Tela, não a saída padrão (onde a call toca).
+    expect(pw.destinoPorNome('tela_sistema')).toBe('tela_sistema_cap');
+    // O retorno segue a saída padrão: nenhum alvo fixo.
+    expect(pw.registro.join('\n')).not.toContain('target.object=');
+  });
+
+  it('o próprio Tela fica de fora', async () => {
+    const pw = pwFalso({ pidsDoTela: [4242] });
+    await new SomDoJogoLinux(pw.efeitos).iniciarSistema(saidas().s);
+    expect(pw.destinoDoStream(97)).toBe(REAL);
+    expect(pw.destinoDoStream(85)).toBe('tela_sistema');
+  });
+
+  it('quem foi mandado para OUTRA saída fica onde está', async () => {
     const pw = pwFalso();
+    pw.novaSaida('fone_usb');
+    // A pessoa mandou a "chamada" para o fone USB (o que o pavucontrol faz).
+    await pw.efeitos.executar({ cmd: 'pw-metadata', args: ['-n', 'default', '85', 'target.object', 'fone_usb', 'Spa:String'] });
+    await new SomDoJogoLinux(pw.efeitos).iniciarSistema(saidas().s);
+    expect(pw.destinoDoStream(85)).toBe('fone_usb');
+    expect(pw.destinoDoStream(97)).toBe('tela_sistema');
+  });
+
+  it('ao vivo: um programa novo entra no sink; a call que começa depois, não', async () => {
+    let tique: (() => void) | null = null;
+    const pw = pwFalso();
+    pw.efeitos.agendar = (fn) => {
+      tique = fn;
+      return () => {
+        tique = null;
+      };
+    };
+    const som = new SomDoJogoLinux(pw.efeitos);
+    await som.iniciarSistema(saidas().s);
+    const musica = pw.novoStream('Spotify', 7000, 'spotify');
+    const discord = pw.novoStream('WEBRTC VoiceEngine', 5555, 'Discord');
+    const teamspeak = pw.novoStream('TeamSpeak 3', 5556, 'ts3client_linux_amd64');
+    tique!();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(pw.destinoDoStream(musica)).toBe('tela_sistema');
+    expect(pw.destinoDoStream(discord)).toBe(REAL);
+    expect(pw.destinoDoStream(teamspeak)).toBe(REAL);
+    expect(som.fase()).toMatchObject({ fase: 'ativo', modo: 'sistema', tocando: true });
+  });
+
+  it('parar devolve cada stream ao que era e remove o sink e a fonte', async () => {
+    const { pw, discord } = comDiscord();
+    pw.fixarAlvo(97, REAL);
     const som = new SomDoJogoLinux(pw.efeitos);
     await som.iniciarSistema(saidas().s);
     await som.parar();
     expect(pw.nosNossos()).toEqual([]);
+    expect(pw.destinoDoStream(85)).toBe(REAL);
+    expect(pw.destinoDoStream(discord)).toBe(REAL);
+    expect(pw.meta.find((m) => m.subject === 97 && m.key === 'target.object')?.value).toBe(REAL);
+    expect(pw.meta.some((m) => m.subject === 85 && m.key === 'target.object')).toBe(false);
     expect(som.fase().fase).toBe('ocioso');
   });
 
@@ -281,18 +351,19 @@ describe('SomDoJogoLinux.iniciarSistema', () => {
     expect(await som.iniciarSistema(saidas().s)).toEqual({ ok: false, error: 'OCUPADO' });
   });
 
-  it('a fonte não liga: FALHOU e nada sobra', async () => {
+  it('a fonte não liga: FALHOU, ninguém é movido e nada sobra', async () => {
     const pw = pwFalso({ entradaNuncaLiga: true });
     const som = new SomDoJogoLinux(pw.efeitos);
     expect(await som.iniciarSistema(saidas().s)).toEqual({ ok: false, error: 'FALHOU' });
     expect(pw.nosNossos()).toEqual([]);
+    expect(pw.registro.some((l) => l.startsWith('pw-metadata'))).toBe(false);
   });
 
   it('sem PipeWire respondendo: INDISPONIVEL', async () => {
     expect(await new SomDoJogoLinux(pwFalso({ semDump: true }).efeitos).iniciarSistema(saidas().s)).toEqual({ ok: false, error: 'INDISPONIVEL' });
   });
 
-  it('a fonte do sistema morrer avisa; a captura do jogo não é varrida no modo sistema', async () => {
+  it('o sink do sistema morrer avisa e devolve os streams', async () => {
     const pw = pwFalso();
     const { s, eventos } = saidas();
     const som = new SomDoJogoLinux(pw.efeitos);
@@ -300,6 +371,16 @@ describe('SomDoJogoLinux.iniciarSistema', () => {
     pw.morrer();
     await new Promise((r) => setTimeout(r, 0));
     expect(eventos).toEqual(['encerrou:SINK_CAIU']);
+    expect(pw.meta.some((m) => m.key === 'target.object')).toBe(false);
+    expect(pw.nosNossos()).toEqual([]);
+  });
+
+  it('limparResiduos também apaga metadados que apontam para o sink do sistema', async () => {
+    const pw = pwFalso();
+    await new SomDoJogoLinux(pw.efeitos).iniciarSistema(saidas().s);
+    const nova = new SomDoJogoLinux(pw.efeitos);
+    expect(await nova.limparResiduos()).toBe(4); // 2 órfãos do registro + 2 streams
+    expect(pw.meta.some((m) => m.key === 'target.object')).toBe(false);
   });
 });
 

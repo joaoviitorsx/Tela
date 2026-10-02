@@ -13,7 +13,17 @@ export class FakeSender {
   encodingsIniciais: RTCRtpEncodingParameters[] = [{}];
   /** Decide se a chamada rejeita, olhando o que foi pedido. `null` aceita. */
   recusar: ((params: RTCRtpSendParameters) => Error | null) | null = null;
-  constructor(readonly track: MediaStreamTrack) {}
+  /** `null` depois de `replaceTrack(null)` — a pausa da cascata (ADR 0031). */
+  track: MediaStreamTrack | null;
+  readonly trocas: Array<MediaStreamTrack | null> = [];
+  constructor(track: MediaStreamTrack) {
+    this.track = track;
+  }
+
+  async replaceTrack(track: MediaStreamTrack | null): Promise<void> {
+    this.track = track;
+    this.trocas.push(track);
+  }
 
   getParameters(): RTCRtpSendParameters {
     return (this.applied.at(-1) ?? {

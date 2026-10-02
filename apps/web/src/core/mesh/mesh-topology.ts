@@ -67,6 +67,13 @@ export type MeshTopologyDeps = {
   readonly maxPeers: number;
   readonly onIssue?: (peerId: string, code: PeerLinkIssueCode | PeerLinkFatalCode) => void;
   readonly onPeerStateChange?: (peerId: string, state: RTCPeerConnectionState) => void;
+  /**
+   * Um sender de vídeo parou (ou voltou a) mandar — a cascata de repasse
+   * (ADR 0031). Quem injeta quadro ("um encode, N envios") precisa tirá-lo da
+   * fila, senão a contrapressão o conta como atrasado e segura o codificador
+   * de todo mundo até ele ser dado como morto.
+   */
+  readonly aoPausarSender?: (sender: RTCRtpSender, pausado: boolean) => void;
 };
 
 /**
@@ -181,6 +188,13 @@ export class MeshTopology {
    * em "conectando" para sempre (ADR 0006, A1).
    */
   private readonly waiting = new Set<string>();
+
+  /**
+   * Peers cujo vídeo vem de um repassador (ADR 0031): o sender de vídeo daqui
+   * está com a trilha `null`. Guardado à parte porque `sender.track` deixa de
+   * dizer que era vídeo.
+   */
+  private readonly pausados = new Map<string, RTCRtpSender[]>();
 
   /**
    * Uma renegociação por peer, em fila.
@@ -384,6 +398,7 @@ export class MeshTopology {
       this.esperasAudio.delete(sender);
     }
     this.senders.delete(peerId);
+    this.pausados.delete(peerId);
     this.relayed.delete(peerId);
     this.rodizio.esquecer(peerId);
     this.retidos.delete(peerId);
@@ -434,6 +449,8 @@ export class MeshTopology {
   private syncTracks(peerId: string, link: PeerLink, stream: MediaStream): void {
     const senders = this.senders.get(peerId) ?? [];
     const enviadas = new Set(senders.map((sender) => sender.track).filter(Boolean));
+    // Pausado não é "sem vídeo": um sender novo duplicaria a trilha.
+    if (this.pausados.has(peerId)) for (const t of this.tracks) if (t.kind === 'video') enviadas.add(t);
 
     for (const track of this.tracks) {
       if (enviadas.has(track)) continue;
@@ -482,6 +499,53 @@ export class MeshTopology {
       }
       if (this.preset !== null) await this.adaptAll(this.preset);
     });
+  }
+
+  /**
+   * Para (ou volta a) mandar vídeo a este peer, sem renegociar: o vídeo dele
+   * passou a vir de um repassador (ADR 0031). O áudio continua daqui.
+   *
+   * `replaceTrack(null)` e não `active: false`: mexer nos parâmetros do
+   * sender reconfigura o encoder dele, e quadro-chave de isca vira IDR do
+   * codificador único para todos.
+   */
+  pausarVideo(peerId: string, pausado: boolean): Promise<void> {
+    return this.enqueue(async () => {
+      const senders = this.senders.get(peerId);
+      if (senders === undefined) return;
+      if (pausado) {
+        if (this.pausados.has(peerId)) return;
+        const video = senders.filter((sender) => sender.track?.kind === 'video');
+        if (video.length === 0) return;
+        this.pausados.set(peerId, video);
+        for (const sender of video) {
+          this.deps.aoPausarSender?.(sender, true);
+          try {
+            await sender.replaceTrack(null);
+          } catch {
+            // Peer fechando no meio; o estado dele cuida do resto.
+          }
+        }
+        return;
+      }
+      const video = this.pausados.get(peerId);
+      if (video === undefined) return;
+      this.pausados.delete(peerId);
+      const track = this.tracks.find((t) => t.kind === 'video') ?? null;
+      for (const sender of video) {
+        try {
+          await sender.replaceTrack(track);
+        } catch {
+          // Idem.
+        }
+        this.deps.aoPausarSender?.(sender, false);
+      }
+    });
+  }
+
+  /** O vídeo deste peer vem de um repassador. */
+  videoPausado(peerId: string): boolean {
+    return this.pausados.has(peerId);
   }
 
   /**
@@ -1088,10 +1152,12 @@ export class MeshTopology {
 
     // Rodízio (B2): só alguns peers por tique; o resto reentrega a leitura
     // retida. Até 5 peers lê todo mundo — ver `rodizio-de-leitura.ts`.
-    const vivos = [...this.links.keys()];
+    // Peer pausado (vídeo vindo de repassador) não é caminho de vídeo daqui:
+    // a malha coletiva e a porta pela banda não podem contá-lo (ADR 0031).
+    const vivos = [...this.links.keys()].filter((id) => !this.pausados.has(id));
     const lerAgora = this.rodizio.escolher(vivos);
     const colhidos = await Promise.all(
-      [...this.links.values()].map(async (link) => {
+      [...this.links.values()].filter((link) => !this.pausados.has(link.peerId)).map(async (link) => {
         if (!lerAgora.has(link.peerId)) {
           const retido = this.retidos.get(link.peerId);
           return retido === undefined ? null : { peerId: link.peerId, report: retido, fresco: false };
@@ -1131,6 +1197,7 @@ export class MeshTopology {
     for (const link of this.links.values()) link.close();
     this.links.clear();
     this.senders.clear();
+    this.pausados.clear();
     this.relayed.clear();
     this.waiting.clear();
     this.pendentes.clear();

@@ -370,3 +370,33 @@ describe('janelaDeChaveMs — coalescência de quadro-chave proporcional à plat
     expect(janelaDeChaveMs(Number.NaN, 'pli')).toBe(JANELA_MINIMA_DE_CHAVE_MS);
   });
 });
+
+describe('FilaDeInjecao — tolerância de entrada (repassador, ADR 0031)', () => {
+  it('entra num IDR até N quadros atrás da ponta e alcança pelas vagas a mais', () => {
+    const fila = new FilaDeInjecao<string>(() => 0, { toleranciaDeEntrada: 2 });
+    let seq = 0;
+    const chega = (chave = false) => fila.chegou({ seq: seq++, chave, dados: `q${seq - 1}` });
+    chega(true); // IDR 0
+    chega(); // P 1
+    chega(); // P 2 — o IDR está 2 atrás: ainda serve
+    fila.entrou('f');
+    expect(fila.vaga('f')).toMatchObject({ tipo: 'enviar', quadro: { seq: 0 } });
+    expect(fila.vaga('f')).toMatchObject({ tipo: 'enviar', quadro: { seq: 1 } });
+    expect(fila.vaga('f')).toMatchObject({ tipo: 'enviar', quadro: { seq: 2 } });
+    // Em dia: vaga sem quadro novo não vai ao ar.
+    expect(fila.vaga('f')).toEqual({ tipo: 'descartar', pedirChave: false });
+  });
+
+  it('além da tolerância, espera o próximo IDR', () => {
+    const fila = new FilaDeInjecao<string>(() => 0, { toleranciaDeEntrada: 1 });
+    let seq = 0;
+    const chega = (chave = false) => fila.chegou({ seq: seq++, chave, dados: `q${seq - 1}` });
+    chega(true);
+    chega();
+    chega();
+    fila.entrou('f');
+    expect(fila.vaga('f').tipo).toBe('descartar');
+    chega(true);
+    expect(fila.vaga('f')).toMatchObject({ tipo: 'enviar', quadro: { seq: 3 } });
+  });
+});

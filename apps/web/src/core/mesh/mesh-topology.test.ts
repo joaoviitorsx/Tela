@@ -299,7 +299,7 @@ describe('MeshTopology — áudio', () => {
     await ctx.mesh.publish(ctx.stream, [ctx.video, audio], PRESET_1080P60);
     await settle(20);
 
-    const kinds = ctx.factory.created[0]?.getSenders().map((s) => s.track.kind);
+    const kinds = ctx.factory.created[0]?.getSenders().map((s) => s.track?.kind);
     expect(kinds).toEqual(['video', 'audio']);
   });
 
@@ -323,7 +323,7 @@ describe('MeshTopology — áudio', () => {
     ctx.mesh.admit('v_1');
     await settle(20);
 
-    const senderAudio = ctx.factory.created[0]?.getSenders().find((s) => s.track.kind === 'audio');
+    const senderAudio = ctx.factory.created[0]?.getSenders().find((s) => s.track?.kind === 'audio');
     // O default do WebRTC assume voz e aperta demais: música de jogo vira lata.
     expect(senderAudio?.applied.at(-1)?.encodings?.[0]?.maxBitrate).toBe(128_000);
   });
@@ -335,7 +335,7 @@ describe('MeshTopology — áudio', () => {
     ctx.mesh.admit('v_1');
     await settle(20);
 
-    const senderAudio = ctx.factory.created[0]?.getSenders().find((s) => s.track.kind === 'audio');
+    const senderAudio = ctx.factory.created[0]?.getSenders().find((s) => s.track?.kind === 'audio');
     expect(senderAudio?.applied.at(-1)?.encodings?.[0]?.maxFramerate).toBeUndefined();
   });
 });
@@ -706,7 +706,7 @@ describe('MeshTopology — parâmetros de áudio verificáveis (TELA-008)', () =
     const senders = peers.map((id) => {
       ctx.mesh.admit(id);
       const pc = ctx.factory.created.at(-1) as FakePeerConnection;
-      return pc.getSenders().find((s) => s.track.kind === 'audio')!;
+      return pc.getSenders().find((s) => s.track?.kind === 'audio')!;
     });
     return { ctx, senders };
   }
@@ -821,5 +821,68 @@ describe('MeshTopology — troca de áudio sem renegociar (TELA-012)', () => {
     ctx.mesh.admit('v_1');
     await settle(20);
     expect(await ctx.mesh.replaceAudio(fakeTrack('audio'), ctx.stream)).toBe(false);
+  });
+});
+
+describe('MeshTopology — vídeo pausado (cascata, ADR 0031)', () => {
+  function comAvisos() {
+    const factory = fakeConnectionFactory();
+    const avisos: Array<[RTCRtpSender, boolean]> = [];
+    const mesh = new MeshTopology({
+      iceServers: ICE,
+      send: () => undefined,
+      createConnection: factory.create,
+      maxPeers: 3,
+      aoPausarSender: (sender, pausado) => avisos.push([sender, pausado]),
+    });
+    const video = fakeTrack('video');
+    const audio = fakeTrack('audio');
+    const stream = fakeStream([video, audio]);
+    return { mesh, factory, video, audio, stream, avisos };
+  }
+
+  it('pausa só o vídeo do peer, avisa quem injeta e volta com a trilha atual', async () => {
+    const ctx = comAvisos();
+    await ctx.mesh.publish(ctx.stream, [ctx.video, ctx.audio], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+    const pc = ctx.factory.created[0]!;
+    const [sVideo, sAudio] = pc.senders;
+
+    await ctx.mesh.pausarVideo('v_1', true);
+    expect(sVideo!.track).toBeNull();
+    expect(sAudio!.track).toBe(ctx.audio);
+    expect(ctx.mesh.videoPausado('v_1')).toBe(true);
+    expect(ctx.avisos).toEqual([[sVideo, true]]);
+
+    // Trocar a captura enquanto pausado não religa o vídeo deste peer.
+    const outro = fakeTrack('video');
+    await ctx.mesh.replaceVideo(outro, fakeStream([outro, ctx.audio]));
+    expect(sVideo!.track).toBeNull();
+
+    await ctx.mesh.pausarVideo('v_1', false);
+    expect(sVideo!.track).toBe(outro);
+    expect(ctx.avisos.at(-1)).toEqual([sVideo, false]);
+  });
+
+  it('pausado não ganha sender de vídeo novo ao republicar', async () => {
+    const ctx = comAvisos();
+    await ctx.mesh.publish(ctx.stream, [ctx.video, ctx.audio], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    await settle();
+    await ctx.mesh.pausarVideo('v_1', true);
+    await ctx.mesh.publish(ctx.stream, [ctx.video, ctx.audio], PRESET_1080P60);
+    expect(ctx.factory.created[0]!.senders).toHaveLength(2);
+  });
+
+  it('pausado não entra na coleta: não é caminho de vídeo daqui', async () => {
+    const ctx = comAvisos();
+    await ctx.mesh.publish(ctx.stream, [ctx.video, ctx.audio], PRESET_1080P60);
+    ctx.mesh.admit('v_1');
+    ctx.mesh.admit('v_2');
+    await settle();
+    await ctx.mesh.pausarVideo('v_1', true);
+    const relatorios = await ctx.mesh.collectStats();
+    expect(relatorios.map((r) => r.peerId)).toEqual(['v_2']);
   });
 });

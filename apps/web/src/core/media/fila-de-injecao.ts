@@ -79,19 +79,40 @@ type EstadoDoSender = {
   chaveLiberadaEm: number;
 };
 
+export type OpcoesDaFila = {
+  /**
+   * Quantos quadros atrás da ponta um IDR ainda serve para quem espera chave.
+   *
+   * `0` (o anfitrião): só o IDR NA PONTA — lá cada quadro ganha exatamente uma
+   * vaga, e começar atrás prenderia o sender atrasado para sempre. O
+   * repassador (ADR 0031) tem relógio de vaga próprio, mais rápido que a
+   * chegada: pode perder o instante em que o IDR é a ponta, e as vagas a mais
+   * drenam o atraso de entrar uns quadros atrás.
+   */
+  readonly toleranciaDeEntrada?: number;
+};
+
 export class FilaDeInjecao<D> {
   private readonly anel: (QuadroCodificado<D> | undefined)[] = new Array<QuadroCodificado<D> | undefined>(
     QUADROS_GUARDADOS,
   ).fill(undefined);
   private ultimoSeq = -1;
+  private ultimaChave = -1;
   private readonly estados = new Map<string, EstadoDoSender>();
+  private readonly tolerancia: number;
 
-  constructor(private readonly agora: () => number) {}
+  constructor(
+    private readonly agora: () => number,
+    opcoes: OpcoesDaFila = {},
+  ) {
+    this.tolerancia = Math.max(0, Math.floor(opcoes.toleranciaDeEntrada ?? 0));
+  }
 
   /** Um quadro novo saiu do codificador único. */
   chegou(quadro: QuadroCodificado<D>): void {
     this.anel[quadro.seq % QUADROS_GUARDADOS] = quadro;
     this.ultimoSeq = quadro.seq;
+    if (quadro.chave) this.ultimaChave = quadro.seq;
   }
 
   entrou(sender: string): void {
@@ -128,13 +149,13 @@ export class FilaDeInjecao<D> {
     s.ultimaVaga = agora;
 
     if (s.esperandoChave) {
-      const ponta = this.ponta();
-      if (ponta !== undefined && ponta.chave && ponta.seq >= s.proximo) {
+      const chave = this.chaveUtil();
+      if (chave !== undefined && chave.seq >= s.proximo) {
         // O IDR da entrada é de graça; os seguintes gastam o direito do sender.
         if (s.proximo >= 0) s.chaveLiberadaEm = agora + INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS;
         s.esperandoChave = false;
-        s.proximo = ponta.seq + 1;
-        return { tipo: 'enviar', quadro: ponta };
+        s.proximo = chave.seq + 1;
+        return { tipo: 'enviar', quadro: chave };
       }
       return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
@@ -176,8 +197,11 @@ export class FilaDeInjecao<D> {
     return pior;
   }
 
-  private ponta(): QuadroCodificado<D> | undefined {
-    return this.ultimoSeq < 0 ? undefined : this.anel[this.ultimoSeq % QUADROS_GUARDADOS];
+  /** O IDR mais recente, se estiver a até `tolerancia` quadros da ponta. */
+  private chaveUtil(): QuadroCodificado<D> | undefined {
+    if (this.ultimaChave < 0 || this.ultimoSeq - this.ultimaChave > this.tolerancia) return undefined;
+    const quadro = this.anel[this.ultimaChave % QUADROS_GUARDADOS];
+    return quadro !== undefined && quadro.seq === this.ultimaChave && quadro.chave ? quadro : undefined;
   }
 
   /** O seq mais antigo que ainda cabe no anel (ou 0, enquanto ele não encheu). */

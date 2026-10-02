@@ -454,6 +454,8 @@ describe('PeerLink — abs-capture-time (latência ponta a ponta)', () => {
     expect(ref).toEqual({
       rtpTimestamp: 90_000,
       captureTimestamp: 3_999_913_073_210,
+      // `timestamp` da fonte relativo à origem da página vira Unix (ADR 0031).
+      entregueMs: performance.timeOrigin + 1,
       relogio: { remotoMs: 1_900, recebidoMs: 2_000, rttMs: 40 },
     });
   });

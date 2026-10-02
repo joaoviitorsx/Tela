@@ -14,6 +14,7 @@ import {
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
 import { type IceSettings, parseIceSettings } from './ice-settings.js';
 import { makeCloudflareProvider, type IceProvisionResult } from './ice-provision.js';
+import type { EnvDoDiscord } from './discord-config.js';
 
 /**
  * Servidor de sinalização em Cloudflare Workers + Durable Objects.
@@ -162,7 +163,7 @@ export type Env = {
    * Ausente = sem limite entre canais (os limites DENTRO do canal seguem).
    */
   IP_LIMITER?: DurableObjectNamespace;
-};
+} & EnvDoDiscord;
 
 /**
  * Socket que ainda não se apresentou. Vive no attachment pelo mesmo motivo de
@@ -299,6 +300,9 @@ export class IpLimiter {
     await this.ctx.storage?.deleteAll?.();
   }
 }
+
+/** Ver `ChannelRoom.estadoPublico`. */
+export type EstadoPublico = { readonly noAr: boolean; readonly espectadores: number };
 
 export class ChannelRoom {
   constructor(
@@ -478,6 +482,22 @@ export class ChannelRoom {
   private versaoRecusada(protocol: number | undefined): SignalingErrorCode | null {
     if (protocol === undefined) return 'BAD_MESSAGE';
     return protocol === PROTOCOL_VERSION ? null : 'PROTOCOL_MISMATCH';
+  }
+
+  /**
+   * O que a prévia do link e o `/tela` do Discord podem saber do canal: se
+   * alguém transmite e QUANTOS assistem. Só leitura, sem storage, sem `await`.
+   *
+   * Nada de nome, IP ou impressão de espectador: a resposta sai do servidor
+   * para quem colou o link, e quem colou não precisa saber quem está lá.
+   * O número é o mesmo que a plateia recebe em `viewers` — pedido pendente
+   * (ADR 0025) ainda não assiste, e não conta.
+   *
+   * "No ar" é ter host conectado: o cliente só reivindica o canal DEPOIS da
+   * captura (`BroadcastSession.start`), então host sem tela não existe.
+   */
+  estadoPublico(): EstadoPublico {
+    return { noAr: this.host() !== null, espectadores: this.viewers().length };
   }
 
   accept(socket: HibernatableSocket, ip?: string): void {

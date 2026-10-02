@@ -6,6 +6,10 @@ import {
 import { describeIceSettings, parseIceSettings } from './ice-settings.js';
 import { DEFAULT_LIMITS } from './limits.js';
 import { listaDeOrigens, origemPermitida } from './origem.js';
+import { ROTA_ESTADO, comMemoria, consultarPeloObjeto, type ConsultarEstado } from './estado-do-canal.js';
+import { type Reescritor, servirComPrevia } from './previa.js';
+import { atenderInteracao, type SubtleEd25519 } from './discord.js';
+import { lerConfigDoDiscord } from './discord-config.js';
 
 /**
  * Ponto de entrada do Cloudflare Worker.
@@ -23,7 +27,20 @@ import { listaDeOrigens, origemPermitida } from './origem.js';
 declare const WebSocketPair: {
   new (): { 0: HibernatableSocket; 1: HibernatableSocket & { accept(): void } };
 };
-declare const crypto: WebCryptoLike;
+declare const crypto: WebCryptoLike & { subtle: SubtleEd25519 };
+declare const HTMLRewriter: { new (): Reescritor };
+
+/**
+ * A consulta de estado com memória vive no escopo do módulo, que é o escopo
+ * do isolate: é o que faz a memória de 30 s valer entre requisições. Criada
+ * na primeira, porque o namespace só chega com o `env`.
+ */
+let consultarEstado: ConsultarEstado | null = null;
+
+function consultaDoIsolate(env: Env): ConsultarEstado {
+  consultarEstado ??= comMemoria(consultarPeloObjeto(env.CHANNELS));
+  return consultarEstado;
+}
 
 /**
  * O que o runtime entrega, declarado à mão para não depender dos tipos do
@@ -61,6 +78,14 @@ export class ChannelDurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
+    // Pergunta interna do Worker (prévia do link, `/tela` do Discord): só lê.
+    // Não acorda socket, não grava nada. Ver `estado-do-canal.ts`.
+    if (request.headers.get('Upgrade') !== 'websocket' && new URL(request.url).pathname === ROTA_ESTADO) {
+      return new Response(JSON.stringify(this.room.estadoPublico()), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
     this.slug = request.headers.get(SLUG_HEADER) ?? '';
 
     const pair = new WebSocketPair();
@@ -180,6 +205,15 @@ export default {
       return await env.CHANNELS.get(id).fetch(new Request(request.url, { headers }));
     }
 
+    // O `/tela` do Discord (docs/DISCORD.md). Sem a chave pública, 404.
+    if (url.pathname === '/discord/interactions') {
+      return await atenderInteracao(request, {
+        config: lerConfigDoDiscord(env),
+        subtle: crypto.subtle,
+        consultar: consultaDoIsolate(env),
+      });
+    }
+
     /**
      * Todo o resto é o front estático, servido pelo MESMO Worker.
      *
@@ -187,7 +221,16 @@ export default {
      * sem variável de build e sem uma segunda publicação para esquecer de
      * fazer. E requisição de asset estático não conta na cota de Workers.
      */
-    if (env.ASSETS !== undefined) return await env.ASSETS.fetch(request);
+    const assets = env.ASSETS;
+    if (assets !== undefined) {
+      // `/<slug>` pedido por robô de prévia ganha o estado do canal; o resto
+      // passa direto. Ver `previa.ts`.
+      return await servirComPrevia(request, {
+        assets: (pedido) => assets.fetch(pedido),
+        consultar: consultaDoIsolate(env),
+        reescritor: () => new HTMLRewriter(),
+      });
+    }
     return new Response('front não publicado neste Worker', { status: 404 });
   },
 };

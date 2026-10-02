@@ -71,3 +71,28 @@ describe('alvoDaExclusao', () => {
     expect(alvoDaExclusao([sessao(1000, 'Discord')], TELA, 999)).toEqual({ pid: 999, app: null });
   });
 });
+
+describe('alvoDaExclusao — Discord achado pelas raízes de processo (addon 1.2.0)', () => {
+  const TELA = new Set([999, 1000]);
+  const proc = (pid: number, nome: string) => ({ pid, nome });
+
+  it('Discord tocando no headset (fora da saída padrão): achado pelo processo, não pela sessão', () => {
+    // A listagem de sessões só viu o jogo; o Discord está entre os processos.
+    expect(alvoDaExclusao([sessao(10, 'Jogo')], TELA, 999, [proc(10, 'Jogo'), proc(50, 'Discord'), proc(60, 'explorer')])).toEqual({
+      pid: 50,
+      app: 'Discord',
+    });
+  });
+
+  it('sessão e processo do mesmo Discord: um alvo só, e quem toca ganha', () => {
+    expect(alvoDaExclusao([sessao(50, 'Discord', true)], TELA, 999, [proc(50, 'Discord'), proc(70, 'Teams')]).pid).toBe(50);
+  });
+
+  it('Discord sem som ainda ganha de outro app de voz tocando', () => {
+    expect(alvoDaExclusao([sessao(70, 'Teams', true)], TELA, 999, [proc(50, 'Discord')]).pid).toBe(50);
+  });
+
+  it('nenhum app de voz entre processos e sessões: o próprio Tela, e app null', () => {
+    expect(alvoDaExclusao([sessao(10, 'Jogo')], TELA, 999, [proc(10, 'Jogo'), proc(20, 'Spotify')])).toEqual({ pid: 999, app: null });
+  });
+});

@@ -25,7 +25,8 @@ export type EscolhaDeSom =
 
 /** O que a última captura entregou, para a escolha de então. */
 export type ResultadoDoSom =
-  | { readonly situacao: 'ativo' }
+  /** `semCall`: no Sistema do Windows, o app de call deixado de fora (`null` = não achou nenhum). */
+  | { readonly situacao: 'ativo'; readonly semCall?: string | null }
   | { readonly situacao: 'falhou'; readonly motivo: string }
   | { readonly situacao: 'parou'; readonly motivo: string };
 
@@ -126,6 +127,13 @@ export function descreverReal(
     // O componente que separa a call do resto não existe aqui: dizer, e não
     // prometer um "sistema" que sairia mudo (ou com a call).
     if (capacidades !== null && !capacidades.jogo.disponivel) return { rotulo: 'SISTEMA · indisponível', curto: 'SEM SOM', tom: 'alerta' };
+    // No ar, o main diz se achou a call para deixar de fora. Sem achar, vai
+    // tudo — e prometer "sem a call" era como alguém se escutava sem aviso.
+    if (resultado?.situacao === 'ativo' && resultado.semCall !== undefined) {
+      return resultado.semCall === null
+        ? { rotulo: 'SISTEMA · nenhuma call aberta: se abrir, sai sozinha', curto: 'SISTEMA', tom: 'alerta' }
+        : { rotulo: `SISTEMA · sem a call do ${resultado.semCall}`, curto: 'SISTEMA', tom: 'ok' };
+    }
     return { rotulo: 'SISTEMA · tudo menos a call', curto: 'SISTEMA', tom: 'ok' };
   }
 

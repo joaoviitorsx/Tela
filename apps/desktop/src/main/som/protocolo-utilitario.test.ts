@@ -85,3 +85,16 @@ describe('appsDasSessoes', () => {
     expect(appsDasSessoes([s(10, 'Tela', true), s(11, 'Jogo', true)], new Set([10])).map((a) => a.pid)).toEqual([11]);
   });
 });
+
+describe('respostaValida — processos (addon 1.2.0)', () => {
+  it('aceita a lista de raízes e recusa item fora do formato', () => {
+    expect(respostaValida({ t: 'sessoes', sessoes: [], processos: [{ pid: 50, nome: 'Discord' }] })).toEqual({
+      t: 'sessoes',
+      sessoes: [],
+      processos: [{ pid: 50, nome: 'Discord' }],
+    });
+    expect(respostaValida({ t: 'sessoes', sessoes: [], processos: [{ pid: 1, nome: 'x' }] })).toBeNull();
+    expect(respostaValida({ t: 'sessoes', sessoes: [], processos: [{ pid: 50, nome: '' }] })).toBeNull();
+    expect(respostaValida({ t: 'sessoes', sessoes: [], processos: 'x' })).toBeNull();
+  });
+});

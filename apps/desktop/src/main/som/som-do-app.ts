@@ -224,7 +224,7 @@ function somWindows(opcoes: OpcoesDoSom): SomDoApp {
       const r = await som.iniciarSistema(avisos(conteudo));
       if (!r.ok) return { ok: false, erro: r.error };
       if (!entregarPorta(conteudo, r.value.id, r.value.porta)) return { ok: false, erro: 'FALHOU' };
-      return { ok: true, via: 'porta', id: r.value.id };
+      return { ok: true, via: 'porta', id: r.value.id, semCall: som.appSemCall() };
     },
     parar: () => som.parar(),
     limparResiduos: () => Promise.resolve(),

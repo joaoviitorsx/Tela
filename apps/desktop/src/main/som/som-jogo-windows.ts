@@ -173,6 +173,7 @@ export class SomDoJogoWindows<P> {
   private sonda: Promise<{ readonly disponivel: boolean; readonly motivo: string | null }> | null = null;
   private ativa: Ativa<P> | null = null;
   private iniciando = false;
+  private appSemCallAtual: string | null = null;
   private proximoId = 1;
   /** Os pids da última listagem: só um deles pode ser capturado (o renderer é uma página web). */
   private listados = new Set<number>();
@@ -302,7 +303,17 @@ export class SomDoJogoWindows<P> {
   private async alvoDoSistema(conversa: Conversa): Promise<number | null> {
     const r = await conversa.pedir({ t: 'listar' }, PRAZO_DA_LISTAGEM_MS, ['sessoes']);
     if (r?.t !== 'sessoes') return null;
-    return alvoDaExclusao(r.sessoes, this.deps.pidsDoTela(), this.deps.pidPrincipal()).pid;
+    const alvo = alvoDaExclusao(r.sessoes, this.deps.pidsDoTela(), this.deps.pidPrincipal(), r.processos ?? []);
+    this.appSemCallAtual = alvo.app;
+    return alvo.pid;
+  }
+
+  /**
+   * O app de call que o modo Sistema está deixando de fora, ou `null` se não
+   * achou nenhum — aí vai tudo, e a interface precisa dizer isso.
+   */
+  appSemCall(): string | null {
+    return this.appSemCallAtual;
   }
 
   /**

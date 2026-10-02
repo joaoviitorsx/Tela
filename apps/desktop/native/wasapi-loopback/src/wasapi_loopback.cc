@@ -17,8 +17,12 @@
 // API para o JavaScript (o utility process, src/main/som/utilitario-win.ts):
 //
 //   versao(): string
+//   listarProcessos(): { pid, nome }[]   (1.2.0)
+//       as raízes de todos os processos — o app de call é achado por aqui
+//       mesmo sem sessão de áudio aberta;
 //   listarSessoes(): { pid, nome, caminho, ativa }[]
-//       as sessões de áudio da saída padrão, uma por executável, já subidas até
+//       as sessões de áudio de TODAS as saídas ativas (1.2.0; antes só a
+//       padrão), uma por executável, já subidas até
 //       o processo-raiz (o Chromium toca por um processo filho; capturar a
 //       árvore da raiz pega os dois);
 //   capturar(pid, aoBloco(Float32Array), aoFim(motivo), modo?): { parar() }
@@ -200,47 +204,60 @@ std::vector<SessaoListada> ListarNaThread(std::string* erro) {
     return saida;
   }
   {
+    // TODAS as saídas ativas, não só a padrão: o Discord costuma tocar a call
+    // no dispositivo de COMUNICAÇÃO (o headset), que não é a saída padrão de
+    // console. Olhando só a padrão, a call nunca era achada, e o modo Sistema
+    // excluía só o próprio Tela — a call ia junto (relato de 02/10).
     ComPtr<IMMDeviceEnumerator> en;
-    ComPtr<IMMDevice> dispositivo;
-    ComPtr<IAudioSessionManager2> gerente;
-    ComPtr<IAudioSessionEnumerator> sessoes;
+    ComPtr<IMMDeviceCollection> colecao;
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&en));
-    if (SUCCEEDED(hr)) hr = en->GetDefaultAudioEndpoint(eRender, eConsole, &dispositivo);
-    if (SUCCEEDED(hr)) hr = dispositivo->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(gerente.GetAddressOf()));
-    if (SUCCEEDED(hr)) hr = gerente->GetSessionEnumerator(&sessoes);
-    int total = 0;
-    if (SUCCEEDED(hr)) hr = sessoes->GetCount(&total);
+    if (SUCCEEDED(hr)) hr = en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &colecao);
+    UINT dispositivos = 0;
+    if (SUCCEEDED(hr)) hr = colecao->GetCount(&dispositivos);
     if (FAILED(hr)) {
-      *erro = "FALHOU: sessões de áudio " + Hex(hr);
+      *erro = "FALHOU: saídas de áudio " + Hex(hr);
     } else {
       const auto tabela = TabelaDeProcessos();
       std::unordered_map<DWORD, size_t> indice;
-      for (int i = 0; i < total; ++i) {
-        ComPtr<IAudioSessionControl> c;
-        ComPtr<IAudioSessionControl2> c2;
-        if (FAILED(sessoes->GetSession(i, &c)) || FAILED(c.As(&c2))) continue;
-        if (c2->IsSystemSoundsSession() == S_OK) continue;
-        DWORD pid = 0;
-        if (FAILED(c2->GetProcessId(&pid)) || pid == 0) continue;
-        AudioSessionState estado = AudioSessionStateInactive;
-        c->GetState(&estado);
-        const DWORD raiz = RaizDoProcesso(pid, tabela);
-        const bool ativa = estado == AudioSessionStateActive;
-        auto achado = indice.find(raiz);
-        if (achado != indice.end()) {
-          saida[achado->second].ativa = saida[achado->second].ativa || ativa;
+      for (UINT d = 0; d < dispositivos; ++d) {
+        ComPtr<IMMDevice> dispositivo;
+        ComPtr<IAudioSessionManager2> gerente;
+        ComPtr<IAudioSessionEnumerator> sessoes;
+        if (FAILED(colecao->Item(d, &dispositivo))) continue;
+        if (FAILED(dispositivo->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                                         reinterpret_cast<void**>(gerente.GetAddressOf())))) {
           continue;
         }
-        std::wstring caminho = CaminhoDoProcesso(raiz);
-        if (caminho.empty()) caminho = CaminhoDoProcesso(pid);
-        std::wstring nome = SemExtensao(NomeDoArquivo(caminho));
-        if (nome.empty()) {
-          auto it = tabela.find(raiz);
-          if (it != tabela.end()) nome = SemExtensao(it->second.exe);
+        if (FAILED(gerente->GetSessionEnumerator(&sessoes))) continue;
+        int total = 0;
+        if (FAILED(sessoes->GetCount(&total))) continue;
+        for (int i = 0; i < total; ++i) {
+          ComPtr<IAudioSessionControl> c;
+          ComPtr<IAudioSessionControl2> c2;
+          if (FAILED(sessoes->GetSession(i, &c)) || FAILED(c.As(&c2))) continue;
+          if (c2->IsSystemSoundsSession() == S_OK) continue;
+          DWORD pid = 0;
+          if (FAILED(c2->GetProcessId(&pid)) || pid == 0) continue;
+          AudioSessionState estado = AudioSessionStateInactive;
+          c->GetState(&estado);
+          const DWORD raiz = RaizDoProcesso(pid, tabela);
+          const bool ativa = estado == AudioSessionStateActive;
+          auto achado = indice.find(raiz);
+          if (achado != indice.end()) {
+            saida[achado->second].ativa = saida[achado->second].ativa || ativa;
+            continue;
+          }
+          std::wstring caminho = CaminhoDoProcesso(raiz);
+          if (caminho.empty()) caminho = CaminhoDoProcesso(pid);
+          std::wstring nome = SemExtensao(NomeDoArquivo(caminho));
+          if (nome.empty()) {
+            auto it = tabela.find(raiz);
+            if (it != tabela.end()) nome = SemExtensao(it->second.exe);
+          }
+          if (nome.empty()) continue;
+          indice[raiz] = saida.size();
+          saida.push_back(SessaoListada{raiz, ParaUtf8(nome), ParaUtf8(caminho), ativa});
         }
-        if (nome.empty()) continue;
-        indice[raiz] = saida.size();
-        saida.push_back(SessaoListada{raiz, ParaUtf8(nome), ParaUtf8(caminho), ativa});
       }
     }
   }
@@ -626,7 +643,8 @@ Napi::Value Versao(const Napi::CallbackInfo& info) {
   // 1.1.0: `capturar` aceita o modo ("incluir" | "excluir"). O utility confere
   // a versão antes de pedir "excluir": uma 1.0 ignoraria o argumento e
   // capturaria SÓ a call, o contrário do pedido.
-  return Napi::String::New(info.Env(), "1.1.0");
+  // 1.2.0: `listarSessoes` varre todas as saídas ativas; `listarProcessos`.
+  return Napi::String::New(info.Env(), "1.2.0");
 }
 
 Napi::Value ListarSessoes(const Napi::CallbackInfo& info) {
@@ -647,6 +665,33 @@ Napi::Value ListarSessoes(const Napi::CallbackInfo& info) {
     o.Set("caminho", Napi::String::New(env, lista[i].caminho));
     o.Set("ativa", Napi::Boolean::New(env, lista[i].ativa));
     arr.Set(static_cast<uint32_t>(i), o);
+  }
+  return arr;
+}
+
+// As RAÍZES de todos os processos (o ancestral mais alto do mesmo executável),
+// uma por raiz: { pid, nome }. O main acha o app de call por aqui mesmo quando
+// ele não tem sessão de áudio aberta no instante da escolha (1.2.0).
+Napi::Value ListarProcessos(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  const auto tabela = TabelaDeProcessos();
+  std::unordered_map<DWORD, bool> vistas;
+  Napi::Array arr = Napi::Array::New(env);
+  uint32_t n = 0;
+  for (const auto& par : tabela) {
+    const DWORD pid = par.first;
+    if (pid == 0 || n >= 2048) continue;
+    const DWORD raiz = RaizDoProcesso(pid, tabela);
+    if (vistas.count(raiz) != 0) continue;
+    vistas[raiz] = true;
+    auto it = tabela.find(raiz);
+    if (it == tabela.end()) continue;
+    const std::wstring nome = SemExtensao(it->second.exe);
+    if (nome.empty()) continue;
+    Napi::Object o = Napi::Object::New(env);
+    o.Set("pid", Napi::Number::New(env, static_cast<double>(raiz)));
+    o.Set("nome", Napi::String::New(env, ParaUtf8(nome)));
+    arr.Set(n++, o);
   }
   return arr;
 }
@@ -701,6 +746,7 @@ Napi::Value Capturar(const Napi::CallbackInfo& info) {
 Napi::Object Iniciar(Napi::Env env, Napi::Object exports) {
   exports.Set("versao", Napi::Function::New(env, Versao));
   exports.Set("listarSessoes", Napi::Function::New(env, ListarSessoes));
+  exports.Set("listarProcessos", Napi::Function::New(env, ListarProcessos));
   exports.Set("capturar", Napi::Function::New(env, Capturar));
   return exports;
 }

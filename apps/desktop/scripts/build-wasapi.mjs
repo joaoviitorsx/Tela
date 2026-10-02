@@ -56,6 +56,18 @@ try {
   } catch (erro) {
     console.log(`[wasapi] listarSessoes não rodou neste ambiente (esperado sem dispositivo de áudio): ${erro.message}`);
   }
+  // A tabela de processos não depende de placa de som: tem de rodar em
+  // qualquer runner. É como o modo Sistema acha a call para deixar de fora.
+  if (typeof addon.listarProcessos !== 'function') {
+    console.error('[wasapi] o addon não exporta listarProcessos (esperado desde 1.2.0)');
+    process.exit(1);
+  }
+  const processos = addon.listarProcessos();
+  if (!Array.isArray(processos) || processos.length === 0) {
+    console.error('[wasapi] listarProcessos voltou vazio — um runner sempre tem processos');
+    process.exit(1);
+  }
+  console.log(`[wasapi] raízes de processo agora: ${processos.length} (ex.: ${processos.slice(0, 3).map((p) => p.nome).join(', ')})`);
 } catch (erro) {
   console.error('[wasapi] o .node não carrega:', erro);
   process.exit(1);

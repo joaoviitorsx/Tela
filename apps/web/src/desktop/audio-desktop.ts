@@ -159,7 +159,10 @@ export function makeAudioDesktop(deps: DepsDoAudioDesktop): AudioCapture {
       if (escolha.tipo === 'sistema') {
         const r = await ponte.som.iniciarSistema();
         if (!r.ok) return falhar(MOTIVO_DO_ERRO[r.erro]);
-        return r.via === 'entrada' ? capturarEntrada(r.descricao, 'o som do sistema') : pcmPorPorta(r.id, 'o som do sistema');
+        if (r.via === 'entrada') return capturarEntrada(r.descricao, 'o som do sistema');
+        const trilha = await pcmPorPorta(r.id, 'o som do sistema');
+        if (r.semCall !== undefined) deps.som.registrar({ situacao: 'ativo', semCall: r.semCall });
+        return trilha;
       }
 
       if (escolha.appId === null) return falhar('nenhum jogo escolhido');

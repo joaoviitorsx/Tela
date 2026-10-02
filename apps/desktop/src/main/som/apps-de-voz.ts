@@ -10,7 +10,7 @@
  * fora da lista é tratado como qualquer outro programa (vai junto), e a lista
  * cresce por pedido, não por adivinhação.
  */
-import type { SessaoDeAudio } from './protocolo-utilitario.js';
+import type { ProcessoRaiz, SessaoDeAudio } from './protocolo-utilitario.js';
 
 /**
  * Windows: o nome do executável, sem `.exe` e sem caixa. O Discord vem
@@ -93,15 +93,36 @@ export type AlvoDaExclusao = {
  *
  * As sessões do próprio Tela nunca são candidatas.
  */
-export function alvoDaExclusao(sessoes: readonly SessaoDeAudio[], pidsDoTela: ReadonlySet<number>, pidPrincipal: number): AlvoDaExclusao {
-  const candidatas = sessoes
-    .filter((s) => !pidsDoTela.has(s.pid) && ehAppDeVozNoWindows(s.nome))
-    // `sort` é estável: entre iguais, a ordem da listagem decide.
-    .sort((a, b) => peso(b) - peso(a));
-  const escolhida = candidatas[0];
+/**
+ * O processo cuja árvore o modo Sistema exclui no Windows.
+ *
+ * Candidatos de dois lugares: as SESSÕES de áudio (quem tem som aberto, em
+ * qualquer saída) e as RAÍZES de processo (addon 1.2.0) — o Discord é achado
+ * mesmo sem sessão no instante da escolha, ou tocando a call num dispositivo
+ * que a listagem de sessões não alcançou. Discord primeiro, depois quem está
+ * tocando; sem nenhum app de call, o próprio Tela (e a interface diz que não
+ * há call para tirar).
+ */
+export function alvoDaExclusao(
+  sessoes: readonly SessaoDeAudio[],
+  pidsDoTela: ReadonlySet<number>,
+  pidPrincipal: number,
+  processos: readonly ProcessoRaiz[] = [],
+): AlvoDaExclusao {
+  const porPid = new Map<number, { pid: number; nome: string; ativa: boolean }>();
+  for (const p of processos) {
+    if (!pidsDoTela.has(p.pid) && ehAppDeVozNoWindows(p.nome)) porPid.set(p.pid, { pid: p.pid, nome: p.nome, ativa: false });
+  }
+  for (const s of sessoes) {
+    if (pidsDoTela.has(s.pid) || !ehAppDeVozNoWindows(s.nome)) continue;
+    const ja = porPid.get(s.pid);
+    porPid.set(s.pid, { pid: s.pid, nome: s.nome, ativa: s.ativa || (ja?.ativa ?? false) });
+  }
+  // `sort` é estável: entre iguais, a ordem de chegada decide.
+  const escolhida = [...porPid.values()].sort((a, b) => peso(b) - peso(a))[0];
   return escolhida === undefined ? { pid: pidPrincipal, app: null } : { pid: escolhida.pid, app: escolhida.nome };
 }
 
-function peso(s: SessaoDeAudio): number {
+function peso(s: { readonly nome: string; readonly ativa: boolean }): number {
   return (DISCORD_NO_WINDOWS.has(normalizar(s.nome)) ? 2 : 0) + (s.ativa ? 1 : 0);
 }

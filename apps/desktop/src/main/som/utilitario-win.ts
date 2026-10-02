@@ -20,6 +20,7 @@ import {
   type ModoDaCaptura,
   pedidoValido,
   type RespostaDoUtilitario,
+  type ProcessoRaiz,
   type SessaoDeAudio,
 } from './protocolo-utilitario.js';
 
@@ -27,6 +28,8 @@ import {
 type Addon = {
   versao(): string;
   listarSessoes(): SessaoDeAudio[];
+  /** 1.2.0+: as raízes de todos os processos. */
+  listarProcessos?(): ProcessoRaiz[];
   capturar(pid: number, aoBloco: (dados: Float32Array) => void, aoFim: (motivo: string) => void, modo: ModoDaCaptura): { parar(): void };
 };
 
@@ -101,7 +104,14 @@ pai.on('message', (evento) => {
     if (pedido.t === 'sondar') {
       responder({ t: 'sonda', ok: true, versao: a.versao() });
     } else if (pedido.t === 'listar') {
-      responder({ t: 'sessoes', sessoes: a.listarSessoes() });
+      const sessoes = a.listarSessoes();
+      let processos: ProcessoRaiz[] | undefined;
+      try {
+        processos = typeof a.listarProcessos === 'function' ? a.listarProcessos() : undefined;
+      } catch {
+        processos = undefined;
+      }
+      responder(processos === undefined ? { t: 'sessoes', sessoes } : { t: 'sessoes', sessoes, processos });
     } else if (pedido.t === 'capturar') {
       const recebida = evento.ports[0];
       if (recebida === undefined || captura !== null) {

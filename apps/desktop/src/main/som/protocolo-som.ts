@@ -46,7 +46,13 @@ export type RespostaSomJogo =
  */
 export type RespostaSomSistema =
   | { readonly ok: true; readonly via: 'entrada'; readonly descricao: string }
-  | { readonly ok: true; readonly via: 'porta'; readonly id: number }
+  | {
+      readonly ok: true;
+      readonly via: 'porta';
+      readonly id: number;
+      /** Windows: o app de call deixado de fora (`Discord`), ou `null` se não achou nenhum. */
+      readonly semCall?: string | null;
+    }
   | { readonly ok: false; readonly erro: ErroSomJogo };
 
 export type FimDoSomDoJogo = {

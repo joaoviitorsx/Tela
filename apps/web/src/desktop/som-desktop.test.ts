@@ -229,3 +229,16 @@ describe('escolha guardada — o padrão seguro é SEM SOM', () => {
     expect(escolhaGuardada(serializarEscolha({ tipo: 'nenhum' }))).toEqual({ tipo: 'nenhum' });
   });
 });
+
+describe('descreverReal — Sistema diz se a call ficou de fora', () => {
+  const caps = { jogo: { disponivel: true, motivo: null } } as const;
+  it('call achada: diz qual', () => {
+    expect(descreverReal({ tipo: 'sistema' }, caps, [], { situacao: 'ativo', semCall: 'Discord' })).toMatchObject({
+      rotulo: 'SISTEMA · sem a call do Discord',
+      tom: 'ok',
+    });
+  });
+  it('nenhuma call achada: avisa em vez de prometer', () => {
+    expect(descreverReal({ tipo: 'sistema' }, caps, [], { situacao: 'ativo', semCall: null })).toMatchObject({ tom: 'alerta' });
+  });
+});

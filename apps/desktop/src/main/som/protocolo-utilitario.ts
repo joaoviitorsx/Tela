@@ -39,6 +39,9 @@ export type SessaoDeAudio = {
  */
 export type ModoDaCaptura = 'incluir' | 'excluir';
 
+/** A raiz de um processo (addon 1.2.0): para achar o app de call sem sessão de áudio. */
+export type ProcessoRaiz = { readonly pid: number; readonly nome: string };
+
 export type PedidoAoUtilitario =
   | { readonly t: 'sondar' }
   | { readonly t: 'listar' }
@@ -58,7 +61,7 @@ export type CodigoDeErroDoUtilitario =
 export type RespostaDoUtilitario =
   | { readonly t: 'sonda'; readonly ok: true; readonly versao: string }
   | { readonly t: 'sonda'; readonly ok: false; readonly erro: CodigoDeErroDoUtilitario }
-  | { readonly t: 'sessoes'; readonly sessoes: readonly SessaoDeAudio[] }
+  | { readonly t: 'sessoes'; readonly sessoes: readonly SessaoDeAudio[]; readonly processos?: readonly ProcessoRaiz[] }
   | { readonly t: 'capturando' }
   | { readonly t: 'fim'; readonly motivo: 'PROCESSO_ENCERROU' | 'DISPOSITIVO' | 'FALHOU' }
   | { readonly t: 'erro'; readonly erro: CodigoDeErroDoUtilitario };
@@ -110,6 +113,13 @@ function sessaoValida(x: unknown): SessaoDeAudio | null {
 }
 
 /** Visto pelo main: o que o utility respondeu. Lixo vira `null`. */
+function processoValido(x: unknown): ProcessoRaiz | null {
+  if (!ehRegistro(x)) return null;
+  const { pid, nome } = x;
+  if (!pidValido(pid) || typeof nome !== 'string' || nome.length === 0 || nome.length > 260) return null;
+  return { pid, nome };
+}
+
 export function respostaValida(x: unknown): RespostaDoUtilitario | null {
   if (!ehRegistro(x)) return null;
   switch (x['t']) {
@@ -119,7 +129,13 @@ export function respostaValida(x: unknown): RespostaDoUtilitario | null {
     case 'sessoes': {
       if (!Array.isArray(x['sessoes']) || x['sessoes'].length > 256) return null;
       const sessoes = (x['sessoes'] as unknown[]).map(sessaoValida);
-      return sessoes.every((s) => s !== null) ? { t: 'sessoes', sessoes: sessoes as SessaoDeAudio[] } : null;
+      if (!sessoes.every((s) => s !== null)) return null;
+      if (x['processos'] === undefined) return { t: 'sessoes', sessoes: sessoes as SessaoDeAudio[] };
+      if (!Array.isArray(x['processos']) || x['processos'].length > 4096) return null;
+      const processos = (x['processos'] as unknown[]).map(processoValido);
+      return processos.every((p) => p !== null)
+        ? { t: 'sessoes', sessoes: sessoes as SessaoDeAudio[], processos: processos as ProcessoRaiz[] }
+        : null;
     }
     case 'capturando':
       return { t: 'capturando' };

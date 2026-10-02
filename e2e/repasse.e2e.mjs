@@ -117,7 +117,7 @@ for (let i = 0; i < ESPECTADORES; i += 1) {
 const lerConexoes = (p) => p.evaluate(async () => {
   const out = [];
   for (const [i, pc] of (window.__pcs ?? []).entries()) {
-    const c = { anfitriao: i === 0, viva: pc.connectionState === 'connected', dec: 0, w: 0, cong: 0, enviado: 0 };
+    const c = { anfitriao: i === 0, viva: pc.connectionState === 'connected', dec: 0, w: 0, cong: 0, enviado: 0, jbD: 0, jbN: 0, jbT: 0 };
     out.push(c);
     if (!c.viva) continue;
     (await pc.getStats()).forEach((s) => {
@@ -125,8 +125,22 @@ const lerConexoes = (p) => p.evaluate(async () => {
         c.dec = s.framesDecoded ?? 0;
         c.w = s.frameWidth ?? 0;
         c.cong = s.freezeCount ?? 0;
+        c.jbD = s.jitterBufferDelay ?? 0;
+        c.jbN = s.jitterBufferEmittedCount ?? 0;
+        c.jbT = s.jitterBufferTargetDelay ?? 0;
+        c.pli = s.pliCount ?? 0;
+        c.perdas = s.packetsLost ?? 0;
+        c.desc = s.framesDropped ?? 0;
+        c.rec = s.framesReceived ?? 0;
+        c.chaves = s.keyFramesDecoded ?? 0;
       }
-      if (s.type === 'outbound-rtp' && s.kind === 'video') c.enviado += s.bytesSent ?? 0;
+      if (s.type === 'outbound-rtp' && s.kind === 'video') {
+        c.enviado += s.bytesSent ?? 0;
+        c.enc = s.framesEncoded ?? 0;
+        c.env = s.framesSent ?? 0;
+        c.lim = s.qualityLimitationReason;
+        c.fpsSaida = s.framesPerSecond;
+      }
     });
   }
   return out;
@@ -155,6 +169,11 @@ async function medir(ms) {
         fps: (c.dec - a.dec) / (ms / 1000),
         kbpsEnviado: ((c.enviado - a.enviado) * 8) / ms,
         congelou: c.cong - a.cong,
+        diag: `pli ${(c.pli ?? 0) - (a.pli ?? 0)}, perdas ${(c.perdas ?? 0) - (a.perdas ?? 0)}, rec ${(((c.rec ?? 0) - (a.rec ?? 0)) / (ms / 1000)).toFixed(1)}/s, desc ${(c.desc ?? 0) - (a.desc ?? 0)}, chaves ${(c.chaves ?? 0) - (a.chaves ?? 0)}`,
+        encFps: ((c.enc ?? 0) - (a.enc ?? 0)) / (ms / 1000),
+        envFps: ((c.env ?? 0) - (a.env ?? 0)) / (ms / 1000),
+        jbMs: c.jbN > (a.jbN ?? 0) ? ((c.jbD - (a.jbD ?? 0)) / (c.jbN - a.jbN)) * 1000 : null,
+        jbAlvoMs: c.jbN > (a.jbN ?? 0) ? ((c.jbT - (a.jbT ?? 0)) / (c.jbN - a.jbN)) * 1000 : null,
       };
     }),
   );
@@ -214,7 +233,7 @@ const hostDepois = await host.evaluate(async () => {
 const caminhosAtivos = hostDepois.filter((b, i) => b - (hostAntes[i] ?? 0) > 10_000).length;
 
 m.forEach((cs, i) => {
-  const desc = cs.filter((c) => c.viva).map((c) => `${c.anfitriao ? 'anfitrião' : 'par'}: ${c.fps.toFixed(1)} fps, ${c.w}px, envia ${c.kbpsEnviado.toFixed(0)} kbps, ${c.congelou} cong.`).join(' | ');
+  const desc = cs.filter((c) => c.viva).map((c) => `${c.anfitriao ? 'anfitrião' : 'par'}: ${c.fps.toFixed(1)} fps, ${c.w}px, envia ${c.kbpsEnviado.toFixed(0)} kbps, ${c.congelou} cong., jb ${c.jbMs?.toFixed(0) ?? '-'} ms (alvo ${c.jbAlvoMs?.toFixed(0) ?? '-'})${c.kbpsEnviado > 0 ? `, isca ${c.encFps.toFixed(0)} cod/${c.envFps.toFixed(0)} env por s, lim ${c.lim}` : ''}${c.fps > 0 ? ` [${c.diag}]` : ''}`).join(' | ');
   console.log(`   espectador ${i}: ${desc}`);
 });
 const filhos = m.map((cs, i) => ({ i, c: cs.find((c) => !c.anfitriao && c.fps > 0) })).filter((x) => x.c !== undefined);
@@ -222,7 +241,7 @@ ok(filhos.length >= 1, `${filhos.length} filho(s) recebendo do repassador`);
 for (const { i, c } of filhos) {
   ok(c.fps >= 20, `filho ${i} decodifica com fluidez pelo repassador (${c.fps.toFixed(1)} fps; a fonte é 30)`);
   ok(c.w >= 640, `filho ${i} recebe a imagem de verdade, não a isca (${c.w}px)`);
-  ok(c.congelou <= 1, `filho ${i} sem congelamento (${c.congelou})`);
+  ok(c.congelou === 0, `filho ${i} sem congelamento (${c.congelou})`);
 }
 for (const i of papeis.repassadores) {
   const fps = m[i].find((c) => c.anfitriao)?.fps ?? 0;
@@ -233,18 +252,46 @@ ok(
   `o anfitrião manda vídeo só a quem não é filho (${caminhosAtivos} caminho(s) de vídeo para ${ESPECTADORES} espectadores)`,
 );
 
+// O HUD de latência do filho soma o atraso que o pai informa ao do salto: tem
+// de ficar perto do pai e nunca abaixo dele (um salto não tira atraso).
+const lerHud = (p) => p.evaluate(() => {
+  const el = [...document.querySelectorAll('[title]')].find((e) => /captura até a tela|só a recepção/.test(e.getAttribute('title') ?? ''));
+  if (!el) return null;
+  const ms = Number(/(\d+)\s*ms/.exec(el.textContent ?? '')?.[1] ?? NaN);
+  return { captura: /captura até a tela/.test(el.getAttribute('title') ?? ''), ms };
+});
+const hudPai = await lerHud(espectadores[papeis.repassadores[0]].p);
+for (const { i } of filhos) {
+  const hud = await lerHud(espectadores[i].p);
+  console.log(`   HUD: repassador ${JSON.stringify(hudPai)} · filho ${i} ${JSON.stringify(hud)}`);
+  ok(hud?.captura === true, `HUD do filho ${i} mede captura até a tela (não esconde o salto)`);
+  if (hud?.captura === true && hudPai?.captura === true) {
+    ok(
+      hud.ms >= hudPai.ms - 5 && hud.ms <= hudPai.ms + 40,
+      `latência do filho ${i} (${hud.ms} ms) = a do pai (${hudPai.ms} ms) + um salto de no máximo 40 ms`,
+    );
+  }
+}
+
 console.log('\n4. O repassador sai: o filho volta ao anfitrião');
 const repassador = papeis.repassadores[0];
 const filhoIdx = filhos[0].i;
 await espectadores[repassador].ctx.close();
+// Antes de fechar: quantos quadros o filho já decodificou pelo anfitrião.
+const base = (await lerConexoes(espectadores[filhoIdx].p))[0]?.dec ?? 0;
 const saiuEm = Date.now();
-const voltou = await ate(async () => {
-  const a = await lerConexoes(espectadores[filhoIdx].p);
-  await esperar(1000);
+let voltou = false;
+while (Date.now() - saiuEm < 20_000) {
   const d = await lerConexoes(espectadores[filhoIdx].p);
-  return (d[0]?.dec ?? 0) - (a[0]?.dec ?? 0) > 15;
-}, 20_000);
-console.log(`   voltou em ~${((Date.now() - saiuEm) / 1000).toFixed(1)} s`);
+  if ((d[0]?.dec ?? 0) - base >= 3) {
+    voltou = true;
+    break;
+  }
+  await esperar(100);
+}
+const volta = (Date.now() - saiuEm) / 1000;
+console.log(`   imagem do anfitrião de volta em ${volta.toFixed(1)} s`);
+ok(volta <= 2.5, `a volta ao anfitrião leva no máximo 2,5 s (${volta.toFixed(1)} s)`);
 ok(voltou, `filho ${filhoIdx} decodifica de novo pela conexão do anfitrião`);
 const estado = await espectadores[filhoIdx].p.evaluate(() => document.body.innerText.slice(0, 200));
 ok(!/caiu|encerr|erro/i.test(estado), 'a página do filho continua assistindo, sem tela de erro');

@@ -36,6 +36,11 @@ describe('ambiente efetivo (S-11)', () => {
     expect(e).toEqual({ TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0', TELA_BANDEJA: '1' });
   });
 
+  it('empacotado, TELA_ATUALIZACAO=0 passa (só desliga a rede); qualquer outro valor não', () => {
+    expect(ambienteEfetivo({ TELA_ATUALIZACAO: '0' }, true)['TELA_ATUALIZACAO']).toBe('0');
+    expect(ambienteEfetivo({ TELA_ATUALIZACAO: '1' }, true)['TELA_ATUALIZACAO']).toBeUndefined();
+  });
+
   it('o app empacotado nunca abre a origem de TELA_DESKTOP_URL nem força o registro do esquema', () => {
     const e = ambienteEfetivo(SUJO, true);
     const origens = origensPermitidas(e['TELA_DESKTOP_URL']);

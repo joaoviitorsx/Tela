@@ -1,7 +1,20 @@
 import { type RefObject, useId } from 'react';
-import type { AjustesDesktop } from './ponte.js';
+import { linhaDeAtualizacao, ultimaVerificacao } from './atualizacao.js';
+import type { AjustesDesktop, EstadoDaAtualizacao } from './ponte.js';
+
+/** A parte "atualização" do painel (D5). Sem ela (dev no navegador) a seção some. */
+export type PropsDeAtualizacao = {
+  readonly versao: string;
+  /** `null` até o main responder. */
+  readonly estado: EstadoDaAtualizacao | null;
+  readonly aoVerificar: () => void;
+  readonly aoReiniciar: () => void;
+  /** deb/rpm: abre a página do pacote (o main só abre `https:`). */
+  readonly aoAbrirPagina: (url: string) => void;
+};
 
 type Props = {
+  readonly atualizacao?: PropsDeAtualizacao;
   readonly dialogRef: RefObject<HTMLDialogElement | null>;
   readonly aoClicarNoFundo: (evento: React.MouseEvent<HTMLDialogElement>) => void;
   /** `null` enquanto o main não respondeu. */
@@ -48,8 +61,68 @@ function Linha({ rotulo, descricao, marcado, desabilitado, aoMudar }: LinhaProps
   );
 }
 
+const TOM: Record<'neutro' | 'pronta' | 'erro', string> = {
+  neutro: 'text-dim',
+  pronta: 'text-accent',
+  erro: 'text-danger',
+};
+
+/** Versão, estado e as ações da atualização. Só desenho: o estado vem do main. */
+function SecaoDeAtualizacao({ versao, estado, aoVerificar, aoReiniciar, aoAbrirPagina }: PropsDeAtualizacao) {
+  const linha = estado === null ? null : linhaDeAtualizacao(estado);
+  return (
+    <div className="flex flex-col gap-2 border-t-2 border-line pt-3 text-[12px]">
+      <div className="text-text">Versão {versao}</div>
+      {linha !== null && estado !== null && (
+        <>
+          <p role="status" className={`m-0 leading-snug [text-wrap:pretty] ${TOM[linha.tom]}`}>
+            {linha.texto}
+          </p>
+          {estado.fase === 'baixando' && estado.progresso !== null && (
+            <progress
+              max={100}
+              value={estado.progresso}
+              aria-label="Progresso do download"
+              className="h-2 w-full accent-accent"
+            />
+          )}
+          {estado.modo !== 'desligada' && (
+            <div className="text-dim">Última verificação: {ultimaVerificacao(estado.ultimaVerificacaoMs, Date.now())}</div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {estado.modo !== 'desligada' && (
+              <button
+                type="button"
+                onClick={aoVerificar}
+                disabled={!estado.podeVerificar}
+                className="tecla !min-h-8 px-2 text-[10px]"
+              >
+                VERIFICAR AGORA
+              </button>
+            )}
+            {estado.podeReiniciar && (
+              <button type="button" onClick={aoReiniciar} className="tecla tecla-primaria !min-h-8 px-2 text-[10px]">
+                REINICIAR E ATUALIZAR
+              </button>
+            )}
+            {estado.pagina !== null && (
+              <button
+                type="button"
+                onClick={() => aoAbrirPagina(estado.pagina ?? '')}
+                className="tecla tecla-primaria !min-h-8 px-2 text-[10px]"
+              >
+                ABRIR PÁGINA
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /**
- * AJUSTES do app (D4): três chaves, nada mais. Cada uma grava na hora — não há
+ * AJUSTES do app (D4): quatro chaves e a linha da atualização (D5). Cada uma grava na hora — não há
  * "salvar" para esquecer. Só desenho: `useAjustes` conversa com o main.
  */
 export function DialogoAjustes({
@@ -61,6 +134,7 @@ export function DialogoAjustes({
   aoMudar,
   fecharRef,
   aoFechar,
+  atualizacao,
 }: Props) {
   const idTitulo = useId();
   const pronto = ajustes !== null;
@@ -108,6 +182,14 @@ export function DialogoAjustes({
             desabilitado={!pronto}
             aoMudar={(sempreNoTopoNoCompacto) => aoMudar({ sempreNoTopoNoCompacto })}
           />
+          <Linha
+            rotulo="Atualizar automaticamente"
+            descricao="Verifica a cada 6 horas e baixa em segundo plano, só com a transmissão fora do ar. A versão nova instala quando você sair do Tela. Nunca mexe numa transmissão no ar."
+            marcado={ajustes?.atualizarAutomaticamente ?? true}
+            desabilitado={!pronto}
+            aoMudar={(atualizarAutomaticamente) => aoMudar({ atualizarAutomaticamente })}
+          />
+          {atualizacao !== undefined && <SecaoDeAtualizacao {...atualizacao} />}
           {ajustes !== null && ajustes.aoFecharAoVivo !== 'perguntar' && (
             <div className="flex flex-wrap items-center gap-3 border-t-2 border-line pt-3 text-[12px] text-dim">
               <span>

@@ -14,6 +14,7 @@ import type { PonteDesktop } from './ponte.js';
 import { type SessaoAoVivo, sessaoAoVivo } from './sessao-ao-vivo.js';
 import { TrilhoDesktop } from './TrilhoDesktop.js';
 import { useAjustes } from './use-ajustes.js';
+import { type PonteDaAtualizacao, useAtualizacao } from './use-atualizacao.js';
 import { useAssistir } from './use-assistir.js';
 import { useCanalPorLink } from './use-canal-por-link.js';
 import { DESTINO, itemAtivo, useNavegacaoDesktop } from './use-navegacao-desktop.js';
@@ -21,7 +22,8 @@ import { type PonteDoSegundoPlano, useSegundoPlano } from './use-segundo-plano.j
 
 type PonteDaMoldura = Pick<PonteDesktop, 'aoAbrirCanal'> &
   PonteDoSegundoPlano &
-  Pick<PonteDesktop, 'ajustes' | 'salvarAjustes'>;
+  Pick<PonteDesktop, 'ajustes' | 'salvarAjustes' | 'abrirNoNavegador' | 'versao'> &
+  PonteDaAtualizacao;
 
 type Props = {
   readonly children: ReactNode;
@@ -55,6 +57,7 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
   const porLink = useCanalPorLink(ponte, irPara);
   const sp = useSegundoPlano({ sessao, ponte, ...(modo === undefined ? {} : { modo }), ...(visibilidade === undefined ? {} : { visibilidade }) });
   const ajustes = useAjustes(ponte);
+  const atualizacao = useAtualizacao(ponte);
   // O botão do cabeçalho do site mora no trilho (D-04); quem abre o painel é outro componente.
   const diagnostico = useDiagnosticoAberto();
 
@@ -156,6 +159,17 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
         bandeja={ajustes.bandeja}
         autostartFalhou={ajustes.autostartFalhou}
         aoMudar={ajustes.mudar}
+        {...(ponte === undefined
+          ? {}
+          : {
+              atualizacao: {
+                versao: ponte.versao,
+                estado: atualizacao.estado,
+                aoVerificar: atualizacao.verificar,
+                aoReiniciar: atualizacao.reiniciar,
+                aoAbrirPagina: (url) => ponte.abrirNoNavegador(url),
+              },
+            })}
         fecharRef={fecharRef}
         aoFechar={() => setAjustesAbertos(false)}
       />

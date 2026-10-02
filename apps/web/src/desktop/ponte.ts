@@ -92,6 +92,8 @@ export type AjustesDesktop = {
   readonly fecharEmSegundoPlano: boolean;
   readonly sempreNoTopoNoCompacto: boolean;
   readonly aoFecharAoVivo: AoFecharAoVivo;
+  /** Verifica e baixa atualizações sozinho (nunca ao vivo). Desligado, só "verificar agora". */
+  readonly atualizarAutomaticamente: boolean;
 };
 
 export type RespostaDeAjustes = {
@@ -103,6 +105,35 @@ export type RespostaDeAjustes = {
 };
 
 export type ModoDaJanela = 'normal' | 'compacto';
+
+/**
+ * Como esta instalação se atualiza: `automatica` (Windows NSIS e AppImage: o
+ * app baixa e instala), `avisar` (deb/rpm: só avisa e leva à página do pacote)
+ * ou `desligada` (desenvolvimento, ou fora do pacote).
+ */
+export type ModoDeAtualizacao = 'automatica' | 'avisar' | 'desligada';
+
+export type FaseDaAtualizacao = 'desligada' | 'em-dia' | 'verificando' | 'disponivel' | 'baixando' | 'pronta' | 'erro';
+
+/** O estado da atualização (D5), calculado e validado no main. */
+export type EstadoDaAtualizacao = {
+  readonly modo: ModoDeAtualizacao;
+  readonly fase: FaseDaAtualizacao;
+  readonly versaoNova: string | null;
+  /** 0–100 só enquanto baixa. */
+  readonly progresso: number | null;
+  /** `Date.now()` da última tentativa (com ou sem erro); `null` = ainda não verificou. */
+  readonly ultimaVerificacaoMs: number | null;
+  /** Uma linha, sem pilha: o que deu errado na última tentativa. */
+  readonly erro: string | null;
+  /** Há versão nova, mas a transmissão está no ar: ela espera acabar. */
+  readonly adiada: boolean;
+  readonly podeVerificar: boolean;
+  /** Pronta e fora do ar: REINICIAR E ATUALIZAR vale. */
+  readonly podeReiniciar: boolean;
+  /** deb/rpm: a página da release, `https:`, para abrir com `abrirNoNavegador`. */
+  readonly pagina: string | null;
+};
 
 /** Um aplicativo com som, para o seletor de "só o jogo" (D3). `icone` é um `data:image/png` ou `null`. */
 export type AppComSom = {
@@ -195,6 +226,18 @@ export interface PonteDesktop {
   /** Parar SEM perguntar (sair, suspensão): `stop()` da sessão, e então `paradaConcluida()`. */
   aoPedirParar(ouvinte: (motivo: MotivoDeParada) => void): () => void;
   paradaConcluida(): void;
+
+  /**
+   * Atualização (D5). O main decide tudo — nada acontece ao vivo — e a
+   * interface só mostra. `atualizacao()` dá o estado de agora; `aoMudarAtualizacao`
+   * entrega cada mudança (progresso incluso).
+   */
+  atualizacao(): Promise<EstadoDaAtualizacao | null>;
+  aoMudarAtualizacao(ouvinte: (estado: EstadoDaAtualizacao) => void): () => void;
+  /** "Verificar agora". O main recusa ao vivo e quando já há algo em curso. */
+  verificarAtualizacao(): void;
+  /** "Reiniciar e atualizar". O main só obedece com a atualização pronta e fora do ar. */
+  reiniciarEAtualizar(): void;
 
   /**
    * Telas e janelas com miniaturas. Custa uma captura de cada janela: só
@@ -301,6 +344,14 @@ export const CANAIS = {
   parar: 'tela:parar',
   /** renderer → main */
   paradaConcluida: 'tela:parada-concluida',
+  /** renderer → main (invoke) → `EstadoDaAtualizacao | null` */
+  atualizacao: 'tela:atualizacao',
+  /** main → renderer, `EstadoDaAtualizacao` */
+  atualizacaoMudou: 'tela:atualizacao-mudou',
+  /** renderer → main */
+  verificarAtualizacao: 'tela:verificar-atualizacao',
+  /** renderer → main */
+  reiniciarEAtualizar: 'tela:reiniciar-e-atualizar',
 } as const;
 
 /**

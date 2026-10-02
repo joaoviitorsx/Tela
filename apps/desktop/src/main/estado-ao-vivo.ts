@@ -7,6 +7,8 @@
  * é: dado de uma página. Nada daqui decide mídia (R8 vale em espírito: o main
  * não toca a transmissão, só a descreve e a manda parar).
  */
+import type { EstadoDaAtualizacao } from './atualizacao-politica.js';
+
 export type EstadoAoVivo = {
   readonly noAr: boolean;
   /** `Date.now()` de quando foi ao ar; `null` fora do ar. */
@@ -103,19 +105,44 @@ export function rotuloDoEstado(estado: EstadoAoVivo, agora: number): string {
   return `NO AR ${tempoNoAr(estado.inicioMs, agora)} · ${estado.assistindo}/${estado.capacidade}`;
 }
 
-export type IdDoMenu = 'estado' | 'copiar' | 'mostrar' | 'encerrar' | 'sair';
+export type IdDoMenu = 'estado' | 'copiar' | 'mostrar' | 'atualizar' | 'encerrar' | 'sair';
 
 export type ItemDoMenu =
   | { readonly tipo: 'item'; readonly id: IdDoMenu; readonly rotulo: string; readonly habilitado: boolean }
   | { readonly tipo: 'separador' };
 
+/** A linha "atualizar" da bandeja: só existe quando há o que fazer (D5). */
+export type ItemDeAtualizacao = { readonly rotulo: string; readonly habilitado: boolean };
+
+export function itemDeAtualizacao(vista: EstadoDaAtualizacao): ItemDeAtualizacao | null {
+  if (vista.fase === 'pronta' && vista.versaoNova !== null) {
+    // Ao vivo a linha aparece, mas travada: a atualização espera a transmissão acabar.
+    return vista.podeReiniciar
+      ? { rotulo: `Reiniciar e atualizar (${vista.versaoNova})`, habilitado: true }
+      : { rotulo: `Atualização ${vista.versaoNova} pronta (instala ao sair)`, habilitado: false };
+  }
+  // deb/rpm não se atualizam sozinhos: a bandeja só leva à página do pacote.
+  if (vista.modo === 'avisar' && vista.versaoNova !== null && vista.pagina !== null) {
+    return { rotulo: `Nova versão ${vista.versaoNova} (abrir página)`, habilitado: true };
+  }
+  return null;
+}
+
 /** O menu da bandeja como dado; o main só o converte em `MenuItem`s. */
-export function modeloDoMenu(estado: EstadoAoVivo, janelaVisivel: boolean, agora: number): readonly ItemDoMenu[] {
+export function modeloDoMenu(
+  estado: EstadoAoVivo,
+  janelaVisivel: boolean,
+  agora: number,
+  atualizacao: ItemDeAtualizacao | null = null,
+): readonly ItemDoMenu[] {
   return [
     { tipo: 'item', id: 'estado', rotulo: rotuloDoEstado(estado, agora), habilitado: false },
     { tipo: 'separador' },
     { tipo: 'item', id: 'copiar', rotulo: 'Copiar link', habilitado: estado.noAr && estado.link !== null },
     { tipo: 'item', id: 'mostrar', rotulo: janelaVisivel ? 'Esconder' : 'Mostrar', habilitado: true },
+    ...(atualizacao === null
+      ? []
+      : [{ tipo: 'item', id: 'atualizar', rotulo: atualizacao.rotulo, habilitado: atualizacao.habilitado } as const]),
     { tipo: 'item', id: 'encerrar', rotulo: 'Encerrar transmissão', habilitado: estado.noAr },
     { tipo: 'separador' },
     { tipo: 'item', id: 'sair', rotulo: estado.noAr ? 'Sair (encerra a transmissão)' : 'Sair', habilitado: true },

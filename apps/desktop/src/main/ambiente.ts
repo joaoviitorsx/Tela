@@ -10,6 +10,7 @@
  *
  *  - `TELA_NATIVO=0`: desliga o helper nativo de captura (menos capacidade);
  *  - `TELA_REGISTRAR_ESQUEMA=0`: não registra o `tela://` (menos efeito no sistema);
+ *  - `TELA_ATUALIZACAO=0`: desliga a verificação de atualização (o smoke não vai à rede);
  *  - `TELA_BANDEJA=0|1`: só decide se há bandeja; não abre nada nem concede nada.
  *
  * `TELA_USERDATA` fica de fora de propósito: o smoke empacotado usa o switch
@@ -25,6 +26,7 @@ export function ambienteEfetivo(env: Ambiente, empacotado: boolean): Ambiente {
   }
   if (env['TELA_NATIVO'] === '0') limpo['TELA_NATIVO'] = '0';
   if (env['TELA_REGISTRAR_ESQUEMA'] === '0') limpo['TELA_REGISTRAR_ESQUEMA'] = '0';
+  if (env['TELA_ATUALIZACAO'] === '0') limpo['TELA_ATUALIZACAO'] = '0';
   const bandeja = env['TELA_BANDEJA'];
   if (bandeja === '0' || bandeja === '1') limpo['TELA_BANDEJA'] = bandeja;
   return limpo;

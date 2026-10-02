@@ -63,6 +63,19 @@ type AjustesDesktop = {
   readonly fecharEmSegundoPlano: boolean;
   readonly sempreNoTopoNoCompacto: boolean;
   readonly aoFecharAoVivo: AoFecharAoVivo;
+  readonly atualizarAutomaticamente: boolean;
+};
+type EstadoDaAtualizacao = {
+  readonly modo: 'automatica' | 'avisar' | 'desligada';
+  readonly fase: 'desligada' | 'em-dia' | 'verificando' | 'disponivel' | 'baixando' | 'pronta' | 'erro';
+  readonly versaoNova: string | null;
+  readonly progresso: number | null;
+  readonly ultimaVerificacaoMs: number | null;
+  readonly erro: string | null;
+  readonly adiada: boolean;
+  readonly podeVerificar: boolean;
+  readonly podeReiniciar: boolean;
+  readonly pagina: string | null;
 };
 type RespostaDeAjustes = { readonly ajustes: AjustesDesktop; readonly bandeja: boolean; readonly autostartFalhou: boolean };
 type ModoDaJanela = 'normal' | 'compacto';
@@ -87,6 +100,10 @@ interface PonteDesktop {
   aoPedirEncerrar(ouvinte: () => void): () => void;
   aoPedirParar(ouvinte: (motivo: MotivoDeParada) => void): () => void;
   paradaConcluida(): void;
+  atualizacao(): Promise<EstadoDaAtualizacao | null>;
+  aoMudarAtualizacao(ouvinte: (estado: EstadoDaAtualizacao) => void): () => void;
+  verificarAtualizacao(): void;
+  reiniciarEAtualizar(): void;
   listarFontes(): Promise<readonly FonteDeCaptura[]>;
   escolherFonte(id: string | null): Promise<boolean>;
   readonly som: {
@@ -133,6 +150,10 @@ const CANAIS = {
   pedirEncerrar: 'tela:pedir-encerrar',
   parar: 'tela:parar',
   paradaConcluida: 'tela:parada-concluida',
+  atualizacao: 'tela:atualizacao',
+  atualizacaoMudou: 'tela:atualizacao-mudou',
+  verificarAtualizacao: 'tela:verificar-atualizacao',
+  reiniciarEAtualizar: 'tela:reiniciar-e-atualizar',
 } as const;
 
 /** Cópia de `MARCA_DA_PORTA` em `ponte.ts`. */
@@ -234,6 +255,15 @@ const ponte: PonteDesktop = {
   aoPedirParar: (ouvinte) =>
     assinar<unknown>(CANAIS.parar, (motivo) => ouvinte(motivo === 'suspensao' ? 'suspensao' : 'sair')),
   paradaConcluida: () => ipcRenderer.send(CANAIS.paradaConcluida),
+
+  atualizacao: () => ipcRenderer.invoke(CANAIS.atualizacao) as Promise<EstadoDaAtualizacao | null>,
+  // O payload vem do main, mas passa por aqui antes da página: só objeto, nunca o evento.
+  aoMudarAtualizacao: (ouvinte) =>
+    assinar<unknown>(CANAIS.atualizacaoMudou, (estado) => {
+      if (typeof estado === 'object' && estado !== null) ouvinte(estado as EstadoDaAtualizacao);
+    }),
+  verificarAtualizacao: () => ipcRenderer.send(CANAIS.verificarAtualizacao),
+  reiniciarEAtualizar: () => ipcRenderer.send(CANAIS.reiniciarEAtualizar),
 
   listarFontes: () => ipcRenderer.invoke(CANAIS.listarFontes) as Promise<readonly FonteDeCaptura[]>,
 

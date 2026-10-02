@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { type EstadoDaAtualizacao } from './atualizacao-politica.js';
 import {
   estadoAoVivoValido,
   FORA_DO_AR,
+  itemDeAtualizacao,
   mesmoEstado,
   modeloDoMenu,
   rotuloDoEstado,
@@ -69,5 +71,46 @@ describe('rótulos e menu', () => {
     expect(por('encerrar')?.habilitado).toBe(true);
     expect(por('mostrar')?.rotulo).toBe('Mostrar');
     expect(por('sair')?.rotulo).toMatch(/encerra a transmissão/);
+  });
+});
+
+describe('bandeja: item de atualização (D5)', () => {
+  const VISTA: EstadoDaAtualizacao = {
+    modo: 'automatica',
+    fase: 'em-dia',
+    versaoNova: null,
+    progresso: null,
+    ultimaVerificacaoMs: null,
+    erro: null,
+    adiada: false,
+    podeVerificar: true,
+    podeReiniciar: false,
+    pagina: null,
+  };
+  it('sem o que fazer, a bandeja é a de sempre (sem o item)', () => {
+    expect(itemDeAtualizacao(VISTA)).toBeNull();
+    const ids = modeloDoMenu(FORA_DO_AR, true, 0, null).flatMap((i) => (i.tipo === 'item' ? [i.id] : []));
+    expect(ids).not.toContain('atualizar');
+  });
+  it('pronta e fora do ar: REINICIAR E ATUALIZAR habilitado, entre Mostrar e Encerrar', () => {
+    const item = itemDeAtualizacao({ ...VISTA, fase: 'pronta', versaoNova: '0.1.0-beta.7', podeReiniciar: true });
+    expect(item).toEqual({ rotulo: 'Reiniciar e atualizar (0.1.0-beta.7)', habilitado: true });
+    const ids = modeloDoMenu(FORA_DO_AR, true, 0, item).flatMap((i) => (i.tipo === 'item' ? [i.id] : []));
+    expect(ids).toEqual(['estado', 'copiar', 'mostrar', 'atualizar', 'encerrar', 'sair']);
+  });
+  it('pronta ao vivo: a linha aparece travada, dizendo que instala ao sair', () => {
+    const item = itemDeAtualizacao({ ...VISTA, fase: 'pronta', versaoNova: '0.1.0-beta.7', podeReiniciar: false });
+    expect(item?.habilitado).toBe(false);
+    expect(item?.rotulo).toMatch(/instala ao sair/);
+  });
+  it('deb/rpm: leva à página do pacote', () => {
+    const item = itemDeAtualizacao({
+      ...VISTA,
+      modo: 'avisar',
+      fase: 'disponivel',
+      versaoNova: '0.1.0-beta.7',
+      pagina: 'https://github.com/joaoviitorsx/Tela/releases/tag/desktop-v0.1.0-beta.7',
+    });
+    expect(item).toEqual({ rotulo: 'Nova versão 0.1.0-beta.7 (abrir página)', habilitado: true });
   });
 });

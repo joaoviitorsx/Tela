@@ -11,6 +11,7 @@ const AJUSTES: AjustesDesktop = {
   fecharEmSegundoPlano: false,
   sempreNoTopoNoCompacto: false,
   aoFecharAoVivo: 'perguntar',
+  atualizarAutomaticamente: true,
 };
 const resposta = (sobre: Partial<RespostaDeAjustes> = {}): RespostaDeAjustes => ({
   ajustes: AJUSTES,

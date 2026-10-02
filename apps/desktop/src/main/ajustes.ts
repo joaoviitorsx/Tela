@@ -17,6 +17,8 @@ export type Ajustes = {
   readonly sempreNoTopoNoCompacto: boolean;
   /** A resposta lembrada de "Continuar transmitindo em segundo plano?". */
   readonly aoFecharAoVivo: AoFecharAoVivo;
+  /** Verifica e baixa atualizações sozinho (nunca ao vivo, D5). Desligado, só "verificar agora". */
+  readonly atualizarAutomaticamente: boolean;
 };
 
 export const AJUSTES_PADRAO: Ajustes = {
@@ -24,11 +26,12 @@ export const AJUSTES_PADRAO: Ajustes = {
   fecharEmSegundoPlano: false,
   sempreNoTopoNoCompacto: false,
   aoFecharAoVivo: 'perguntar',
+  atualizarAutomaticamente: true,
 };
 
 const ESCOLHAS: ReadonlySet<string> = new Set<AoFecharAoVivo>(['perguntar', 'segundo-plano', 'encerrar']);
 
-const CAMPOS_BOOLEANOS = ['iniciarComSistema', 'fecharEmSegundoPlano', 'sempreNoTopoNoCompacto'] as const;
+const CAMPOS_BOOLEANOS = ['iniciarComSistema', 'fecharEmSegundoPlano', 'sempreNoTopoNoCompacto', 'atualizarAutomaticamente'] as const;
 
 /**
  * Aplica um objeto desconhecido por cima de `base`, campo a campo: só entra o
@@ -67,6 +70,7 @@ export function mesmosAjustes(a: Ajustes, b: Ajustes): boolean {
     a.iniciarComSistema === b.iniciarComSistema &&
     a.fecharEmSegundoPlano === b.fecharEmSegundoPlano &&
     a.sempreNoTopoNoCompacto === b.sempreNoTopoNoCompacto &&
-    a.aoFecharAoVivo === b.aoFecharAoVivo
+    a.aoFecharAoVivo === b.aoFecharAoVivo &&
+    a.atualizarAutomaticamente === b.atualizarAutomaticamente
   );
 }

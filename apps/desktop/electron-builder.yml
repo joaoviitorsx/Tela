@@ -46,8 +46,10 @@ extraResources:
   - from: ../web/dist-desktop
     to: web
 
-# Nenhuma dependência de runtime: o pacote é main, preload e o site.
-# Reconstruir node_modules seria trabalho à toa. O tela-captura (nativo/linux)
+# Uma dependência de runtime só: `electron-updater` (D5), JavaScript puro, que o
+# electron-builder leva para dentro do app.asar com as dependências dele — por
+# isso o fuse onlyLoadAppFromAsar não o atrapalha. Nenhuma tem código nativo,
+# então reconstruir node_modules seria trabalho à toa. O tela-captura (nativo/linux)
 # é um executável à parte, em `extraResources` do Linux abaixo, e o addon do
 # som do jogo (native/wasapi-loopback) é um `.node` próprio, em `extraResources`
 # do Windows — o node-gyp deles roda no CI, não aqui.

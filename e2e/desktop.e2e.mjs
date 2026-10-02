@@ -91,7 +91,11 @@ try {
   console.log(`   ${JSON.stringify(estado)}`);
   ok(estado.caminho === '/', `rota inicial é a home (${estado.caminho})`);
   ok(estado.ponte !== null && estado.ponte.plataforma === process.platform, `ponte presente (${estado.ponte?.plataforma}, v${estado.ponte?.versao})`);
-  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'responderFechar', 'salvarAjustes', 'som', 'versao']), 'a ponte expõe só as operações nomeadas');
+  const CHAVES = ['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoMudarAtualizacao', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'atualizacao', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'reiniciarEAtualizar', 'responderFechar', 'salvarAjustes', 'som', 'verificarAtualizacao', 'versao'];
+  // O que importa de verdade: nada genérico de IPC atravessa a ponte (§3.4).
+  const GENERICAS = ['send', 'sendSync', 'invoke', 'on', 'once', 'ipcRenderer', 'require', 'postMessage'];
+  ok(!(estado.ponte?.chaves ?? []).some((c) => GENERICAS.includes(c)), 'nenhuma operação genérica de IPC na ponte');
+  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(CHAVES), `a ponte expõe só as operações nomeadas (${JSON.stringify(estado.ponte?.chaves)})`);
   ok(!estado.node, 'nada de Node na página');
   ok(!estado.baixarApp, 'sem BAIXAR APP dentro do próprio app');
 

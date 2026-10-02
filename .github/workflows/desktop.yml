@@ -238,6 +238,26 @@ jobs:
           test "${#arquivos[@]}" -gt 0
           sha256sum "${arquivos[@]}" | tee "SHA256SUMS-${RUNNER_OS}.txt"
 
+      # O auto-update (D5, docs/desktop/D5-atualizacao.md) lê `latest.yml`
+      # (Windows) ou `latest-linux.yml` (AppImage) do release: o SHA-512 e o
+      # tamanho do instalador estão lá, e o app só instala o que bate. O
+      # `.blockmap` do .exe permite baixar só o que mudou. Sem eles o release
+      # existe, mas nenhum app instalado o enxerga como atualização — foi o que
+      # a reestruturação do S-04 (`--publish never` + job `publicar`) quebrou em
+      # silêncio, então o passo falha alto. (O AppImage leva o blockmap
+      # embutido; não gera arquivo à parte.)
+      - name: arquivos do auto-update
+        shell: bash
+        run: |
+          cd apps/desktop/release
+          if [ "$RUNNER_OS" = Windows ]; then
+            test -f latest.yml
+            test -n "$(ls Tela-*-win-x64.exe.blockmap 2>/dev/null)"
+          else
+            test -f latest-linux.yml
+          fi
+          ls -la latest*.yml *.blockmap 2>/dev/null || true
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tela-desktop-${{ runner.os }}
@@ -246,6 +266,8 @@ jobs:
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
             apps/desktop/release/*.rpm
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
             apps/desktop/release/SHA256SUMS-*.txt
           if-no-files-found: error
 
@@ -280,9 +302,31 @@ jobs:
           ls -la instaladores
           test "$(ls instaladores/*.exe 2>/dev/null | wc -l)" -ge 1
           test "$(ls instaladores/*.AppImage 2>/dev/null | wc -l)" -ge 1
+          test -f instaladores/latest.yml
+          test -f instaladores/latest-linux.yml
+          test "$(ls instaladores/*.exe.blockmap 2>/dev/null | wc -l)" -ge 1
 
-      # Proveniência (S-04): liga cada instalador ao commit, ao workflow e ao
-      # runner que o gerou. Sem certificado de assinatura de código, é o que
+      # O que o app instalado confia é o SHA-512 do `latest*.yml`. Confere que
+      # ele descreve o instalador que está aqui — se o artefato foi trocado ou
+      # o yml é de outro build, o release não sai (e o rascunho fica).
+      - name: latest*.yml descreve os instaladores
+        run: |
+          for yml in instaladores/latest.yml instaladores/latest-linux.yml; do
+            arquivo=$(sed -n 's/^path: //p' "$yml")
+            esperado=$(sed -n 's/^sha512: //p' "$yml")
+            test -n "$arquivo" && test -n "$esperado"
+            real=$(openssl dgst -sha512 -binary "instaladores/$arquivo" | base64 -w0)
+            if [ "$real" != "$esperado" ]; then
+              echo "::error::$yml diz sha512 $esperado para $arquivo, mas o arquivo tem $real"
+              exit 1
+            fi
+            echo "$yml confere com $arquivo"
+          done
+
+      # Proveniência (S-04): liga cada instalador — e o `latest*.yml` e o
+      # `.blockmap` que o auto-update consulta — ao commit, ao workflow e ao
+      # runner que o gerou. O yml é o que um app instalado segue às cegas:
+      # atestá-lo é o que permite conferir que não foi trocado no release. Sem certificado de assinatura de código, é o que
       # permite conferir a ORIGEM do arquivo — o SHA-256 sozinho só prova que
       # o arquivo não mudou depois de gerado (quem troca o instalador no
       # release troca o hash junto).
@@ -293,6 +337,8 @@ jobs:
             instaladores/*.AppImage
             instaladores/*.deb
             instaladores/*.rpm
+            instaladores/*.blockmap
+            instaladores/latest*.yml
 
       - name: anexar ao release e publicar
         env:
@@ -301,6 +347,6 @@ jobs:
           TAG: ${{ needs.preparar.outputs.tag }}
         run: |
           shopt -s nullglob
-          gh release upload "$TAG" instaladores/*.exe instaladores/*.AppImage instaladores/*.deb instaladores/*.rpm instaladores/SHA256SUMS-*.txt --clobber
+          gh release upload "$TAG" instaladores/*.exe instaladores/*.AppImage instaladores/*.deb instaladores/*.rpm instaladores/*.blockmap instaladores/latest*.yml instaladores/SHA256SUMS-*.txt --clobber
           gh release edit "$TAG" --draft=false --prerelease
           gh release view "$TAG"

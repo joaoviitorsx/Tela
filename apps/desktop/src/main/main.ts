@@ -40,6 +40,14 @@ import {
   webContents as todosOsConteudos,
 } from 'electron';
 import { ambienteEfetivo } from './ambiente.js';
+import { type Atualizador, criarAtualizador } from './atualizador.js';
+import { type EstadoDaAtualizacao } from './atualizacao-politica.js';
+import {
+  modoDeAtualizacao,
+  TAMANHO_MAXIMO_DA_LISTA,
+  URL_DA_LISTA_DE_RELEASES,
+} from './atualizacao-release.js';
+import { criarMotorDoUpdater } from './motor-electron-updater.js';
 import { gravarArquivoPrivado } from './arquivo-privado.js';
 import { criarPortaoDeGesto, ehGesto } from './gestos.js';
 import {
@@ -69,6 +77,7 @@ import {
   estadoAoVivoValido,
   FORA_DO_AR,
   type EstadoAoVivo,
+  itemDeAtualizacao,
   mesmoEstado,
   modeloDoMenu,
   rotuloDoEstado,
@@ -123,6 +132,7 @@ import {
   origensPermitidas,
   permissaoConcedida,
   podeNavegar,
+  urlExternaPermitida,
   urlParaAbrirNoNavegador,
 } from './seguranca.js';
 
@@ -162,6 +172,14 @@ const CANAIS = {
   pedirEncerrar: 'tela:pedir-encerrar',
   parar: 'tela:parar',
   paradaConcluida: 'tela:parada-concluida',
+  /** renderer → main (invoke) → `EstadoDaAtualizacao` */
+  atualizacao: 'tela:atualizacao',
+  /** main → renderer, `EstadoDaAtualizacao` */
+  atualizacaoMudou: 'tela:atualizacao-mudou',
+  /** renderer → main */
+  verificarAtualizacao: 'tela:verificar-atualizacao',
+  /** renderer → main */
+  reiniciarEAtualizar: 'tela:reiniciar-e-atualizar',
 } as const;
 
 /*
@@ -385,6 +403,8 @@ let suspensaoPendente = false;
 let quedas: readonly number[] = [];
 let tiqueDaBandeja: ReturnType<typeof setInterval> | null = null;
 let rotuloDaBandeja = '';
+/** A atualização (D5). `null` até o `ready`: precisa dos ajustes lidos. */
+let atualizador: Atualizador | null = null;
 
 function lerAjustesDoDisco(): Ajustes {
   try {
@@ -487,6 +507,17 @@ function aoEscolherNoMenu(id: string): void {
         janela.webContents.send(CANAIS.pedirEncerrar);
       }
       break;
+    case 'atualizar': {
+      const vista = atualizador?.vista();
+      if (vista === undefined) break;
+      if (vista.podeReiniciar) atualizador?.reiniciar();
+      // deb/rpm: a bandeja leva à página do pacote, pelo mesmo filtro de `https:`.
+      else if (vista.pagina !== null) {
+        const permitida = urlExternaPermitida(vista.pagina);
+        if (permitida !== null) void shell.openExternal(permitida);
+      }
+      break;
+    }
     case 'sair':
       void sairEncerrando();
       break;
@@ -498,7 +529,13 @@ function atualizarBandeja(): void {
   if (tray === null) return;
   const agora = Date.now();
   const visivelAgora = janelaVisivelAgora();
-  const modelo = modeloDoMenu(estado, visivelAgora, agora);
+  const vistaDaAtualizacao = atualizador?.vista();
+  const modelo = modeloDoMenu(
+    estado,
+    visivelAgora,
+    agora,
+    vistaDaAtualizacao === undefined ? null : itemDeAtualizacao(vistaDaAtualizacao),
+  );
   const chave = JSON.stringify(modelo);
   if (chave === rotuloDaBandeja) return;
   rotuloDaBandeja = chave;
@@ -644,6 +681,7 @@ function aoCairORenderer(j: BrowserWindow, razao: string, codigo: number): void 
   void somDoApp.parar();
   const estavaNoAr = estado.noAr;
   estado = FORA_DO_AR;
+  atualizador?.aoVivo(false);
   perguntando = false;
   portaoDeParada?.confirmar();
   atualizarBandeja();
@@ -957,6 +995,58 @@ async function iniciarCapturaNativa(conteudo: WebContents, payload: unknown) {
   return { ok: true, id, fonte, memoria } as const;
 }
 
+/* ------------------------------------------------- atualização (D5, §5) */
+
+/** GET com prazo e teto de tamanho: a resposta vem da rede e só vira texto aqui. */
+async function buscarListaDeReleases(): Promise<string> {
+  const resposta = await net.fetch(URL_DA_LISTA_DE_RELEASES, {
+    headers: { Accept: 'application/vnd.github+json' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!resposta.ok) throw new Error(`GitHub respondeu ${resposta.status} à lista de releases`);
+  const texto = await resposta.text();
+  if (texto.length > TAMANHO_MAXIMO_DA_LISTA) throw new Error('lista de releases grande demais');
+  return texto;
+}
+
+function iniciarAtualizacao(): void {
+  const log = {
+    info: (msg: string) => console.warn(`[tela] atualização: ${msg}`),
+    erro: (msg: string, erro?: unknown) => console.error(`[tela] atualização: ${msg}`, erro ?? ''),
+  };
+  const modoDeAtualizar = modoDeAtualizacao({ plataforma: process.platform, empacotado: app.isPackaged, env: ENV });
+  const motor = criarMotorDoUpdater({
+    modo: modoDeAtualizar,
+    versaoAtual: app.getVersion(),
+    buscarLista: buscarListaDeReleases,
+    // `electron-updater` é CommonJS: o import dinâmico entrega o `module.exports` em `default`.
+    carregarUpdater: async () => {
+      const modulo = (await import('electron-updater')).default;
+      return { autoUpdater: modulo.autoUpdater, CancellationToken: modulo.CancellationToken };
+    },
+    // Reiniciar para atualizar é sair de propósito: o `close` não pode virar "esconder na bandeja".
+    aoReiniciar: () => {
+      saindo = true;
+      capturaNativa.pararTudo();
+    },
+    log,
+  });
+  atualizador = criarAtualizador({
+    modo: modoDeAtualizar,
+    automatico: ajustes.atualizarAutomaticamente,
+    motor,
+    agora: Date.now,
+    agendar,
+    aoMudar: (vista: EstadoDaAtualizacao) => {
+      atualizarBandeja();
+      if (janela !== null && !janela.isDestroyed()) janela.webContents.send(CANAIS.atualizacaoMudou, vista);
+    },
+    log,
+  });
+  atualizador.aoVivo(estado.noAr);
+  atualizador.iniciar();
+}
+
 /* ---------------------------------------------------------------- IPC */
 
 function registrarIpc(): void {
@@ -979,6 +1069,8 @@ function registrarIpc(): void {
     if (novo === null || mesmoEstado(novo, estado)) return;
     const eraNoAr = estado.noAr;
     estado = novo;
+    // A política de atualização para (ou retoma) o que fazia conforme o ar.
+    atualizador?.aoVivo(novo.noAr);
     if (eraNoAr && !novo.noAr) {
       portaoDeParada?.confirmar();
       // Acabou a transmissão: o compacto não tem mais o que mostrar.
@@ -1009,11 +1101,25 @@ function registrarIpc(): void {
     if (!mesmosAjustes(novo, ajustes)) {
       ajustes = novo;
       gravarAjustes();
+      atualizador?.automatico(ajustes.atualizarAutomaticamente);
       if (modo === 'compacto' && janela !== null && !janela.isDestroyed()) {
         janela.setAlwaysOnTop(ajustes.sempreNoTopoNoCompacto, 'floating');
       }
     }
     return respostaDeAjustes(falhou);
+  });
+
+  /* ---- D5: atualização. Sem payload: não há o que validar além de quem pede;
+     o que o pedido pode fazer, a política decide (nada ao vivo). */
+
+  ipcMain.handle(CANAIS.atualizacao, (evento) => (daInterface(evento) ? (atualizador?.vista() ?? null) : null));
+
+  ipcMain.on(CANAIS.verificarAtualizacao, (evento) => {
+    if (daInterface(evento)) atualizador?.verificarAgora();
+  });
+
+  ipcMain.on(CANAIS.reiniciarEAtualizar, (evento) => {
+    if (daInterface(evento)) atualizador?.reiniciar();
   });
 
   ipcMain.on(CANAIS.pedirModo, (evento, valor: unknown) => {
@@ -1163,6 +1269,7 @@ if (!app.requestSingleInstanceLock()) {
     // O caminho do executável pode ter mudado (AppImage movido, atualização).
     if (ajustes.iniciarComSistema) aplicarAutostart(true);
     registrarEnergia();
+    iniciarAtualizacao();
     void iniciarBandeja().finally(resolverBandeja);
     // Lançado pelo link (primeira instância): o canal espera a página carregar.
     canalPendente = canalPendente ?? canalDoArgv(process.argv);

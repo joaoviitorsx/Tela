@@ -36,13 +36,38 @@ release.
 | `Tela-<versão>-linux-x86_64.rpm` | Fedora |
 | `Tela-<versão>-linux-amd64.deb` | Ubuntu/Debian |
 | `SHA256SUMS-Windows.txt`, `SHA256SUMS-Linux.txt` | Hash dos instaladores, gerado no runner que os produziu |
-| Atestação de proveniência (no repositório, não é um arquivo do release) | Liga cada instalador ao commit e ao workflow que o gerou; confira com `gh attestation verify` (abaixo) |
+| `latest.yml`, `latest-linux.yml`, `Tela-<versão>-win-x64.exe.blockmap` | Não são para baixar: é o que o app instalado lê para se atualizar (SHA-512 do instalador, tamanho, mapa de blocos). Sem eles o release não chega a ninguém como atualização |
+| Atestação de proveniência (no repositório, não é um arquivo do release) | Liga cada instalador, os `latest*.yml` e o `.blockmap` ao commit e ao workflow que os gerou; confira com `gh attestation verify` (abaixo) |
 
 O renderer é compilado contra o signaling de produção
 (`wss://tela.transmissao.workers.dev/signal`), e o app não tem tela de
-configuração. **Não há atualização automática ainda**: cada beta é baixar e
-instalar de novo. O instalador do Windows não é assinado, por decisão (§15) —
+configuração. O instalador do Windows não é assinado, por decisão (§15) —
 daí o aviso abaixo e o hash.
+
+## Como a atualização chega a quem testa
+
+Quem instalou a beta N recebe a beta N+1 sem baixar nada à mão (detalhes e
+limites em `D5-atualizacao.md`):
+
+- **Windows (instalador) e Linux AppImage:** 30 s depois de abrir, e a cada 6 h,
+  o app consulta o release mais novo `desktop-v…` (pré-release conta). Se há
+  versão nova, baixa em segundo plano e a instala **quando você sair do Tela**.
+  Em AJUSTES há *Atualizar automaticamente* (ligado por padrão), a linha de
+  estado (*em dia / baixando 42% / pronta*), a *Última verificação* e o botão
+  **REINICIAR E ATUALIZAR**, que também aparece no menu da bandeja.
+- **Nunca durante uma transmissão:** ao vivo, o app não verifica, não baixa
+  (um download em curso é cancelado e retomado depois) e não reinicia. Se a
+  atualização ficou pronta antes de você entrar no ar, ela espera.
+- **Linux RPM/DEB:** não se atualiza sozinho. O app só avisa que há versão nova
+  (AJUSTES e bandeja) e abre a página do release; baixe e instale o pacote como
+  da primeira vez.
+- Falha de rede ou de verificação não abre diálogo: aparece em AJUSTES e no
+  terminal (`[tela] atualização: …`). Para cortar a beta N+1, nada muda no
+  caminho acima — suba a versão, crie a tag; o workflow anexa o `latest*.yml`.
+
+A atualização do Windows confere o SHA-512 do `latest.yml`, **não** uma
+assinatura de código (não há certificado). Se desconfiar de uma atualização,
+confira a atestação do release como na seção abaixo.
 
 Os pacotes não trazem o `tela-captura` (áudio só do jogo no Linux, D2). Nesta
 beta, o som no Linux é o que o PipeWire oferecer ao `getDisplayMedia`.

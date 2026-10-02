@@ -38,7 +38,7 @@ ok(!`${comoNode.stdout}${comoNode.stderr}`.includes('VIROU NODE'), 'ELECTRON_RUN
 
 const dados = mkdtempSync(join(tmpdir(), 'tela-empacotado-'));
 const app = spawn(EXE, [`--remote-debugging-port=${PORTA}`, `--user-data-dir=${dados}`], {
-  env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0', TELA_DESKTOP_URL: 'https://mal.example' },
+  env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0', TELA_ATUALIZACAO: '0', TELA_DESKTOP_URL: 'https://mal.example' },
   stdio: 'ignore',
 });
 let navegador;

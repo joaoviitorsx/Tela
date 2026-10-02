@@ -14,6 +14,15 @@ describe('ajustes', () => {
     expect(AJUSTES_PADRAO.aoFecharAoVivo).toBe('perguntar');
   });
 
+  it('atualizar automaticamente vem ligado, e só um booleano o muda', () => {
+    expect(AJUSTES_PADRAO.atualizarAutomaticamente).toBe(true);
+    expect(mesclarAjustes(AJUSTES_PADRAO, { atualizarAutomaticamente: false }).atualizarAutomaticamente).toBe(false);
+    expect(mesclarAjustes(AJUSTES_PADRAO, { atualizarAutomaticamente: 'nao' }).atualizarAutomaticamente).toBe(true);
+    expect(mesclarAjustes(AJUSTES_PADRAO, { atualizarAutomaticamente: 0 }).atualizarAutomaticamente).toBe(true);
+    expect(lerAjustes('{"atualizarAutomaticamente":false}').atualizarAutomaticamente).toBe(false);
+    expect(mesmosAjustes(AJUSTES_PADRAO, { ...AJUSTES_PADRAO, atualizarAutomaticamente: false })).toBe(false);
+  });
+
   it('o que grava, lê de volta', () => {
     const a = { ...AJUSTES_PADRAO, iniciarComSistema: true, aoFecharAoVivo: 'segundo-plano' as const };
     expect(lerAjustes(serializarAjustes(a))).toEqual(a);

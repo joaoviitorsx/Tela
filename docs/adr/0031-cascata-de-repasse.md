@@ -408,6 +408,46 @@ Ambiente: Chromium 151 headless, loopback, anfitrião sintético 1280×720 a
 - Matriz de RTT e perda com `tc netem`.
 - Porte do modelo para `malhas.sim.mjs`.
 
+## Fase 2 — o que mudou (2026-10-02)
+
+A profundidade 3 do plano original saiu: a resposta 3 do dono fixou um salto,
+no máximo. A fase 2 cuidou do que a fase 1 deixou e do que mais pesa em rede
+real.
+
+1. **Falha por aresta, não por repassador.** Uma aresta que não fecha costuma
+   ser culpa do par, o NAT de um dos dois. O filho evita aquele pai por 60 s,
+   e o pai tenta outro filho no mesmo tique. O repassador só sai do jogo
+   quando falha com dois filhos diferentes.
+2. **Volta ao anfitrião em ~1 s, antes ~3 s.** Com a pausa desfeita, o
+   anfitrião pede IDR na hora, com a janela de entrada. O filho segura o
+   último quadro do pai até chegar a imagem direta, em vez de ir ao preto.
+   Medido: 1,1–1,2 s.
+3. **Latência real no HUD do filho.**
+   - O repassador mede o próprio atraso (captura no anfitrião → quadro
+     entregue a ele) e o manda ao filho pelo `via`.
+   - O filho recua o carimbo da isca do pai por esse número.
+   - Resultado: o HUD e o vigia de latência veem o total.
+   - Medido: pai 32–35 ms, filho 54–63 ms.
+   - O alvo de jitter da sessão passou a valer também para a aresta do pai.
+     Antes ficava preso nos 60 ms iniciais.
+4. **Defeito achado medindo:** o repassador lia a chave da sua isca como PLI
+   do filho.
+   - Toda reconfiguração da isca gera uma chave, como a do teto da aresta.
+   - Cada uma deixava o filho esperando o próximo IDR periódico.
+   - Efeito: ~1 s de quadros perdidos, 1 congelamento e +60 ms para o
+     primeiro filho.
+   - No repassador o gatilho não serve a nada e foi desligado.
+   - Medido depois da correção: os dois filhos a 30 fps, 0 congelamento,
+     salto de +21 a +28 ms.
+
+`e2e/repasse.e2e.mjs` passou a exigir:
+- 0 congelamento;
+- salto de no máximo 40 ms sobre a latência do pai, no HUD;
+- volta ao anfitrião em até 2,5 s.
+
+Fica para depois: o modelo da árvore real no simulador, sob churn, e o
+diagnóstico do anfitrião mostrando quantos repassam.
+
 ## O que continua sem verificação
 
 - **Humano:** latência glass-to-glass com a câmera a 240 fps (E2 mede um proxy por relógio comum); FPS do jogo do repassador com MangoHud; taxa de sucesso de ICE entre espectadores atrás de CGNAT brasileiro, com amigos em operadoras diferentes — **a hipótese que mais pode quebrar o ganho**.

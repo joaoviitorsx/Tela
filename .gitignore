@@ -27,6 +27,9 @@ zz-*
 # Artefato de execução do simulador de malhas (~800 KB por run).
 e2e/malhas.sim.json
 
+# Artefato de execução do simulador da cascata (ADR 0031).
+e2e/cascata.sim.json
+
 # Binário do tela-captura (apps/desktop/nativo/linux/build.sh).
 apps/desktop/nativo/linux/build/
 

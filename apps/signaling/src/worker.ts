@@ -14,6 +14,7 @@ import {
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
 import { type IceSettings, parseIceSettings } from './ice-settings.js';
 import { makeCloudflareProvider, type IceProvisionResult } from './ice-provision.js';
+import type { EnvDoDiscord } from './discord-config.js';
 
 /**
  * Servidor de sinalização em Cloudflare Workers + Durable Objects.
@@ -162,7 +163,7 @@ export type Env = {
    * Ausente = sem limite entre canais (os limites DENTRO do canal seguem).
    */
   IP_LIMITER?: DurableObjectNamespace;
-};
+} & EnvDoDiscord;
 
 /**
  * Socket que ainda não se apresentou. Vive no attachment pelo mesmo motivo de

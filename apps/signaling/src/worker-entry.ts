@@ -8,6 +8,8 @@ import { DEFAULT_LIMITS } from './limits.js';
 import { listaDeOrigens, origemPermitida } from './origem.js';
 import { ROTA_ESTADO, comMemoria, consultarPeloObjeto, type ConsultarEstado } from './estado-do-canal.js';
 import { type Reescritor, servirComPrevia } from './previa.js';
+import { atenderInteracao, type SubtleEd25519 } from './discord.js';
+import { lerConfigDoDiscord } from './discord-config.js';
 
 /**
  * Ponto de entrada do Cloudflare Worker.
@@ -25,7 +27,7 @@ import { type Reescritor, servirComPrevia } from './previa.js';
 declare const WebSocketPair: {
   new (): { 0: HibernatableSocket; 1: HibernatableSocket & { accept(): void } };
 };
-declare const crypto: WebCryptoLike;
+declare const crypto: WebCryptoLike & { subtle: SubtleEd25519 };
 declare const HTMLRewriter: { new (): Reescritor };
 
 /**
@@ -201,6 +203,15 @@ export default {
       else headers.set(IP_HEADER, ip);
 
       return await env.CHANNELS.get(id).fetch(new Request(request.url, { headers }));
+    }
+
+    // O `/tela` do Discord (docs/DISCORD.md). Sem a chave pública, 404.
+    if (url.pathname === '/discord/interactions') {
+      return await atenderInteracao(request, {
+        config: lerConfigDoDiscord(env),
+        subtle: crypto.subtle,
+        consultar: consultaDoIsolate(env),
+      });
     }
 
     /**

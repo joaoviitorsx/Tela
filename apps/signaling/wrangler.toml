@@ -31,9 +31,10 @@ directory = "../web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 # O Worker precisa ver a requisição ANTES dos assets, senão `/signal/*` nunca
-# chega ao Durable Object e `/health` cai no SPA.
+# chega ao Durable Object, `/health` cai no SPA e `/discord/interactions`
+# (docs/DISCORD.md) devolve o index.html para o Discord.
 #
-# `/*` cobre os dois — o wrangler recusa listá-los junto, por redundância — e
+# `/*` cobre os três — o wrangler recusa listá-los junto, por redundância — e
 # também o link do canal, `/<slug>`: o robô de prévia do Discord/WhatsApp
 # recebe ali o estado do canal (src/previa.ts). `*` casa em qualquer
 # profundidade e exceção (`!`) vence, então ficam de fora todo arquivo (slug
@@ -114,6 +115,12 @@ ALLOWED_ORIGINS = "app://tela"
 # TURN_URL singular continua aceito apenas durante a migração; não combine os dois.
 # TURN_TTL_SECONDS = "600"
 # TURN_FETCH_TIMEOUT_MS = "2500"
+
+# App do Discord (docs/DISCORD.md): o `/tela canal:<slug>` no "+" → "Usar apps".
+# A chave pública é SECRET (`wrangler secret put DISCORD_PUBLIC_KEY`); sem ela,
+# `/discord/interactions` responde 404. O Application ID é público e opcional:
+# com ele, interação de outro app é recusada. Descomente com o seu.
+# DISCORD_APPLICATION_ID = "000000000000000000"
 
 [observability]
 enabled = true

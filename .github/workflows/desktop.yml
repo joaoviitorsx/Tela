@@ -106,10 +106,22 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
 
-      # O electron-builder gera o .rpm com o `rpmbuild` do sistema.
-      - name: rpmbuild, para o pacote do Fedora
+      # O electron-builder gera o .rpm com o `rpmbuild` do sistema. Os
+      # cabeçalhos do GStreamer e do GLib são do tela-captura (D2): o binário
+      # é compilado aqui e vai em `resources/nativo` do pacote Linux. Só
+      # cabeçalhos — em tempo de execução ele usa os plugins da máquina de quem
+      # instala (recomendados no deb/rpm; no AppImage é detecção ao abrir).
+      - name: rpmbuild e cabeçalhos do GStreamer
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm gcc pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libglib2.0-dev
+
+      - name: tela-captura (nativo/linux)
+        if: runner.os == 'Linux'
+        run: |
+          sh apps/desktop/nativo/linux/build.sh
+          test -x apps/desktop/nativo/linux/build/tela-captura
 
       # Na ordem das dependências: o site importa @tela/shared compilado, e o
       # app empacota o site. `turbo build --filter=@tela/desktop...` não

@@ -37,10 +37,17 @@
  * USO
  *   tela-captura [--fonte=portal|mutter:<conector>] [--restaurar=<token>]
  *                [--alvo=<largura>,<altura>,<fps>,<bitrate>]
+ *   tela-captura --sondar
  *
  *   `mutter:` usa a API privada do GNOME, sem diálogo: só para teste
  *   automatizado. O produto usa o portal, que pergunta ao usuário o que
  *   compartilhar e devolve um token para não perguntar de novo.
+ *
+ *   `--sondar` não captura nada e não abre diálogo: confere que os elementos
+ *   do GStreamer existem e que o NVENC abre o dispositivo, escreve um evento
+ *   `sonda` no mesmo protocolo e sai com 0 (usável) ou 3 (não). O app roda
+ *   isto uma vez ao abrir para decidir entre o NVENC e o codificador do
+ *   Chromium antes de a pessoa apertar TRANSMITIR.
  */
 #include <errno.h>
 #include <math.h>
@@ -650,8 +657,11 @@ static gboolean pelo_mutter(const char *conector, guint32 *no) {
 
 int main(int argc, char **argv) {
   const char *fonte = "portal";
+  gboolean sondar = FALSE;
   for (int i = 1; i < argc; i++) {
-    if (g_str_has_prefix(argv[i], "--fonte="))
+    if (strcmp(argv[i], "--sondar") == 0)
+      sondar = TRUE;
+    else if (g_str_has_prefix(argv[i], "--fonte="))
       fonte = argv[i] + 8;
     else if (g_str_has_prefix(argv[i], "--restaurar="))
       token_restaurar = g_strdup(argv[i] + 12);
@@ -676,6 +686,32 @@ int main(int argc, char **argv) {
     /* O app lê isto e fica no codificador do Chromium. */
     erro(g_str_equal(faltando, "nvh264enc") ? "SEM_NVENC" : "SEM_COMPONENTE", faltando);
     return 3;
+  }
+
+  if (sondar) {
+    /*
+     * A fábrica existir só diz que o plugin carregou. É NULL→READY que abre a
+     * sessão de codificação no driver (CUDA + NvEncOpenEncodeSessionEx): sem
+     * GPU NVIDIA utilizável, sem driver que bata com a libnvidia-encode, ou com
+     * as sessões do NVENC esgotadas, é aqui que falha — e é isto que o app
+     * precisa saber antes de prometer o caminho nativo.
+     */
+    GstElement *enc = gst_element_factory_make("nvh264enc", NULL);
+    if (enc == NULL) {
+      erro("SEM_NVENC", "nvh264enc não instancia");
+      return 3;
+    }
+    gboolean abre = gst_element_set_state(enc, GST_STATE_READY) != GST_STATE_CHANGE_FAILURE;
+    gst_element_set_state(enc, GST_STATE_NULL);
+    gst_object_unref(enc);
+    if (!abre) {
+      erro("SEM_NVENC", "nvh264enc não abre o dispositivo");
+      return 3;
+    }
+    g_autofree char *versao = gst_version_string();
+    g_autofree char *j = g_strdup_printf("{\"evento\":\"sonda\",\"nvenc\":true,\"gstreamer\":\"%s\"}", versao);
+    evento(j);
+    return 0;
   }
 
   int fd = -1;

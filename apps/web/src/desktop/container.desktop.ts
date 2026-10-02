@@ -2,14 +2,23 @@ import { P2P_LIMITS } from '@tela/shared';
 import { makeBrowserAudioGain } from '../adapters/browser-audio-gain.js';
 import { makeBrowserScreenCapture } from '../adapters/browser-screen-capture.js';
 import { makeCanvasQuadroNeutro } from '../adapters/canvas-quadro-neutro.js';
+import { CodificadorExterno } from '../adapters/codificador-externo.js';
+import type { CodificadorUnico, DepsDoCodificador } from '../adapters/codificador-unico.js';
 import { makeEncodeOnceTransport } from '../adapters/encode-once-transport.js';
 import { makeMeshTransport } from '../adapters/mesh-transport.js';
+import { CodificadorWebCodecs } from '../adapters/webcodecs-codificador.js';
 import { makeWsSignaling } from '../adapters/ws-signaling.js';
 import { appVersion, aprovados, audio, diagnosticId, scheduler, uplinkMemory } from '../container.js';
 import { linkDoCanal } from '../core/domain/link.js';
 import { BroadcastSession } from '../core/media/broadcast-session.js';
 import { ViewerSession } from '../core/media/viewer-session.js';
 import type { MediaTransport } from '../core/ports/media-transport.js';
+import type { ScreenCapture } from '../core/ports/screen-capture.js';
+import { makeCapturaDesktop } from './captura-desktop.js';
+import { CodificadorComutavel } from './codificador-comutavel.js';
+import { makeLigacaoNativa } from './porta-nativa.js';
+import { makeSeletorDeFontes } from './seletor-de-fontes.js';
+import { criarTrilhaFantasma } from './trilha-fantasma.js';
 
 /**
  * A raiz de composição do app desktop (PLANO-desktop §3.6).
@@ -22,7 +31,10 @@ import type { MediaTransport } from '../core/ports/media-transport.js';
  * - o link compartilhado é a origem PÚBLICA, nunca `app://` (§3.5);
  * - o signaling é o configurado no build, porque `app://tela` não tem `/signal`;
  * - o transporte de quem transmite é o "um encode, N envios" (D0b): um
- *   codificador para todos os espectadores, não um por `RTCPeerConnection`.
+ *   codificador para todos os espectadores, não um por `RTCPeerConnection`;
+ * - a captura é a do app (D2): seletor próprio, portal, ou o `tela-captura`
+ *   nativo com NVENC — e o codificador acompanha a captura
+ *   (`codificador-comutavel.ts`).
  *
  * O plugin em `vite.desktop.config.ts` faz rotas e hooks lerem este arquivo
  * quando importam `../container.js`.
@@ -68,9 +80,58 @@ function signaling() {
 const criarWorker = (): Worker =>
   new Worker(new URL('../adapters/injecao-worker.ts', import.meta.url), { type: 'module' });
 
-/** Codificador padrão (WebCodecs). O NVENC nativo do Linux entra no D2. */
+/*
+  A captura (D2). Em dev no navegador (`http://localhost:5174`, sem Electron)
+  não há ponte: o seletor é o do navegador e o codificador é o WebCodecs, como
+  na web — o app inteiro continua utilizável para mexer na interface.
+*/
+const ponte = window.telaDesktop;
+
+const agendar = (fn: () => void, ms: number): (() => void) => {
+  const t = setTimeout(fn, ms);
+  return () => clearTimeout(t);
+};
+
+/** A loja do seletor próprio: a moldura desenha, o adapter de captura abre. */
+export const seletorDeFontes = makeSeletorDeFontes({
+  listar: () => ponte?.listarFontes() ?? Promise.resolve([]),
+  agendar,
+});
+
+const ligacaoNativa = makeLigacaoNativa(window);
+
+const capturaDesktop =
+  ponte === undefined
+    ? null
+    : makeCapturaDesktop({
+        ponte,
+        seletor: seletorDeFontes,
+        navegador: makeBrowserScreenCapture(),
+        ligacao: ligacaoNativa,
+        criarTrilhaFantasma,
+      });
+
+const screen: ScreenCapture = capturaDesktop ?? makeBrowserScreenCapture();
+
+/**
+ * O codificador do "um encode": no app, um que escolhe entre o externo
+ * (NVENC, quando a captura é a nativa) e o WebCodecs. O externo fala com o
+ * `tela-captura` pela ligação acima, que o adapter de captura liga à porta
+ * da sessão quando ela sobe.
+ */
+function criarCodificador(d: DepsDoCodificador): CodificadorUnico {
+  if (capturaDesktop === null) {
+    return new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar);
+  }
+  return new CodificadorComutavel<CodificadorUnico>({
+    nativo: () => new CodificadorExterno(ligacaoNativa.porta, d),
+    webcodecs: () => new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar),
+    ehNativa: (track) => capturaDesktop.ehNativa(track),
+  });
+}
+
 function createTransport(): MediaTransport {
-  return makeEncodeOnceTransport({ channel: signaling(), scheduler, criarWorker });
+  return makeEncodeOnceTransport({ channel: signaling(), scheduler, criarWorker, criarCodificador });
 }
 
 /**
@@ -85,7 +146,7 @@ export function createBroadcastSession(): BroadcastSession {
   return new BroadcastSession({
     transport: createTransport(),
     capacidade: capacidadeDeEspectadores(),
-    screen: makeBrowserScreenCapture(),
+    screen,
     audio,
     gain: makeBrowserAudioGain(),
     uplinkMemory,

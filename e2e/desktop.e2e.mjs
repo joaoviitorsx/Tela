@@ -42,7 +42,9 @@ try {
   // que carrega o main de dentro do asar e o front de resources/web.
   const exe = process.env.TELA_EXE;
   app = await _electron.launch(
-    exe ? { executablePath: exe, args: [] } : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop` },
+    exe
+      ? { executablePath: exe, args: [], env: { ...process.env, TELA_NATIVO: '0' } }
+      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: { ...process.env, TELA_NATIVO: '0' } },
   );
   const page = await app.firstWindow();
   await page.waitForURL(/^app:\/\//, { timeout: 10_000 }).catch(() => undefined);
@@ -74,7 +76,7 @@ try {
   console.log(`   ${JSON.stringify(estado)}`);
   ok(estado.caminho === '/', `rota inicial é a home (${estado.caminho})`);
   ok(estado.ponte !== null && estado.ponte.plataforma === process.platform, `ponte presente (${estado.ponte?.plataforma}, v${estado.ponte?.versao})`);
-  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(['abrirNoNavegador', 'aoMudarVisibilidade', 'plataforma', 'versao']), 'a ponte expõe só as operações nomeadas');
+  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(['abrirNoNavegador', 'aoMudarVisibilidade', 'capacidades', 'capturaNativa', 'escolherFonte', 'listarFontes', 'plataforma', 'versao']), 'a ponte expõe só as operações nomeadas');
   ok(!estado.node, 'nada de Node na página');
   ok(!estado.baixarApp, 'sem BAIXAR APP dentro do próprio app');
 

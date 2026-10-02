@@ -3,7 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { App } from '../App.js';
 import { parseRoute } from '../router.js';
 import '../styles/globals.css';
+import { seletorDeFontes } from './container.desktop.js';
 import { MolduraDesktop } from './MolduraDesktop.js';
+import { SeletorDeFontesDesktop } from './SeletorDeFontesDesktop.js';
 import { fonteDeVisibilidadeDesktop } from './visibilidade-desktop.js';
 
 /**
@@ -21,15 +23,18 @@ if (pathname === '/desktop.html' || parseRoute(pathname).name === 'broadcast') {
   window.history.replaceState({}, '', '/');
 }
 
-// No navegador (dev em http://localhost:5174) não há ponte: vale o documento.
-const visibilidade = window.telaDesktop === undefined ? undefined : fonteDeVisibilidadeDesktop(window.telaDesktop);
+// No navegador (dev em http://localhost:5174) não há ponte: vale o documento,
+// e a captura é o seletor do próprio navegador.
+const ponte = window.telaDesktop;
+const visibilidade = ponte === undefined ? undefined : fonteDeVisibilidadeDesktop(ponte);
+const seletor = ponte === undefined ? undefined : <SeletorDeFontesDesktop seletor={seletorDeFontes} plataforma={ponte.plataforma} />;
 
 const root = document.getElementById('root');
 if (root === null) throw new Error('#root não existe no desktop.html');
 
 createRoot(root).render(
   <StrictMode>
-    <MolduraDesktop>
+    <MolduraDesktop {...(seletor === undefined ? {} : { sobreposicao: seletor })}>
       <App {...(visibilidade === undefined ? {} : { visibilidade })} />
     </MolduraDesktop>
   </StrictMode>,

@@ -13,19 +13,63 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 type PlataformaDesktop = 'win32' | 'linux' | 'darwin';
 
+type CapacidadesDesktop = {
+  readonly nvenc: boolean;
+  readonly nvencDetalhe: string;
+  readonly seletorProprio: boolean;
+};
+
+type FonteDeCaptura = {
+  readonly id: string;
+  readonly nome: string;
+  readonly tipo: 'tela' | 'janela';
+  readonly miniatura: string | null;
+  readonly icone: string | null;
+};
+
+type PedidoDeCapturaNativa = { readonly width: number; readonly height: number; readonly fps: number };
+
+type RespostaDeCapturaNativa =
+  | { readonly ok: true; readonly id: number; readonly fonte: { readonly width: number; readonly height: number }; readonly memoria: string }
+  | { readonly ok: false; readonly erro: string };
+
+type FimDaCapturaNativa = {
+  readonly id: number;
+  readonly motivo: 'FONTE_ENCERRADA' | 'PIPELINE' | 'PORTAL' | 'MORREU';
+  readonly codigo: number | null;
+};
+
 /** Cópia de `PonteDesktop` em `apps/web/src/desktop/ponte.ts`. */
 interface PonteDesktop {
   readonly plataforma: PlataformaDesktop;
   readonly versao: string;
   aoMudarVisibilidade(ouvinte: (visivel: boolean) => void): () => void;
   abrirNoNavegador(url: string): void;
+  capacidades(): Promise<CapacidadesDesktop>;
+  listarFontes(): Promise<readonly FonteDeCaptura[]>;
+  escolherFonte(id: string | null): Promise<boolean>;
+  readonly capturaNativa: {
+    iniciar(pedido: PedidoDeCapturaNativa): Promise<RespostaDeCapturaNativa>;
+    parar(id: number): void;
+    aoEncerrar(ouvinte: (fim: FimDaCapturaNativa) => void): () => void;
+  };
 }
 
 /** Cópia de `CANAIS` em `apps/web/src/desktop/ponte.ts`. */
 const CANAIS = {
   visibilidade: 'tela:visibilidade',
   abrirNoNavegador: 'tela:abrir-no-navegador',
+  capacidades: 'tela:capacidades',
+  listarFontes: 'tela:listar-fontes',
+  escolherFonte: 'tela:escolher-fonte',
+  capturaNativaIniciar: 'tela:captura-nativa-iniciar',
+  capturaNativaParar: 'tela:captura-nativa-parar',
+  capturaNativaPorta: 'tela:captura-nativa-porta',
+  capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
 } as const;
+
+/** Cópia de `MARCA_DA_PORTA` em `ponte.ts`. */
+const MARCA_DA_PORTA = 'tela:porta-nativa';
 
 /** Prefixo do argumento que o main põe em `additionalArguments` (`src/main/main.ts`). */
 const ARGUMENTO_VERSAO = '--tela-versao=';
@@ -40,6 +84,15 @@ function versao(): string {
   return arg === undefined ? '0.0.0' : arg.slice(ARGUMENTO_VERSAO.length);
 }
 
+/** Assina um canal main → renderer entregando só o payload, nunca o evento. */
+function assinar<T>(canal: string, ouvinte: (valor: T) => void): () => void {
+  const interno = (_evento: IpcRendererEvent, valor: T): void => ouvinte(valor);
+  ipcRenderer.on(canal, interno);
+  return () => {
+    ipcRenderer.removeListener(canal, interno);
+  };
+}
+
 const ponte: PonteDesktop = {
   plataforma: plataforma(),
   versao: versao(),
@@ -47,19 +100,38 @@ const ponte: PonteDesktop = {
   aoMudarVisibilidade(ouvinte) {
     // O ouvinte da página recebe só o boolean: o `IpcRendererEvent` carrega o
     // `sender` e as portas, e nada disso atravessa a ponte.
-    const interno = (_evento: IpcRendererEvent, visivel: unknown): void => {
-      ouvinte(visivel === true);
-    };
-    ipcRenderer.on(CANAIS.visibilidade, interno);
-    return () => {
-      ipcRenderer.removeListener(CANAIS.visibilidade, interno);
-    };
+    return assinar<unknown>(CANAIS.visibilidade, (visivel) => ouvinte(visivel === true));
   },
 
   abrirNoNavegador(url) {
     // Validar é com o main (`seguranca.ts`): ele conhece a origem do frame.
     ipcRenderer.send(CANAIS.abrirNoNavegador, String(url));
   },
+
+  capacidades: () => ipcRenderer.invoke(CANAIS.capacidades) as Promise<CapacidadesDesktop>,
+
+  listarFontes: () => ipcRenderer.invoke(CANAIS.listarFontes) as Promise<readonly FonteDeCaptura[]>,
+
+  escolherFonte: (id) =>
+    ipcRenderer.invoke(CANAIS.escolherFonte, id === null ? null : String(id)) as Promise<boolean>,
+
+  capturaNativa: {
+    iniciar: (pedido) => ipcRenderer.invoke(CANAIS.capturaNativaIniciar, pedido) as Promise<RespostaDeCapturaNativa>,
+    parar: (id) => ipcRenderer.send(CANAIS.capturaNativaParar, Number(id)),
+    aoEncerrar: (ouvinte) => assinar<FimDaCapturaNativa>(CANAIS.capturaNativaEncerrou, ouvinte),
+  },
 };
+
+/*
+  A porta dos quadros do `tela-captura`. `contextBridge` não transfere
+  `MessagePort`; o jeito documentado pelo Electron é o preload repassá-la ao
+  mundo da página por `window.postMessage`, que transfere. A página confere
+  a marca e o `id` (`apps/web/src/desktop/porta-nativa.ts`).
+*/
+ipcRenderer.on(CANAIS.capturaNativaPorta, (evento, dados: unknown) => {
+  const id = typeof dados === 'object' && dados !== null ? (dados as { id?: unknown }).id : undefined;
+  if (typeof id !== 'number' || evento.ports.length === 0) return;
+  window.postMessage({ tipo: MARCA_DA_PORTA, id }, '*', evento.ports);
+});
 
 contextBridge.exposeInMainWorld('telaDesktop', ponte);

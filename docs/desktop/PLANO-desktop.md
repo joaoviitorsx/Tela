@@ -1,6 +1,6 @@
 # Tela Desktop — análise e plano (Windows e Linux)
 
-**Data:** 2026-10-01 · **Estado:** D0 no Linux medido (`D0-relatorio-linux.md`); falta o Windows
+**Data:** 2026-10-01 · **Estado:** D0 no Linux medido (`D0-relatorio-linux.md`); D1 entregue; D2 em código, à espera de validação humana (`D2-captura.md`); falta o D0 no Windows
 **Tarefas:** TELA-027 a TELA-034 (plano global §20) · **ADR:** 0027
 
 O desktop transmite **e** assiste. O link continua um só (`tela.gg/<canal>`,
@@ -332,7 +332,7 @@ Um marco por vez (AGENTS.md); cada um termina em relatório e decisão.
 | **D0c — NVENC no Linux** | TELA-034 (antecipada) | Addon: captura PipeWire + NVENC + saída H.264 para o ponto de injeção | 1080p60 com ≤ 0,5 núcleo no Fedora do dono |
 | **D0 — Prova técnica** | TELA-027 | App Electron mínimo: a `BroadcastSession` atual na janela, captura pelo handler, transmissão para um navegador; modo escondido; `tela --benchmark`; detecção de encoder | Matriz §9 medida; **decisão na ADR 0027**: seguir, seguir com limitação (ex.: Linux NVIDIA a 720p) ou abrir TELA-034 |
 | **D1 — Shell** | TELA-028 | `app://`, preload, container desktop, URLs configuradas, importação do código de recuperação, Origin no Worker, moldura da §11 | Telas do site rodando no app; testes de IPC |
-| **D2 — Captura** | TELA-029 | Seletor próprio com miniaturas no Windows; portal no Linux; troca e fim de fonte | Matriz de limitações por ambiente |
+| **D2 — Captura** | TELA-029 | **Feito em código** (`D2-captura.md`): seletor próprio com miniaturas (Windows, Linux X11); portal no Wayland; `tela-captura` com NVENC no Linux (sonda ao abrir, token do portal, fim de fonte); empacotado como `resources/nativo` | Matriz de limitações por ambiente — **falta a validação humana** (Windows com jogo, Wayland com portal e token, X11) |
 | **D3 — Som** | TELA-030 | Sistema / só o jogo / sem som nas duas plataformas; addon WASAPI no Windows; PipeWire gerenciado no Linux | Aceite da §4.1 com jogo + call |
 | **D4 — Segundo plano** | TELA-031 | Bandeja, modo compacto, política de fechar, autostart, atalho, suspensão, crash | Política da §5 nos dois sistemas |
 | **D5 — Distribuição** | TELA-032 | NSIS, AppImage, RPM, DEB, atualizador, página de download | Instalar/atualizar/desinstalar em máquina limpa |

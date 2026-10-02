@@ -44,9 +44,10 @@ extraResources:
   - from: ../web/dist-desktop
     to: web
 
-# Nenhum módulo nativo e nenhuma dependência de runtime: o pacote é main,
-# preload e o site. Reconstruir node_modules seria trabalho à toa. O
-# tela-captura (nativo/linux) ainda não entra — é o D2.
+# Nenhum módulo nativo de Node e nenhuma dependência de runtime: o pacote é
+# main, preload e o site. Reconstruir node_modules seria trabalho à toa. O
+# tela-captura (nativo/linux) é um executável à parte, em `extraResources`
+# do Linux abaixo — não passa pelo node-gyp.
 npmRebuild: false
 
 publish:
@@ -95,9 +96,39 @@ linux:
   # do GitHub do dono do repositório — não é caixa de ninguém.
   maintainer: Tela <joaoviitorsx@users.noreply.github.com>
   vendor: Tela
+  # O tela-captura (D2, docs/desktop/D2-captura.md): captura pelo portal e
+  # codifica no NVENC, fora do Chromium. Compilado por nativo/linux/build.sh
+  # ANTES do electron-builder (o CI faz isso; o caminho humano está em
+  # BETA.md). main.ts o procura em `resources/nativo/tela-captura` e, se não
+  # estiver lá ou o `--sondar` disser que não há NVENC, fica no WebCodecs.
+  # O modo de arquivo é preservado: o binário sai executável.
+  extraResources:
+    - from: nativo/linux/build/tela-captura
+      to: nativo/tela-captura
 
+# As dependências do tela-captura são RECOMENDADAS, não exigidas: quem não
+# tem NVIDIA (ou não quer os plugins) instala do mesmo jeito e transmite com
+# o codificador do Chromium. `depends` não é definido de propósito — definir
+# substituiria a lista padrão do electron-builder (gtk, nss, xss…).
+#   plugins-bad: o `nvh264enc` (nvcodec) · pipewire: o `pipewiresrc` · gl: os
+#   `glupload`/`glcolorconvert`/`glcolorscale`
 deb:
   packageName: tela
+  recommends:
+    - gstreamer1.0-plugins-bad
+    - gstreamer1.0-pipewire
+    - gstreamer1.0-gl
+    - gstreamer1.0-plugins-base
 
+# O rpm do electron-builder (fpm) não tem campo `recommends`; a tag vai
+# direto para o spec. No Fedora o nvcodec está no bad-free e os plugins GL
+# no plugins-base.
 rpm:
   packageName: tela
+  fpm:
+    - '--rpm-tag'
+    - 'Recommends: gstreamer1-plugins-bad-free'
+    - '--rpm-tag'
+    - 'Recommends: pipewire-gstreamer'
+    - '--rpm-tag'
+    - 'Recommends: gstreamer1-plugins-base'

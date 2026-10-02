@@ -74,7 +74,9 @@ let navegador;
 try {
   const exe = process.env.TELA_EXE;
   app = await _electron.launch(
-    exe ? { executablePath: exe, args: [] } : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop` },
+    exe
+      ? { executablePath: exe, args: [], env: { ...process.env, TELA_NATIVO: '0' } }
+      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: { ...process.env, TELA_NATIVO: '0' } },
   );
   const host = await app.firstWindow();
   const erros = [];

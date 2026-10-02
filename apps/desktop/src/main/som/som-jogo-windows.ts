@@ -90,7 +90,8 @@ type FimDaCaptura = 'PROCESSO_ENCERROU' | 'DISPOSITIVO' | 'FALHOU';
  * a cada 5 s por horas, e um ouvinte por pergunta seria um vazamento.
  */
 class Conversa {
-  private esperando: ((r: RespostaDoUtilitario) => boolean) | null = null;
+  /** O pedido em curso: recebe a resposta (ou `null`, se o utility morreu). */
+  private esperando: ((r: RespostaDoUtilitario | null) => void) | null = null;
   private aoFimDaCaptura: ((motivo: FimDaCaptura) => void) | null = null;
   private fimGuardado: FimDaCaptura | null = null;
   private saiu = false;
@@ -112,6 +113,7 @@ class Conversa {
     });
     proc.aoSair(() => {
       this.saiu = true;
+      this.esperando?.(null);
       for (const o of this.aoSairDoProcesso.splice(0)) o();
     });
   }
@@ -138,11 +140,8 @@ class Conversa {
       };
       const cancelar = this.agendar(() => terminar(null), prazoMs);
       this.esperando = (r) => {
-        if (r.t !== 'erro' && !espera.includes(r.t)) return false;
-        terminar(r);
-        return true;
+        if (r === null || r.t === 'erro' || espera.includes(r.t)) terminar(r);
       };
-      this.aoSair(() => terminar(null));
       this.proc.postMessage(pedido, transferir);
     });
   }

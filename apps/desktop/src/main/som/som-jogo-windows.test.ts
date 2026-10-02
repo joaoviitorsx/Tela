@@ -404,6 +404,15 @@ describe('iniciarSistema: tudo que toca, menos a call', () => {
     expect(await velho.som.iniciarSistema({ encerrou: () => undefined })).toEqual({ ok: false, error: 'INDISPONIVEL' });
   });
 
+  it('o utility morre no meio da listagem: FALHOU, sem ficar esperando', async () => {
+    const { som, processos } = montar({ utilitario: (p) => (p.t === 'sondar' ? [{ t: 'sonda', ok: true, versao: '1.1.0' }] : 'mudo') });
+    const r = som.iniciarSistema({ encerrou: () => undefined });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    processos.at(-1)!.morrer();
+    expect(await r).toEqual({ ok: false, error: 'FALHOU' });
+    expect(som.idAtivo()).toBeNull();
+  });
+
   it('o app de voz fechou entre a listagem e a ativação: FALHOU, não "programa não encontrado"', async () => {
     const { som } = montar({
       utilitario: (p) => (p.t === 'sondar' ? [{ t: 'sonda', ok: true, versao: '1.1.0' }] : p.t === 'listar' ? [{ t: 'sessoes', sessoes: SESSOES }] : [{ t: 'erro', erro: 'PROCESSO_INVALIDO' }]),

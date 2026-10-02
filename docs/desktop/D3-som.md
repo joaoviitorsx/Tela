@@ -298,7 +298,7 @@ Todo `invoke` confere a origem do frame; o id do app passa por
 
 ### 6.1 "Sistema" sem a call (D3-b, 2026-10-02)
 
-- `pnpm --filter @tela/desktop test` (349 testes, 30 arquivos) e
+- `pnpm --filter @tela/desktop test` (350 testes, 30 arquivos) e
   `pnpm --filter @tela/web test` (1124 testes, 130 arquivos), o portão do repo
   (`pnpm turbo lint typecheck test build --concurrency=2`: 16 tarefas ok),
   `pnpm depcruise` (sem violações), o eslint do repo inteiro e o

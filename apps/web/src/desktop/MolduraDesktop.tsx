@@ -5,12 +5,14 @@ import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
 import type { FonteDeVisibilidade } from '../react/use-aba-visivel.js';
 import { useDiagnosticoAberto } from '../react/painel-diagnostico.js';
 import { useDialogo } from '../react/use-dialogo.js';
+import { BarraDaJanela } from './BarraDaJanela.js';
 import { DialogoAjustes } from './DialogoAjustes.js';
 import { DialogoFechar } from './DialogoFechar.js';
 import { ModoCompacto } from './ModoCompacto.js';
 import { PainelNoAr } from './PainelNoAr.js';
 import type { ModoDaJanelaStore } from './modo-da-janela.js';
 import type { PonteDesktop } from './ponte.js';
+import { type PonteDaBarra, useBarraDaJanela } from './use-barra-da-janela.js';
 import { type SessaoAoVivo, sessaoAoVivo } from './sessao-ao-vivo.js';
 import { TrilhoDesktop } from './TrilhoDesktop.js';
 import { useAjustes } from './use-ajustes.js';
@@ -23,7 +25,8 @@ import { type PonteDoSegundoPlano, useSegundoPlano } from './use-segundo-plano.j
 type PonteDaMoldura = Pick<PonteDesktop, 'aoAbrirCanal'> &
   PonteDoSegundoPlano &
   Pick<PonteDesktop, 'ajustes' | 'salvarAjustes' | 'abrirNoNavegador' | 'versao'> &
-  PonteDaAtualizacao;
+  PonteDaAtualizacao &
+  Partial<PonteDaBarra>;
 
 type Props = {
   readonly children: ReactNode;
@@ -63,6 +66,14 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
 
   const compactoNoAr = sp.compacto && sp.noAr;
 
+  // A barra própria (§11): só no app, no Windows e no Linux; some em tela cheia.
+  const barra = useBarraDaJanela(
+    ponte?.plataforma !== undefined && ponte.janela !== undefined ? { plataforma: ponte.plataforma, janela: ponte.janela } : undefined,
+  );
+  const comBarra = barra !== null && !barra.estado.telaCheia;
+  // No Linux o app não tem moldura do sistema: a borda de `edge` é a da janela.
+  const comBorda = comBarra && barra.plataforma === 'linux' && !barra.estado.maximizada;
+
   // ENCERRAR do painel: a confirmação do Tela, a mesma da rota. No compacto
   // a pergunta vem inline (a janela é pequena demais para um diálogo).
   const seguroRef = useRef<HTMLButtonElement>(null);
@@ -81,10 +92,25 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
   };
 
   return (
-    <div className="flex h-dvh w-full flex-col overflow-hidden bg-void">
+    <div
+      className={`flex h-dvh w-full flex-col overflow-hidden bg-void ${comBorda ? 'border-2 border-edge' : ''}`}
+    >
+      {comBarra && (
+        <BarraDaJanela
+          plataforma={barra.plataforma}
+          link={sp.noAr && sp.painel.link !== '' ? sp.painel.link : null}
+          ativa={barra.estado.focada}
+          maximizada={barra.estado.maximizada}
+          compacto={compactoNoAr}
+          aoMinimizar={barra.minimizar}
+          aoAlternarMaximizar={barra.alternarMaximizar}
+          aoFechar={barra.fechar}
+        />
+      )}
       {compactoNoAr && (
         <ModoCompacto
           link={sp.painel.link}
+          semLink={comBarra}
           tempo={sp.painel.tempo}
           assistindo={sp.painel.assistindo}
           capacidade={sp.painel.capacidade}

@@ -16,6 +16,8 @@ type Props = {
   readonly aoConfirmar: () => void;
   readonly aoCancelar: () => void;
   readonly aoExpandir: () => void;
+  /** A barra da janela já mostra o link: a faixa o tira e ganha a altura. */
+  readonly semLink?: boolean;
 };
 
 /**
@@ -36,11 +38,12 @@ export function ModoCompacto({
   aoConfirmar,
   aoCancelar,
   aoExpandir,
+  semLink = false,
 }: Props) {
   return (
     <section
       aria-label="Transmissão no ar, janela compacta"
-      className="flex h-full w-full flex-col justify-between gap-1.5 bg-bar px-3 py-2"
+      className="flex min-h-0 w-full flex-1 flex-col justify-between gap-1.5 bg-bar px-3 py-2"
     >
       <div className="flex items-center gap-3">
         <span className="flex items-center gap-2 font-[family-name:var(--font-pixel)] text-[11px] text-live-hi">
@@ -52,14 +55,16 @@ export function ModoCompacto({
           {assistindo}/{capacidade} assistindo
         </span>
       </div>
-      <div className="flex items-center gap-2">
-        <span className="numeral min-w-0 flex-1 truncate text-[20px] text-accent-hi" title={link}>
-          {link}
-        </span>
-        <button type="button" onClick={aoCopiar} className="tecla !min-h-8 px-2 text-[10px]">
-          {copiado ? 'COPIADO' : 'COPIAR'}
-        </button>
-      </div>
+      {!semLink && (
+        <div className="flex items-center gap-2">
+          <span className="numeral min-w-0 flex-1 truncate text-[20px] text-accent-hi" title={link}>
+            {link}
+          </span>
+          <button type="button" onClick={aoCopiar} className="tecla !min-h-8 px-2 text-[10px]">
+            {copiado ? 'COPIADO' : 'COPIAR'}
+          </button>
+        </div>
+      )}
       {confirmando ? (
         <div className="flex items-center gap-2" role="group" aria-label="Confirmar encerramento">
           <span className="min-w-0 flex-1 text-[11px] leading-tight text-text [text-wrap:pretty]">{textoConfirmar}</span>
@@ -72,6 +77,11 @@ export function ModoCompacto({
         </div>
       ) : (
         <div className="flex items-center justify-end gap-2">
+          {semLink && (
+            <button type="button" onClick={aoCopiar} className="tecla !min-h-8 px-2 text-[10px]">
+              {copiado ? 'COPIADO' : 'COPIAR LINK'}
+            </button>
+          )}
           <button type="button" onClick={aoExpandir} className="tecla !min-h-8 px-2 text-[10px]">
             EXPANDIR
           </button>

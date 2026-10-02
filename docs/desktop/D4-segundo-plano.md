@@ -193,3 +193,9 @@ compositor de verdade):
   for falso.
 - Dúvida: o D-Bus `NameHasOwner` pode dar falso negativo em sandbox
   (Flatpak/Snap); o app então cai no compacto, que é o lado seguro.
+
+## 9. Moldura própria e o fechar
+
+O botão Fechar da barra da janela (Linux) e o fechar nativo (X do Windows, Alt+F4,
+`win.close()`) terminam no mesmo `close` da `BrowserWindow`, logo na mesma
+`decidirFechar` da §3. Detalhes da moldura em `PLANO-desktop.md` §11.1.

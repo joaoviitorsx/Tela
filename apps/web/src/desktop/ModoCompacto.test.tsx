@@ -52,3 +52,27 @@ describe('ModoCompacto', () => {
     expect(a.aoConfirmar).toHaveBeenCalled();
   });
 });
+
+describe('ModoCompacto com a barra da janela', () => {
+  it('semLink tira o link da faixa e leva o COPIAR LINK para a linha dos botões', () => {
+    render(
+      <ModoCompacto
+        link="tela.gg/jv"
+        semLink
+        tempo="00:01:00"
+        assistindo={1}
+        capacidade={5}
+        copiado={false}
+        aoCopiar={() => undefined}
+        confirmando={false}
+        textoConfirmar=""
+        aoEncerrar={() => undefined}
+        aoConfirmar={() => undefined}
+        aoCancelar={() => undefined}
+        aoExpandir={() => undefined}
+      />,
+    );
+    expect(screen.queryByText('tela.gg/jv')).toBeNull();
+    expect(screen.getByRole('button', { name: 'COPIAR LINK' })).toBeTruthy();
+  });
+});

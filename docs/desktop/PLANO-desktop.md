@@ -420,6 +420,42 @@ estático, abertura e TV 3D.
 As telas do site são reaproveitadas (passos, console, fim da transmissão); muda
 a moldura de navegação em volta.
 
+### 11.1 A moldura da janela
+
+A barra de título é a da ilustração do BAIXAR APP (`ConteudoApp.tsx`): 32 px,
+`bg-void`, `border-b-2 border-line`, ícone, marca, o link do canal quando ao
+vivo, espaço, controles. Opções do `BrowserWindow` por sistema em
+`apps/desktop/src/main/moldura-janela.ts` (pura, testada); a barra é
+`apps/web/src/desktop/BarraDaJanela.tsx` (burra) + `use-barra-da-janela.ts`.
+
+| Sistema | Moldura | Controles |
+|---|---|---|
+| Windows | `titleBarStyle: 'hidden'` + `titleBarOverlay` (`#0b0c0e`, símbolos `#f2a93b`, 32 px) | Do sistema (Snap Layouts, acessibilidade). A barra deixa o canto livre por `env(titlebar-area-*)`, reserva de 138 px |
+| Linux (X11 e Wayland) | `frame: false` | Nossos: Minimizar, Maximizar/Restaurar, Fechar, por IPC sem payload |
+| macOS | padrão (não é alvo) | do sistema |
+
+- **Fechar passa pela política de D4.** O botão manda `tela:janela-fechar`; o
+  main só faz `win.close()` e o `close` da janela decide (`decidirFechar`):
+  pergunta uma vez ao vivo, esconde, compacta ou sai. Nenhuma regra nova.
+- IPC: `tela:janela-minimizar|alternar-maximizar|fechar` (renderer → main, sem
+  argumentos; o main confere frame da interface, remetente = a janela e
+  `pedidoSemCarga`) e `tela:janela-estado` (main → renderer: foco, maximizada,
+  tela cheia). Maximizar é ignorado no compacto e em tela cheia.
+- Sem foco a barra esmaece; em tela cheia (tecla F do espectador) some.
+- Compacto: a mesma barra, sem Maximizar; a faixa tira a linha do link (a
+  barra já o mostra) e o COPIAR LINK passa para a linha dos botões, mantendo
+  440×132.
+- **Redimensionar sem moldura no Linux.** A documentação do Electron (Custom
+  Window Styles) diz que no Wayland janelas sem moldura têm sombra GTK e
+  "extended resize boundaries" por padrão; `hasShadow: false` as remove. Por
+  isso NÃO se desenha alça nenhuma nem se usa `setBounds`, e `hasShadow` fica
+  no padrão. A borda `border-2 border-edge` é desenhada pela página (some
+  maximizada); a sombra da ilustração é a do compositor.
+- **Duplo clique na barra.** Região `-webkit-app-region: drag` engole eventos
+  de mouse, então não há `onDoubleClick` em JS (seria código morto ou
+  alternaria duas vezes). Depende do Electron/compositor maximizar no duplo
+  clique da região de arrasto: ponto de validação humana no GNOME Wayland.
+
 ---
 
 ## 12. O que só humano verifica (AGENTS.md)

@@ -82,6 +82,8 @@ type ModoDaJanela = 'normal' | 'compacto';
 type RespostaDeFechar = { readonly acao: 'segundo-plano' | 'encerrar' | 'cancelar'; readonly lembrar: boolean };
 type MotivoDeParada = 'sair' | 'suspensao';
 
+type EstadoDaJanela = { readonly focada: boolean; readonly maximizada: boolean; readonly telaCheia: boolean };
+
 /** Cópia de `PonteDesktop` em `apps/web/src/desktop/ponte.ts`. */
 interface PonteDesktop {
   readonly plataforma: PlataformaDesktop;
@@ -113,6 +115,12 @@ interface PonteDesktop {
     pararSom(): void;
     iniciarSistema(): Promise<RespostaSomSistema>;
     aoEncerrar(ouvinte: (fim: FimDoSomDoJogo) => void): () => void;
+  };
+  readonly janela: {
+    minimizar(): void;
+    alternarMaximizar(): void;
+    fechar(): void;
+    aoMudarEstado(ouvinte: (estado: EstadoDaJanela) => void): () => void;
   };
   readonly capturaNativa: {
     iniciar(pedido: PedidoDeCapturaNativa): Promise<RespostaDeCapturaNativa>;
@@ -154,6 +162,10 @@ const CANAIS = {
   atualizacaoMudou: 'tela:atualizacao-mudou',
   verificarAtualizacao: 'tela:verificar-atualizacao',
   reiniciarEAtualizar: 'tela:reiniciar-e-atualizar',
+  janelaMinimizar: 'tela:janela-minimizar',
+  janelaAlternarMaximizar: 'tela:janela-alternar-maximizar',
+  janelaFechar: 'tela:janela-fechar',
+  janelaEstado: 'tela:janela-estado',
 } as const;
 
 /** Cópia de `MARCA_DA_PORTA` em `ponte.ts`. */
@@ -208,6 +220,20 @@ ipcRenderer.on(CANAIS.modo, (_evento, modo: unknown) => {
   if (modo !== 'normal' && modo !== 'compacto') return;
   modoAtual = modo;
   for (const ouvinte of ouvintesDeModo) ouvinte(modo);
+});
+
+/*
+  O estado da janela (foco, maximizada, tela cheia) chega no `did-finish-load`,
+  antes de o React assinar: guarda o último, como o modo. Só booleanos passam;
+  o resto do payload é descartado.
+*/
+let estadoDaJanela: EstadoDaJanela | null = null;
+const ouvintesDaJanela = new Set<(estado: EstadoDaJanela) => void>();
+ipcRenderer.on(CANAIS.janelaEstado, (_evento, bruto: unknown) => {
+  if (typeof bruto !== 'object' || bruto === null) return;
+  const b = bruto as Record<string, unknown>;
+  estadoDaJanela = { focada: b['focada'] === true, maximizada: b['maximizada'] === true, telaCheia: b['telaCheia'] === true };
+  for (const ouvinte of ouvintesDaJanela) ouvinte(estadoDaJanela);
 });
 
 const ponte: PonteDesktop = {
@@ -277,6 +303,20 @@ const ponte: PonteDesktop = {
     pararSom: () => ipcRenderer.send(CANAIS.somParar),
     iniciarSistema: () => ipcRenderer.invoke(CANAIS.somIniciarSistema) as Promise<RespostaSomSistema>,
     aoEncerrar: (ouvinte) => assinar<FimDoSomDoJogo>(CANAIS.somJogoEncerrou, ouvinte),
+  },
+
+  janela: {
+    // Sem payload, de propósito: o main sabe qual é a janela.
+    minimizar: () => ipcRenderer.send(CANAIS.janelaMinimizar),
+    alternarMaximizar: () => ipcRenderer.send(CANAIS.janelaAlternarMaximizar),
+    fechar: () => ipcRenderer.send(CANAIS.janelaFechar),
+    aoMudarEstado(ouvinte) {
+      ouvintesDaJanela.add(ouvinte);
+      if (estadoDaJanela !== null) ouvinte(estadoDaJanela);
+      return () => {
+        ouvintesDaJanela.delete(ouvinte);
+      };
+    },
   },
 
   capturaNativa: {

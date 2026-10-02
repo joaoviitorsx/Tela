@@ -180,6 +180,13 @@ export type RespostaDeFechar = {
 /** Por que o main mandou parar: `sair` (Sair/Ctrl+Q/bandeja) ou `suspensao` (o sistema vai dormir). */
 export type MotivoDeParada = 'sair' | 'suspensao';
 
+/** O que a barra própria da janela precisa saber dela: foco, maximizada, tela cheia. */
+export type EstadoDaJanela = {
+  readonly focada: boolean;
+  readonly maximizada: boolean;
+  readonly telaCheia: boolean;
+};
+
 export interface PonteDesktop {
   readonly plataforma: PlataformaDesktop;
   /** Versão do app (`app.getVersion()`), para o diagnóstico. */
@@ -274,6 +281,19 @@ export interface PonteDesktop {
     aoEncerrar(ouvinte: (fim: FimDoSomDoJogo) => void): () => void;
   };
 
+  /**
+   * A moldura própria da janela (§11). Sem payload: o main sabe qual é a
+   * janela, e `fechar` passa pela MESMA política do fechar nativo (pergunta
+   * uma vez ao vivo; esconde, compacta ou sai).
+   */
+  readonly janela: {
+    minimizar(): void;
+    alternarMaximizar(): void;
+    fechar(): void;
+    /** Entrega o estado atual na hora, se já se sabe, e cada mudança depois. */
+    aoMudarEstado(ouvinte: (estado: EstadoDaJanela) => void): () => void;
+  };
+
   /** O `tela-captura` (Linux com NVENC). Só existe quando `capacidades().nvenc`. */
   readonly capturaNativa: {
     /**
@@ -352,6 +372,14 @@ export const CANAIS = {
   verificarAtualizacao: 'tela:verificar-atualizacao',
   /** renderer → main */
   reiniciarEAtualizar: 'tela:reiniciar-e-atualizar',
+  /** renderer → main, sem payload */
+  janelaMinimizar: 'tela:janela-minimizar',
+  /** renderer → main, sem payload */
+  janelaAlternarMaximizar: 'tela:janela-alternar-maximizar',
+  /** renderer → main, sem payload: vira `win.close()` e a política de fechar decide */
+  janelaFechar: 'tela:janela-fechar',
+  /** main → renderer, `EstadoDaJanela` */
+  janelaEstado: 'tela:janela-estado',
 } as const;
 
 /**

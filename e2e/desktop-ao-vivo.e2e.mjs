@@ -224,8 +224,15 @@ try {
   await esperar(500);
   ok((await host.evaluate(() => location.pathname)) === '/transmitir' && (await painel.isVisible()), 'continuar no ar mantém a transmissão');
 
+  // Moldura própria (§11): ao vivo a barra mostra o link, e o botão Fechar (Linux)
+  // passa pela MESMA política do fechar nativo — a primeira pergunta vem dele.
+  const barra = host.getByRole('group', { name: 'Barra da janela' });
+  ok(await barra.isVisible(), 'a barra da janela está à vista ao vivo');
+  ok(/tela\.gg|localhost|\//.test(await barra.innerText()), `a barra mostra o link do canal (${(await barra.innerText()).replace(/\s+/g, ' ')})`);
+
   // Fechar a janela ao vivo: pergunta; continuar esconde (bandeja) ou vira compacto (sem ela).
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  if (process.platform === 'linux') await barra.getByRole('button', { name: 'Fechar' }).click();
+  else await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
   const pergunta = host.getByText('CONTINUAR TRANSMITINDO EM SEGUNDO PLANO?');
   await pergunta.waitFor({ state: 'visible', timeout: 3000 }).catch(() => undefined);
   ok(await pergunta.isVisible(), 'fechar ao vivo pergunta "Continuar transmitindo em segundo plano?"');

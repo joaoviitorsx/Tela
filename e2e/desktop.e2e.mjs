@@ -91,7 +91,7 @@ try {
   console.log(`   ${JSON.stringify(estado)}`);
   ok(estado.caminho === '/', `rota inicial é a home (${estado.caminho})`);
   ok(estado.ponte !== null && estado.ponte.plataforma === process.platform, `ponte presente (${estado.ponte?.plataforma}, v${estado.ponte?.versao})`);
-  const CHAVES = ['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoMudarAtualizacao', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'atualizacao', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'reiniciarEAtualizar', 'responderFechar', 'salvarAjustes', 'som', 'verificarAtualizacao', 'versao'];
+  const CHAVES = ['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoMudarAtualizacao', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'atualizacao', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'janela', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'reiniciarEAtualizar', 'responderFechar', 'salvarAjustes', 'som', 'verificarAtualizacao', 'versao'];
   // O que importa de verdade: nada genérico de IPC atravessa a ponte (§3.4).
   const GENERICAS = ['send', 'sendSync', 'invoke', 'on', 'once', 'ipcRenderer', 'require', 'postMessage'];
   ok(!(estado.ponte?.chaves ?? []).some((c) => GENERICAS.includes(c)), 'nenhuma operação genérica de IPC na ponte');
@@ -169,6 +169,36 @@ try {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.restore());
   await esperar(800);
   ok((await page.evaluate(() => document.documentElement.dataset.aba)) === 'visivel', 'restaurada: volta a visível');
+
+  console.log('\n3b. Moldura própria da janela (§11)');
+  const barra = page.getByRole('group', { name: 'Barra da janela' });
+  ok(await barra.isVisible(), 'a barra da janela existe');
+  const medida = await barra.evaluate((el) => ({ h: el.getBoundingClientRect().height, drag: getComputedStyle(el).getPropertyValue('-webkit-app-region') }));
+  ok(medida.h === 32, `a barra tem 32 px (${medida.h})`);
+  if (process.platform === 'linux') {
+    ok(medida.drag === 'drag', `a barra é região de arrasto (${medida.drag})`);
+    for (const nome of ['Minimizar', 'Maximizar', 'Fechar']) {
+      ok(await barra.getByRole('button', { name: nome }).isVisible(), `botão ${nome}`);
+    }
+    ok((await barra.getByRole('button', { name: 'Fechar' }).evaluate((el) => getComputedStyle(el).getPropertyValue('-webkit-app-region'))) === 'no-drag', 'os botões são no-drag');
+    // Minimizar de verdade, pelo botão.
+    await barra.getByRole('button', { name: 'Minimizar' }).click();
+    await esperar(800);
+    ok(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.isMinimized()), 'o botão minimiza a janela');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.restore());
+    await esperar(800);
+    // Fechar passa pela política de D4: o `close` da janela dispara. Um ouvinte
+    // posterior ao do main cancela, para o teste não derrubar o app (fora do ar a política é "sair").
+    await app.evaluate(({ BrowserWindow }) => {
+      globalThis.__fechou = 0;
+      BrowserWindow.getAllWindows()[0]?.once('close', (e) => { e.preventDefault(); globalThis.__fechou += 1; });
+    });
+    await barra.getByRole('button', { name: 'Fechar' }).click();
+    await esperar(600);
+    ok((await app.evaluate(() => globalThis.__fechou)) === 1, 'o botão Fechar dispara o `close` da janela (a mesma política do fechar nativo)');
+  } else {
+    ok((await barra.getByRole('button').count()) === 0, 'fora do Linux os botões são do sistema (overlay)');
+  }
 
   console.log('\n4. Sinalização aceita a origem app://tela');
   const ws = await page.evaluate((url) => new Promise((resolve) => {

@@ -98,6 +98,7 @@ import {
   TAMANHO_COMPACTO,
   urlDaRecuperacao,
 } from './politica-de-fechar.js';
+import { decidirAcaoDeJanela, estadoDaJanela, opcoesDeMoldura, pedidoSemCarga } from './moldura-janela.js';
 import {
   CapturaNativa,
   lerTokenDoPortal,
@@ -180,6 +181,10 @@ const CANAIS = {
   verificarAtualizacao: 'tela:verificar-atualizacao',
   /** renderer → main */
   reiniciarEAtualizar: 'tela:reiniciar-e-atualizar',
+  janelaMinimizar: 'tela:janela-minimizar',
+  janelaAlternarMaximizar: 'tela:janela-alternar-maximizar',
+  janelaFechar: 'tela:janela-fechar',
+  janelaEstado: 'tela:janela-estado',
 } as const;
 
 /*
@@ -285,6 +290,10 @@ function avisarVisibilidade(j: BrowserWindow, valor: boolean): void {
   if (!j.isDestroyed() && !j.webContents.isCrashed()) j.webContents.send(CANAIS.visibilidade, valor);
 }
 
+function avisarEstadoDaJanela(j: BrowserWindow): void {
+  if (!j.isDestroyed() && !j.webContents.isCrashed()) j.webContents.send(CANAIS.janelaEstado, estadoDaJanela(j));
+}
+
 function criarJanela(): BrowserWindow {
   paginaPronta = false;
   const j = new BrowserWindow({
@@ -298,6 +307,8 @@ function criarJanela(): BrowserWindow {
     // Electron; fica escrito porque o D8 depende dele. O `Esc` sai sozinho.
     fullscreenable: true,
     backgroundColor: '#000000',
+    // A moldura própria (§11): overlay no Windows, sem moldura no Linux.
+    ...opcoesDeMoldura(process.platform),
     // Aparece pronta: sem o flash branco antes do primeiro quadro da página.
     // Aberto pelo autostart, só aparece se não houver bandeja para controlá-lo.
     show: false,
@@ -340,9 +351,18 @@ function criarJanela(): BrowserWindow {
     atualizarBandeja();
   });
   j.on('close', (evento) => aoFecharJanela(evento));
+  // A barra própria escurece quando a janela perde o foco e some em tela cheia.
+  const aoMudarEstadoDaJanela = (): void => avisarEstadoDaJanela(j);
+  j.on('focus', aoMudarEstadoDaJanela);
+  j.on('blur', aoMudarEstadoDaJanela);
+  j.on('maximize', aoMudarEstadoDaJanela);
+  j.on('unmaximize', aoMudarEstadoDaJanela);
+  j.on('enter-full-screen', aoMudarEstadoDaJanela);
+  j.on('leave-full-screen', aoMudarEstadoDaJanela);
   // Ao carregar, a página recebe o estado atual — pode ter nascido minimizada.
   j.webContents.on('did-finish-load', () => {
     avisarVisibilidade(j, visivel(j));
+    avisarEstadoDaJanela(j);
     // O modo também: a janela pode ter recarregado (queda) enquanto compacta.
     j.webContents.send(CANAIS.modo, modo);
     // Página nova = nada no ar ainda. A página só conta o "fora do ar" inicial
@@ -1128,6 +1148,38 @@ function registrarIpc(): void {
     // Compacto só ao vivo: sem transmissão não há o que mostrar nele.
     if (pedido === null || (pedido === 'compacto' && !estado.noAr)) return;
     definirModo(pedido);
+  });
+
+  /* ---- Moldura própria (§11): sem payload; o frame é da interface e o remetente é a janela. */
+  const pedidoDaBarra = (evento: Electron.IpcMainEvent, resto: readonly unknown[]): BrowserWindow | null =>
+    daInterface(evento) &&
+    pedidoSemCarga(resto) &&
+    janela !== null &&
+    !janela.isDestroyed() &&
+    evento.sender === janela.webContents
+      ? janela
+      : null;
+
+  ipcMain.on(CANAIS.janelaMinimizar, (evento, ...resto: unknown[]) => {
+    pedidoDaBarra(evento, resto)?.minimize();
+  });
+
+  ipcMain.on(CANAIS.janelaAlternarMaximizar, (evento, ...resto: unknown[]) => {
+    const j = pedidoDaBarra(evento, resto);
+    if (j === null) return;
+    const decisao = decidirAcaoDeJanela('alternar-maximizar', {
+      modoCompacto: modo === 'compacto',
+      maximizada: j.isMaximized(),
+      telaCheia: j.isFullScreen(),
+    });
+    if (decisao === 'maximizar') j.maximize();
+    else if (decisao === 'restaurar') j.unmaximize();
+  });
+
+  // Fechar é `close()` e nada mais: o evento `close` passa por `aoFecharJanela`,
+  // a MESMA política do fechar nativo (pergunta ao vivo, esconde, compacta ou sai).
+  ipcMain.on(CANAIS.janelaFechar, (evento, ...resto: unknown[]) => {
+    pedidoDaBarra(evento, resto)?.close();
   });
 
   ipcMain.on(CANAIS.responderFechar, (evento, payload: unknown) => {

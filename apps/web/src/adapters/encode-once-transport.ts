@@ -80,21 +80,38 @@ function criarIsca(): { readonly trilha: MediaStreamTrack; readonly tique: () =>
 }
 
 export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
-  const worker = deps.criarWorker();
-  const canal = new MessageChannel();
-  worker.postMessage({ tipo: 'porta', porta: canal.port2 }, [canal.port2]);
-
-  const isca = criarIsca();
-  const criarCodificador =
-    deps.criarCodificador ?? ((d: DepsDoCodificador) => new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar));
-  const codificador = criarCodificador({
-    entregar: (chunk, transferir) => canal.port1.postMessage(chunk, transferir),
-    aoCapturar: isca.tique,
-    aoMudarFonte: () => recalcular(),
-  });
-  canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
-    if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo, m.data.senders);
-    else if (m.data.tipo === 'atraso') codificador.definirAtraso(m.data.quadros);
+  /*
+    Worker, isca e codificador nascem no primeiro uso, não aqui. A sessão que
+    embrulha este transporte é criada no render da rota; uma sessão que o React
+    descarta (render recomeçado, StrictMode) não pode deixar um worker, uma
+    trilha de canvas e um encoder para trás — eram ~2 MB de worker cada, e
+    passaram de cem num só ir ao ar no app (ver container.desktop.ts).
+  */
+  type Recursos = {
+    readonly worker: Worker;
+    readonly isca: ReturnType<typeof criarIsca>;
+    readonly codificador: CodificadorUnico;
+  };
+  let recursos: Recursos | null = null;
+  const garantir = (): Recursos => {
+    if (recursos !== null) return recursos;
+    const worker = deps.criarWorker();
+    const canal = new MessageChannel();
+    worker.postMessage({ tipo: 'porta', porta: canal.port2 }, [canal.port2]);
+    const isca = criarIsca();
+    const criarCodificador =
+      deps.criarCodificador ?? ((d: DepsDoCodificador) => new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar));
+    const codificador = criarCodificador({
+      entregar: (chunk, transferir) => canal.port1.postMessage(chunk, transferir),
+      aoCapturar: isca.tique,
+      aoMudarFonte: () => recalcular(),
+    });
+    canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
+      if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo, m.data.senders);
+      else if (m.data.tipo === 'atraso') codificador.definirAtraso(m.data.quadros);
+    };
+    recursos = { worker, isca, codificador };
+    return recursos;
   };
 
   /** O id de cada transform: a pausa da cascata tira aquele sender da fila. */
@@ -104,7 +121,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     if (sender === undefined || sender.transform !== null) return;
     const id = crypto.randomUUID();
     idDoSender.set(sender, id);
-    sender.transform = new RTCRtpScriptTransform(worker, { id });
+    sender.transform = new RTCRtpScriptTransform(garantir().worker, { id });
   };
 
   let idrPeriodico: ReturnType<typeof setInterval> | null = null;
@@ -115,17 +132,17 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         const id = idDoSender.get(sender);
         if (id === undefined) return;
         if (pausado) {
-          worker.postMessage({ tipo: 'pausa', id } satisfies MensagemAoWorker);
+          recursos?.worker.postMessage({ tipo: 'pausa', id } satisfies MensagemAoWorker);
           return;
         }
         // Voltou porque o repassador falhou: o filho está com a imagem parada.
         // A primeira vaga recoloca o sender na fila, e o IDR sai já, com a
         // janela de entrada — sem esperar a janela da plateia nem o periódico.
-        codificador.pedirChave('entrada', 1);
+        recursos?.codificador.pedirChave('entrada', 1);
       },
       aoMudarAtividade: (ativa: boolean) => {
         if (idrPeriodico !== null) clearInterval(idrPeriodico);
-        idrPeriodico = ativa ? setInterval(() => codificador.pedirChave('repasse', 1), IDR_DO_REPASSE_MS) : null;
+        idrPeriodico = ativa ? setInterval(() => recursos?.codificador.pedirChave('repasse', 1), IDR_DO_REPASSE_MS) : null;
       },
       ...(deps.forcarRepasse === true ? { forcar: true } : {}),
     },
@@ -161,13 +178,13 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
 
   const alvo = () => {
     if (preset === null) return null;
-    const a = alvoDoCodificador({ preset, orcamento, prioridade, fonte: codificador.fonte() ?? fonte, piorEstimativa });
+    const a = alvoDoCodificador({ preset, orcamento, prioridade, fonte: recursos?.codificador.fonte() ?? fonte, piorEstimativa });
     limitadoPelaEstimativa = a.limitadoPelaEstimativa;
     return a;
   };
   const recalcular = (): void => {
     const a = alvo();
-    if (a !== null && iniciado) codificador.configurar(a);
+    if (a !== null && iniciado) recursos?.codificador.configurar(a);
   };
   const medirFonte = (track: MediaStreamTrack): void => {
     const s = track.getSettings();
@@ -185,6 +202,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         útil do degrau (24,9 Mbps em 1080p60). Um teto de isca (centenas de
         kbps) cegaria o estimador de banda — o defeito da ADR 0018.
       */
+      const { isca, codificador } = garantir();
       await mesh.publishVideo(isca.trilha, next);
       const a = alvo();
       if (a !== null) {
@@ -196,7 +214,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     async replaceVideo(track) {
       // A isca continua a mesma: só a captura do codificador troca.
       medirFonte(track);
-      codificador.trocarFonte(track);
+      recursos?.codificador.trocarFonte(track);
       recalcular();
     },
 
@@ -221,7 +239,8 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       // Freio rápido: a estimativa medida agora entra no alvo do codificador.
       piorEstimativa = s.piorAvailableBps;
       recalcular();
-      const c = codificador.estatisticas();
+      if (recursos === null) return s;
+      const c = recursos.codificador.estatisticas();
       const porPar = s.bitrateBps / Math.max(1, s.paresMedidos);
       return {
         ...s,
@@ -246,9 +265,10 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     async disconnect() {
       if (idrPeriodico !== null) clearInterval(idrPeriodico);
       idrPeriodico = null;
-      codificador.parar();
-      isca.trilha.stop();
-      worker.terminate();
+      recursos?.codificador.parar();
+      recursos?.isca.trilha.stop();
+      recursos?.worker.terminate();
+      recursos = null;
       await mesh.disconnect();
     },
   };

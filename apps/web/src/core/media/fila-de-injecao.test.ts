@@ -3,7 +3,9 @@ import {
   FilaDeInjecao,
   INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS,
   JANELA_DE_CHAVE_POR_SENDER_MS,
+  ARRASTO_SUSTENTADO_MS,
   JANELA_MINIMA_DE_CHAVE_MS,
+  LIMITE_DE_ARRASTO,
   QUADROS_GUARDADOS,
   SENDER_MORTO_MS,
   janelaDeChaveMs,
@@ -398,5 +400,80 @@ describe('FilaDeInjecao — tolerância de entrada (repassador, ADR 0031)', () =
     expect(fila.vaga('f').tipo).toBe('descartar');
     chega(true);
     expect(fila.vaga('f')).toMatchObject({ tipo: 'enviar', quadro: { seq: 3 } });
+  });
+});
+
+describe('FilaDeInjecao — um espectador lento não segura a sala', () => {
+  it('quem fica além do limite POR UM SEGUNDO enquanto outro está em dia é solto e espera IDR', () => {
+    const { fila, codificar, passar } = montar();
+    fila.entrou('rapido');
+    fila.entrou('lento');
+    codificar(true);
+    expect(fila.vaga('rapido').tipo).toBe('enviar');
+    expect(fila.vaga('lento').tipo).toBe('enviar');
+    for (let i = 0; i < LIMITE_DE_ARRASTO + 2; i += 1) {
+      codificar();
+      expect(fila.vaga('rapido').tipo).toBe('enviar'); // o rápido acompanha
+    }
+    // O lento não teve vaga: está LIMITE+2 atrás e seguraria o codificador.
+    expect(fila.atraso()).toBe(LIMITE_DE_ARRASTO + 2);
+    // Um instante atrás não basta (rajada do pacer): só sustentado.
+    expect(fila.soltarArrastados()).toBe(0);
+    passar(ARRASTO_SUSTENTADO_MS - 1);
+    fila.vaga('rapido');
+    // O lento continua vivo (teve vaga há pouco o bastante para não ser "morto").
+    expect(fila.soltarArrastados()).toBe(0);
+    passar(1);
+    expect(fila.soltarArrastados()).toBe(1);
+    expect(fila.atraso()).toBe(0);
+    // Solto, ele espera o próximo IDR na ponta.
+    expect(fila.vaga('lento')).toEqual({ tipo: 'descartar', pedirChave: true });
+    codificar(true);
+    expect(fila.vaga('lento')).toMatchObject({ tipo: 'enviar', quadro: { chave: true } });
+  });
+
+  it('com um sender só, ninguém é solto: a fila é a dele', () => {
+    const { fila, codificar, passar } = montar();
+    fila.entrou('unico');
+    codificar(true);
+    fila.vaga('unico');
+    for (let i = 0; i < LIMITE_DE_ARRASTO + 5; i += 1) codificar();
+    fila.soltarArrastados();
+    passar(ARRASTO_SUSTENTADO_MS);
+    expect(fila.soltarArrastados()).toBe(0);
+    expect(fila.atraso()).toBe(LIMITE_DE_ARRASTO + 5);
+  });
+
+  it('todos atrasados juntos (o codificador é que está rápido): ninguém é solto', () => {
+    const { fila, codificar, passar } = montar();
+    fila.entrou('a');
+    fila.entrou('b');
+    codificar(true);
+    fila.vaga('a');
+    fila.vaga('b');
+    for (let i = 0; i < LIMITE_DE_ARRASTO + 3; i += 1) codificar();
+    fila.soltarArrastados();
+    passar(ARRASTO_SUSTENTADO_MS);
+    expect(fila.soltarArrastados()).toBe(0);
+  });
+
+  it('quem volta para dentro do limite zera o relógio', () => {
+    const { fila, codificar, passar } = montar();
+    fila.entrou('a');
+    fila.entrou('b');
+    codificar(true);
+    fila.vaga('a');
+    fila.vaga('b');
+    for (let i = 0; i < LIMITE_DE_ARRASTO + 2; i += 1) {
+      codificar();
+      fila.vaga('a');
+    }
+    fila.soltarArrastados();
+    passar(ARRASTO_SUSTENTADO_MS / 2);
+    // b alcança.
+    while (fila.vaga('b').tipo === 'enviar');
+    fila.soltarArrastados();
+    passar(ARRASTO_SUSTENTADO_MS / 2 + 1);
+    expect(fila.soltarArrastados()).toBe(0);
   });
 });

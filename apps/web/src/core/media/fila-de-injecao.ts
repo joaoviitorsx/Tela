@@ -59,6 +59,32 @@ export const JANELA_DE_CHAVE_POR_SENDER_MS = 40;
 export const INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS = 2_000;
 
 /**
+ * Quadros que um sender pode ficar atrás da ponta enquanto OUTRO está em dia,
+ * antes de ser solto da contrapressão. ~100 ms a 60 fps.
+ *
+ * A contrapressão (`atraso()`) faz o codificador pular quadro de captura
+ * enquanto algum sender tem fila: com o MÁXIMO entre todos, um espectador de
+ * rede ruim — cujo caminho congestionado faz a isca dele produzir poucas
+ * vagas — segurava a imagem da sala inteira. Era "slide" para todo mundo por
+ * causa de um. Solto, ele pula para o próximo IDR (pedido dentro da cota de
+ * `INTERVALO_MINIMO_DE_CHAVE_POR_SENDER_MS`) e só ele vê o salto.
+ *
+ * Os parâmetros de encoding continuam idênticos para todos (R5); o orçamento
+ * continua coletivo (a malha desce o degrau de todos pela pior estimativa).
+ * O que deixa de ser coletivo é só a FILA de um caminho que não acompanha.
+ */
+export const LIMITE_DE_ARRASTO = 12;
+/**
+ * Por quanto tempo o sender precisa ficar além do limite, SEM PARAR, para ser
+ * solto. Medido: em loopback um sender passa de 6 quadros atrás por instantes
+ * o tempo todo (rajadas do pacer, fila do encoder da isca). Soltar no primeiro
+ * instante virou 15 IDRs em 30 s e a sala a 22 fps (`e2e/um-encode.e2e.mjs`).
+ * Só quem fica para trás por um segundo inteiro tem um caminho que não
+ * acompanha — o caso que esta regra existe para isolar.
+ */
+export const ARRASTO_SUSTENTADO_MS = 1_000;
+
+/**
  * Por quanto tempo um pedido de quadro-chave fica de molho depois do último IDR.
  *
  * `entrada` não paga a janela da plateia: quem acabou de entrar vê tela preta
@@ -77,6 +103,8 @@ type EstadoDoSender = {
   ultimaVaga: number;
   /** Instante a partir do qual um pedido deste sender vale de novo. */
   chaveLiberadaEm: number;
+  /** Desde quando está além de `LIMITE_DE_ARRASTO`, sem voltar; `null` = em dia. */
+  atrasadoDesde: number | null;
 };
 
 export type OpcoesDaFila = {
@@ -116,7 +144,13 @@ export class FilaDeInjecao<D> {
   }
 
   entrou(sender: string): void {
-    this.estados.set(sender, { proximo: -1, esperandoChave: true, ultimaVaga: this.agora(), chaveLiberadaEm: -Infinity });
+    this.estados.set(sender, {
+      proximo: -1,
+      esperandoChave: true,
+      ultimaVaga: this.agora(),
+      chaveLiberadaEm: -Infinity,
+      atrasadoDesde: null,
+    });
   }
 
   saiu(sender: string): void {
@@ -177,6 +211,38 @@ export class FilaDeInjecao<D> {
       return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
     return { tipo: 'descartar', pedirChave: false };
+  }
+
+  /**
+   * Solta da contrapressão quem ficou para trás por `ARRASTO_SUSTENTADO_MS`
+   * enquanto outro está em dia (ver `LIMITE_DE_ARRASTO`): ele passa a esperar
+   * o próximo IDR. Devolve
+   * quantos soltou. O(N) senders, chamado a cada leitura de atraso (~10 Hz).
+   *
+   * Com um sender só, ninguém é solto: aí a fila É a do único espectador, e
+   * pular para IDR a cada 100 ms trocaria lentidão por IDRs em rajada.
+   */
+  soltarArrastados(): number {
+    const agora = this.agora();
+    const vivo = (s: EstadoDoSender) => agora - s.ultimaVaga <= SENDER_MORTO_MS && !s.esperandoChave && s.proximo >= 0;
+    let emDia = false;
+    for (const s of this.estados.values()) {
+      if (!vivo(s)) continue;
+      if (this.ultimoSeq + 1 - s.proximo > LIMITE_DE_ARRASTO) s.atrasadoDesde ??= agora;
+      else {
+        s.atrasadoDesde = null;
+        emDia = true;
+      }
+    }
+    if (!emDia) return 0;
+    let soltos = 0;
+    for (const s of this.estados.values()) {
+      if (!vivo(s) || s.atrasadoDesde === null || agora - s.atrasadoDesde < ARRASTO_SUSTENTADO_MS) continue;
+      s.esperandoChave = true;
+      s.atrasadoDesde = null;
+      soltos += 1;
+    }
+    return soltos;
   }
 
   /**

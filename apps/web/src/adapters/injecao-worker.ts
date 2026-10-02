@@ -30,6 +30,8 @@ export type MotivoDeChave = 'pli' | 'entrada' | 'atrasado';
 export type AvisoDoWorker =
   | { readonly tipo: 'chave'; readonly motivo: MotivoDeChave; readonly senders: number }
   | { readonly tipo: 'atraso'; readonly quadros: number }
+  /** Espectadores soltos da contrapressão por ficarem para trás (ver `LIMITE_DE_ARRASTO`). */
+  | { readonly tipo: 'arrasto'; readonly soltos: number }
   /** Repassador: hora de tocar a isca (relógio livre, ver `RELOGIO_DO_REPASSE_HZ`). */
   | { readonly tipo: 'tique' }
   /** Repassador: quadros copiados da recepção e vagas servidas, para o relatório. */
@@ -91,7 +93,11 @@ function avisar(aviso: AvisoDoWorker): void {
 // Contrapressão: o codificador pula quadro de conteúdo enquanto houver fila.
 // O repassador não tem codificador a segurar (ver o relógio dele abaixo).
 setInterval(() => {
-  if (papel === 'anfitriao') avisar({ tipo: 'atraso', quadros: fila.atraso() });
+  if (papel !== 'anfitriao') return;
+  // Antes do atraso: um caminho lento não pode segurar a sala inteira.
+  const soltos = fila.soltarArrastados();
+  if (soltos > 0) avisar({ tipo: 'arrasto', soltos });
+  avisar({ tipo: 'atraso', quadros: fila.atraso() });
 }, 100);
 
 escopo.onmessage = (e) => {

@@ -621,6 +621,20 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
                     imagem. Só quantos, para quantos — nada de endereço.
                   */
                   ...(stats.repasse === null ? [] : [{ rotulo: 'AMIGOS REPASSAM', valor: stats.repasse }]),
+                  /*
+                    Quadros que o codificador deixou de lado porque a fila de
+                    algum espectador não esvaziava: é fluidez perdida pela REDE
+                    de alguém, não pela máquina.
+                  */
+                  ...(stats.segurados === null
+                    ? []
+                    : [
+                        {
+                          rotulo: 'SEGURADOS',
+                          valor: stats.segurados,
+                          tom: stats.seguradosAlto ? ('alerta' as const) : ('neutro' as const),
+                        },
+                      ]),
                 ]}
               />
 

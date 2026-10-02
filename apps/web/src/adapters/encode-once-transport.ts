@@ -58,6 +58,9 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     readonly codificador: CodificadorUnico;
   };
   let recursos: Recursos | null = null;
+  /** Espectadores soltos da contrapressão desde a última leitura de estatísticas. */
+  let soltosDesdeALeitura = 0;
+  let ultimaLeitura = performance.now();
   const garantir = (): Recursos => {
     if (recursos !== null) return recursos;
     const worker = deps.criarWorker();
@@ -74,6 +77,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
       if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo, m.data.senders);
       else if (m.data.tipo === 'atraso') codificador.definirAtraso(m.data.quadros);
+      else if (m.data.tipo === 'arrasto') soltosDesdeALeitura += m.data.soltos;
     };
     recursos = { worker, isca, codificador };
     return recursos;
@@ -206,6 +210,11 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       recalcular();
       if (recursos === null) return s;
       const c = recursos.codificador.estatisticas();
+      const agora = performance.now();
+      const segundos = Math.max(0.001, (agora - ultimaLeitura) / 1000);
+      ultimaLeitura = agora;
+      const fila = { seguradosPorSegundo: c.segurados / segundos, soltos: soltosDesdeALeitura };
+      soltosDesdeALeitura = 0;
       const porPar = s.bitrateBps / Math.max(1, s.paresMedidos);
       return {
         ...s,
@@ -217,6 +226,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         qp: null,
         msPorQuadro: c.msPorQuadro,
         encoderImplementation: c.implementacao,
+        fila,
         /*
           Os motivos que as malhas leem, com a mesma semântica do Chromium:
           `cpu` quando o encoder não dá conta, `bandwidth` quando a estimativa

@@ -14,6 +14,8 @@ const STATS: ReadableStats = {
   bpp: '0,113',
   bppBaixo: false,
   repasse: null,
+  segurados: null,
+  seguradosAlto: false,
   encoder: 'hardware',
   qp: '—',
   latencia: '—',

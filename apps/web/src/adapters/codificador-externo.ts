@@ -121,6 +121,8 @@ export class CodificadorExterno implements CodificadorUnico {
       hardware: true,
       // Um quadro levando mais que o período inteiro: a GPU não dá conta.
       sobrecarregado: this.msPorQuadro !== null && alvo !== null && this.msPorQuadro > 1000 / alvo.fps,
+      // O helper aplica o `atraso` lá dentro e não conta o que pulou.
+      segurados: 0,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
       implementacao: this.falhou === null ? 'nativo·NVENC' : `nativo·falhou(${this.falhou})`,

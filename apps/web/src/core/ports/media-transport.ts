@@ -136,6 +136,14 @@ export type MediaStats = {
    */
   readonly repasse?: { readonly repassadores: number; readonly filhos: number };
   /**
+   * "Um encode" (D0b): quadros de captura que o codificador deixou de lado
+   * por segundo porque os senders tinham fila (contrapressão), e quantos
+   * espectadores foram soltos por ficar para trás (`LIMITE_DE_ARRASTO`).
+   * É a parte da queda de fps que vem da REDE de alguém, e não da máquina.
+   * Ausente fora do "um encode".
+   */
+  readonly fila?: { readonly seguradosPorSegundo: number; readonly soltos: number };
+  /**
    * A estimativa CRUA de cada caminho, por peer.
    *
    * O governador precisa suavizar cada uma separadamente antes de tirar o

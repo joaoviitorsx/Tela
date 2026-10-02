@@ -98,6 +98,10 @@ export type AmostraDiagnostico = {
   readonly msPorQuadro: number | null;
   readonly limitador: string;
   readonly orcamentoKbps: number | null;
+  /** Só no transmissor "um encode": quadros segurados por fila, por segundo. */
+  readonly segurados?: number;
+  /** Espectadores soltos da contrapressão por ficarem para trás, nesta amostra. */
+  readonly soltos?: number;
   /** Só no espectador. */
   readonly jitterMs: number | null;
   readonly processamentoMs: number | null;
@@ -260,6 +264,9 @@ export class Diario {
       qp: stats.qp === null ? null : Math.round(stats.qp),
       msPorQuadro: stats.msPorQuadro === null ? null : Number(stats.msPorQuadro.toFixed(1)),
       limitador: stats.limitation,
+      ...(stats.fila === undefined
+        ? {}
+        : { segurados: Number(stats.fila.seguradosPorSegundo.toFixed(1)), soltos: stats.fila.soltos }),
       orcamentoKbps:
         stats.piorAvailableBps === null ? null : Math.round(stats.piorAvailableBps / 1000),
       jitterMs:

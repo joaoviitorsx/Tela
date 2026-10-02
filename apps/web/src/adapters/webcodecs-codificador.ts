@@ -40,6 +40,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private readonly pedidos: Record<string, number> = {};
   private hardware: boolean | null = null;
   private descartesPorSobrecarga = 0;
+  private segurados = 0;
   private readonly entrada = new Map<number, number>(); // timestamp → quando entrou
   private somaMs = 0;
   private amostrasMs = 0;
@@ -112,6 +113,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.amostrasMs = 0;
     const sobrecarregado = this.descartesPorSobrecarga > 0;
     this.descartesPorSobrecarga = 0;
+    const segurados = this.segurados;
+    this.segurados = 0;
     const c = this.configurado;
     return {
       width: c?.width ?? 0,
@@ -121,6 +124,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       bitrateAlvo: c?.bitrate ?? 0,
       hardware: this.hardware,
       sobrecarregado,
+      segurados,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
       implementacao:
@@ -211,6 +215,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
     // Contrapressão dos senders — exceto quando um IDR foi pedido.
     if (this.atraso >= ATRASO_TOLERADO && !this.pedirChaveAgora) {
+      this.segurados += 1;
       quadro.close();
       return;
     }

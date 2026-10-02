@@ -35,6 +35,13 @@ export type ReadableStats = {
    * `null` sem repasse. Nunca fala de endereço: só quantos.
    */
   readonly repasse: string | null;
+  /**
+   * Quadros de captura segurados por fila de algum espectador, por segundo
+   * ("um encode"). `null` fora do "um encode" ou sem nada segurado.
+   */
+  readonly segurados: string | null;
+  /** Acima de 5/s a fila de alguém já custa fluidez a quem assiste. */
+  readonly seguradosAlto: boolean;
   /** QP médio formatado, ou `—`. Acima de 37 o Chromium derruba resolução. */
   readonly qp: string;
   /**
@@ -91,6 +98,9 @@ const QUADRO_60FPS_MS = 1000 / 60;
 
 const EM_SOFTWARE = /libvpx|libaom|openh264|ffmpeg|dav1d|libx264/i;
 
+/** Quadros segurados por segundo a partir dos quais a fluidez de quem assiste já cai. */
+const LIMIAR_SEGURADOS = 5;
+
 const MOTIVOS: Record<MediaStats['limitation'], string | null> = {
   none: null,
   // Diagnóstico honesto, não eufemismo. O usuário merece saber que o problema
@@ -113,6 +123,8 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         bpp: '—',
         bppBaixo: false,
         repasse: null,
+        segurados: null,
+        seguradosAlto: false,
         encoder: '—',
         qp: '—',
         qpAlto: false,
@@ -137,6 +149,11 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         stats.repasse !== undefined && stats.repasse.filhos > 0
           ? `${stats.repasse.repassadores} → ${stats.repasse.filhos}`
           : null,
+      segurados:
+        stats.fila !== undefined && stats.fila.seguradosPorSegundo >= 0.5
+          ? `${Math.round(stats.fila.seguradosPorSegundo)}/s`
+          : null,
+      seguradosAlto: stats.fila !== undefined && stats.fila.seguradosPorSegundo > LIMIAR_SEGURADOS,
       encoder: impl === null ? '—' : EM_SOFTWARE.test(impl) ? 'software' : 'hardware',
       qp: stats.qp === null ? '—' : stats.qp.toFixed(0),
       // `kHighH264QpThreshold = 37` no libwebrtc: é onde o quality scaler age.

@@ -21,6 +21,8 @@ export type EstatisticasDoCodificador = {
   /** O encoder não está dando conta: é CPU/GPU, não rede. */
   readonly sobrecarregado: boolean;
   readonly idrs: number;
+  /** Quadros de captura deixados de lado por fila dos senders, desde a última leitura. */
+  readonly segurados: number;
   /** Pedidos de quadro-chave recebidos, por motivo — diagnóstico. */
   readonly pedidosDeChave: Readonly<Record<string, number>>;
   /** Rótulo para o console da transmissão (`encoderImplementation`). */

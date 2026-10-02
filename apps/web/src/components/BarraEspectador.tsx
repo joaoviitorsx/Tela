@@ -40,6 +40,15 @@ type Props = {
   readonly aoTelaCheia: () => void;
   readonly copiouDiagnostico: boolean;
   readonly aoCopiarDiagnostico: () => void;
+  /**
+   * ABRIR NO APP, discreto. `null` onde não há app (celular, Mac, Safari) ou
+   * onde a página já é o app. `falhou`: a última tentativa não achou o Tela.
+   */
+  readonly abrirNoApp?: {
+    readonly aoAbrir: () => void;
+    readonly tentando: boolean;
+    readonly falhou: boolean;
+  } | null;
 };
 
 /**
@@ -155,6 +164,23 @@ export function BarraEspectador(p: Props) {
         >
           {p.copiouDiagnostico ? 'COPIADO' : 'DIAGNÓSTICO'}
         </button>
+
+        {p.abrirNoApp != null && (
+          <button
+            type="button"
+            onClick={p.abrirNoApp.aoAbrir}
+            disabled={p.abrirNoApp.tentando}
+            title={
+              p.abrirNoApp.falhou
+                ? 'O Tela Desktop não respondeu. Ele está instalado?'
+                : 'Abrir este canal no Tela Desktop'
+            }
+            aria-label="Abrir este canal no Tela Desktop"
+            className="h-11 border-0 border-l-2 border-line bg-transparent px-3 font-[family-name:var(--font-pixel)] text-[11px] text-muted hover:bg-key hover:text-accent-hi disabled:opacity-60"
+          >
+            {p.abrirNoApp.tentando ? 'ABRINDO…' : p.abrirNoApp.falhou ? '! SEM APP' : 'ABRIR NO APP'}
+          </button>
+        )}
 
         <div className="ml-auto flex items-center border-l-2 border-edge">
           <BotaoBarra rotulo="Esconder controles (H)" aoClicar={p.aoEsconder} largo>

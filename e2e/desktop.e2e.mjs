@@ -43,8 +43,8 @@ try {
   const exe = process.env.TELA_EXE;
   app = await _electron.launch(
     exe
-      ? { executablePath: exe, args: [], env: { ...process.env, TELA_NATIVO: '0' } }
-      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: { ...process.env, TELA_NATIVO: '0' } },
+      ? { executablePath: exe, args: [], env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0' } }
+      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0' } },
   );
   const page = await app.firstWindow();
   await page.waitForURL(/^app:\/\//, { timeout: 10_000 }).catch(() => undefined);
@@ -76,7 +76,7 @@ try {
   console.log(`   ${JSON.stringify(estado)}`);
   ok(estado.caminho === '/', `rota inicial é a home (${estado.caminho})`);
   ok(estado.ponte !== null && estado.ponte.plataforma === process.platform, `ponte presente (${estado.ponte?.plataforma}, v${estado.ponte?.versao})`);
-  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(['abrirNoNavegador', 'aoMudarVisibilidade', 'capacidades', 'capturaNativa', 'escolherFonte', 'listarFontes', 'plataforma', 'versao']), 'a ponte expõe só as operações nomeadas');
+  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(['abrirNoNavegador', 'aoAbrirCanal', 'aoMudarVisibilidade', 'capacidades', 'capturaNativa', 'escolherFonte', 'listarFontes', 'plataforma', 'versao']), 'a ponte expõe só as operações nomeadas');
   ok(!estado.node, 'nada de Node na página');
   ok(!estado.baixarApp, 'sem BAIXAR APP dentro do próprio app');
 
@@ -89,6 +89,58 @@ try {
   await page.getByRole('button', { name: /transmitir/i }).first().click();
   await esperar(500);
   ok((await page.evaluate(() => location.pathname)) === '/', 'TRANSMITIR volta à home');
+
+  console.log('\n2b. ASSISTIR: cola o link e abre o canal');
+  const assistir = page.getByRole('button', { name: /^ASSISTIR$/ }).first();
+  ok(await assistir.isVisible(), 'o trilho tem ASSISTIR');
+  await assistir.click();
+  await esperar(400);
+  const campo = page.getByLabel('LINK OU NOME DO CANAL');
+  // `isVisible` não espera: logo depois de uma troca de rota o diálogo pode
+  // abrir uns quadros depois do clique.
+  await campo.waitFor({ state: 'visible', timeout: 3000 }).catch(() => undefined);
+  if (!ok(await campo.isVisible(), 'o painel ASSISTIR abre com o campo')) {
+    console.log('   diagnóstico:', JSON.stringify(await page.evaluate(() => ({
+      caminho: location.pathname,
+      abertos: [...document.querySelectorAll('dialog')].filter((d) => d.open).map((d) => d.querySelector('h2')?.textContent),
+      noPonto: (() => {
+        const b = [...document.querySelectorAll('nav button')].find((x) => x.textContent.includes('ASSISTIR'));
+        if (!b) return 'sem botão';
+        const r = b.getBoundingClientRect();
+        return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.outerHTML.slice(0, 100);
+      })(),
+    }))));
+  }
+  await campo.fill('???');
+  await page.getByRole('button', { name: /^ASSISTIR$/ }).last().click();
+  await esperar(300);
+  ok((await page.evaluate(() => location.pathname)) === '/', 'entrada inválida não navega');
+  await campo.fill('https://tela.gg/maria');
+  await page.getByRole('button', { name: /^ASSISTIR$/ }).last().click();
+  await esperar(800);
+  const noCanal = await page.evaluate(() => ({
+    caminho: location.pathname,
+    marca: window.__marca,
+    ativo: document.querySelector('nav button[aria-current="page"]')?.textContent ?? null,
+  }));
+  ok(noCanal.caminho === '/maria', `o link colado abre /maria (${noCanal.caminho})`);
+  ok(noCanal.marca === 'sem-recarregar', 'sem recarregar a página');
+  ok(/ASSISTIR/.test(noCanal.ativo ?? ''), `ASSISTIR aceso no canal (${noCanal.ativo})`);
+
+  console.log('\n2c. Deep link tela://assistir/<canal> (second-instance, formato Windows)');
+  // O main trata `second-instance`, `open-url` e o argv do primeiro lançamento
+  // pelo MESMO caminho; emitir o evento exercita o do Windows/Linux sem abrir
+  // outro processo e sem registrar o esquema na máquina.
+  await app.evaluate(({ app: a }) => a.emit('second-instance', {}, ['Tela.exe', '--', '"tela://assistir/joao?x=1"'], ''));
+  await esperar(800);
+  const porLink = await page.evaluate(() => ({ caminho: location.pathname, marca: window.__marca }));
+  ok(porLink.caminho === '/joao', `o link leva a /joao (${porLink.caminho})`);
+  ok(porLink.marca === 'sem-recarregar', 'sem recarregar a página');
+  await app.evaluate(({ app: a }) => a.emit('second-instance', {}, ['tela', 'tela://assistir/../recuperar', 'tela://assistir/pedro'], ''));
+  await esperar(500);
+  ok((await page.evaluate(() => location.pathname)) === '/joao', 'link malformado é ignorado');
+  await page.getByRole('button', { name: /transmitir/i }).first().click();
+  await esperar(500);
 
   console.log('\n3. Modo escondido');
   ok((await page.evaluate(() => document.documentElement.dataset.aba)) === 'visivel', 'visível: animações rodando');

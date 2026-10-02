@@ -8,7 +8,7 @@ import {
 } from '../core/intro/timeline.js';
 import { PRAZO_MODELO_MS, aguentaCoreografia, decideModoAbertura } from '../core/intro/probe.js';
 import type { PalcoAbertura, PlacaDaTela } from '../core/ports/intro-stage.js';
-import { abrirPalcoAbertura, suporteDeAbertura } from '../container.js';
+import { aberturaPermitida, aberturaVista, abrirPalcoAbertura, suporteDeAbertura } from '../container.js';
 
 /**
  * A abertura, do primeiro quadro ao canvas removido.
@@ -165,9 +165,15 @@ export function useAbertura(): Abertura {
     const encerra = () => {
       if (!vivo) return;
       vivo = false;
+      aberturaVista();
       desmontaRecursos();
       setMontado(false);
     };
+
+    if (!aberturaPermitida()) {
+      encerra();
+      return;
+    }
 
     const inicioSondagem = performance.now();
     const temWebGL = suporteDeAbertura();

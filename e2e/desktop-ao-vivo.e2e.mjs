@@ -75,8 +75,8 @@ try {
   const exe = process.env.TELA_EXE;
   app = await _electron.launch(
     exe
-      ? { executablePath: exe, args: [], env: { ...process.env, TELA_NATIVO: '0' } }
-      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: { ...process.env, TELA_NATIVO: '0' } },
+      ? { executablePath: exe, args: [], env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0' } }
+      : { executablePath: ELECTRON, args: ['.'], cwd: `${RAIZ}apps/desktop`, env: { ...process.env, TELA_NATIVO: '0', TELA_REGISTRAR_ESQUEMA: '0' } },
   );
   const host = await app.firstWindow();
   const erros = [];
@@ -108,6 +108,18 @@ try {
   ok(noAr.caminho === '/transmitir', `rota de transmissão (${noAr.caminho})`);
   ok(noAr.texto.includes(`${new URL(WEB).host}/${slug}`), 'o link mostrado é a origem pública, não app://');
   ok(noAr.trilho.length > 0 && noAr.trilho.every(Boolean), 'trilho travado ao vivo');
+
+  console.log('\n1b. Link tela://assistir/<canal> ao vivo não tira a pessoa da transmissão');
+  await app.evaluate(({ app: a }) => a.emit('second-instance', {}, ['tela', '--', '"tela://assistir/outrocanal"'], ''));
+  await esperar(800);
+  const comLink = await host.evaluate(() => ({
+    caminho: location.pathname,
+    aviso: document.body.innerText.includes('Você está ao vivo'),
+    trilho: [...document.querySelectorAll('nav button')].map((b) => b.disabled),
+  }));
+  ok(comLink.caminho === '/transmitir', `continua em /transmitir (${comLink.caminho})`);
+  ok(comLink.aviso, 'aviso "Você está ao vivo" aparece, sem bloquear');
+  ok(comLink.trilho.every(Boolean), 'ASSISTIR e o resto do trilho seguem travados');
 
   console.log(`\n2. Espectador web em ${WEB}/${slug}`);
   navegador = await chromium.launch({ headless: true });

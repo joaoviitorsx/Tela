@@ -27,6 +27,8 @@ export function itemAtivo(pathname: string): ItemDoTrilho | null {
     case 'home':
     case 'broadcast':
       return 'transmitir';
+    case 'viewer':
+      return 'assistir';
     case 'recover':
       return 'canal';
     default:
@@ -34,7 +36,8 @@ export function itemAtivo(pathname: string): ItemDoTrilho | null {
   }
 }
 
-export const DESTINO: Record<ItemDoTrilho, string> = {
+/** Os itens que são rotas. ASSISTIR não é: abre o painel onde se cola o link. */
+export const DESTINO: Record<Exclude<ItemDoTrilho, 'assistir'>, string> = {
   transmitir: '/',
   canal: '/recuperar',
 };

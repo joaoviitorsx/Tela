@@ -85,6 +85,13 @@ export interface PonteDesktop {
   aoMudarVisibilidade(ouvinte: (visivel: boolean) => void): () => void;
   /** Abre um link `https:` no navegador do sistema. O main valida e recusa o resto. */
   abrirNoNavegador(url: string): void;
+  /**
+   * Chegou um `tela://assistir/<canal>` (clique no link com o app instalado).
+   * O main já validou o slug; a página valida DE NOVO e decide se pode
+   * navegar — ao vivo, não pode. Links que chegaram antes da assinatura (o app
+   * abriu pelo link) são entregues ao primeiro ouvinte.
+   */
+  aoAbrirCanal(ouvinte: (slug: string) => void): () => void;
 
   capacidades(): Promise<CapacidadesDesktop>;
 
@@ -134,6 +141,8 @@ export const CANAIS = {
   capturaNativaPorta: 'tela:captura-nativa-porta',
   /** main → renderer, `FimDaCapturaNativa` */
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
+  /** main → renderer, `string` (slug já validado) */
+  abrirCanal: 'tela:abrir-canal',
 } as const;
 
 /**

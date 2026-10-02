@@ -45,6 +45,7 @@ interface PonteDesktop {
   readonly versao: string;
   aoMudarVisibilidade(ouvinte: (visivel: boolean) => void): () => void;
   abrirNoNavegador(url: string): void;
+  aoAbrirCanal(ouvinte: (slug: string) => void): () => void;
   capacidades(): Promise<CapacidadesDesktop>;
   listarFontes(): Promise<readonly FonteDeCaptura[]>;
   escolherFonte(id: string | null): Promise<boolean>;
@@ -66,6 +67,7 @@ const CANAIS = {
   capturaNativaParar: 'tela:captura-nativa-parar',
   capturaNativaPorta: 'tela:captura-nativa-porta',
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
+  abrirCanal: 'tela:abrir-canal',
 } as const;
 
 /** Cópia de `MARCA_DA_PORTA` em `ponte.ts`. */
@@ -93,6 +95,20 @@ function assinar<T>(canal: string, ouvinte: (valor: T) => void): () => void {
   };
 }
 
+/*
+  Canais que chegam por `tela://assistir/<slug>`. O preload roda ANTES do
+  React: um link que abriu o app pode chegar sem ninguém assinando ainda.
+  Guarda numa fila e entrega quando o primeiro ouvinte aparecer — sem isso o
+  clique no link abria o app na home, sem canal nenhum.
+*/
+const canaisAguardando: string[] = [];
+const ouvintesDeCanal = new Set<(slug: string) => void>();
+ipcRenderer.on(CANAIS.abrirCanal, (_evento, slug: unknown) => {
+  if (typeof slug !== 'string') return;
+  if (ouvintesDeCanal.size === 0) canaisAguardando.push(slug);
+  else for (const ouvinte of ouvintesDeCanal) ouvinte(slug);
+});
+
 const ponte: PonteDesktop = {
   plataforma: plataforma(),
   versao: versao(),
@@ -106,6 +122,17 @@ const ponte: PonteDesktop = {
   abrirNoNavegador(url) {
     // Validar é com o main (`seguranca.ts`): ele conhece a origem do frame.
     ipcRenderer.send(CANAIS.abrirNoNavegador, String(url));
+  },
+
+  aoAbrirCanal(ouvinte) {
+    ouvintesDeCanal.add(ouvinte);
+    // Síncrono: com o StrictMode a primeira assinatura é desmontada em seguida,
+    // e uma entrega adiada cairia num ouvinte que já saiu. A navegação é um
+    // `pushState`, que sobrevive à remontagem.
+    for (const slug of canaisAguardando.splice(0)) ouvinte(slug);
+    return () => {
+      ouvintesDeCanal.delete(ouvinte);
+    };
   },
 
   capacidades: () => ipcRenderer.invoke(CANAIS.capacidades) as Promise<CapacidadesDesktop>,

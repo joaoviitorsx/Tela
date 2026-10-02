@@ -52,6 +52,13 @@ import {
   tipoDaFonte,
   usaSeletorProprio,
 } from './fontes-de-captura.js';
+import {
+  argumentosDoRegistro,
+  canalDoArgv,
+  canalDoLinkProfundo,
+  deveRegistrarEsquema,
+  ESQUEMA_LINK,
+} from './link-profundo.js';
 import { ESQUEMA_APP, ORIGEM_APP, PAGINA_UNICA, resolverArquivo } from './protocolo-app.js';
 import {
   decidirJanelaNova,
@@ -79,6 +86,8 @@ const CANAIS = {
   capturaNativaParar: 'tela:captura-nativa-parar',
   capturaNativaPorta: 'tela:captura-nativa-porta',
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
+  /** main → renderer, `string` (slug já validado) */
+  abrirCanal: 'tela:abrir-canal',
 } as const;
 
 /**
@@ -161,12 +170,17 @@ function avisarVisibilidade(j: BrowserWindow, valor: boolean): void {
 }
 
 function criarJanela(): BrowserWindow {
+  paginaPronta = false;
   const j = new BrowserWindow({
     title: 'Tela',
     width: 1280,
     height: 800,
     minWidth: 960,
     minHeight: 600,
+    // Tela cheia do espectador (F, duplo clique): o `requestFullscreen` da
+    // página precisa de uma janela que possa ir para tela cheia. É o padrão do
+    // Electron; fica escrito porque o D8 depende dele. O `Esc` sai sozinho.
+    fullscreenable: true,
     backgroundColor: '#000000',
     // Aparece pronta: sem o flash branco antes do primeiro quadro da página.
     show: false,
@@ -199,7 +213,16 @@ function criarJanela(): BrowserWindow {
   j.on('restore', () => avisarVisibilidade(j, true));
   j.on('show', () => avisarVisibilidade(j, true));
   // Ao carregar, a página recebe o estado atual — pode ter nascido minimizada.
-  j.webContents.on('did-finish-load', () => avisarVisibilidade(j, visivel(j)));
+  j.webContents.on('did-finish-load', () => {
+    avisarVisibilidade(j, visivel(j));
+    paginaPronta = true;
+    // Um link que chegou antes da página existir (lançamento a frio pelo link).
+    if (canalPendente !== null) {
+      const slug = canalPendente;
+      canalPendente = null;
+      j.webContents.send(CANAIS.abrirCanal, slug);
+    }
+  });
 
   j.webContents.on('render-process-gone', (_evento, detalhes) => {
     // D4 mostra "transmissão caiu" e preserva o diagnóstico (§3.1, §5). Por
@@ -226,6 +249,44 @@ function mostrarJanela(): void {
   if (janela.isMinimized()) janela.restore();
   janela.show();
   janela.focus();
+}
+
+/* ------------------------------------------------- link profundo (D8) */
+
+/**
+ * O canal que chegou por `tela://assistir/<slug>` e ainda não pôde ser
+ * entregue: o app abriu PELO link, e a página só existe depois do load.
+ */
+let canalPendente: string | null = null;
+let paginaPronta = false;
+
+/**
+ * Entrega um canal já validado ao renderer e traz a janela. O main NÃO decide
+ * se pode navegar: quem sabe que a pessoa está ao vivo é a rota
+ * (`/transmitir`), e é ela quem recusa. O link só abre canal — nunca captura.
+ */
+function abrirCanal(slug: string): void {
+  if (!app.isReady()) {
+    canalPendente = slug;
+    return;
+  }
+  canalPendente = slug;
+  mostrarJanela();
+  if (janela !== null && !janela.isDestroyed() && paginaPronta && !janela.webContents.isLoading()) {
+    canalPendente = null;
+    janela.webContents.send(CANAIS.abrirCanal, slug);
+  }
+}
+
+function registrarEsquema(): void {
+  if (!deveRegistrarEsquema(app.isPackaged, process.env)) return;
+  const args = argumentosDoRegistro(process.defaultApp === true, process.argv, (c) => resolve(c));
+  if (args === null && process.defaultApp === true) return;
+  const registrou =
+    args === null
+      ? app.setAsDefaultProtocolClient(ESQUEMA_LINK)
+      : app.setAsDefaultProtocolClient(ESQUEMA_LINK, process.execPath, [...args]);
+  if (!registrou) console.error('[tela] não foi possível registrar o esquema tela://');
 }
 
 /**
@@ -485,7 +546,18 @@ function registrarIpc(): void {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', mostrarJanela);
+  app.on('second-instance', (_evento, argv) => {
+    const slug = canalDoArgv(argv);
+    if (slug === null) mostrarJanela();
+    else abrirCanal(slug);
+  });
+
+  // macOS entrega o esquema por evento, e pode ser antes do `ready`.
+  app.on('open-url', (evento, url) => {
+    evento.preventDefault();
+    const slug = canalDoLinkProfundo(url);
+    if (slug !== null) abrirCanal(slug);
+  });
 
   // O menu padrão do Electron (File/Edit/View…) não é do Tela.
   Menu.setApplicationMenu(null);
@@ -496,6 +568,9 @@ if (!app.requestSingleInstanceLock()) {
     registrarProtocoloApp();
     configurarPermissoes();
     registrarIpc();
+    registrarEsquema();
+    // Lançado pelo link (primeira instância): o canal espera a página carregar.
+    canalPendente = canalPendente ?? canalDoArgv(process.argv);
     janela = criarJanela();
     // Em paralelo com a janela: a sonda leva até alguns segundos quando o
     // driver acorda a GPU, e a tela inicial não depende dela.

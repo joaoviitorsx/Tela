@@ -1,6 +1,6 @@
-import { IconChave, IconTv } from '../components/Icon.js';
+import { IconChave, IconOlho, IconTv } from '../components/Icon.js';
 
-export type ItemDoTrilho = 'transmitir' | 'canal';
+export type ItemDoTrilho = 'transmitir' | 'assistir' | 'canal';
 
 type Props = {
   readonly ativo: ItemDoTrilho | null;
@@ -15,14 +15,16 @@ const ITENS: ReadonlyArray<{
   readonly Icone: typeof IconTv;
 }> = [
   { id: 'transmitir', rotulo: 'TRANSMITIR', Icone: IconTv },
+  { id: 'assistir', rotulo: 'ASSISTIR', Icone: IconOlho },
   { id: 'canal', rotulo: 'CANAL', Icone: IconChave },
 ];
 
 /**
  * O trilho fino à esquerda, à moda do Discord — com a tecla do site.
  *
- * Só desenho: quem sabe o caminho e a trava é `useNavegacaoDesktop`. Por
- * enquanto são dois itens; Sala, Diagnóstico e Ajustes chegam com o estado
+ * Só desenho: quem sabe o caminho e a trava é `useNavegacaoDesktop`. ASSISTIR
+ * (D8) não é uma rota: abre o painel onde se cola o link, e acende enquanto a
+ * rota do espectador está aberta. Sala, Diagnóstico e Ajustes chegam com o estado
  * que precisam (D2/D4), não como botão morto.
  */
 export function TrilhoDesktop({ ativo, travado, aoEscolher }: Props) {

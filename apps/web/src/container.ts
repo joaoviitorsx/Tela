@@ -1,4 +1,5 @@
 import { OFFENSIVE, P2P_LIMITS, type PresetId, RESERVED, suggestPreset } from '@tela/shared';
+import { makeAbrirNoApp } from './adapters/abrir-no-app.js';
 import { makeBrowserAudioCapture } from './adapters/browser-audio-capture.js';
 import { makeBrowserAudioGain } from './adapters/browser-audio-gain.js';
 import { makeBrowserFrameTiming } from './adapters/browser-frame-timing.js';
@@ -16,6 +17,7 @@ import { makeBrowserSondaDeRede } from './adapters/browser-sonda-de-rede.js';
 import { makeWebAudioCue } from './adapters/web-audio-cue.js';
 import { suportaWebGL } from './adapters/webgl-probe.js';
 import { makeWsSignaling } from './adapters/ws-signaling.js';
+import { CHAVE_SEM_APP } from './core/domain/abrir-no-app.js';
 import type { SlugPolicy } from './core/domain/slug.js';
 import { linkDoCanal } from './core/domain/link.js';
 import { makeIdentity } from './core/identity/owner-token.js';
@@ -118,6 +120,17 @@ export function presetSustentavel(): PresetId | null {
   if (!Number.isFinite(lembrado) || lembrado <= 0) return null;
   return suggestPreset(lembrado, 1);
 }
+
+/**
+ * "Abrir no app" na página do espectador (PLANO-desktop §14). A marca
+ * `tela.semApp` é do aparelho, como o volume: "aqui não há app, não pergunte".
+ */
+export const abrirNoApp = makeAbrirNoApp();
+export const semAppMarca = {
+  ler: (): boolean => storage.get(CHAVE_SEM_APP) !== null,
+  gravar: (): void => storage.set(CHAVE_SEM_APP, '1'),
+  limpar: (): void => storage.remove(CHAVE_SEM_APP),
+};
 
 /** A web oferece o app desktop (BAIXAR APP); o próprio app sobrescreve com `false`. */
 export const ofereceApp: boolean = true;
@@ -236,6 +249,16 @@ export const abrirPalcoAbertura: AbrePalco = async (opcoes) => {
 };
 
 export const suporteDeAbertura = suportaWebGL;
+
+/**
+ * Se a abertura roda nesta visita à home. Na web, sempre (ADR 0013). O app
+ * desktop sobrescreve: lá a home é uma tecla do trilho, e repetir a cena a
+ * cada volta gasta GPU e engole o primeiro clique (o toque que pula a
+ * abertura é barrado de propósito).
+ */
+export const aberturaPermitida = (): boolean => true;
+/** A abertura terminou (ou foi pulada). Na web não muda nada. */
+export const aberturaVista = (): void => undefined;
 
 /**
  * O aparelho da vitrine, ao lado do campo.

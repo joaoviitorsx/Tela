@@ -1,5 +1,6 @@
 import { P2P_LIMITS } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AbertoNoApp } from '../components/AbertoNoApp.js';
 import { AudioUnlock } from '../components/AudioUnlock.js';
 import { BarraEspectador } from '../components/BarraEspectador.js';
 import { EntradaDeApelido } from '../components/EntradaDeApelido.js';
@@ -7,10 +8,11 @@ import { VidroCrt } from '../components/EfeitosTv.js';
 import { IconOlho } from '../components/Icon.js';
 import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
-import { createViewerSession, espectador, volumePreference } from '../container.js';
+import { abrirNoApp, createViewerSession, espectador, semAppMarca, volumePreference } from '../container.js';
 import { apelidoValido } from '../core/identity/espectador.js';
 import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { ViewerState } from '../core/media/viewer-session.js';
+import { useAbrirNoApp } from '../react/use-abrir-no-app.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useCopia } from '../react/use-copia.js';
 import { useMediaStats } from '../react/use-media-stats.js';
@@ -88,6 +90,11 @@ const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>([
 export function Viewer({ slug }: Props) {
   const session = useMemo(() => createViewerSession(), []);
   const state = useViewer(session);
+  /*
+    Quem tem o app instalado é levado a ele; a sessão da web só abre quando a
+    fase é `navegador`. Onde não há o que tentar a fase já nasce assim.
+  */
+  const app = useAbrirNoApp(slug, abrirNoApp, semAppMarca);
   const videoRef = useRef<HTMLVideoElement>(null);
   /**
    * O elemento também como ESTADO, e não só como ref.
@@ -195,12 +202,12 @@ export function Viewer({ slug }: Props) {
   const precisaNome = editandoNome;
 
   useEffect(() => {
-    if (precisaNome) return;
+    if (precisaNome || app.fase !== 'navegador') return;
     void session.open(slug, { nome: nome ?? '', chave: espectador.chave() });
     return () => {
       void session.close();
     };
-  }, [session, slug, nome, precisaNome]);
+  }, [session, slug, nome, precisaNome, app.fase]);
 
   /**
    * `srcObject` não é atributo — precisa ser atribuído na instância.
@@ -344,6 +351,19 @@ export function Viewer({ slug }: Props) {
     ),
     comImagem,
   );
+
+  if (app.fase !== 'navegador') {
+    return (
+      <main>
+        <VidroCrt />
+        <AbertoNoApp
+          slug={slug}
+          estado={app.fase === 'no-app' ? 'aberto' : 'tentando'}
+          aoContinuarNoNavegador={app.continuarNoNavegador}
+        />
+      </main>
+    );
+  }
 
   if (precisaNome) {
     return (
@@ -538,6 +558,11 @@ export function Viewer({ slug }: Props) {
           aoTelaCheia={toggleFullscreen}
           copiouDiagnostico={diagCopia.copiado}
           aoCopiarDiagnostico={copiarDiagnostico}
+          abrirNoApp={
+            app.oferece
+              ? { aoAbrir: app.abrir, tentando: app.manual === 'tentando', falhou: app.manual === 'falhou' }
+              : null
+          }
         />
       </div>
 

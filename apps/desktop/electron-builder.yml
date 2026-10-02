@@ -50,6 +50,17 @@ extraResources:
 # do Linux abaixo — não passa pelo node-gyp.
 npmRebuild: false
 
+# O link `tela://assistir/<canal>` (D8, PLANO-desktop §14). O NSIS grava o
+# esquema no registro do Windows; no Linux o electron-builder acrescenta
+# `MimeType=x-scheme-handler/tela;` ao .desktop do deb e do rpm e o `%U` ao
+# Exec (verificado em app-builder-lib/LinuxTargetHelper) — por isso não há
+# `linux.mimeTypes` aqui. No AppImage não existe instalação: o esquema só
+# aparece quando o usuário o integra (AppImageLauncher) ou pelo .desktop.
+protocols:
+  - name: Tela
+    schemes:
+      - tela
+
 publish:
   provider: github
   owner: joaoviitorsx

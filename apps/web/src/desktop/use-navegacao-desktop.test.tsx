@@ -23,11 +23,11 @@ describe('trilhoTravado / itemAtivo', () => {
     expect(trilhoTravado('/joao')).toBe(false);
   });
 
-  it('acende TRANSMITIR na home e ao vivo, CANAL em /recuperar, nada no resto', () => {
+  it('acende TRANSMITIR na home e ao vivo, ASSISTIR num canal, CANAL em /recuperar, nada no resto', () => {
     expect(itemAtivo('/')).toBe('transmitir');
     expect(itemAtivo('/transmitir')).toBe('transmitir');
     expect(itemAtivo('/recuperar')).toBe('canal');
-    expect(itemAtivo('/joao')).toBeNull();
+    expect(itemAtivo('/joao')).toBe('assistir');
     expect(itemAtivo('/x')).toBeNull();
   });
 });

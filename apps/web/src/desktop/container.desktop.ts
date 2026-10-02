@@ -52,6 +52,17 @@ if (ORIGEM_PUBLICA === null) {
   console.error('Build do desktop sem VITE_PUBLIC_ORIGIN: o app não tem link para compartilhar.');
 }
 
+/**
+ * A abertura roda uma vez por sessão do app: na abertura do programa, não a
+ * cada volta à home pelo trilho. Marca ao TERMINAR, não ao começar — o
+ * StrictMode do desenvolvimento monta o efeito duas vezes.
+ */
+let aberturaJaVista = false;
+export const aberturaPermitida = (): boolean => !aberturaJaVista;
+export const aberturaVista = (): void => {
+  aberturaJaVista = true;
+};
+
 /** Dentro do app, BAIXAR APP não faz sentido. */
 export const ofereceApp: boolean = false;
 

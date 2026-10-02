@@ -34,7 +34,7 @@ if (root === null) throw new Error('#root não existe no desktop.html');
 
 createRoot(root).render(
   <StrictMode>
-    <MolduraDesktop {...(seletor === undefined ? {} : { sobreposicao: seletor })}>
+    <MolduraDesktop {...(seletor === undefined ? {} : { sobreposicao: seletor })} {...(ponte === undefined ? {} : { ponte })}>
       <App {...(visibilidade === undefined ? {} : { visibilidade })} />
     </MolduraDesktop>
   </StrictMode>,

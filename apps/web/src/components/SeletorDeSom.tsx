@@ -12,24 +12,25 @@ export type AppNaLista = {
 
 type Props = {
   readonly opcao: OpcaoDeSom;
-  /** `null` enquanto o app ainda pergunta ao sistema se "só o jogo" existe. */
-  readonly jogoDisponivel: boolean | null;
-  /** Por que "só o jogo" está desabilitado. Aparece NA opção, não num tooltip. */
-  readonly motivoDoJogo: string | null;
+  /**
+   * O componente que separa o som por programa existe? "Sistema" (tudo menos
+   * a call) e "Só o jogo" dependem dele. `null` enquanto o app ainda pergunta.
+   */
+  readonly componenteDisponivel: boolean | null;
+  /** Por que as duas opções estão desabilitadas. Aparece NA opção, não num tooltip. */
+  readonly motivoDoComponente: string | null;
   readonly apps: readonly AppNaLista[];
   readonly appEscolhido: string | null;
   readonly listando: boolean;
   /** O modo REAL por extenso, e se ele difere do que a pessoa escolheu. */
   readonly real: { readonly rotulo: string; readonly tom: 'ok' | 'alerta' };
-  /** O Windows só leva o som do sistema junto da tela inteira. */
-  readonly avisoDoSistema: string | null;
   readonly aoEscolherOpcao: (opcao: OpcaoDeSom) => void;
   readonly aoEscolherApp: (id: string) => void;
   readonly aoAtualizar: () => void;
 };
 
 const OPCOES: ReadonlyArray<{ readonly id: OpcaoDeSom; readonly nome: string; readonly texto: string }> = [
-  { id: 'sistema', nome: 'SISTEMA', texto: 'Tudo que toca no seu PC, inclusive a call de voz.' },
+  { id: 'sistema', nome: 'SISTEMA', texto: 'Tudo que toca no seu PC, menos a call de voz.' },
   { id: 'jogo', nome: 'SÓ O JOGO', texto: 'O som de um programa só. A call fica de fora.' },
   { id: 'nenhum', nome: 'SEM SOM', texto: 'Só a imagem, sem áudio.' },
 ];
@@ -63,21 +64,22 @@ function teclasDoGrupo(evento: KeyboardEvent<HTMLElement>, ids: readonly string[
  */
 export function SeletorDeSom({
   opcao,
-  jogoDisponivel,
-  motivoDoJogo,
+  componenteDisponivel,
+  motivoDoComponente,
   apps,
   appEscolhido,
   listando,
   real,
-  avisoDoSistema,
   aoEscolherOpcao,
   aoEscolherApp,
   aoAtualizar,
 }: Props) {
   const idOpcoes = useId();
   const idApps = useId();
-  const jogoBloqueado = jogoDisponivel === false;
-  const habilitadas = OPCOES.filter((o) => !(o.id === 'jogo' && jogoBloqueado)).map((o) => o.id);
+  // "Sem som" nunca depende de nada; as outras duas, do componente de som.
+  const precisaDoComponente = (id: OpcaoDeSom): boolean => id !== 'nenhum';
+  const semComponente = componenteDisponivel === false;
+  const habilitadas = OPCOES.filter((o) => !(precisaDoComponente(o.id) && semComponente)).map((o) => o.id);
 
   return (
     <div className="flex min-w-0 flex-col gap-3">
@@ -93,7 +95,7 @@ export function SeletorDeSom({
       >
         {OPCOES.map((o) => {
           const marcada = o.id === opcao;
-          const bloqueada = o.id === 'jogo' && jogoBloqueado;
+          const bloqueada = precisaDoComponente(o.id) && semComponente;
           return (
             <button
               key={o.id}
@@ -123,19 +125,15 @@ export function SeletorDeSom({
                 <span className={`font-[family-name:var(--font-pixel)] text-[12px] ${marcada ? 'text-accent-hi' : 'text-text'}`}>{o.nome}</span>
               </span>
               <span className="text-[11px] leading-relaxed text-muted [text-wrap:pretty]">
-                {bloqueada ? (motivoDoJogo ?? 'Indisponível neste sistema.') : o.texto}
+                {bloqueada ? (motivoDoComponente ?? 'Indisponível neste sistema.') : o.texto}
               </span>
-              {o.id === 'jogo' && jogoDisponivel === null && <span className="rotulo">VERIFICANDO…</span>}
+              {precisaDoComponente(o.id) && componenteDisponivel === null && <span className="rotulo">VERIFICANDO…</span>}
             </button>
           );
         })}
       </div>
 
-      {opcao === 'sistema' && avisoDoSistema !== null && (
-        <p className="m-0 border-2 border-line bg-surface px-3.5 py-2.5 text-[11.5px] leading-relaxed text-muted [text-wrap:pretty]">{avisoDoSistema}</p>
-      )}
-
-      {opcao === 'jogo' && !jogoBloqueado && (
+      {opcao === 'jogo' && !semComponente && (
         <div className="flex flex-col gap-2 border-2 border-line bg-surface p-3">
           <div className="flex items-center justify-between gap-3">
             <h3 id={idApps} className="rotulo m-0">

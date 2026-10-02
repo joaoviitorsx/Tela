@@ -37,52 +37,58 @@ function montar(opcoes: { capacidades?: CapacidadesDeSom; apps?: readonly AppCom
 }
 
 describe('descreverReal: o modo REAL, por extenso', () => {
-  it('sistema diz que inclui a call', () => {
-    expect(descreverReal({ tipo: 'sistema' }, 'win32', null, [], null)).toEqual({ rotulo: 'SISTEMA · inclui a call', curto: 'SISTEMA', tom: 'ok' });
-    expect(descreverReal({ tipo: 'sistema' }, 'linux', null, [], null).rotulo).toBe('SISTEMA · saída padrão · inclui a call');
+  it('sistema diz que vai tudo menos a call', () => {
+    expect(descreverReal({ tipo: 'sistema' }, null, [], null)).toEqual({ rotulo: 'SISTEMA · tudo menos a call', curto: 'SISTEMA', tom: 'ok' });
+    expect(descreverReal({ tipo: 'sistema' }, DISPONIVEL, [], null).rotulo).toBe('SISTEMA · tudo menos a call');
+  });
+
+  it('sistema sem o componente que separa a call: indisponível, em alerta — nunca a call no lugar', () => {
+    expect(descreverReal({ tipo: 'sistema' }, INDISPONIVEL, [], null)).toEqual({ rotulo: 'SISTEMA · indisponível', curto: 'SEM SOM', tom: 'alerta' });
   });
 
   it('só o jogo diz qual', () => {
-    const r = descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'Minecraft' }, 'win32', DISPONIVEL, [MINECRAFT], null);
+    const r = descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'Minecraft' }, DISPONIVEL, [MINECRAFT], null);
     expect(r).toEqual({ rotulo: 'SÓ O JOGO · Minecraft', curto: 'SÓ O JOGO', tom: 'ok' });
   });
 
   it('só o jogo sem jogo escolhido pede a escolha', () => {
-    expect(descreverReal({ tipo: 'jogo', appId: null, nome: null }, 'win32', DISPONIVEL, [], null)).toMatchObject({ rotulo: 'SÓ O JOGO · escolha o jogo', tom: 'alerta' });
+    expect(descreverReal({ tipo: 'jogo', appId: null, nome: null }, DISPONIVEL, [], null)).toMatchObject({ rotulo: 'SÓ O JOGO · escolha o jogo', tom: 'alerta' });
   });
 
   it('o jogo escolhido fechou antes de ir ao ar: avisa', () => {
-    expect(descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'Minecraft' }, 'win32', DISPONIVEL, [DISCORD], null)).toMatchObject({
+    expect(descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'Minecraft' }, DISPONIVEL, [DISCORD], null)).toMatchObject({
       rotulo: 'SÓ O JOGO · Minecraft (não está aberto)',
       tom: 'alerta',
     });
     // Sem listagem ainda não dá para afirmar nada: segue o plano.
-    expect(descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'Minecraft' }, 'win32', DISPONIVEL, [], null).tom).toBe('ok');
+    expect(descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'Minecraft' }, DISPONIVEL, [], null).tom).toBe('ok');
   });
 
   it('só o jogo indisponível nunca vira outra coisa em silêncio', () => {
-    expect(descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'X' }, 'win32', INDISPONIVEL, [], null)).toMatchObject({ rotulo: 'SÓ O JOGO · indisponível', curto: 'SEM SOM', tom: 'alerta' });
+    expect(descreverReal({ tipo: 'jogo', appId: 'pid:10', nome: 'X' }, INDISPONIVEL, [], null)).toMatchObject({ rotulo: 'SÓ O JOGO · indisponível', curto: 'SEM SOM', tom: 'alerta' });
   });
 
   it('a captura que falhou ou parou vence o plano', () => {
     const jogo = { tipo: 'jogo', appId: 'pid:10', nome: 'Minecraft' } as const;
-    expect(descreverReal(jogo, 'win32', DISPONIVEL, [MINECRAFT], { situacao: 'falhou', motivo: 'o Windows recusou' })).toEqual({
+    expect(descreverReal(jogo, DISPONIVEL, [MINECRAFT], { situacao: 'falhou', motivo: 'o Windows recusou' })).toEqual({
       rotulo: 'SEM SOM · o Windows recusou',
       curto: 'SEM SOM',
       tom: 'alerta',
     });
-    expect(descreverReal(jogo, 'win32', DISPONIVEL, [MINECRAFT], { situacao: 'parou', motivo: 'o jogo fechou' }).rotulo).toBe('SEM SOM · o jogo fechou');
-    expect(descreverReal({ tipo: 'sistema' }, 'win32', null, [], { situacao: 'falhou', motivo: 'janela não leva som' }).rotulo).toBe('SEM SOM · janela não leva som');
+    expect(descreverReal(jogo, DISPONIVEL, [MINECRAFT], { situacao: 'parou', motivo: 'o jogo fechou' }).rotulo).toBe('SEM SOM · o jogo fechou');
+    expect(descreverReal({ tipo: 'sistema' }, null, [], { situacao: 'falhou', motivo: 'o som não iniciou' }).rotulo).toBe('SEM SOM · o som não iniciou');
   });
 
   it('sem som é sem som', () => {
-    expect(descreverReal({ tipo: 'nenhum' }, 'linux', null, [], { situacao: 'falhou', motivo: 'x' })).toEqual({ rotulo: 'SEM SOM', curto: 'SEM SOM', tom: 'ok' });
+    expect(descreverReal({ tipo: 'nenhum' }, null, [], { situacao: 'falhou', motivo: 'x' })).toEqual({ rotulo: 'SEM SOM', curto: 'SEM SOM', tom: 'ok' });
   });
 });
 
 describe('pendenteDoSom', () => {
   it('só uma escolha incompleta ou indisponível bloqueia', () => {
     expect(pendenteDoSom({ tipo: 'sistema' }, null)).toBeNull();
+    expect(pendenteDoSom({ tipo: 'sistema' }, DISPONIVEL)).toBeNull();
+    expect(pendenteDoSom({ tipo: 'sistema' }, INDISPONIVEL)).toContain('não está disponível');
     expect(pendenteDoSom({ tipo: 'nenhum' }, null)).toBeNull();
     expect(pendenteDoSom({ tipo: 'jogo', appId: null, nome: null }, DISPONIVEL)).toContain('Escolha o jogo');
     expect(pendenteDoSom({ tipo: 'jogo', appId: 'pid:1', nome: 'X' }, DISPONIVEL)).toBeNull();

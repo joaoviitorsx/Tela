@@ -26,7 +26,7 @@ import { makePortasDeSom } from './porta-som.js';
 import { makeSeletorDeFontes } from './seletor-de-fontes.js';
 import { sessaoAoVivo } from './sessao-ao-vivo.js';
 import { makeSomDesktop } from './som-desktop.js';
-import { comSomEscolhido } from './som-na-captura.js';
+import { semSomNaCaptura } from './som-na-captura.js';
 import { criarSomDoApp } from './SomDoAppDesktop.js';
 import { contextoDoNavegador, criarTrilhaDePcm } from './trilha-pcm.js';
 import { criarTrilhaFantasma } from './trilha-fantasma.js';
@@ -141,8 +141,9 @@ const capturaDesktop =
 /*
   O som (D3): a escolha mora numa loja (`som-desktop.ts`) que a interface do
   passo ÁUDIO desenha e os dois adapters abaixo consultam. A captura de tela
-  só pede áudio ao sistema no modo "Sistema" (`som-na-captura.ts`), e o
-  `audio` é o do app — sistema no Linux, só o jogo nas duas plataformas.
+  nunca pede áudio (`som-na-captura.ts`: o loopback dela levaria a call), e o
+  `audio` é o do app — "sistema" (tudo menos a call) e "só o jogo", nas duas
+  plataformas.
 */
 const som = ponte === undefined
   ? null
@@ -158,7 +159,7 @@ const som = ponte === undefined
     });
 
 const telaDoApp: ScreenCapture = capturaDesktop ?? makeBrowserScreenCapture();
-const screen: ScreenCapture = som === null ? telaDoApp : comSomEscolhido(telaDoApp, som);
+const screen: ScreenCapture = som === null ? telaDoApp : semSomNaCaptura(telaDoApp);
 
 /** O `AudioCapture` da sessão: o do app com a ponte, o do navegador no dev sem Electron. */
 export const audio: AudioCapture =
@@ -166,7 +167,6 @@ export const audio: AudioCapture =
     ? audioDoNavegador
     : makeAudioDesktop({
         ponte,
-        plataforma: ponte.plataforma,
         som,
         navegador: audioDoNavegador,
         portas: makePortasDeSom(window),

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppComSom, CapacidadesDeSom } from './ponte.js';
 import { makeSomDesktop } from './som-desktop.js';
-import { avisoDoSistema, criarSomDoApp, ID_DE_AUDIO_DO_APP, resumoDoSom } from './SomDoAppDesktop.js';
+import { criarSomDoApp, ID_DE_AUDIO_DO_APP, resumoDoSom } from './SomDoAppDesktop.js';
 
 afterEach(cleanup);
 
@@ -32,13 +32,6 @@ describe('resumoDoSom', () => {
   });
 });
 
-describe('avisoDoSistema', () => {
-  it('só o Windows tem o aviso da tela inteira', () => {
-    expect(avisoDoSistema('win32')).toContain('TELA');
-    expect(avisoDoSistema('linux')).toBeNull();
-  });
-});
-
 describe('Seletor do app', () => {
   it('escolher "só o jogo", escolher o app e ver o modo real mudar', async () => {
     const { app, som } = montar();
@@ -51,11 +44,23 @@ describe('Seletor do app', () => {
     expect(screen.getByRole('status').textContent).toContain('SÓ O JOGO · Minecraft');
   });
 
-  it('"só o jogo" indisponível vem desabilitado com o motivo do main', async () => {
+  it('sem o componente de som, "sistema" e "só o jogo" vêm desabilitados com o motivo do main', async () => {
     const { app } = montar({ jogo: { disponivel: false, motivo: 'Precisa do PipeWire.' } }, 'linux');
     render(<app.Seletor />);
     await assentar();
     expect(screen.getByRole('radio', { name: /SÓ O JOGO/ }).textContent).toContain('Precisa do PipeWire.');
+    expect(screen.getByRole('radio', { name: /SISTEMA/ }).textContent).toContain('Precisa do PipeWire.');
+  });
+
+  it('Sistema escolhido: o modo real diz que vai tudo menos a call, no Windows e no Linux', async () => {
+    for (const plataforma of ['win32', 'linux'] as const) {
+      const { app, som } = montar(undefined, plataforma);
+      som.escolherSistema();
+      render(<app.Seletor />);
+      await assentar();
+      expect(screen.getByRole('status').textContent).toContain('SISTEMA · tudo menos a call');
+      cleanup();
+    }
   });
 
   it('o modo real reflete uma falha registrada pelo adapter', async () => {

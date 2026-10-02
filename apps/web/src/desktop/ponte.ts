@@ -146,17 +146,24 @@ export type AppComSom = {
 
 export type CapacidadesDeSom = {
   /**
-   * "Só o jogo" funciona neste sistema? Quando não, o motivo vai ao usuário
-   * junto da opção desabilitada — nunca se troca por "Sistema" em silêncio.
+   * O componente que separa o som por programa funciona neste sistema? "Só o
+   * jogo" e "Sistema" (tudo menos a call) dependem dele. Quando não, o motivo
+   * vai ao usuário junto das opções desabilitadas — nunca se troca por outro
+   * som em silêncio.
    */
   readonly jogo: { readonly disponivel: boolean; readonly motivo: string | null };
 };
 
 export type ErroSomJogo = 'INDISPONIVEL' | 'APP_NAO_ENCONTRADO' | 'FALHOU' | 'OCUPADO';
 
-/** O modo "Sistema" no Linux: `descricao` é o rótulo da fonte virtual no Chromium. */
+/**
+ * O modo "Sistema" (tudo que toca, menos a call) chega como o "só o jogo":
+ * `entrada` no Linux (`descricao` é o rótulo da fonte virtual no Chromium),
+ * `porta` no Windows (PCM pela `MessagePort` marcada com este `id`).
+ */
 export type RespostaSomSistema =
-  | { readonly ok: true; readonly descricao: string }
+  | { readonly ok: true; readonly via: 'entrada'; readonly descricao: string }
+  | { readonly ok: true; readonly via: 'porta'; readonly id: number }
   | { readonly ok: false; readonly erro: ErroSomJogo };
 
 /**
@@ -272,9 +279,10 @@ export interface PonteDesktop {
     /** Devolve o roteamento ao que era. Idempotente. */
     pararSom(): void;
     /**
-     * Linux, modo "Sistema": cria a fonte virtual do monitor da saída padrão
-     * (o Chromium não lista monitores). `parar` a remove. No Windows o
-     * "Sistema" é o `loopback` junto da tela e isto devolve `INDISPONIVEL`.
+     * Modo "Sistema": tudo que toca, MENOS a call (Discord e outros apps de
+     * voz). Linux: o sink Tela-Sistema com tudo menos a call e a fonte virtual
+     * dele; Windows: o process loopback excluindo o app de voz. `pararSom`
+     * desfaz. Nunca vem junto da captura de tela.
      */
     iniciarSistema(): Promise<RespostaSomSistema>;
     /** O som do jogo parou sem ninguém pedir (o sink caiu, o jogo fechou, o componente morreu). */

@@ -519,6 +519,9 @@ export class BroadcastSession {
       frameRate: Math.min(preset.main.maxFramerate, FRAMERATE_POR_PRIORIDADE[this.prioridade]),
       systemAudio: true,
     });
+    // Mesmo quando deu certo na segunda tentativa: o nome do erro da primeira
+    // é a pista de qual pedido o navegador recusou.
+    this.diario.registrarFalhaDaCaptura(this.deps.screen.ultimaFalha?.() ?? null);
     if (!pedido.ok) {
       if (this.stale(epoch)) return;
       return this.fail(FALHA_DE_CAPTURA[pedido.error]);

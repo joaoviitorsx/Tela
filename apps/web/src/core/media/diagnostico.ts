@@ -142,6 +142,11 @@ export type Diagnostico = {
   readonly configAudio: ResumoConfigAudio | null;
   /** Fonte do som e o processamento que o navegador DIZ ter aplicado. */
   readonly capturaAudio: CapturaAudio | null;
+  /**
+   * O nome do erro do navegador quando a captura da tela falhou por motivo
+   * técnico (`NotReadableError`, `AbortError>ok`…). Só o nome, nunca a mensagem.
+   */
+  readonly falhaDaCaptura: string | null;
   /** `null` significa que esta etapa ainda não foi observada. */
   readonly etapas: Readonly<Record<EtapaDiagnostico, CodigoDiagnostico | null>>;
   readonly eventos: readonly EventoDiagnostico[];
@@ -190,6 +195,7 @@ export class Diario {
   private codecAudio: CodecDiagnostico | null = null;
   private configAudio: ResumoConfigAudio | null = null;
   private capturaAudio: CapturaAudio | null = null;
+  private falhaDaCaptura: string | null = null;
   private sessaoId = 'unknown';
   private tentativaId = 'unknown';
   private versaoApp: string | null = null;
@@ -218,6 +224,11 @@ export class Diario {
       t: Math.round(agora), tentativaId: this.tentativaId, etapa, codigo,
     });
     if (this.eventos.length > CAPACIDADE_EVENTOS) this.eventos.shift();
+  }
+
+  registrarFalhaDaCaptura(nome: string | null): void {
+    if (this.congelado !== null) return;
+    this.falhaDaCaptura = nome !== null && /^[A-Za-z>]{1,90}$/.test(nome) ? nome : null;
   }
 
   registrarCapturaAudio(captura: CapturaAudio): void {
@@ -284,6 +295,7 @@ export class Diario {
     this.codecAudio = null;
     this.configAudio = null;
     this.capturaAudio = null;
+    this.falhaDaCaptura = null;
     this.sessaoId = 'unknown';
     this.tentativaId = 'unknown';
     this.versaoApp = null;
@@ -313,6 +325,7 @@ export class Diario {
       codecAudio: this.codecAudio,
       configAudio: this.configAudio,
       capturaAudio: this.capturaAudio,
+      falhaDaCaptura: this.falhaDaCaptura,
       etapas: { ...this.etapas },
       eventos: [...this.eventos],
       amostras: [...this.amostras],

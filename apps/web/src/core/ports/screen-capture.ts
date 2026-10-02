@@ -41,4 +41,10 @@ export type ScreenCapture = {
    * normal; `throw` fica para bug.
    */
   request(options: CaptureRequest): Promise<Result<CaptureResult, CaptureError>>;
+  /**
+   * O nome do erro do navegador na última falha técnica (`NotReadableError`,
+   * `AbortError>ok`…), para o diagnóstico. Só o nome: a mensagem pode trazer
+   * nome de janela ou caminho. `null` sem falha registrada.
+   */
+  ultimaFalha?(): string | null;
 };

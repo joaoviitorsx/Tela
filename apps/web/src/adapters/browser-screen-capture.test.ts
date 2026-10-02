@@ -79,3 +79,59 @@ describe('browser-screen-capture — o que é PEDIDO ao navegador', () => {
     expect(opts['systemAudio']).toBe('include');
   });
 });
+
+/** `getDisplayMedia` que responde, na ordem, cada item: erro (pelo nome) ou sucesso. */
+function stubEmSequencia(respostas: ReadonlyArray<string | 'ok'>) {
+  const chamadas: Chamada[] = [];
+  const limites: unknown[] = [];
+  const track = {
+    kind: 'video',
+    getSettings: () => ({ width: 2560, height: 1440, displaySurface: 'monitor' }),
+    applyConstraints: async (c: unknown) => {
+      limites.push(c);
+    },
+    stop: () => undefined,
+  };
+  let i = 0;
+  vi.stubGlobal('navigator', {
+    mediaDevices: {
+      getDisplayMedia: async (opts: Chamada) => {
+        chamadas.push(opts);
+        const r = respostas[i++] ?? 'ok';
+        if (r !== 'ok') throw Object.assign(new Error('x'), { name: r });
+        return { getVideoTracks: () => [track], getAudioTracks: () => [], getTracks: () => [track] };
+      },
+    },
+  });
+  return { chamadas, limites };
+}
+
+describe('browser-screen-capture — falha técnica tenta de novo com o pedido mínimo', () => {
+  it('a segunda tentativa vale: captura sai, limites vão na trilha, o nome do erro fica', async () => {
+    const { chamadas, limites } = stubEmSequencia(['NotReadableError', 'ok']);
+    const captura = makeBrowserScreenCapture();
+    const r = await captura.request(PEDIDO);
+    expect(r.ok).toBe(true);
+    expect(chamadas[1]).toEqual({ video: true, audio: true });
+    expect(limites).toEqual([{ width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 60 } }]);
+    expect(captura.ultimaFalha?.()).toBe('NotReadableError>ok');
+  });
+
+  it('as duas falham: FAILED com os dois nomes', async () => {
+    stubEmSequencia(['AbortError', 'NotReadableError']);
+    const captura = makeBrowserScreenCapture();
+    expect(await captura.request(PEDIDO)).toEqual({ ok: false, error: 'FAILED' });
+    expect(captura.ultimaFalha?.()).toBe('AbortError>NotReadableError');
+  });
+
+  it('cancelar na segunda tentativa é cancelar', async () => {
+    stubEmSequencia(['AbortError', 'NotAllowedError']);
+    expect(await makeBrowserScreenCapture().request(PEDIDO)).toEqual({ ok: false, error: 'DENIED' });
+  });
+
+  it('cancelar na primeira não tenta de novo', async () => {
+    const { chamadas } = stubEmSequencia(['NotAllowedError']);
+    expect(await makeBrowserScreenCapture().request(PEDIDO)).toEqual({ ok: false, error: 'DENIED' });
+    expect(chamadas).toHaveLength(1);
+  });
+});

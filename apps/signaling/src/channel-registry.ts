@@ -6,8 +6,9 @@ import {
   PROTOCOL_VERSION,
   type ServerMessage,
   type SignalingErrorCode,
+  apelidoUnico,
 } from '@tela/shared';
-import { type Limits, RateBuckets } from './limits.js';
+import { type Limits, RateBuckets, bytesDe } from './limits.js';
 import type { IceProvisionResult } from './ice-provision.js';
 
 /**
@@ -39,6 +40,8 @@ type Peer = {
   /** Só espectador: apelido e sha256 da chave do navegador (ADR 0025). */
   readonly name?: string;
   readonly fingerprint?: string;
+  /** Origem de rede (S-07): decide o teto de assentos por IP. */
+  readonly ip: string;
 };
 
 /**
@@ -54,6 +57,7 @@ type Pedido = {
   readonly name: string;
   readonly fingerprint: string;
   readonly participantId?: string;
+  readonly ip: string;
   admitir(): void;
   recusar(code: SignalingErrorCode): void;
 };
@@ -117,7 +121,8 @@ export const OWNERSHIP_GRACE_MS = 5 * 60_000;
 
 export function makeChannelRegistry(deps: RegistryDeps) {
   const channels = new Map<string, Channel>();
-  const hostAttempts = new RateBuckets(deps.now);
+  /** Baldes por IP e por slug (S-01, S-02): tudo o que é limite de ABUSO, não de protocolo. */
+  const baldes = new RateBuckets(deps.now);
 
   function reap(name: string): void {
     const channel = channels.get(name);
@@ -185,6 +190,22 @@ export function makeChannelRegistry(deps: RegistryDeps) {
       let windowStart = deps.now();
       let inWindow = 0;
 
+      let refreshInicio = deps.now();
+      let refreshes = 0;
+      function refreshDaConexao(): boolean {
+        const agora = deps.now();
+        if (agora - refreshInicio >= deps.limits.refreshIceWindowMs) {
+          refreshInicio = agora;
+          refreshes = 0;
+        }
+        refreshes += 1;
+        return refreshes <= deps.limits.refreshIceSocketLimit;
+      }
+
+      /** S-07: bytes de `signal` que ESTE espectador já mandou ao host na janela. */
+      let signalBytes = 0;
+      let signalInicio = deps.now();
+
       const cancelHelloTimer = deps.setTimer(HELLO_TIMEOUT_MS, () => {
         if (peer === null && pedido === null && !closed) fail('HELLO_TIMEOUT');
       });
@@ -224,20 +245,47 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         const versao = versaoRecusada(protocol);
         if (versao !== null) return fail(versao);
         if (!deps.isValidSlug(slug)) return fail('SLUG_INVALID');
-        if (!hostAttempts.take(`host:${remoteAddress}`, deps.limits.hostLimit, deps.limits.hostWindowMs)) {
+
+        /*
+          S-01: a posse é checada ANTES de qualquer contagem, e só a FALHA
+          conta. Antes, toda tentativa (inclusive a do dono) gastava o balde
+          do IP, e 20 `host` com token errado, de qualquer lugar, trancavam o
+          dono fora do próprio slug — e, passada a carência, o atacante levava
+          o link. Agora o token certo passa sempre, por mais que se erre.
+        */
+        const ownerHash = deps.hash(ownerToken);
+        const existing = channels.get(slug);
+        const ehDono = existing !== undefined && deps.equals(existing.ownerHash, ownerHash);
+
+        if (existing !== undefined && !ehDono) {
+          // Dono errado: é o único caminho que gasta balde. Estourou, o erro
+          // muda de SLUG_TAKEN para RATE_LIMITED — nunca para "pode entrar".
+          const dentro =
+            baldes.take(`falha:${remoteAddress}`, deps.limits.falhaHostLimit, deps.limits.hostWindowMs) &&
+            baldes.take(`falha-slug:${slug}`, deps.limits.falhaHostSlugLimit, deps.limits.hostWindowMs);
+          return fail(dentro ? 'SLUG_TAKEN' : 'RATE_LIMITED');
+        }
+
+        /*
+          Slug LIVRE: é aqui que mora o squatting, e o limite por IP vale
+          (rajada por minuto + acúmulo por hora). Reconexão do dono não passa
+          por este ponto.
+        */
+        if (
+          existing === undefined &&
+          !(baldes.take(`host:${remoteAddress}`, deps.limits.hostLimit, deps.limits.hostWindowMs) &&
+            baldes.take(`host-h:${remoteAddress}`, deps.limits.slugsNovosPorHoraLimit, deps.limits.slugsNovosJanelaMs))
+        ) {
           return fail('RATE_LIMITED');
         }
 
-        const ownerHash = deps.hash(ownerToken);
-        const existing = channels.get(slug);
         const teto = tetoDoCanal(capacidade);
 
         if (existing !== undefined) {
-          if (!deps.equals(existing.ownerHash, ownerHash)) return fail('SLUG_TAKEN');
           // Mesmo dono: derruba o socket velho e assume. Cobre refresh de
           // página, crash do browser e troca de rede.
           existing.host?.socket.close();
-          peer = { id: deps.newPeerId('h'), role: 'host', socket };
+          peer = { id: deps.newPeerId('h'), role: 'host', socket, ip: remoteAddress };
           existing.host = peer;
           existing.emptySince = null;
           existing.aprovacao = aprovacao;
@@ -246,7 +294,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           // A banda é medida pela sessão nova; ela manda `capacidade` de novo.
           existing.tetoPelaBanda = null;
         } else {
-          peer = { id: deps.newPeerId('h'), role: 'host', socket };
+          peer = { id: deps.newPeerId('h'), role: 'host', socket, ip: remoteAddress };
           channels.set(slug, {
             host: peer,
             viewers: new Map(),
@@ -308,6 +356,14 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         }
       }
 
+      function assentosDoIp(channel: Channel): number {
+        return [...channel.viewers.values()].filter((v) => v.ip === remoteAddress).length;
+      }
+
+      function pedidosDoIp(channel: Channel): number {
+        return [...channel.pedidos.values()].filter((p) => p.ip === remoteAddress).length;
+      }
+
       function joinChannel(
         slug: string, protocol: number | undefined,
         participantId?: string, attemptId?: string, name?: string, viewerKey?: string,
@@ -339,6 +395,8 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           cancelHelloTimer();
           if (anterior !== undefined) return entrar(channel, anterior.id, name, impressao, participantId, attemptId, anterior);
           if (semVaga(channel)) return fail('CHANNEL_FULL', tetoEfetivo(channel));
+          // S-07: um IP não toma o canal inteiro. Vale só na sala aberta.
+          if (assentosDoIp(channel) >= deps.limits.viewersPorIp) return fail('RATE_LIMITED');
           return entrar(channel, deps.newPeerId('v'), name, impressao, participantId, attemptId, undefined);
         }
 
@@ -364,14 +422,22 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         const repetido = participantId === undefined ? undefined : [...channel.pedidos.values()]
           .find((p) => p.participantId === participantId && deps.equals(p.fingerprint, fingerprint));
         if (repetido === undefined && channel.pedidos.size >= deps.limits.maxPending) return fail('RATE_LIMITED');
+        // S-07: um IP também não enche a fila do dono de pedidos.
+        if (repetido === undefined && pedidosDoIp(channel) >= deps.limits.viewersPorIp) return fail('RATE_LIMITED');
 
         const id = repetido?.id ?? deps.newPeerId('v');
         if (repetido !== undefined) {
           channel.pedidos.delete(repetido.id);
           repetido.socket.close();
         }
+        // S-20: dois "Maria" diante do dono seriam indistinguíveis; o segundo vira "Maria (2)".
+        const ocupados = [
+          ...[...channel.viewers.values()].flatMap((v) => (v.name === undefined ? [] : [v.name])),
+          ...[...channel.pedidos.values()].map((p) => p.name),
+        ];
+        name = apelidoUnico(name, ocupados);
         const meu: Pedido = {
-          id, socket, name, fingerprint,
+          id, socket, name, fingerprint, ip: remoteAddress,
           ...(participantId === undefined ? {} : { participantId }),
           admitir: () => {
             if (pedido !== meu || closed) return;
@@ -404,8 +470,12 @@ export function makeChannelRegistry(deps: RegistryDeps) {
       ): void {
         const host = channel.host;
         if (host === null) return fail('NOT_HOSTING');
+        // S-02: cada entrada emite credencial TURN; o IP tem orçamento delas.
+        if (!baldes.take(`watch:${remoteAddress}`, deps.limits.watchIpLimit, deps.limits.watchIpWindowMs)) {
+          return fail('RATE_LIMITED');
+        }
         peer = {
-          id, role: 'viewer', socket,
+          id, role: 'viewer', socket, ip: remoteAddress,
           ...(name === undefined ? {} : { name }),
           ...(fingerprint === undefined ? {} : { fingerprint }),
           ...(participantId === undefined ? {} : { participantId }),
@@ -483,8 +553,20 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         return to === undefined ? null : (channel.viewers.get(to) ?? null);
       }
 
-      function relay(message: Extract<ClientMessage, { type: 'signal' }>): void {
+      function relay(message: Extract<ClientMessage, { type: 'signal' }>, bytes: number): void {
         if (peer === null || channelName === null) return fail('BAD_MESSAGE');
+        if (peer.role === 'viewer') {
+          // S-07: o host paga cada byte que um espectador manda. Frame grande
+          // demais é abuso (SDP legítimo é pequeno); volume demais também.
+          if (bytes > deps.limits.viewerSignalMaxBytes) return fail('BAD_MESSAGE');
+          const agora = deps.now();
+          if (agora - signalInicio >= deps.limits.messageWindowMs) {
+            signalInicio = agora;
+            signalBytes = 0;
+          }
+          signalBytes += bytes;
+          if (signalBytes > deps.limits.viewerSignalBytesPorJanela) return fail('RATE_LIMITED');
+        }
         const channel = channels.get(channelName);
         if (channel === undefined) return;
         // Um socket desalojado por outra conexão não fala mais em nome do peer.
@@ -545,6 +627,15 @@ export function makeChannelRegistry(deps: RegistryDeps) {
               if (peer === null || channelName === null) return fail('BAD_MESSAGE');
               const current = channels.get(channelName);
               if (current === undefined || peerIn(current, peer.id) !== peer) return;
+              /*
+                S-02: cada refresh é uma credencial TURN paga. Estourou o teto
+                da conexão ou do IP: silêncio, sem emitir e sem fechar — o
+                cliente tem timeout e tenta de novo no ciclo seguinte, e
+                derrubar um espectador por excesso de renovação puniria a
+                vítima de um cliente com defeito.
+              */
+              if (!refreshDaConexao()) return;
+              if (!baldes.take(`refresh:${remoteAddress}`, deps.limits.refreshIceIpLimit, deps.limits.refreshIceWindowMs)) return;
               const ice = deps.iceServersFor(peer.id);
               socket.send({
                 type: 'ice-servers', requestId: message.requestId,
@@ -556,7 +647,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
             }
             case 'signal':
               if (peer === null) return fail('BAD_MESSAGE');
-              return relay(message);
+              return relay(message, bytesDe(raw));
             case 'leave':
               // Marca ANTES de fechar: é o que separa "eu parei" de "meu
               // socket caiu", e as duas coisas pedem reações opostas.

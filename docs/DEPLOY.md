@@ -40,9 +40,16 @@ build corresponde ao HEAD e publica.
 pacote do workspace para uma pasta) e engole qualquer script com esse nome. O
 deploy simplesmente não roda, e a mensagem de erro não diz isso.
 
-O `wrangler.toml` já traz o binding do Durable Object e a migração
-`new_sqlite_classes` — **obrigatória no plano gratuito**, porque Durable
-Objects com backend key-value continuam sendo recurso pago.
+O `wrangler.toml` já traz os bindings dos Durable Objects e as migrações
+`new_sqlite_classes` — **obrigatórias no plano gratuito**, porque Durable
+Objects com backend key-value continuam sendo recurso pago. São dois objetos:
+`ChannelDurableObject` (um por slug) e `IpLimiterDurableObject` (um por IP, só
+um contador de abuso, sem WebSocket — migração `v2`; um deploy que não rodar a
+migração derruba o Worker com erro de binding). O IP vem de `CF-Connecting-IP`,
+que a Cloudflare define na borda; os limites por IP (aberturas, slugs novos,
+entradas de espectador, `refresh-ice`) dependem dele e ficam **de fora** quando
+o cabeçalho não existe (`wrangler dev` sem proxy). Custo no plano gratuito: cada
+entrada de espectador faz até 2 chamadas ao contador do IP, além da do canal.
 
 Anote a URL que o deploy imprime (`https://tela.<conta>.workers.dev`). Ela é
 o produto inteiro: o front sai dela, e o link que você manda para os amigos é
@@ -171,6 +178,8 @@ do lado do front é `VITE_SIGNAL_URL`.
 | `PORT` / `HOST` | onde escutar (padrão `3333` / `0.0.0.0`) |
 | `MAX_PEERS` | teto de espectadores por canal que o servidor aceita (padrão e máximo 50, o teto do produto — ADR 0029). O transmissor declara a própria `capacidade` ao reivindicar o canal, e vale o menor dos dois |
 | `ALLOWED_ORIGINS` | origens que podem abrir o WebSocket, separadas por vírgula. **Obrigatória em produção no Node** (o servidor não sobe sem ela). No Worker, a origem dele mesmo já passa; liste só as extras |
+| `MAX_VIEWERS_PER_IP` | espectadores simultâneos de um mesmo IP num canal de sala aberta (padrão **3** em produção; fora dela, 50 = sem freio, porque dev/e2e abrem todo mundo de 127.0.0.1). Sem `TRUST_PROXY` atrás de um proxy, todos parecem o mesmo IP: configure um antes do outro. No Worker, a mesma variável vale em `[vars]` |
+| `TRUST_PROXY` | de quem confiar para ler o IP do cliente em `X-Forwarded-For` (limites por IP). **Padrão vazio: o cabeçalho é ignorado** e o IP é o do socket — sem isso, quem fala direto com a porta troca de IP a cada conexão e foge de todo limite. Atrás de proxy: o número de proxies confiáveis na frente (`1` para um Caddy/nginx/balanceador; o cliente é a N-ésima entrada da direita) ou a lista de IPs dos proxies (`10.0.0.5,10.0.0.6`: só confia se o socket vier de um deles). Errar para mais lê um IP forjável; errar para menos põe todo mundo no balde do proxy. Valor inválido impede o boot |
 | `NODE_ENV` | `production` liga as recusas de configuração insegura (TURN estático, origem aberta) |
 | `STUN_URLS` | lista separada por vírgula |
 | `ICE_PROVIDER` | `auto` (padrão) ou `coturn` no Node; Worker também aceita `cloudflare` |

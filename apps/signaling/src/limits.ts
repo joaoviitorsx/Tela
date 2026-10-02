@@ -31,6 +31,29 @@ export type Limits = {
    * quem tem o link enche a fila dele de pedidos e esconde os amigos de verdade.
    */
   readonly maxPending: number;
+  /**
+   * S-01: reivindicações FALHAS (token de dono errado) por IP, por janela. Só
+   * estas contam; quem chega com o token certo nunca passa por aqui.
+   */
+  readonly falhaHostLimit: number;
+  /** S-01: o mesmo, por slug (um atacante com muitos IPs contra UM alvo). */
+  readonly falhaHostSlugLimit: number;
+  /** S-01/S-02: slugs NOVOS reivindicados por IP numa janela longa (squatting). */
+  readonly slugsNovosPorHoraLimit: number;
+  readonly slugsNovosJanelaMs: number;
+  /** S-02: entradas de espectador (cada uma emite TURN) por IP, por janela. */
+  readonly watchIpLimit: number;
+  readonly watchIpWindowMs: number;
+  /** S-02: `refresh-ice` por conexão e por IP, na mesma janela longa. */
+  readonly refreshIceSocketLimit: number;
+  readonly refreshIceIpLimit: number;
+  readonly refreshIceWindowMs: number;
+  /** S-07: espectadores simultâneos de UM canal vindos do mesmo IP. */
+  readonly viewersPorIp: number;
+  /** S-07: maior frame `signal` que um ESPECTADOR manda ao host, em bytes. */
+  readonly viewerSignalMaxBytes: number;
+  /** S-07: bytes de `signal` que um espectador manda ao host por `messageWindowMs`. */
+  readonly viewerSignalBytesPorJanela: number;
 };
 
 export const DEFAULT_LIMITS: Limits = {
@@ -98,6 +121,59 @@ export const DEFAULT_LIMITS: Limits = {
    * amigos de verdade.
    */
   maxPending: P2P_LIMITS.maxViewers,
+
+  /*
+    S-01. Falha de dono é rara na vida real (token errado só acontece com
+    cliente quebrado ou ataque), então 20/min por IP é folgado e barra quem
+    adivinha. O token é de 256 bits: o limite não existe para impedir adivinhar,
+    existe para a tentativa não custar hash, storage e ruído de graça.
+  */
+  falhaHostLimit: 20,
+  falhaHostSlugLimit: 20,
+  /*
+    60 slugs NOVOS por hora por IP: quem transmite cria um canal por vez e
+    reaproveita o seu; um grupo atrás de CGNAT, mesmo grande, não passa de
+    dezenas por hora. Complementa o `hostLimit` (rajada) com o freio do
+    acúmulo lento: sem ele, 20/min ainda seriam 28 mil slugs por dia.
+  */
+  slugsNovosPorHoraLimit: 60,
+  slugsNovosJanelaMs: 3_600_000,
+
+  /*
+    S-02. 120 entradas por minuto por IP: 50 amigos atrás de um CGNAT
+    entrando juntos, mais reconexões em massa, cabem; um script que gasta TURN
+    em laço (cada entrada é um POST pago) não.
+  */
+  watchIpLimit: 120,
+  watchIpWindowMs: 60_000,
+  /*
+    A credencial vale 10 min e o cliente renova uma vez por ciclo; 6 em 10 min
+    é 3× o necessário por conexão. Por IP, 120 em 10 min cobre os 50 amigos
+    do mesmo CGNAT com folga. Medido antes: UM socket emitia 230.
+  */
+  refreshIceSocketLimit: 6,
+  refreshIceIpLimit: 120,
+  refreshIceWindowMs: 600_000,
+
+  /*
+    S-07. 3 por IP e canal: uma casa (PC + celular + TV) ou um casal cabe;
+    uma família grande atrás do mesmo IPv4 de CGNAT corre risco, mas o dono
+    pode ligar a aprovação (ADR 0025) e o limite vale só para a SALA ABERTA
+    e para pedidos pendentes — quem o dono admite à mão não é cortado. É o
+    freio contra UM script ocupando as 50 vagas; contra botnet só a
+    aprovação resolve, e isso está documentado na revisão.
+  */
+  viewersPorIp: 3,
+  /*
+    Estimativa, não medição em navegador real (ver relatório): a resposta SDP
+    de um espectador recvonly de vídeo+áudio tem 1–3 KB e cada candidato ICE
+    ~0,3 KB. 16 KB por frame deixa 5× de folga para o SDP e é 4× menor que os
+    64 KB de antes. Por janela de 10 s, 192 KB comportam ~12 SDPs ou ~600
+    candidatos: um ICE restart inteiro, nunca um laço. No pior caso, 50
+    espectadores somam ~1 MB/s ao host (eram 77 MB/s).
+  */
+  viewerSignalMaxBytes: 16 * 1024,
+  viewerSignalBytesPorJanela: 192 * 1024,
 };
 
 /**
@@ -143,4 +219,11 @@ export class RateBuckets {
   get size(): number {
     return this.buckets.size;
   }
+}
+
+const codificador = new TextEncoder();
+
+/** Tamanho em BYTES de um frame de texto (`length` conta unidades UTF-16 e subestima até 3×). */
+export function bytesDe(raw: string): number {
+  return codificador.encode(raw).length;
 }

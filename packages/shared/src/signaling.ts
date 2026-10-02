@@ -63,16 +63,88 @@ export const ViewerKeySchema = z.string().regex(/^[A-Za-z0-9_-]{22,128}$/);
 
 /**
  * Como o transmissor reconhece quem pede para entrar. Não é conta (R6): não
- * tem senha, não é único, e o servidor só o segura enquanto a conexão existe.
- * Sem caractere de controle, para não quebrar a linha de quem lê.
+ * tem senha, não é único por si, e o servidor só o segura enquanto a conexão
+ * existe.
+ *
+ * S-20: o apelido é o ÚNICO texto de terceiros que o transmissor lê, então é
+ * normalizado aqui, no schema, e vale igual nos dois servidores e no cliente:
+ *  - NFC: a mesma letra escrita de dois jeitos vira uma só;
+ *  - sem controle nem formato (`\p{C}`): sai bidi (U+202E inverte o texto de
+ *    quem lê) e zero-width (nome "vazio" ou idêntico a outro). Quebra de
+ *    linha e tabulação (inclusive U+2028/9) viram ESPAÇO, para não colar
+ *    palavras. Em vez de recusar, limpa: colar um nome com um lixo invisível
+ *    não deve virar erro;
+ *  - exceção: o ZWJ (U+200D), que cola emoji compostos (família, profissão).
+ *    Fica só entre dois caracteres visíveis, nunca repetido nem nas pontas;
+ *  - o teto conta GRAFEMAS (o que a pessoa vê), não unidades UTF-16: um emoji
+ *    valia 2 e "👨‍👩‍👧" valia 8. Um segundo teto em code points impede o
+ *    empilhamento de marcas combinantes (zalgo), que é 1 grafema e mil
+ *    caracteres.
  */
 export const APELIDO_MAX = 24;
+/** Folga de 3 code points por grafema: cabe emoji composto, não cabe zalgo. */
+export const APELIDO_MAX_CODEPOINTS = APELIDO_MAX * 3;
+
+export function normalizarApelido(bruto: string): string {
+  const semInvisiveis = bruto
+    .normalize('NFC')
+    // Quebra de linha e tabulação separam palavras: "Ana\nLima" é "Ana Lima", não "AnaLima".
+    .replace(/[\t\n\v\f\r\u0085\u2028\u2029]/g, ' ')
+    .replace(/[\p{C}\u2028\u2029]/gu, (c) => (c === '\u200d' ? c : ''));
+  const zwj = semInvisiveis
+    .replace(/\u200d+/g, '\u200d')
+    .replace(/(^|\s)\u200d|\u200d(\s|$)/g, '$1$2');
+  return zwj.replace(/\s+/gu, ' ').trim();
+}
+
+export function tamanhoDoApelido(nome: string): { grafemas: number; codePoints: number } {
+  const codePoints = [...nome].length;
+  // Sem Segmenter (runtime muito antigo) cai em code points: pior só para emoji.
+  if (typeof Intl === 'undefined' || typeof Intl.Segmenter === 'undefined') {
+    return { grafemas: codePoints, codePoints };
+  }
+  const grafemas = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(nome)].length;
+  return { grafemas, codePoints };
+}
+
 export const ApelidoSchema = z
   .string()
-  .trim()
-  .min(1)
-  .max(APELIDO_MAX)
-  .regex(/^[^\p{C}]+$/u);
+  .max(512) // antes de normalizar: não gastar CPU em lixo gigante
+  .transform(normalizarApelido)
+  .pipe(
+    z
+      .string()
+      .min(1)
+      .refine((nome) => {
+        const t = tamanhoDoApelido(nome);
+        return t.grafemas <= APELIDO_MAX && t.codePoints <= APELIDO_MAX_CODEPOINTS;
+      }),
+  );
+
+/**
+ * Apelido que ainda não está em uso na sala (S-20, fluxo de aprovação).
+ *
+ * Sem unicidade, quem entra como "Maria" quando já há uma "Maria" aprovada se
+ * passa por ela diante do dono. Não dá para recusar (código novo de erro
+ * quebraria todo `Record<AppError, …>` e abas abertas): o servidor acrescenta
+ * " (2)", " (3)"... e o transmissor vê dois nomes diferentes. A comparação
+ * ignora caixa e compatibilidade Unicode (NFKC: "ＭＡＲＩＡ" = "maria"); NÃO
+ * pega homóglifos entre alfabetos (cirílico "а" x latino "a") — isso exigiria
+ * tabela de confundíveis, e o transmissor já vê a impressão digital.
+ */
+export function apelidoUnico(nome: string, ocupados: Iterable<string>): string {
+  const chave = (n: string) => n.normalize('NFKC').toLocaleLowerCase('en-US');
+  const usados = new Set([...ocupados].map(chave));
+  if (!usados.has(chave(nome))) return nome;
+  for (let n = 2; n < 1000; n += 1) {
+    const sufixo = ` (${n})`;
+    // Corta o nome (por grafema) para o sufixo caber no teto.
+    const base = [...nome].slice(0, Math.max(1, APELIDO_MAX - sufixo.length)).join('');
+    const candidato = `${base}${sufixo}`;
+    if (!usados.has(chave(candidato))) return candidato;
+  }
+  return nome;
+}
 
 export const SignalingErrorCodeSchema = z.enum([
   'SLUG_TAKEN', // já existe transmissão nesse slug, de outro dono

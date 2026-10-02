@@ -1,4 +1,5 @@
 import { PROTOCOL_VERSION, type ServerMessage } from '@tela/shared';
+import type { Limits } from './limits.js';
 
 /**
  * Contrato de comportamento do servidor de sinalização, independente de onde
@@ -43,6 +44,13 @@ export type Saudacao = {
    * o pedido esperando — é assim que se testa a aprovação em si (ADR 0025).
    */
   readonly aprovar?: boolean;
+  /**
+   * Origem de rede da conexão (IP). Não vai na mensagem: é o que o servidor
+   * enxerga do socket. Padrão: um IP distinto por cliente no Node (os limites
+   * por IP não interferem nos cenários de protocolo) e NENHUM no Worker (que
+   * então não aplica limite por IP). Os testes de abuso passam o mesmo IP.
+   */
+  readonly ip?: string;
 };
 
 export type ConformanceDriver = {
@@ -81,6 +89,8 @@ export type ConformanceDriver = {
 export const OWNER = 'o'.repeat(43);
 export const OUTRO = 'z'.repeat(43);
 export const SLUG = 'joao';
+/** Opções dos drivers: teto do servidor e limites sobrepostos (para estourar um limite barato). */
+export type OpcoesDoDriver = { readonly maxPeers?: number; readonly limites?: Partial<Limits> };
 /** Teto do servidor nos drivers: pequeno para o "canal cheio" ser barato de encher. */
 export const TETO_DE_TESTE = 3;
 

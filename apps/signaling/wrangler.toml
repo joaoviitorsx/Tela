@@ -38,6 +38,13 @@ run_worker_first = ["/signal/*", "/health"]
 name = "CHANNELS"
 class_name = "ChannelDurableObject"
 
+# Contador de abuso por IP (S-02): um objeto por IP, sem WebSocket, que o
+# objeto do canal (um por slug) não tem como enxergar. O alarme apaga as linhas
+# quando as janelas vencem.
+[[durable_objects.bindings]]
+name = "IP_LIMITER"
+class_name = "IpLimiterDurableObject"
+
 # SQLite-backed é OBRIGATÓRIO no plano gratuito — Durable Objects com backend
 # key-value continuam sendo recurso pago.
 #
@@ -49,6 +56,10 @@ class_name = "ChannelDurableObject"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ChannelDurableObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["IpLimiterDurableObject"]
 
 [vars]
 # Precisa acompanhar `P2P_LIMITS.maxViewers` em `packages/shared/src/encoding.ts`

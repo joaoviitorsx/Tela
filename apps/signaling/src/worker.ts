@@ -8,6 +8,7 @@ import {
   SLUG_RE,
   type ServerMessage,
   type SignalingErrorCode,
+  apelidoUnico,
   isBlockedSlug,
 } from '@tela/shared';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
@@ -108,6 +109,18 @@ type Attachment = {
   readonly saiuDeProposito?: boolean;
   readonly janelaInicio: number;
   readonly janelaContagem: number;
+  /**
+   * `CF-Connecting-IP` da conexão (S-02/S-07). No attachment pela hibernação.
+   * Ausente só fora da Cloudflare (teste, `wrangler dev` sem proxy): aí os
+   * limites por IP não se aplicam — melhor sem o freio que um balde "IP
+   * desconhecido" compartilhado por todo mundo.
+   */
+  readonly ip?: string;
+  /** Bytes de `signal` que o ESPECTADOR mandou ao host na janela (S-07). */
+  readonly janelaBytes?: number;
+  /** Janela e contagem de `refresh-ice` desta conexão (S-02). */
+  readonly refreshInicio?: number;
+  readonly refreshN?: number;
 };
 
 export type Env = {
@@ -115,6 +128,8 @@ export type Env = {
   /** Front estático servido pelo mesmo Worker. Ver `wrangler.toml`. */
   ASSETS?: { fetch(request: Request): Promise<Response> };
   MAX_PEERS?: string;
+  /** Assentos por IP e canal na sala aberta (S-07). Padrão: `DEFAULT_LIMITS.viewersPorIp`. */
+  MAX_VIEWERS_PER_IP?: string;
   STUN_URLS?: string;
   ICE_PROVIDER?: string;
   TURN_URL?: string;
@@ -141,6 +156,12 @@ export type Env = {
    * origem do próprio Worker, que serve o front, já passa (TELA-019).
    */
   ALLOWED_ORIGINS?: string;
+  /**
+   * Contador de abuso por IP, um Durable Object por IP (S-02). O objeto do
+   * canal é por slug e não enxerga o que o mesmo IP faz em outros; este, sim.
+   * Ausente = sem limite entre canais (os limites DENTRO do canal seguem).
+   */
+  IP_LIMITER?: DurableObjectNamespace;
 };
 
 /**
@@ -151,6 +172,7 @@ export type Env = {
 type PreAttachment = {
   /** Quando abriu. O alarme derruba quem passar do prazo sem saudação. */
   readonly aguardandoDesde?: number;
+  readonly ip?: string;
   /** Já mandou `host`/`watch` e está no meio do `await`. */
   readonly apresentando?: true;
 };
@@ -189,6 +211,7 @@ export type DurableContext = {
     get<T>(key: string): Promise<T | undefined>;
     put<T>(key: string, value: T): Promise<void>;
     delete(key: string): Promise<boolean>;
+    deleteAll?(): Promise<void>;
     /** Alarme do objeto: o único relógio que sobrevive à hibernação. */
     getAlarm?(): Promise<number | null>;
     setAlarm?(quando: number): Promise<void>;
@@ -214,6 +237,13 @@ export type ChannelDeps = {
   readonly equals: (a: string, b: string) => boolean;
   readonly iceServersFor: (peerId: string) => Promise<IceProvisionResult>;
   readonly newPeerId: (prefix: string) => string;
+  /**
+   * Balde por IP compartilhado entre canais (S-02). `true` = permitido.
+   * Opcional: sem ele (teste, Worker sem o binding) só valem os limites do
+   * próprio canal. Falha de infraestrutura devolve `true`: o freio de abuso
+   * não pode virar a causa de indisponibilidade.
+   */
+  readonly ipGate?: (ip: string, chave: string, limite: number, janelaMs: number) => Promise<boolean>;
 };
 
 /**
@@ -233,9 +263,42 @@ export const OWNERSHIP_GRACE_MS = 5 * 60_000;
 type PosseGuardada = { readonly ownerHash: string; readonly ate: number };
 
 const CHAVE_POSSE = 'posse';
-const CHAVE_CLAIMS = 'claims';
+const CHAVE_FALHAS = 'falhas';
 
 type JanelaClaims = { readonly inicio: number; readonly n: number };
+
+/**
+ * Contador de abuso de UM IP (um Durable Object por IP, ver `IP_LIMITER`).
+ *
+ * Janela fixa por chave, gravada no storage para sobreviver ao despejo do
+ * objeto. O alarme apaga tudo quando a maior janela passa: sem ele, cada IP
+ * que já falou conosco deixaria linhas para sempre.
+ */
+export class IpLimiter {
+  constructor(private readonly ctx: Pick<DurableContext, 'storage'>) {}
+
+  async take(chave: string, limite: number, janelaMs: number, agora: number = Date.now()): Promise<boolean> {
+    const storage = this.ctx.storage;
+    if (storage === undefined) return true;
+    const guardado = await storage.get<JanelaClaims>(`b:${chave}`);
+    const janela = guardado === undefined || agora - guardado.inicio >= janelaMs
+      ? { inicio: agora, n: 0 }
+      : guardado;
+    const n = janela.n + 1;
+    await storage.put(`b:${chave}`, { inicio: janela.inicio, n });
+    if (storage.setAlarm !== undefined) {
+      const atual = (await storage.getAlarm?.()) ?? null;
+      const fim = janela.inicio + janelaMs + 1_000;
+      if (atual === null || atual < fim) await storage.setAlarm(fim);
+    }
+    return n <= limite;
+  }
+
+  /** Chamado pelo `alarm()`: tudo o que havia já expirou (cada janela é <= ao alarme). */
+  async limpar(): Promise<void> {
+    await this.ctx.storage?.deleteAll?.();
+  }
+}
 
 export class ChannelRoom {
   constructor(
@@ -417,9 +480,11 @@ export class ChannelRoom {
     return protocol === PROTOCOL_VERSION ? null : 'PROTOCOL_MISMATCH';
   }
 
-  accept(socket: HibernatableSocket): void {
+  accept(socket: HibernatableSocket, ip?: string): void {
     this.ctx.acceptWebSocket(socket);
-    socket.serializeAttachment({ aguardandoDesde: Date.now() } satisfies PreAttachment);
+    socket.serializeAttachment({
+      aguardandoDesde: Date.now(), ...(ip === undefined ? {} : { ip }),
+    } satisfies PreAttachment);
     void this.agendarExpiracao(Date.now() + HELLO_TIMEOUT_MS);
   }
 
@@ -482,6 +547,8 @@ export class ChannelRoom {
 
     const message = parsed.data;
     const at = this.atual(socket);
+    // Lido ANTES de o attachment ser trocado pelo de "apresentando"/de peer.
+    const ip = at?.ip ?? this.preAttachmentOf(socket)?.ip;
 
     /*
       Uma saudação por socket, também durante o `await`. Sem isto, três
@@ -490,7 +557,9 @@ export class ChannelRoom {
     */
     if ((message.type === 'host' || message.type === 'watch') && at === null) {
       if (this.preAttachmentOf(socket)?.apresentando === true) return this.fail(socket, 'BAD_MESSAGE');
-      socket.serializeAttachment({ apresentando: true } satisfies PreAttachment);
+      socket.serializeAttachment({
+        apresentando: true, ...(ip === undefined ? {} : { ip }),
+      } satisfies PreAttachment);
     }
 
     switch (message.type) {
@@ -499,7 +568,7 @@ export class ChannelRoom {
         const versao = this.versaoRecusada(message.protocol);
         if (versao !== null) return this.fail(socket, versao);
         return await this.claim(
-          socket, slug, message.slug, message.ownerToken, message.approval === true, message.capacidade,
+          socket, slug, message.slug, message.ownerToken, message.approval === true, message.capacidade, ip,
         );
       }
       case 'watch': {
@@ -508,7 +577,7 @@ export class ChannelRoom {
         if (versao !== null) return this.fail(socket, versao);
         return await this.join(
           socket, slug, message.slug, message.participantId, message.attemptId,
-          message.name, message.viewerKey,
+          message.name, message.viewerKey, ip,
         );
       }
       case 'admit':
@@ -526,7 +595,7 @@ export class ChannelRoom {
         return await this.refreshIce(socket, at, message.requestId);
       case 'signal':
         if (at === null) return this.fail(socket, 'BAD_MESSAGE');
-        return this.relay(socket, at, message);
+        return this.relay(socket, at, message, tamanhoEmBytes(raw));
       case 'leave':
         // Marca ANTES de fechar: separa "eu parei" de "meu socket caiu".
         if (at !== null) this.gravar(socket, { ...at, saiuDeProposito: true });
@@ -557,6 +626,7 @@ export class ChannelRoom {
       ...at,
       janelaInicio: reiniciou ? agora : at.janelaInicio,
       janelaContagem: contagem,
+      ...(reiniciou ? { janelaBytes: 0 } : {}),
     } satisfies Attachment);
 
     // O transmissor negocia com a plateia inteira; o espectador, com um peer.
@@ -564,24 +634,36 @@ export class ChannelRoom {
     return contagem <= teto;
   }
 
+  /** Balde por IP entre canais. Sem IP (fora da Cloudflare) ou sem binding: livre. */
+  private async gate(ip: string | undefined, chave: string, limite: number, janelaMs: number): Promise<boolean> {
+    if (ip === undefined || this.deps.ipGate === undefined) return true;
+    return await this.deps.ipGate(ip, chave, limite, janelaMs);
+  }
+
   /**
-   * Janela deslizante simples de reivindicações deste canal.
+   * Conta uma reivindicação FALHA (token de dono errado) e diz se ainda está
+   * dentro do teto — por slug (storage deste objeto) e por IP (entre canais).
    *
-   * Uma linha só no storage, sobrescrita — não acumula. Se o storage não
-   * existir (driver de teste antigo), deixa passar: recusar tudo por falta de
-   * armazenamento seria pior que não limitar.
+   * Só a falha conta (S-01). Antes, o contador era incrementado por QUALQUER
+   * `host`, antes de olhar o dono: 20 tentativas erradas de um estranho
+   * trancavam o dono real fora do slug com `RATE_LIMITED`, e a carência de
+   * cinco minutos virava a janela para o estranho levar o link. Estourar este
+   * teto só troca o erro de quem já erraria (SLUG_TAKEN -> RATE_LIMITED); o
+   * token certo nunca chega aqui.
+   *
+   * Se o storage não existir (driver de teste antigo), deixa passar.
    */
-  private async dentroDoTetoDeClaims(): Promise<boolean> {
+  private async falhaDentroDoTeto(ip: string | undefined): Promise<boolean> {
     const agora = Date.now();
-    const guardado = await this.ctx.storage?.get<JanelaClaims>(CHAVE_CLAIMS);
+    const guardado = await this.ctx.storage?.get<JanelaClaims>(CHAVE_FALHAS);
     const janela =
       guardado === undefined || agora - guardado.inicio >= this.deps.limits.hostWindowMs
         ? { inicio: agora, n: 0 }
         : guardado;
-
-    if (janela.n >= this.deps.limits.hostLimit) return false;
-    await this.ctx.storage?.put(CHAVE_CLAIMS, { inicio: janela.inicio, n: janela.n + 1 });
-    return true;
+    await this.ctx.storage?.put(CHAVE_FALHAS, { inicio: janela.inicio, n: janela.n + 1 });
+    const porSlug = janela.n + 1 <= this.deps.limits.falhaHostSlugLimit;
+    const porIp = await this.gate(ip, 'falha', this.deps.limits.falhaHostLimit, this.deps.limits.hostWindowMs);
+    return porSlug && porIp;
   }
 
   private async claim(
@@ -591,6 +673,7 @@ export class ChannelRoom {
     ownerToken: string,
     aprovacao: boolean,
     capacidade: number | undefined,
+    ip: string | undefined,
   ): Promise<void> {
     // O slug do Durable Object vence: ele veio da URL e determinou qual
     // instância atendeu. Divergir significa cliente confuso ou malicioso.
@@ -600,37 +683,35 @@ export class ChannelRoom {
       return this.fail(socket, 'SLUG_INVALID');
     }
 
-    /**
-     * Teto de reivindicações, ANTES do hash.
-     *
-     * O Worker não tinha nenhum — 200 tentativas seguidas, 200 aceitas —
-     * enquanto o Node limita a 20/min. Sem isto, `host` + desconectar tranca
-     * qualquer slug pelos cinco minutos da carência de posse, de graça e
-     * repetível.
-     *
-     * A contagem é POR CANAL, não por IP: dentro do Durable Object não existe
-     * o IP do cliente, e o objeto já é por slug. Isso barra a repetição contra
-     * UM slug — que é o que amplificava a corrida do `claim`. Ocupação em massa
-     * de slugs diferentes precisaria de um limitador global, e continua aberta.
-     *
-     * Fica antes do `hash` de propósito: rejeitar tem que ser mais barato que
-     * atacar.
-     */
-    if (!(await this.dentroDoTetoDeClaims())) {
-      return this.fail(socket, 'RATE_LIMITED');
-    }
-
-    const hash = await this.deps.hash(ownerToken);
-    const peerId = this.deps.newPeerId('h');
-
     /*
+      S-01: a posse é lida ANTES de qualquer contagem, e só a FALHA conta (ver
+      `falhaDentroDoTeto`). O dono verdadeiro passa sempre, por mais que um
+      estranho erre; um estranho que nunca teve o token só recebe SLUG_TAKEN
+      ou RATE_LIMITED — durante a carência a posse vem do storage, então a
+      janela de cinco minutos não é porta aberta.
+
       Dono errado sai ANTES da emissão TURN (§9.2: não chamar a API paga antes
       de uma autorização viável). A seção crítica abaixo confere de novo — isto
       só evita o gasto no caso óbvio, não substitui a garantia.
     */
+    const hash = await this.deps.hash(ownerToken);
+    const peerId = this.deps.newPeerId('h');
     const donoPrevio = await this.donoAtual();
     if (donoPrevio !== null && !this.deps.equals(donoPrevio, hash)) {
-      return this.fail(socket, 'SLUG_TAKEN');
+      return this.fail(socket, (await this.falhaDentroDoTeto(ip)) ? 'SLUG_TAKEN' : 'RATE_LIMITED');
+    }
+
+    /*
+      Slug LIVRE: aqui mora o squatting. Limite por IP ENTRE canais (o objeto
+      é por slug e não enxerga o resto): rajada por minuto e acúmulo por hora.
+      O dono que reconecta (`donoPrevio` bate) não passa por aqui.
+    */
+    if (donoPrevio === null) {
+      const { hostLimit, hostWindowMs, slugsNovosPorHoraLimit, slugsNovosJanelaMs } = this.deps.limits;
+      const livre = (await this.gate(ip, 'host', hostLimit, hostWindowMs)) &&
+        (await this.gate(ip, 'host-h', slugsNovosPorHoraLimit, slugsNovosJanelaMs));
+      if (!livre) return this.fail(socket, 'RATE_LIMITED');
+      if (!this.ctx.getWebSockets().includes(socket)) return;
     }
 
     /**
@@ -679,6 +760,7 @@ export class ChannelRoom {
         ownerHash: hash,
         aprovacao,
         ...(capacidade === undefined ? {} : { capacidade }),
+        ...(ip === undefined ? {} : { ip }),
         janelaInicio: Date.now(),
         janelaContagem: 0,
       } satisfies Attachment);
@@ -725,7 +807,7 @@ export class ChannelRoom {
       if (aprovacao) this.send(socket, this.pedidoParaHost(p.at));
       else {
         await this.admitir(
-          p.socket, p.at.peerId, p.at.name, p.at.fingerprint, p.at.participantId, p.at.attemptId, null,
+          p.socket, p.at.peerId, p.at.name, p.at.fingerprint, p.at.participantId, p.at.attemptId, null, p.at.ip,
         );
       }
     }
@@ -733,7 +815,7 @@ export class ChannelRoom {
 
   private async join(
     socket: HibernatableSocket, slug: string, wanted: string,
-    participantId?: string, attemptId?: string, name?: string, viewerKey?: string,
+    participantId?: string, attemptId?: string, name?: string, viewerKey?: string, ip?: string,
   ): Promise<void> {
     // `isBlockedSlug` também aqui: sem ele o Node responde `SLUG_INVALID` e o
     // Worker responde `NOT_HOSTING` para o mesmo pedido, e a diferença deixa
@@ -749,6 +831,17 @@ export class ChannelRoom {
     if (host === null) return this.fail(socket, 'NOT_HOSTING');
 
     /*
+      S-02: cada entrada acaba numa credencial TURN paga. O orçamento por IP é
+      cobrado AQUI, antes de qualquer outro `await`, porque a contagem de
+      vagas abaixo e a gravação do attachment não podem ser separadas por uma
+      ida ao contador (outra entrada passaria no meio e estouraria o teto).
+    */
+    if (!(await this.gate(ip, 'watch', this.deps.limits.watchIpLimit, this.deps.limits.watchIpWindowMs))) {
+      return this.fail(socket, 'RATE_LIMITED');
+    }
+    if (!this.ctx.getWebSockets().includes(socket)) return;
+
+    /*
       Sala aberta (ADR 0028): quem tem o link entra direto, como antes da
       ADR 0025. Retomada pelo `participantId`, segredo de alta entropia do
       navegador.
@@ -762,9 +855,14 @@ export class ChannelRoom {
       if (anterior === undefined && this.viewers().length >= this.teto()) {
         return this.fail(socket, 'CHANNEL_FULL', this.teto());
       }
+      // S-07: um IP não toma o canal inteiro. Só na sala aberta; quem o dono aprova à mão não é cortado.
+      if (anterior === undefined && ip !== undefined &&
+        this.viewers().filter((v) => v.at.ip === ip).length >= this.deps.limits.viewersPorIp) {
+        return this.fail(socket, 'RATE_LIMITED');
+      }
       return await this.admitir(
         socket, anterior?.at.peerId ?? this.deps.newPeerId('v'), name, impressao,
-        participantId, attemptId, anterior?.socket ?? null,
+        participantId, attemptId, anterior?.socket ?? null, ip,
       );
     }
 
@@ -784,7 +882,9 @@ export class ChannelRoom {
       .find((viewer) => viewer.at.participantId === participantId &&
         typeof viewer.at.fingerprint === 'string' && this.deps.equals(viewer.at.fingerprint, fingerprint));
     if (previous !== undefined) {
-      return await this.admitir(socket, previous.at.peerId, name, fingerprint, participantId, attemptId, previous.socket);
+      return await this.admitir(
+        socket, previous.at.peerId, name, fingerprint, participantId, attemptId, previous.socket, ip,
+      );
     }
 
     if (this.viewers().length >= this.teto()) return this.fail(socket, 'CHANNEL_FULL', this.teto());
@@ -796,6 +896,11 @@ export class ChannelRoom {
     if (repetido === undefined && this.pedidos().length >= this.deps.limits.maxPending) {
       return this.fail(socket, 'RATE_LIMITED');
     }
+    // S-07: um IP também não enche a fila do dono de pedidos.
+    if (repetido === undefined && ip !== undefined &&
+      this.pedidos().filter((p) => p.at.ip === ip).length >= this.deps.limits.viewersPorIp) {
+      return this.fail(socket, 'RATE_LIMITED');
+    }
     const peerId = repetido?.at.peerId ?? this.deps.newPeerId('v');
     if (repetido !== undefined) {
       // Marca antes de fechar: o `webSocketClose` dele não pode cancelar o pedido novo.
@@ -803,12 +908,17 @@ export class ChannelRoom {
       this.esquecer(repetido.socket);
       repetido.socket.close(1000, 'substituido');
     }
+    // S-20: dois "Maria" diante do dono seriam indistinguíveis; o segundo vira "Maria (2)".
+    const ocupados = [...this.viewers(), ...this.pedidos()]
+      .filter((p) => p.socket !== repetido?.socket)
+      .flatMap((p) => (p.at.name === undefined ? [] : [p.at.name]));
     const pedido: Attachment = {
       peerId,
       role: 'viewer',
       pendente: true,
       ready: false,
-      name,
+      name: apelidoUnico(name, ocupados),
+      ...(ip === undefined ? {} : { ip }),
       fingerprint,
       ...(participantId === undefined ? {} : { participantId }),
       ...(attemptId === undefined ? {} : { attemptId }),
@@ -839,7 +949,7 @@ export class ChannelRoom {
     }
     await this.admitir(
       alvo.socket, peerId, alvo.at.name ?? '?', alvo.at.fingerprint ?? '',
-      alvo.at.participantId, alvo.at.attemptId, null,
+      alvo.at.participantId, alvo.at.attemptId, null, alvo.at.ip,
     );
   }
 
@@ -847,10 +957,12 @@ export class ChannelRoom {
   private async admitir(
     socket: HibernatableSocket, peerId: string, name: string | undefined, fingerprint: string | undefined,
     participantId: string | undefined, attemptId: string | undefined, anterior: HibernatableSocket | null,
+    ip?: string,
   ): Promise<void> {
     this.gravar(socket, {
       peerId,
       role: 'viewer',
+      ...(ip === undefined ? {} : { ip }),
       ...(name === undefined ? {} : { name }),
       ...(fingerprint === undefined ? {} : { fingerprint }),
       ...(participantId === undefined ? {} : { participantId }),
@@ -918,6 +1030,21 @@ export class ChannelRoom {
   }
 
   private async refreshIce(socket: HibernatableSocket, at: Attachment, requestId: string): Promise<void> {
+    /*
+      S-02: cada refresh é um POST pago ao TURN. Um socket sozinho emitiu 230.
+      Estourou o teto da conexão ou do IP: silêncio — sem emitir e sem fechar.
+      O cliente tem timeout e tenta no ciclo seguinte; derrubar um espectador
+      por excesso de renovação puniria a vítima de um cliente com defeito.
+    */
+    const agora = Date.now();
+    const reiniciou = at.refreshInicio === undefined ||
+      agora - at.refreshInicio >= this.deps.limits.refreshIceWindowMs;
+    const n = reiniciou ? 1 : (at.refreshN ?? 0) + 1;
+    this.gravar(socket, { ...at, refreshInicio: reiniciou ? agora : at.refreshInicio, refreshN: n } satisfies Attachment);
+    if (n > this.deps.limits.refreshIceSocketLimit) return;
+    if (!(await this.gate(
+      at.ip, 'refresh', this.deps.limits.refreshIceIpLimit, this.deps.limits.refreshIceWindowMs,
+    ))) return;
     const ice = await this.deps.iceServersFor(at.peerId);
     if (!this.ctx.getWebSockets().includes(socket)) return;
     const current = this.atual(socket);
@@ -951,8 +1078,23 @@ export class ChannelRoom {
    * Mesma semântica da varredura que havia aqui — espectador só fala com o
    * host, host endereça por `to`, e removido/pendente/não-pronto não recebe.
    */
-  private relay(socket: HibernatableSocket, from: Attachment, message: Extract<ClientMessage, { type: 'signal' }>): void {
+  private relay(
+    socket: HibernatableSocket, from: Attachment, message: Extract<ClientMessage, { type: 'signal' }>,
+    bytes: number,
+  ): void {
     if (from.ready === false) return;
+    if (from.role === 'viewer') {
+      /*
+        S-07: o host paga cada byte que um espectador manda. Frame grande
+        demais é abuso (SDP legítimo é pequeno); volume demais na janela
+        também. Contado no attachment: sobrevive à hibernação.
+      */
+      if (bytes > this.deps.limits.viewerSignalMaxBytes) return this.fail(socket, 'BAD_MESSAGE');
+      const total = (this.atual(socket)?.janelaBytes ?? 0) + bytes;
+      if (total > this.deps.limits.viewerSignalBytesPorJanela) return this.fail(socket, 'RATE_LIMITED');
+      const atual = this.atual(socket);
+      if (atual !== null) this.gravar(socket, { ...atual, janelaBytes: total } satisfies Attachment);
+    }
     const indice = this.indice();
     let target: HibernatableSocket | undefined;
     if (from.role === 'host') {
@@ -1143,6 +1285,41 @@ function iceComFallback(env: Env, relatar: (problemas: readonly string[]) => voi
   throw new Error('ICE_DEFAULT_INVALID');
 }
 
+/**
+ * Fala com o `IpLimiter` do IP. Erro de rede ou do objeto = permitido: o freio
+ * de abuso não pode ser, ele mesmo, o que derruba a sinalização.
+ */
+export function makeIpGate(
+  namespace: DurableObjectNamespace | undefined,
+): ChannelDeps['ipGate'] {
+  if (namespace === undefined) return undefined;
+  return async (ip, chave, limite, janelaMs) => {
+    try {
+      const resposta = await namespace.get(namespace.idFromName(ip)).fetch(
+        new Request('https://ip-limiter/take', {
+          method: 'POST',
+          body: JSON.stringify({ chave, limite, janelaMs }),
+        }),
+      );
+      const corpo = (await resposta.json()) as { permitido?: unknown };
+      return corpo.permitido !== false;
+    } catch {
+      return true;
+    }
+  };
+}
+
+/**
+ * Abertura de WebSocket por IP, ANTES de acordar o objeto do canal (S-02).
+ * Mesmo teto do Node (`openLimit`). Sem IP ou sem contador: passa.
+ */
+export async function aberturaPermitida(
+  gate: ChannelDeps['ipGate'], ip: string | null, limits: Limits,
+): Promise<boolean> {
+  if (gate === undefined || ip === null || ip === '') return true;
+  return await gate(ip, 'open', limits.openLimit, limits.openWindowMs);
+}
+
 export function makeChannelDeps(
   env: Env,
   crypto: WebCryptoLike,
@@ -1154,16 +1331,24 @@ export function makeChannelDeps(
   if (!Number.isInteger(parsedMax) || parsedMax < 1 || parsedMax > P2P_LIMITS.maxViewers) {
     throw new Error('MAX_PEERS_INVALID');
   }
+  const porIp = Number(env.MAX_VIEWERS_PER_IP ?? DEFAULT_LIMITS.viewersPorIp);
+  if (!Number.isInteger(porIp) || porIp < 1 || porIp > P2P_LIMITS.maxViewers) {
+    throw new Error('MAX_VIEWERS_PER_IP_INVALID');
+  }
   const settings = iceComFallback(env, relatar);
   const cloudflare = makeCloudflareProvider(settings);
 
   const encoder = new TextEncoder();
 
+  const ipGate = makeIpGate(env.IP_LIMITER);
+
   return {
     limits: {
       ...DEFAULT_LIMITS,
       maxPeers: parsedMax,
+      viewersPorIp: porIp,
     },
+    ...(ipGate === undefined ? {} : { ipGate }),
 
     async hash(input) {
       const digest = await crypto.subtle.digest('SHA-256', encoder.encode(input));

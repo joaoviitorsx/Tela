@@ -1,6 +1,10 @@
 import { MAX_FRAME_BYTES, SLUG_RE } from '@tela/shared';
-import { ChannelRoom, type Env, type HibernatableSocket, type WebCryptoLike, makeChannelDeps } from './worker.js';
+import {
+  ChannelRoom, IpLimiter, type Env, type HibernatableSocket, type WebCryptoLike,
+  aberturaPermitida, makeChannelDeps, makeIpGate,
+} from './worker.js';
 import { describeIceSettings, parseIceSettings } from './ice-settings.js';
+import { DEFAULT_LIMITS } from './limits.js';
 import { listaDeOrigens, origemPermitida } from './origem.js';
 
 /**
@@ -40,6 +44,13 @@ type DurableState = {
 };
 
 const SLUG_HEADER = 'x-tela-slug';
+/**
+ * IP do cliente, repassado ao objeto do canal. Quem escreve é só o Worker, a
+ * partir de `CF-Connecting-IP` (que a Cloudflare define na borda e o cliente
+ * não consegue forjar); um `x-tela-ip` mandado de fora é sobrescrito ou
+ * apagado antes de chegar ao objeto.
+ */
+const IP_HEADER = 'x-tela-ip';
 
 export class ChannelDurableObject {
   private readonly room: ChannelRoom;
@@ -58,7 +69,7 @@ export class ChannelDurableObject {
     // `acceptWebSocket`, e NÃO `server.accept()`: só o primeiro permite que o
     // objeto hiberne com a conexão aberta. Trocar um pelo outro é a diferença
     // entre caber no free tier e não caber.
-    this.room.accept(server);
+    this.room.accept(server, request.headers.get(IP_HEADER) ?? undefined);
 
     return new Response(null, { status: 101, webSocket: client } as ResponseInit);
   }
@@ -84,6 +95,31 @@ export class ChannelDurableObject {
 
   async webSocketError(socket: HibernatableSocket): Promise<void> {
     this.room.handleClose(socket);
+  }
+}
+
+/**
+ * Contador de abuso por IP (S-02): um objeto por IP, sem WebSocket. Toda a
+ * lógica está em `IpLimiter` (testada); aqui só entra o HTTP.
+ */
+export class IpLimiterDurableObject {
+  private readonly limiter: IpLimiter;
+
+  constructor(state: DurableState) {
+    this.limiter = new IpLimiter({ storage: state.storage });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const corpo = (await request.json()) as { chave?: unknown; limite?: unknown; janelaMs?: unknown };
+    if (typeof corpo.chave !== 'string' || typeof corpo.limite !== 'number' || typeof corpo.janelaMs !== 'number') {
+      return new Response('{"permitido":true}', { status: 400 });
+    }
+    const permitido = await this.limiter.take(corpo.chave, corpo.limite, corpo.janelaMs);
+    return new Response(JSON.stringify({ permitido }), { headers: { 'content-type': 'application/json' } });
+  }
+
+  async alarm(): Promise<void> {
+    await this.limiter.limpar();
   }
 }
 
@@ -124,6 +160,12 @@ export default {
         return new Response('origem não permitida', { status: 403 });
       }
 
+      // S-02: o IP vem da borda, e a abertura tem teto por IP antes de acordar objeto algum.
+      const ip = request.headers.get('CF-Connecting-IP');
+      if (!(await aberturaPermitida(makeIpGate(env.IP_LIMITER), ip, DEFAULT_LIMITS))) {
+        return new Response('muitas conexões', { status: 429 });
+      }
+
       // O slug decide QUAL Durable Object atende, então todos os peers de um
       // canal caem na mesma instância sem roteamento nosso.
       const slug = url.pathname.replace(/^\/signal\/?/, '').toLowerCase();
@@ -132,6 +174,8 @@ export default {
       const id = env.CHANNELS.idFromName(slug);
       const headers = new Headers(request.headers);
       headers.set(SLUG_HEADER, slug);
+      if (ip === null || ip === '') headers.delete(IP_HEADER);
+      else headers.set(IP_HEADER, ip);
 
       return await env.CHANNELS.get(id).fetch(new Request(request.url, { headers }));
     }

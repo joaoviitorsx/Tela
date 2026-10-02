@@ -6,8 +6,14 @@
  * página de terceiros abrindo sinalização em nome de quem a visita — e
  * gastando credencial TURN da nossa cota com isso.
  *
- * Sem `Origin` passa: navegador sempre manda no upgrade, então a ausência é
- * cliente fora do navegador, que esta regra não tem como conter.
+ * Sem `Origin` passa (decisão da revisão S-02, mantida de propósito): navegador
+ * sempre manda no upgrade, então a ausência é cliente fora do navegador — e
+ * esse cliente manda o `Origin` que quiser. Recusar a ausência só barraria o
+ * script preguiçoso (um `curl` que esquece o cabeçalho) e quebraria
+ * ferramentas legítimas (os `e2e/*.mjs`, clientes de linha de comando), sem
+ * conter ninguém que se importe. O que protege o TURN pago e as vagas é o
+ * limite por IP, por conexão e por canal (`limits.ts`, `ip-do-cliente.ts`),
+ * que vale com ou sem `Origin`.
  */
 export function normalizarOrigem(valor: string): string {
   return valor.trim().toLowerCase().replace(/\/+$/, '');

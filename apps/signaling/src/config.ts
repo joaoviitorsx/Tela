@@ -1,6 +1,7 @@
 import { P2P_LIMITS } from '@tela/shared';
 import { z } from 'zod';
 import { DEFAULT_LIMITS, type Limits } from './limits.js';
+import { parseTrustProxy, type ConfiancaNoProxy } from './ip-do-cliente.js';
 import { parseIceSettings, type IceSettings } from './ice-settings.js';
 
 /** ÚNICO lugar do serviço que lê process.env. */
@@ -13,6 +14,22 @@ const Schema = z.object({
 
   /** Pode baixar o teto do produto (ADR 0029), nunca passar dele. */
   MAX_PEERS: z.coerce.number().int().min(1).max(P2P_LIMITS.maxViewers).default(DEFAULT_LIMITS.maxPeers),
+
+  /**
+   * Assentos por IP e canal na sala aberta (S-07). Padrão: 3 em produção; fora
+   * dela, o teto do produto (= sem freio), porque o desenvolvimento e o e2e
+   * abrem todos os espectadores de 127.0.0.1 e o que se testa ali é o teto do
+   * CANAL, não este. Em produção atrás de CGNAT/proxy sem `TRUST_PROXY`, todos
+   * vêm do mesmo IP: configure `TRUST_PROXY` antes de mexer neste número.
+   */
+  MAX_VIEWERS_PER_IP: z.coerce.number().int().min(1).max(P2P_LIMITS.maxViewers).optional(),
+
+  /**
+   * Proxies confiáveis para ler o IP do cliente em `X-Forwarded-For` (S-17).
+   * Vazio/0 = ignora o cabeçalho. N = quantos proxies na frente. Lista de IPs
+   * = só confia se o socket vier de um deles. Ver `ip-do-cliente.ts`.
+   */
+  TRUST_PROXY: z.string().default(''),
 
   STUN_URLS: z.string().default('stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478'),
   ICE_PROVIDER: z.string().optional(),
@@ -40,6 +57,7 @@ export type Config = z.infer<typeof Schema> & {
   readonly limits: Limits;
   readonly allowedOrigins: readonly string[];
   readonly ice: IceSettings;
+  readonly trustProxy: ConfiancaNoProxy;
 };
 
 export function parseConfig(env: NodeJS.ProcessEnv): { config: Config } | { problems: string[] } {
@@ -72,6 +90,8 @@ export function parseConfig(env: NodeJS.ProcessEnv): { config: Config } | { prob
       'TURN com credencial estática em produção: qualquer espectador que abrir o DevTools ganha um relay permanente. Use TURN_SECRET.',
     );
   }
+  const trustProxy = parseTrustProxy(raw.TRUST_PROXY);
+  if ('problema' in trustProxy) problems.push(trustProxy.problema);
   if ('problems' in ice) return { problems };
   if (problems.length > 0) return { problems };
 
@@ -84,9 +104,15 @@ export function parseConfig(env: NodeJS.ProcessEnv): { config: Config } | { prob
   return {
     config: {
       ...raw,
-      limits: { ...DEFAULT_LIMITS, maxPeers: raw.MAX_PEERS },
+      limits: {
+        ...DEFAULT_LIMITS,
+        maxPeers: raw.MAX_PEERS,
+        viewersPorIp: raw.MAX_VIEWERS_PER_IP ??
+          (raw.NODE_ENV === 'production' ? DEFAULT_LIMITS.viewersPorIp : P2P_LIMITS.maxViewers),
+      },
       allowedOrigins: split(raw.ALLOWED_ORIGINS),
       ice: ice.settings,
+      trustProxy: trustProxy as ConfiancaNoProxy,
     },
   };
 }

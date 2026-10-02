@@ -1,12 +1,12 @@
 import type { ServerMessage } from '@tela/shared';
 import { type Connection, makeChannelRegistry } from './channel-registry.js';
-import { type ConformanceClient, type ConformanceDriver, TETO_DE_TESTE, saudar } from './conformance.js';
+import { type ConformanceClient, type ConformanceDriver, type OpcoesDoDriver, TETO_DE_TESTE, saudar } from './conformance.js';
 import { SpySocket, TestClock, testDeps } from './testing.js';
 
 /** Driver de conformidade sobre o registro em memória (Node + `ws`). */
-export function makeNodeDriver(opcoes: { readonly maxPeers?: number } = {}): ConformanceDriver {
+export function makeNodeDriver(opcoes: OpcoesDoDriver = {}): ConformanceDriver {
   const clock = new TestClock();
-  const registry = makeChannelRegistry(testDeps(clock, { maxPeers: opcoes.maxPeers ?? TETO_DE_TESTE }));
+  const registry = makeChannelRegistry(testDeps(clock, { maxPeers: opcoes.maxPeers ?? TETO_DE_TESTE, ...opcoes.limites }));
   const sockets = new Map<string, SpySocket>();
   const conns = new Map<string, Connection>();
 
@@ -17,12 +17,12 @@ export function makeNodeDriver(opcoes: { readonly maxPeers?: number } = {}): Con
     closed: () => sockets.get(id)?.closed ?? false,
   });
 
-  function open(id: string, message: unknown, ip: string): ConformanceClient {
+  function open(id: string, message: unknown, ip: string, ipFixo?: string): ConformanceClient {
     const socket = new SpySocket();
     sockets.set(id, socket);
     // Um IP distinto por cliente: o limite de `host` por IP é do servidor, não
     // do contrato de protocolo que esta suíte verifica.
-    const conn = registry.accept(socket, `${ip}.${sockets.size}`);
+    const conn = registry.accept(socket, ipFixo ?? `${ip}.${sockets.size}`);
     conns.set(id, conn);
     conn.receive(JSON.stringify(message));
     return client(id);
@@ -30,10 +30,10 @@ export function makeNodeDriver(opcoes: { readonly maxPeers?: number } = {}): Con
 
   return {
     async host(id, slug, ownerToken, saudacao) {
-      return open(id, saudar({ type: 'host', slug, ownerToken }, saudacao), '10.0.0');
+      return open(id, saudar({ type: 'host', slug, ownerToken }, saudacao), '10.0.0', saudacao?.ip);
     },
     async watch(id, slug, identity, saudacao) {
-      return open(id, saudar({ type: 'watch', slug, ...identity }, saudacao, id), '10.0.1');
+      return open(id, saudar({ type: 'watch', slug, ...identity }, saudacao, id), '10.0.1', saudacao?.ip);
     },
     async send(id, message) {
       conns.get(id)?.receive(JSON.stringify(message));

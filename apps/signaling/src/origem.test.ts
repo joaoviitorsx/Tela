@@ -23,7 +23,7 @@ describe('origem do upgrade (TELA-019)', () => {
     expect(origemPermitida('app://outro', ['app://tela'], 'https://tela.gg')).toBe(false);
   });
 
-  it('sem Origin passa: não é navegador, e a regra não é autenticação', () => {
+  it('sem Origin passa (S-02, decisão mantida): não é navegador, e a regra não é autenticação — o freio é o limite por IP', () => {
     expect(origemPermitida(null, ['https://tela.gg'])).toBe(true);
     expect(origemPermitida('', ['https://tela.gg'])).toBe(true);
   });

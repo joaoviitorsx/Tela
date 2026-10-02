@@ -8,6 +8,7 @@ import { makeChannelRegistry } from './channel-registry.js';
 import { RateBuckets } from './limits.js';
 import { origemPermitida } from './origem.js';
 import { loadConfig } from './config.js';
+import { ipDoCliente } from './ip-do-cliente.js';
 import { makeIceProvider, makePeerIdGenerator } from './ice.js';
 import { describeIceSettings } from './ice-settings.js';
 
@@ -42,14 +43,9 @@ const http = createServer((req, res) => {
   res.writeHead(404).end();
 });
 
-/** Atrás de um proxy o IP real vem no cabeçalho; sem proxy, o socket basta. */
+/** S-17: o cabeçalho só vale se `TRUST_PROXY` disser; ver `ip-do-cliente.ts`. */
 function ipDe(req: IncomingMessage): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  return (
-    (typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : undefined) ??
-    req.socket.remoteAddress ??
-    'desconhecido'
-  );
+  return ipDoCliente(req.socket.remoteAddress, req.headers['x-forwarded-for'], config.trustProxy);
 }
 
 const aberturas = new RateBuckets(() => Date.now());

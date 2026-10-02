@@ -1,10 +1,11 @@
 import { webcrypto } from 'node:crypto';
 import type { ServerMessage } from '@tela/shared';
-import { type ConformanceClient, type ConformanceDriver, TETO_DE_TESTE, saudar } from './conformance.js';
+import { type ConformanceClient, type ConformanceDriver, type OpcoesDoDriver, TETO_DE_TESTE, saudar } from './conformance.js';
 import type { IceProvisionResult } from './ice-provision.js';
 import {
   ChannelRoom,
   type DurableContext,
+  IpLimiter,
   type Env,
   type HibernatableSocket,
   type WebCryptoLike,
@@ -102,10 +103,26 @@ export class FakeDurableContext implements DurableContext {
  */
 export function makeWorkerDriver(
   iceServersFor?: (peerId: string) => Promise<IceProvisionResult>,
-  opcoes: { readonly maxPeers?: number } = {},
+  opcoes: OpcoesDoDriver = {},
 ): ConformanceDriver {
   const env: Env = { CHANNELS: null as never, MAX_PEERS: String(opcoes.maxPeers ?? TETO_DE_TESTE) };
-  const deps = { ...makeChannelDeps(env, webcrypto as unknown as WebCryptoLike),
+  /*
+    Um contador por IP, com a MESMA classe do Durable Object de produção e um
+    contexto de storage falso por IP: o que roda aqui é o `IpLimiter` de
+    verdade, não um Map que concordaria com qualquer implementação.
+  */
+  const limitadores = new Map<string, IpLimiter>();
+  const ipGate = async (ip: string, chave: string, limite: number, janelaMs: number) => {
+    let l = limitadores.get(ip);
+    if (l === undefined) {
+      l = new IpLimiter(new FakeDurableContext());
+      limitadores.set(ip, l);
+    }
+    return await l.take(chave, limite, janelaMs);
+  };
+  const base = makeChannelDeps(env, webcrypto as unknown as WebCryptoLike);
+  const deps = { ...base, ipGate,
+    limits: { ...base.limits, ...opcoes.limites },
     ...(iceServersFor === undefined ? {} : { iceServersFor }) };
 
   const rooms = new Map<string, { room: ChannelRoom; ctx: FakeDurableContext }>();
@@ -143,13 +160,13 @@ export function makeWorkerDriver(
     closed: () => sockets.get(id)?.closed ?? false,
   });
 
-  async function open(id: string, slug: string, message: unknown): Promise<ConformanceClient> {
+  async function open(id: string, slug: string, message: unknown, ip?: string): Promise<ConformanceClient> {
     const socket = new FakeHibernatableSocket();
     sockets.set(id, socket);
     slugOf.set(id, slug);
 
     const alvo = roomFor(slug);
-    alvo.room.accept(socket);
+    alvo.room.accept(socket, ip);
     // O runtime avisa o objeto quando o socket fecha, inclusive quando foi o
     // próprio servidor que fechou.
     socket.aoFechar = () => roomFor(slug).room.handleClose(socket);
@@ -159,10 +176,10 @@ export function makeWorkerDriver(
 
   return {
     async host(id, slug, ownerToken, saudacao) {
-      return await open(id, slug, saudar({ type: 'host', slug, ownerToken }, saudacao));
+      return await open(id, slug, saudar({ type: 'host', slug, ownerToken }, saudacao), saudacao?.ip);
     },
     async watch(id, slug, identity, saudacao) {
-      return await open(id, slug, saudar({ type: 'watch', slug, ...identity }, saudacao, id));
+      return await open(id, slug, saudar({ type: 'watch', slug, ...identity }, saudacao, id), saudacao?.ip);
     },
     async send(id, message) {
       const socket = sockets.get(id);

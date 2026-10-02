@@ -4,15 +4,18 @@ import { describe, expect, it } from 'vitest';
 import { OUTRO, OWNER, SLUG, saudar } from './conformance.js';
 import type { IceProvisionResult } from './ice-provision.js';
 import { FakeDurableContext, FakeHibernatableSocket } from './testing-worker-driver.js';
-import { ChannelRoom, type Env, type WebCryptoLike, makeChannelDeps } from './worker.js';
+import { DEFAULT_LIMITS } from './limits.js';
+import {
+  ChannelRoom, IpLimiter, type Env, type WebCryptoLike, aberturaPermitida, makeChannelDeps, makeIpGate,
+} from './worker.js';
 
 /**
  * O que só o Durable Object tem: hibernação, alarme e `await` no meio da
  * saudação. A suíte de conformidade cobre o comportamento comum; isto cobre
  * as defesas que o Node não precisa porque é síncrono e tem `setTimeout`.
  */
-function sala(ice?: (peerId: string) => Promise<IceProvisionResult>) {
-  const env: Env = { CHANNELS: null as never, MAX_PEERS: '3' };
+function sala(ice?: (peerId: string) => Promise<IceProvisionResult>, maxPeers = '3') {
+  const env: Env = { CHANNELS: null as never, MAX_PEERS: maxPeers };
   const pedidos: string[] = [];
   const base = makeChannelDeps(env, webcrypto as unknown as WebCryptoLike);
   const deps = {
@@ -257,5 +260,80 @@ describe('índice de attachments (C2)', () => {
     s.hibernar();
     await s.mandar(h, { type: 'signal', to: id, payload: 'x' });
     expect(sinaisRecebidos(a)).toHaveLength(0);
+  });
+});
+
+describe('contador por IP do Worker (S-02)', () => {
+  it('IpLimiter: conta por chave, estoura no limite e reabre quando a janela vence', async () => {
+    const ctx = new FakeDurableContext();
+    const l = new IpLimiter(ctx);
+    const t0 = 1_000_000;
+    expect(await l.take('open', 2, 60_000, t0)).toBe(true);
+    expect(await l.take('open', 2, 60_000, t0 + 1)).toBe(true);
+    expect(await l.take('open', 2, 60_000, t0 + 2)).toBe(false);
+    // Outra chave não é afetada.
+    expect(await l.take('watch', 2, 60_000, t0 + 3)).toBe(true);
+    // Janela vencida: recomeça.
+    expect(await l.take('open', 2, 60_000, t0 + 60_001)).toBe(true);
+    // Sobrevive ao despejo: outro `IpLimiter` sobre o MESMO storage enxerga a contagem.
+    expect(await new IpLimiter(ctx).take('open', 2, 60_000, t0 + 60_002)).toBe(true);
+    expect(await new IpLimiter(ctx).take('open', 2, 60_000, t0 + 60_003)).toBe(false);
+  });
+
+  it('IpLimiter agenda o alarme e `limpar` apaga tudo (sem lixo por IP para sempre)', async () => {
+    const ctx = new FakeDurableContext();
+    const apagados: string[] = [];
+    const storage = { ...ctx.storage, deleteAll: async () => { apagados.push('tudo'); } };
+    const l = new IpLimiter({ storage });
+    await l.take('k', 1, 60_000, 1_000);
+    expect(ctx.alarme).toBe(1_000 + 60_000 + 1_000);
+    await l.limpar();
+    expect(apagados).toEqual(['tudo']);
+  });
+
+  it('abertura de WebSocket: openLimit por IP antes de acordar o objeto do canal', async () => {
+    const l = new IpLimiter(new FakeDurableContext());
+    const gate = (_ip: string, chave: string, limite: number, janela: number) => l.take(chave, limite, janela);
+    const limits = { ...DEFAULT_LIMITS, openLimit: 3 };
+    const r = [];
+    for (let i = 0; i < 5; i += 1) r.push(await aberturaPermitida(gate, '203.0.113.1', limits));
+    expect(r).toEqual([true, true, true, false, false]);
+  });
+
+  it('sem IP (fora da Cloudflare) ou sem contador, a abertura passa', async () => {
+    expect(await aberturaPermitida(undefined, '203.0.113.1', DEFAULT_LIMITS)).toBe(true);
+    expect(await aberturaPermitida(async () => false, null, DEFAULT_LIMITS)).toBe(true);
+  });
+
+  it('falha do contador (rede/objeto fora) NÃO derruba a sinalização: permite', async () => {
+    const quebrado = makeIpGate({
+      idFromName: () => 'x',
+      get: () => ({ fetch: async () => { throw new Error('DO fora do ar'); } }),
+    });
+    expect(await quebrado?.('203.0.113.1', 'open', 1, 1000)).toBe(true);
+  });
+
+  it('o IP viaja no attachment: sobrevive à hibernação e vale para o teto por IP', async () => {
+    const s = sala(undefined, '50');
+    const host = s.abrir();
+    await s.mandar(host, saudar({ type: 'host', slug: SLUG, ownerToken: OWNER }, { capacidade: 50 }));
+    const v = (id: string) => {
+      const socket = new FakeHibernatableSocket();
+      socket.aoFechar = () => s.room.handleClose(socket);
+      s.room.accept(socket, '203.0.113.9');
+      return { id, socket };
+    };
+    for (let i = 0; i < DEFAULT_LIMITS.viewersPorIp; i += 1) {
+      const { socket } = v(`v${i}`);
+      await s.mandar(socket, saudar({ type: 'watch', slug: SLUG }, {}, `v${i}`));
+    }
+    // Hibernação: instância nova sobre o mesmo contexto.
+    const room = new ChannelRoom(s.ctx, makeChannelDeps(
+      { CHANNELS: null as never, MAX_PEERS: '50' }, webcrypto as unknown as WebCryptoLike,
+    ));
+    const extra = new FakeHibernatableSocket();
+    room.accept(extra, '203.0.113.9');
+    await room.handleMessage(extra, SLUG, JSON.stringify(saudar({ type: 'watch', slug: SLUG }, {}, 'extra')));
+    expect(extra.sent.at(-1)).toEqual({ type: 'error', code: 'RATE_LIMITED' });
   });
 });

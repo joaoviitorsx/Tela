@@ -8,6 +8,7 @@ import {
   OWNER,
   SLUG,
   type ConformanceDriver,
+  type OpcoesDoDriver,
   chaveDe,
   comAprovacao,
   errorOf,
@@ -22,7 +23,7 @@ import {
  * único jeito honesto de manter duas implementações do mesmo protocolo sem
  * que elas divirjam com o tempo.
  */
-type Opcoes = { readonly maxPeers?: number };
+type Opcoes = OpcoesDoDriver;
 const implementacoes: [string, (opcoes?: Opcoes) => ConformanceDriver][] = [
   ['node + ws', (opcoes) => comAprovacao(makeNodeDriver(opcoes))],
   ['cloudflare durable object', (opcoes) => comAprovacao(makeWorkerDriver(undefined, opcoes))],
@@ -735,7 +736,7 @@ describe.each(implementacoes)('aprovação manual (ADR 0025) — %s', (_nome, cr
     const host = await d.host('h', SLUG, OWNER, { approval: true });
     expect(errorOf(await d.watch('a', SLUG, undefined, { ...esperar, name: null }))).toBe('BAD_MESSAGE');
     expect(errorOf(await d.watch('b', SLUG, undefined, { ...esperar, viewerKey: null }))).toBe('BAD_MESSAGE');
-    expect(errorOf(await d.watch('c', SLUG, undefined, { ...esperar, name: 'a\u0007b' }))).toBe('BAD_MESSAGE');
+    expect(errorOf(await d.watch('c', SLUG, undefined, { ...esperar, name: '\u0007\u200b\u202e' }))).toBe('BAD_MESSAGE');
     expect(errorOf(await d.watch('d', SLUG, undefined, { ...esperar, name: 'x'.repeat(25) }))).toBe('BAD_MESSAGE');
     expect(ofType(host, 'join-request')).toEqual([]);
   });
@@ -824,5 +825,287 @@ describe.each(implementacoes)('aprovação manual (ADR 0025) — %s', (_nome, cr
     expect(ofType(impostor, 'watching')).toEqual([]);
     expect(dentro.closed()).toBe(false);
     expect(ofType(host, 'join-request').map((m) => m.name)).toEqual(['ana', 'eva']);
+  });
+});
+
+/**
+ * Abuso (revisão de segurança de 2026-10-02): S-01, S-02, S-07, S-20.
+ *
+ * Roda nas duas implementações, com o MESMO IP para os clientes de um mesmo
+ * ator (o padrão dos drivers é um IP distinto por cliente, que não exercita
+ * nenhum limite por IP).
+ */
+describe.each(implementacoes)('abuso — %s', (_nome, criar) => {
+  const ATACANTE = '203.0.113.7';
+  const DONO_IP = '198.51.100.9';
+  const slugN = (n: number) => `canal-${String.fromCharCode(97 + (n % 26))}${String.fromCharCode(97 + Math.floor(n / 26))}`;
+
+  describe('S-01: o dono nunca fica trancado fora do próprio slug', () => {
+    it('50 `host` com token errado e o dono verdadeiro ainda reivindica', async () => {
+      const d = criar();
+      const dono1 = await d.host('dono0', SLUG, OWNER, { ip: DONO_IP });
+      expect(ofType(dono1, 'hosting')).toHaveLength(1);
+      for (let i = 0; i < 50; i += 1) {
+        const mal = await d.host(`mal${i}`, SLUG, OUTRO, { ip: ATACANTE });
+        // Nunca `hosting`; passado o teto de falhas, o erro muda para RATE_LIMITED.
+        expect(ofType(mal, 'hosting')).toEqual([]);
+        expect(['SLUG_TAKEN', 'RATE_LIMITED']).toContain(errorOf(mal));
+      }
+      // O dono reconecta (F5), do mesmo IP ou de outro, e passa.
+      const volta = await d.host('dono1', SLUG, OWNER, { ip: DONO_IP });
+      expect(ofType(volta, 'hosting')).toHaveLength(1);
+      expect(errorOf(volta)).toBeUndefined();
+      const deOutroIp = await d.host('dono2', SLUG, OWNER, { ip: '192.0.2.44' });
+      expect(ofType(deOutroIp, 'hosting')).toHaveLength(1);
+    });
+
+    it('o dono do MESMO IP do atacante também passa', async () => {
+      const d = criar();
+      await d.host('dono0', SLUG, OWNER, { ip: ATACANTE });
+      for (let i = 0; i < 50; i += 1) await d.host(`mal${i}`, SLUG, OUTRO, { ip: ATACANTE });
+      const volta = await d.host('dono1', SLUG, OWNER, { ip: ATACANTE });
+      expect(ofType(volta, 'hosting')).toHaveLength(1);
+    });
+
+    it('o teto de falhas só troca o erro de quem erra: SLUG_TAKEN vira RATE_LIMITED', async () => {
+      const d = criar();
+      await d.host('dono0', SLUG, OWNER, { ip: DONO_IP });
+      const erros: (string | undefined)[] = [];
+      for (let i = 0; i < DEFAULT_LIMITS.falhaHostLimit + 5; i += 1) {
+        erros.push(errorOf(await d.host(`mal${i}`, SLUG, OUTRO, { ip: ATACANTE })));
+      }
+      expect(erros.slice(0, DEFAULT_LIMITS.falhaHostLimit).every((e) => e === 'SLUG_TAKEN')).toBe(true);
+      expect(erros.slice(DEFAULT_LIMITS.falhaHostLimit).every((e) => e === 'RATE_LIMITED')).toBe(true);
+    });
+
+    it('muitos IPs contra UM slug também esbarram no teto por slug, sem trancar o dono', async () => {
+      const d = criar();
+      await d.host('dono0', SLUG, OWNER, { ip: DONO_IP });
+      const erros: (string | undefined)[] = [];
+      for (let i = 0; i < DEFAULT_LIMITS.falhaHostSlugLimit + 5; i += 1) {
+        erros.push(errorOf(await d.host(`mal${i}`, SLUG, OUTRO, { ip: `203.0.113.${i + 10}` })));
+      }
+      expect(erros.at(-1)).toBe('RATE_LIMITED');
+      expect(ofType(await d.host('dono1', SLUG, OWNER, { ip: DONO_IP }), 'hosting')).toHaveLength(1);
+    });
+
+    it('na CARÊNCIA o atacante que nunca teve o token não leva o slug — nem depois da hibernação', async () => {
+      const d = criar();
+      await d.host('dono0', SLUG, OWNER, { ip: DONO_IP });
+      d.disconnect('dono0'); // F5: o host sai, a posse fica guardada pela carência
+      for (let i = 0; i < 50; i += 1) {
+        const mal = await d.host(`mal${i}`, SLUG, OUTRO, { ip: ATACANTE });
+        expect(ofType(mal, 'hosting')).toEqual([]);
+        if (i === 25) d.hibernar?.();
+      }
+      // Quem acabou de ver o canal "vazio" também não o leva como visitante.
+      expect(errorOf(await d.watch('curioso', SLUG))).toBe('NOT_HOSTING');
+      const volta = await d.host('dono1', SLUG, OWNER, { ip: DONO_IP });
+      expect(ofType(volta, 'hosting')).toHaveLength(1);
+    });
+
+    it('reconexão do dono não gasta o limite de slugs novos', async () => {
+      const d = criar();
+      for (let i = 0; i < DEFAULT_LIMITS.hostLimit * 2; i += 1) {
+        const h = await d.host(`dono${i}`, SLUG, OWNER, { ip: DONO_IP });
+        expect(ofType(h, 'hosting')).toHaveLength(1);
+      }
+    });
+  });
+
+  describe('S-02: slugs novos, TURN e abertura por IP', () => {
+    it('um IP não reivindica slugs novos em laço: hostLimit por minuto', async () => {
+      const d = criar();
+      const erros: (string | undefined)[] = [];
+      for (let i = 0; i < DEFAULT_LIMITS.hostLimit + 3; i += 1) {
+        erros.push(errorOf(await d.host(`h${i}`, slugN(i), OWNER + i, { ip: ATACANTE })));
+      }
+      expect(erros.slice(0, DEFAULT_LIMITS.hostLimit).every((e) => e === undefined)).toBe(true);
+      expect(erros.slice(DEFAULT_LIMITS.hostLimit)).toEqual(['RATE_LIMITED', 'RATE_LIMITED', 'RATE_LIMITED']);
+      // Outro IP não é afetado.
+      expect(errorOf(await d.host('outro', slugN(99), OWNER, { ip: DONO_IP }))).toBeUndefined();
+    });
+
+    it('o acúmulo lento também tem teto: slugsNovosPorHora', async () => {
+      const d = criar({ limites: { hostLimit: 1000, slugsNovosPorHoraLimit: 5 } });
+      const erros: (string | undefined)[] = [];
+      for (let i = 0; i < 7; i += 1) {
+        erros.push(errorOf(await d.host(`h${i}`, slugN(i), OWNER + i, { ip: ATACANTE })));
+      }
+      expect(erros).toEqual([undefined, undefined, undefined, undefined, undefined, 'RATE_LIMITED', 'RATE_LIMITED']);
+    });
+
+    it('refresh-ice: um socket só recebe refreshIceSocketLimit credenciais por janela', async () => {
+      const d = criar();
+      await d.host('h', SLUG, OWNER);
+      const v = await d.watch('v', SLUG);
+      for (let i = 0; i < 230; i += 1) await d.refreshIce('v', `r${i}`);
+      expect(ofType(v, 'ice-servers')).toHaveLength(DEFAULT_LIMITS.refreshIceSocketLimit);
+      // Silêncio, não queda: a conexão segue viva.
+      expect(v.closed()).toBe(false);
+    });
+
+    it('refresh-ice: o IP também tem orçamento, somando todos os sockets dele', async () => {
+      const d = criar({ limites: { refreshIceIpLimit: 4, refreshIceSocketLimit: 100 } });
+      await d.host('h', SLUG, OWNER);
+      const a = await d.watch('a', SLUG, undefined, { ip: ATACANTE });
+      const b = await d.watch('b', SLUG, undefined, { ip: ATACANTE });
+      for (let i = 0; i < 10; i += 1) {
+        await d.refreshIce('a', `a${i}`);
+        await d.refreshIce('b', `b${i}`);
+      }
+      expect(ofType(a, 'ice-servers').length + ofType(b, 'ice-servers').length).toBe(4);
+    });
+
+    it('entradas de espectador por IP: watchIpLimit por janela', async () => {
+      const d = criar({ maxPeers: 50, limites: { watchIpLimit: 5, viewersPorIp: 100 } });
+      await d.host('h', SLUG, OWNER, { capacidade: 50 });
+      const erros: (string | undefined)[] = [];
+      for (let i = 0; i < 8; i += 1) erros.push(errorOf(await d.watch(`v${i}`, SLUG, undefined, { ip: ATACANTE })));
+      expect(erros).toEqual([undefined, undefined, undefined, undefined, undefined, 'RATE_LIMITED', 'RATE_LIMITED', 'RATE_LIMITED']);
+      expect(errorOf(await d.watch('amigo', SLUG, undefined, { ip: DONO_IP }))).toBeUndefined();
+    });
+  });
+
+  describe('S-07: sala aberta', () => {
+    it('um IP ocupa no máximo viewersPorIp assentos; outro IP entra normalmente', async () => {
+      const d = criar({ maxPeers: 50 });
+      await d.host('h', SLUG, OWNER, { capacidade: 50 });
+      const n = DEFAULT_LIMITS.viewersPorIp;
+      for (let i = 0; i < n; i += 1) {
+        expect(ofType(await d.watch(`a${i}`, SLUG, undefined, { ip: ATACANTE }), 'watching')).toHaveLength(1);
+      }
+      expect(errorOf(await d.watch('a-extra', SLUG, undefined, { ip: ATACANTE }))).toBe('RATE_LIMITED');
+      expect(ofType(await d.watch('amigo', SLUG, undefined, { ip: DONO_IP }), 'watching')).toHaveLength(1);
+    });
+
+    it('sair libera o assento do IP, e retomar a MESMA vaga não conta de novo', async () => {
+      const d = criar({ maxPeers: 50 });
+      await d.host('h', SLUG, OWNER, { capacidade: 50 });
+      const ids = ['p'.repeat(32), 'q'.repeat(32), 'r'.repeat(32)];
+      for (let i = 0; i < ids.length; i += 1) {
+        await d.watch(`a${i}`, SLUG, { participantId: ids[i]!, attemptId: 'a'.repeat(32) }, { ip: ATACANTE });
+      }
+      // Reconexão do participante 0 (socket novo, mesma identidade): retoma, não é o 4º.
+      const retomou = await d.watch('a0b', SLUG, { participantId: ids[0]!, attemptId: 'b'.repeat(32) }, { ip: ATACANTE });
+      expect(ofType(retomou, 'watching')).toHaveLength(1);
+      d.disconnect('a1');
+      expect(ofType(await d.watch('novo', SLUG, undefined, { ip: ATACANTE }), 'watching')).toHaveLength(1);
+    });
+
+    it('com aprovação, o IP não enche a fila de pedidos do dono — e quem o dono admite não é cortado', async () => {
+      const d = criar({ maxPeers: 50 });
+      await d.host('h', SLUG, OWNER, { approval: true, capacidade: 50 });
+      const esperar = { aprovar: false, ip: ATACANTE } as const;
+      for (let i = 0; i < DEFAULT_LIMITS.viewersPorIp; i += 1) {
+        expect(ofType(await d.watch(`p${i}`, SLUG, undefined, esperar), 'awaiting-approval')).toHaveLength(1);
+      }
+      expect(errorOf(await d.watch('p-extra', SLUG, undefined, esperar))).toBe('RATE_LIMITED');
+      expect(ofType(await d.watch('amigo', SLUG, undefined, { aprovar: false, ip: DONO_IP }), 'awaiting-approval')).toHaveLength(1);
+    });
+
+    describe('volume de `signal` do espectador para o host', () => {
+      async function sala() {
+        const d = criar({ maxPeers: 50 });
+        const host = await d.host('h', SLUG, OWNER, { capacidade: 50 });
+        const v = await d.watch('v', SLUG);
+        return { d, host, v };
+      }
+
+      it('uma entrada REAL cabe folgada: resposta SDP de 8 KB + 60 candidatos ICE', async () => {
+        const { d, host, v } = await sala();
+        await d.signal('v', { type: 'answer', sdp: 's'.repeat(8 * 1024) });
+        for (let i = 0; i < 60; i += 1) await d.signal('v', { candidate: `candidate:${i} ${'c'.repeat(160)}` });
+        expect(v.closed()).toBe(false);
+        expect(ofType(host, 'signal')).toHaveLength(61);
+      });
+
+      it('frame acima de viewerSignalMaxBytes é recusado e fecha', async () => {
+        const { d, host, v } = await sala();
+        await d.signal('v', { sdp: 'x'.repeat(DEFAULT_LIMITS.viewerSignalMaxBytes + 1) });
+        expect(errorOf(v)).toBe('BAD_MESSAGE');
+        expect(v.closed()).toBe(true);
+        expect(ofType(host, 'signal')).toEqual([]);
+      });
+
+      it('volume por janela: passou viewerSignalBytesPorJanela, RATE_LIMITED e nada mais chega ao host', async () => {
+        const { d, host, v } = await sala();
+        const frame = 'x'.repeat(10 * 1024);
+        let enviados = 0;
+        for (let i = 0; i < 40 && !v.closed(); i += 1) {
+          await d.signal('v', { sdp: frame });
+          enviados += 1;
+        }
+        expect(errorOf(v)).toBe('RATE_LIMITED');
+        const chegaram = ofType(host, 'signal').length;
+        // ~19 frames de 10 KB cabem em 192 KB; o resto (do 20º em diante) não chega.
+        expect(chegaram).toBeLessThanOrEqual(Math.floor(DEFAULT_LIMITS.viewerSignalBytesPorJanela / (10 * 1024)));
+        expect(chegaram).toBeLessThan(enviados);
+      });
+
+      it('o limite é do ESPECTADOR: o host fala com a plateia inteira sem ele', async () => {
+        const { d, host, v } = await sala();
+        const alvo = peerIdOf(v);
+        for (let i = 0; i < 40; i += 1) await d.signal('h', { sdp: 'x'.repeat(15 * 1024) }, alvo);
+        expect(host.closed()).toBe(false);
+        expect(ofType(v, 'signal')).toHaveLength(40);
+      });
+    });
+  });
+
+  describe('S-20: apelido', () => {
+    const esperar = { aprovar: false } as const;
+
+    it('controle, bidi e zero-width saem; NFC; o dono lê o nome limpo', async () => {
+      const d = criar();
+      const host = await d.host('h', SLUG, OWNER, { approval: true });
+      // "e" + acento combinante (NFD), U+202E (inverte o texto), U+200B (zero-width), \n e BEL.
+      await d.watch('a', SLUG, undefined, { ...esperar, name: 'José‮​\n\u0007 Lima' });
+      expect(ofType(host, 'join-request')[0]?.name).toBe('José Lima');
+    });
+
+    it('o teto conta o que a pessoa VÊ: 24 emojis cabem, 25 não — e família composta vale 1', async () => {
+      const d = criar();
+      await d.host('h', SLUG, OWNER, { approval: true });
+      const ok = await d.watch('a', SLUG, undefined, { ...esperar, name: '😀'.repeat(24) });
+      expect(ofType(ok, 'awaiting-approval')).toHaveLength(1);
+      expect(errorOf(await d.watch('b', SLUG, undefined, { ...esperar, name: '😀'.repeat(25) }))).toBe('BAD_MESSAGE');
+      const familia = await d.watch('c', SLUG, undefined, { ...esperar, name: '👨‍👩‍👧'.repeat(3) });
+      expect(ofType(familia, 'awaiting-approval')).toHaveLength(1);
+    });
+
+    it('marcas combinantes empilhadas (zalgo) não passam como "1 caractere"', async () => {
+      const d = criar();
+      await d.host('h', SLUG, OWNER, { approval: true });
+      const zalgo = `a${'́'.repeat(200)}`;
+      expect(errorOf(await d.watch('z', SLUG, undefined, { ...esperar, name: zalgo }))).toBe('BAD_MESSAGE');
+    });
+
+    it('nome só de invisíveis vira vazio e é recusado', async () => {
+      const d = criar();
+      await d.host('h', SLUG, OWNER, { approval: true });
+      expect(errorOf(await d.watch('v', SLUG, undefined, { ...esperar, name: '​‎  ' }))).toBe('BAD_MESSAGE');
+    });
+
+    it('apelido repetido na fila vira "Nome (2)": o dono nunca vê dois iguais', async () => {
+      const d = criar();
+      const host = await d.host('h', SLUG, OWNER, { approval: true });
+      await d.watch('a', SLUG, undefined, { ...esperar, name: 'Maria', ip: '192.0.2.1' });
+      await d.watch('b', SLUG, undefined, { ...esperar, name: 'MARIA', ip: '192.0.2.2' });
+      await d.watch('c', SLUG, undefined, { ...esperar, name: 'maria ', ip: '192.0.2.3' });
+      expect(ofType(host, 'join-request').map((m) => m.name)).toEqual(['Maria', 'MARIA (2)', 'maria (3)']);
+    });
+
+    it('apelido de quem já está dentro também conta, e a retomada da MESMA pessoa mantém o nome', async () => {
+      const d = criar();
+      const host = await d.host('h', SLUG, OWNER, { approval: true });
+      const participantId = 'p'.repeat(32);
+      await d.watch('ana', SLUG, { participantId, attemptId: 'a'.repeat(32) }, { name: 'Ana' });
+      const volta = await d.watch('ana2', SLUG, { participantId, attemptId: 'b'.repeat(32) }, { name: 'Ana', viewerKey: chaveDe('ana') });
+      expect(ofType(volta, 'watching')).toHaveLength(1);
+      await d.watch('outra', SLUG, undefined, { ...esperar, name: 'ana' });
+      const pedidos = ofType(host, 'join-request').map((m) => m.name);
+      expect(pedidos.at(-1)).toBe('ana (2)');
+    });
   });
 });

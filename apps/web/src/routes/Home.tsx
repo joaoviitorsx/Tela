@@ -24,12 +24,14 @@ import { audioCue, identity, ofereceApp } from '../container.js';
 import {
   capturaSuportada,
   platform,
+  somDoApp,
   preferences,
   presetSustentavel,
   volumeTransmissaoPreference,
 } from '../container-transmissao.js';
 import { espiarNomeRecusado, limparNomeRecusado, sugerirNomes } from '../core/identity/nome-recusado.js';
 import { isPresetId } from '../core/media/presets.js';
+import type { ResumoDoSom } from '../react/som-do-app.js';
 import { useAudioSources } from '../react/use-audio-sources.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
 import { useSlugCheck } from '../react/use-slug-check.js';
@@ -49,6 +51,14 @@ type Props = {
 };
 
 type NumeroDoPasso = 1 | 2 | 3;
+
+/**
+ * No app desktop o passo ÁUDIO tem seletor e resumo próprios (D3); na web
+ * `somDoApp` é `null` e nada disto roda. É uma constante do módulo, então o
+ * hook escolhido nunca muda entre renderizações.
+ */
+const useResumoDoApp: () => ResumoDoSom | null = somDoApp?.useResumo ?? (() => null);
+const Seletor = somDoApp?.Seletor ?? null;
 
 const NOMES = { 1: 'CANAL', 2: 'TELA OU JOGO', 3: 'ÁUDIO' } as const;
 
@@ -139,6 +149,7 @@ export function Home({ onStart }: Props) {
   const troca = useTrocaDeCanal<NumeroDoPasso>(1);
   const som = useVolumeTransmissao(volumeTransmissaoPreference);
   const fontes = useAudioSources();
+  const resumoApp = useResumoDoApp();
   const os = platform.osName();
   const modoAudio = platform.systemAudio();
   /*
@@ -157,13 +168,14 @@ export function Home({ onStart }: Props) {
 
   const iniciar = useCallback(() => {
     const wanted = slug.trim().toLowerCase();
-    if (!valido) return;
+    // No app, "só o jogo" sem jogo escolhido não vai ao ar: a transmissão sairia muda.
+    if (!valido || resumoApp?.pendente != null) return;
     // §10 da coreografia: a abertura é muda, e o chiado entra como recompensa
     // do primeiro gesto. Este é o gesto.
     audioCue.estouro();
     identity.rememberSlug(wanted);
-    onStart(wanted, presetId, audioDeviceId, prioridade);
-  }, [slug, valido, presetId, audioDeviceId, prioridade, onStart]);
+    onStart(wanted, presetId, resumoApp === null ? audioDeviceId : resumoApp.idDeAudio, prioridade);
+  }, [slug, valido, presetId, audioDeviceId, prioridade, onStart, resumoApp]);
 
   /**
    * O que o tubo da vitrine mostra: o MESMO dado do campo, traduzido para o
@@ -283,13 +295,15 @@ export function Home({ onStart }: Props) {
   const trilha: readonly Passo[] = [...passos, { n: '04', rotulo: 'NO AR', estado: 'pendente' }];
 
   const resumoAudio =
-    modoAudio === 'display-media'
-      ? 'SISTEMA'
-      : modoAudio === 'monitor-device'
-        ? audioDeviceId === null
-          ? 'SEM ÁUDIO'
-          : 'ENTRADA'
-        : 'MUDO';
+    resumoApp !== null
+      ? resumoApp.curto
+      : modoAudio === 'display-media'
+        ? 'SISTEMA'
+        : modoAudio === 'monitor-device'
+          ? audioDeviceId === null
+            ? 'SEM ÁUDIO'
+            : 'ENTRADA'
+          : 'MUDO';
 
   return (
     <div className="flex min-h-dvh flex-col bg-void">
@@ -459,30 +473,38 @@ export function Home({ onStart }: Props) {
                 medidas={[
                   { rotulo: 'IMAGEM', valor: rotuloDoPreset(presetId, Math.min(preset.main.maxFramerate, fps)) },
                   { rotulo: 'ÁUDIO', valor: resumoAudio },
-                  { rotulo: 'VOLUME', valor: resumoAudio === 'MUDO' ? '—' : `${Math.round(som.volume * 100)}%` },
+                  { rotulo: 'VOLUME', valor: resumoApp?.mudo === true || resumoAudio === 'MUDO' ? '—' : `${Math.round(som.volume * 100)}%` },
                 ]}
               />
-              <div className="border-t-2 border-line px-3.5 py-3">
-                <button
-                  type="button"
-                  aria-expanded={comoAudio}
-                  aria-controls="como-audio"
-                  onClick={() => setComoAudio((v) => !v)}
-                  className="tecla w-full justify-between"
-                >
-                  <span>
-                    {modoAudio === 'monitor-device' ? 'ESCOLHER O SOM DO JOGO (LINUX)' : 'COMO O SOM DO JOGO VAI JUNTO'}
-                  </span>
-                  <span aria-hidden="true" className={`transition-transform duration-200 ${comoAudio ? 'rotate-180' : ''}`}>
-                    ▾
-                  </span>
-                </button>
-              </div>
+              {Seletor !== null ? (
+                /* No app (D3): as três opções ficam à vista, com o modo real; nada atrás de botão. */
+                <div className="border-t-2 border-line px-3.5 py-3.5">
+                  <Seletor />
+                </div>
+              ) : (
+                <div className="border-t-2 border-line px-3.5 py-3">
+                  <button
+                    type="button"
+                    aria-expanded={comoAudio}
+                    aria-controls="como-audio"
+                    onClick={() => setComoAudio((v) => !v)}
+                    className="tecla w-full justify-between"
+                  >
+                    <span>
+                      {modoAudio === 'monitor-device' ? 'ESCOLHER O SOM DO JOGO (LINUX)' : 'COMO O SOM DO JOGO VAI JUNTO'}
+                    </span>
+                    <span aria-hidden="true" className={`transition-transform duration-200 ${comoAudio ? 'rotate-180' : ''}`}>
+                      ▾
+                    </span>
+                  </button>
+                </div>
+              )}
               <RodapeDoPasso>
                 <Botao onClick={() => irParaPasso(2)}>VOLTAR</Botao>
                 <Botao
                   tom="primaria"
                   bloco
+                  disabled={resumoApp?.pendente != null}
                   onClick={iniciar}
                   icone={<span aria-hidden="true" className="h-2.5 w-2.5 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
                 >
@@ -491,7 +513,13 @@ export function Home({ onStart }: Props) {
               </RodapeDoPasso>
             </PainelOsd>
 
-            {comoAudio && (
+            {resumoApp?.pendente != null && (
+              <p role="status" className="m-0 border-2 border-warn-edge bg-warn-bg px-3.5 py-2.5 text-[12px] leading-relaxed text-warn">
+                ! {resumoApp.pendente}
+              </p>
+            )}
+
+            {Seletor === null && comoAudio && (
               <div id="como-audio" className="entra border-2 border-line bg-surface p-4 sm:p-5">
                 <AudioSourcePicker
                   os={os}

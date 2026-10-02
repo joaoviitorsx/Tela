@@ -82,7 +82,13 @@ o Tela é só o vídeo):
 5. **Qualidade e FPS** — anote o que o console da transmissão mostra
    (resolução, fps, bits por pixel) e, se tiver MangoHud/RTSS, o fps do jogo
    antes e durante. O amigo diz se a imagem borra, quadricula ou engasga.
-6. **Encerrar** — pare a transmissão e feche o app. O amigo tem que ver que
+6. **Som: só o jogo** — com a call aberta (Discord), no passo ÁUDIO escolha
+   **SÓ O JOGO** e o jogo na lista. O amigo tem que ouvir o jogo e **não**
+   ouvir a call. Depois teste **SISTEMA** (ele ouve tudo, call inclusa) e
+   **SEM SOM**. A linha "VAI SAIR" do passo ÁUDIO diz o modo real; se "Só o
+   jogo" vier desabilitado, copie o motivo que está escrito nele (é o
+   addon do WASAPI — `D3-som.md`).
+7. **Encerrar** — pare a transmissão e feche o app. O amigo tem que ver que
    acabou, não um quadro congelado.
 
 ### O que mandar de volta
@@ -102,3 +108,7 @@ o Tela é só o vídeo):
 AppImage: `chmod +x Tela-*.AppImage && ./Tela-*.AppImage`. No Fedora, se não
 abrir, falta o FUSE 2: `sudo dnf install fuse-libs` — ou instale o RPM. Confira
 o hash com `sha256sum -c SHA256SUMS-Linux.txt --ignore-missing`.
+
+O som do jogo e o do sistema usam `pw-dump`, `pw-loopback` e `pw-metadata`
+(Fedora: `sudo dnf install pipewire-utils`; Debian/Ubuntu: `pipewire-bin`;
+o RPM e o DEB já os recomendam). Sem eles o passo ÁUDIO diz o que falta.

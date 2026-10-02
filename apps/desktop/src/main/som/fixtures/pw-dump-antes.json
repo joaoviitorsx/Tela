@@ -1,0 +1,159 @@
+[
+ {
+  "id": 40,
+  "type": "PipeWire:Interface:Metadata",
+  "props": {
+   "metadata.name": "default"
+  },
+  "metadata": [
+   {
+    "subject": 0,
+    "key": "default.configured.audio.sink",
+    "type": "Spa:String:JSON",
+    "value": {
+     "name": "alsa_output.pci-0000_01_00.0.hdmi-stereo"
+    }
+   },
+   {
+    "subject": 0,
+    "key": "default.audio.sink",
+    "type": "Spa:String:JSON",
+    "value": {
+     "name": "alsa_output.pci-0000_00_1f.3.analog-stereo"
+    }
+   },
+   {
+    "subject": 0,
+    "key": "default.audio.source",
+    "type": "Spa:String:JSON",
+    "value": {
+     "name": "alsa_input.pci-0000_00_1f.3.analog-stereo"
+    }
+   }
+  ]
+ },
+ {
+  "id": 52,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+    "node.description": "Controlador de áudio Estéreo analógico",
+    "node.nick": "Analog",
+    "media.class": "Audio/Sink",
+    "client.id": 34,
+    "object.serial": 52
+   }
+  }
+ },
+ {
+  "id": 89,
+  "type": "PipeWire:Interface:Client",
+  "info": {
+   "props": {
+    "application.name": "pw-cat",
+    "application.process.id": 846083,
+    "application.process.binary": "pw-cat",
+    "object.serial": 3255
+   }
+  }
+ },
+ {
+  "id": 102,
+  "type": "PipeWire:Interface:Client",
+  "info": {
+   "props": {
+    "application.name": "pw-cat",
+    "application.process.id": 846081,
+    "application.process.binary": "pw-cat",
+    "object.serial": 3256
+   }
+  }
+ },
+ {
+  "id": 97,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "pw-play",
+    "media.class": "Stream/Output/Audio",
+    "media.name": "Game-Audio",
+    "media.role": "Music",
+    "application.name": "Jogo-Exemplo",
+    "application.process.id": 4242,
+    "application.process.binary": "jogo-exemplo",
+    "application.icon-name": "applications-games",
+    "client.id": 102,
+    "object.serial": 3257
+   }
+  }
+ },
+ {
+  "id": 85,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "pw-play",
+    "media.class": "Stream/Output/Audio",
+    "media.name": "Voice-Chat",
+    "media.role": "Communication",
+    "application.name": "Chamada-Voz",
+    "application.process.id": 4343,
+    "application.process.binary": "chamada",
+    "client.id": 89,
+    "object.serial": 3258
+   }
+  }
+ },
+ {
+  "id": 88,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 97,
+    "link.input.node": 52,
+    "link.output.port": 101,
+    "link.input.port": 57
+   }
+  }
+ },
+ {
+  "id": 92,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 97,
+    "link.input.node": 52,
+    "link.output.port": 104,
+    "link.input.port": 58
+   }
+  }
+ },
+ {
+  "id": 95,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 85,
+    "link.input.node": 52,
+    "link.output.port": 91,
+    "link.input.port": 57
+   }
+  }
+ },
+ {
+  "id": 76,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 85,
+    "link.input.node": 52,
+    "link.output.port": 87,
+    "link.input.port": 58
+   }
+  }
+ }
+]

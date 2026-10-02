@@ -1,0 +1,232 @@
+[
+ {
+  "id": 40,
+  "type": "PipeWire:Interface:Metadata",
+  "props": {
+   "metadata.name": "default"
+  },
+  "metadata": [
+   {
+    "subject": 0,
+    "key": "default.configured.audio.sink",
+    "type": "Spa:String:JSON",
+    "value": {
+     "name": "alsa_output.pci-0000_01_00.0.hdmi-stereo"
+    }
+   },
+   {
+    "subject": 0,
+    "key": "default.audio.sink",
+    "type": "Spa:String:JSON",
+    "value": {
+     "name": "alsa_output.pci-0000_00_1f.3.analog-stereo"
+    }
+   },
+   {
+    "subject": 0,
+    "key": "default.audio.source",
+    "type": "Spa:String:JSON",
+    "value": {
+     "name": "alsa_input.pci-0000_00_1f.3.analog-stereo"
+    }
+   },
+   {
+    "subject": 97,
+    "key": "target.object",
+    "type": "Spa:String",
+    "value": "tela_jogo"
+   }
+  ]
+ },
+ {
+  "id": 52,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "alsa_output.pci-0000_00_1f.3.analog-stereo",
+    "node.description": "Controlador de áudio Estéreo analógico",
+    "node.nick": "Analog",
+    "media.class": "Audio/Sink",
+    "client.id": 34,
+    "object.serial": 52
+   }
+  }
+ },
+ {
+  "id": 89,
+  "type": "PipeWire:Interface:Client",
+  "info": {
+   "props": {
+    "application.name": "pw-cat",
+    "application.process.id": 846083,
+    "application.process.binary": "pw-cat",
+    "object.serial": 3255
+   }
+  }
+ },
+ {
+  "id": 102,
+  "type": "PipeWire:Interface:Client",
+  "info": {
+   "props": {
+    "application.name": "pw-cat",
+    "application.process.id": 846081,
+    "application.process.binary": "pw-cat",
+    "object.serial": 3256
+   }
+  }
+ },
+ {
+  "id": 97,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "pw-play",
+    "media.class": "Stream/Output/Audio",
+    "media.name": "Game-Audio",
+    "media.role": "Music",
+    "application.name": "Jogo-Exemplo",
+    "application.process.id": 4242,
+    "application.process.binary": "jogo-exemplo",
+    "application.icon-name": "applications-games",
+    "client.id": 102,
+    "object.serial": 3257
+   }
+  }
+ },
+ {
+  "id": 85,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "pw-play",
+    "media.class": "Stream/Output/Audio",
+    "media.name": "Voice-Chat",
+    "media.role": "Communication",
+    "application.name": "Chamada-Voz",
+    "application.process.id": 4343,
+    "application.process.binary": "chamada",
+    "client.id": 89,
+    "object.serial": 3258
+   }
+  }
+ },
+ {
+  "id": 95,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 85,
+    "link.input.node": 52,
+    "link.output.port": 91,
+    "link.input.port": 57
+   }
+  }
+ },
+ {
+  "id": 76,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 85,
+    "link.input.node": 52,
+    "link.output.port": 87,
+    "link.input.port": 58
+   }
+  }
+ },
+ {
+  "id": 106,
+  "type": "PipeWire:Interface:Client",
+  "info": {
+   "props": {
+    "application.name": "pw-loopback",
+    "application.process.id": 846094,
+    "application.process.binary": "pw-loopback",
+    "object.serial": 3268
+   }
+  }
+ },
+ {
+  "id": 107,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "tela_jogo_retorno",
+    "node.description": "tela_jogo_lb",
+    "media.class": "Stream/Output/Audio",
+    "media.name": "tela_jogo_lb output",
+    "client.id": 106,
+    "object.serial": 3269,
+    "node.dont-reconnect": true
+   }
+  }
+ },
+ {
+  "id": 90,
+  "type": "PipeWire:Interface:Node",
+  "info": {
+   "state": "running",
+   "props": {
+    "node.name": "tela_jogo",
+    "node.description": "Tela-Jogo",
+    "media.class": "Audio/Sink",
+    "media.name": "Tela-Jogo input",
+    "client.id": 106,
+    "object.serial": 3270
+   }
+  }
+ },
+ {
+  "id": 128,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 107,
+    "link.input.node": 52,
+    "link.output.port": 129,
+    "link.input.port": 57
+   }
+  }
+ },
+ {
+  "id": 132,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 107,
+    "link.input.node": 52,
+    "link.output.port": 108,
+    "link.input.port": 58
+   }
+  }
+ },
+ {
+  "id": 92,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 97,
+    "link.input.node": 90,
+    "link.output.port": 101,
+    "link.input.port": 94
+   }
+  }
+ },
+ {
+  "id": 88,
+  "type": "PipeWire:Interface:Link",
+  "info": {
+   "props": {
+    "link.output.node": 97,
+    "link.input.node": 90,
+    "link.output.port": 104,
+    "link.input.port": 99
+   }
+  }
+ }
+]

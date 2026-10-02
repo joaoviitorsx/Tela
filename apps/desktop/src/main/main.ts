@@ -69,6 +69,8 @@ import {
   rotuloDoEstado,
 } from './estado-ao-vivo.js';
 import { criarPortaoDeParada, type PortaoDeParada } from './parada.js';
+import { pedidoDeJogoValido } from './som/protocolo-som.js';
+import { criarSomDoApp } from './som/som-do-app.js';
 import {
   type DecisaoDeFechar,
   decidirFechar,
@@ -136,6 +138,13 @@ const CANAIS = {
   capturaNativaParar: 'tela:captura-nativa-parar',
   capturaNativaPorta: 'tela:captura-nativa-porta',
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
+  somCapacidades: 'tela:som-capacidades',
+  somListarApps: 'tela:som-listar-apps',
+  somIniciarJogo: 'tela:som-iniciar-jogo',
+  somParar: 'tela:som-parar',
+  somIniciarSistema: 'tela:som-iniciar-sistema',
+  somJogoEncerrou: 'tela:som-jogo-encerrou',
+  somJogoPorta: 'tela:som-jogo-porta',
   /** main → renderer, `string` (slug já validado) */
   abrirCanal: 'tela:abrir-canal',
   estadoAoVivo: 'tela:estado-ao-vivo',
@@ -615,6 +624,9 @@ function aoCairORenderer(j: BrowserWindow, razao: string, codigo: number): void 
   // O `tela-captura` não pode ficar codificando para ninguém, e o estado
   // "no ar" que o main guardava já não é verdade.
   capturaNativa.pararTudo();
+  // O som do jogo também: o sink do Tela e o roteamento do app não podem
+  // sobreviver à página que os pediu.
+  void somDoApp.parar();
   const estavaNoAr = estado.noAr;
   estado = FORA_DO_AR;
   perguntando = false;
@@ -795,6 +807,18 @@ const agendar = (fn: () => void, ms: number): (() => void) => {
 };
 
 const capturaNativa = new CapturaNativa({ spawn: spawnDoHelper, agendar });
+
+/**
+ * O som do jogo (D3, `docs/desktop/D3-som.md`): "só o jogo" no Linux (PipeWire,
+ * sink próprio) e no Windows (addon WASAPI num utility process). "Sistema" e
+ * "sem som" não passam por aqui.
+ */
+const somDoApp = criarSomDoApp({
+  pastaDoMain: AQUI,
+  canalDaPorta: CANAIS.somJogoPorta,
+  avisarEncerrou: (conteudo, fim) => conteudo.send(CANAIS.somJogoEncerrou, fim),
+});
+let saindoDoSom = false;
 
 let capacidades = { nvenc: false, nvencDetalhe: 'SEM_HELPER', seletorProprio: SELETOR_PROPRIO };
 
@@ -1001,6 +1025,37 @@ function registrarIpc(): void {
     return true;
   });
 
+  ipcMain.handle(CANAIS.somCapacidades, (evento) => (daInterface(evento) ? somDoApp.capacidades() : null));
+
+  ipcMain.handle(CANAIS.somListarApps, async (evento) => {
+    if (!daInterface(evento)) return [];
+    try {
+      return await somDoApp.listarApps();
+    } catch (erro: unknown) {
+      console.error('[tela] listar apps com som falhou:', erro);
+      return [];
+    }
+  });
+
+  ipcMain.handle(CANAIS.somIniciarJogo, async (evento, payload: unknown) => {
+    if (!daInterface(evento) || pedidoDeJogoValido(payload) === null) return { ok: false, erro: 'APP_NAO_ENCONTRADO' };
+    try {
+      return await somDoApp.iniciarJogo(evento.sender, payload);
+    } catch (erro: unknown) {
+      console.error('[tela] som do jogo falhou:', erro);
+      await somDoApp.parar();
+      return { ok: false, erro: 'FALHOU' };
+    }
+  });
+
+  ipcMain.on(CANAIS.somParar, (evento) => {
+    if (daInterface(evento)) void somDoApp.parar();
+  });
+
+  ipcMain.handle(CANAIS.somIniciarSistema, (evento) =>
+    daInterface(evento) ? somDoApp.iniciarSistema(evento.sender) : { ok: false, erro: 'INDISPONIVEL' },
+  );
+
   ipcMain.handle(CANAIS.capturaNativaIniciar, (evento, payload: unknown) =>
     daInterface(evento) ? iniciarCapturaNativa(evento.sender, payload) : { ok: false, erro: 'INDISPONIVEL' },
   );
@@ -1052,6 +1107,8 @@ if (!app.requestSingleInstanceLock()) {
     // Em paralelo com a janela: a sonda leva até alguns segundos quando o
     // driver acorda a GPU, e a tela inicial não depende dela.
     void sondarCapacidades();
+    // Resíduos de uma execução que caiu sem limpar (sink e roteamento do som do jogo).
+    void somDoApp.limparResiduos();
 
     // macOS: clicar no dock sem janela aberta reabre.
     app.on('activate', mostrarJanela);
@@ -1073,4 +1130,19 @@ if (!app.requestSingleInstanceLock()) {
     }
     capturaNativa.pararTudo();
   });
+
+  /*
+    O roteamento do som do jogo é do sistema, não do app: sair sem devolvê-lo
+    deixaria o jogo da pessoa apontando para um sink que some junto. O `quit`
+    espera `parar()` (alguns `pw-metadata`, dezenas de ms) e só então sai.
+  */
+  app.on('will-quit', (evento) => {
+    if (saindoDoSom || !somDoApp.ativo()) return;
+    evento.preventDefault();
+    saindoDoSom = true;
+    void somDoApp.parar().finally(() => app.quit());
+  });
+
+  // Ctrl+C no terminal e `kill` normal: passam pelo mesmo caminho de sair.
+  for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sinal, () => app.quit());
 }

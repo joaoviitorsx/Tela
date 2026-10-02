@@ -39,6 +39,17 @@ type FimDaCapturaNativa = {
   readonly codigo: number | null;
 };
 
+type AppComSom = { readonly id: string; readonly nome: string; readonly tocando: boolean; readonly icone: string | null };
+type CapacidadesDeSom = { readonly jogo: { readonly disponivel: boolean; readonly motivo: string | null } };
+type RespostaSomJogo =
+  | { readonly ok: true; readonly app: string; readonly via: 'entrada'; readonly descricao: string }
+  | { readonly ok: true; readonly app: string; readonly via: 'porta'; readonly id: number }
+  | { readonly ok: false; readonly erro: 'INDISPONIVEL' | 'APP_NAO_ENCONTRADO' | 'FALHOU' | 'OCUPADO' };
+type RespostaSomSistema =
+  | { readonly ok: true; readonly descricao: string }
+  | { readonly ok: false; readonly erro: 'INDISPONIVEL' | 'APP_NAO_ENCONTRADO' | 'FALHOU' | 'OCUPADO' };
+type FimDoSomDoJogo = { readonly motivo: 'SINK_CAIU' | 'PROCESSO_ENCERROU' | 'COMPONENTE_CAIU' };
+
 type EstadoAoVivo = {
   readonly noAr: boolean;
   readonly inicioMs: number | null;
@@ -78,6 +89,14 @@ interface PonteDesktop {
   paradaConcluida(): void;
   listarFontes(): Promise<readonly FonteDeCaptura[]>;
   escolherFonte(id: string | null): Promise<boolean>;
+  readonly som: {
+    capacidades(): Promise<CapacidadesDeSom>;
+    listarApps(): Promise<readonly AppComSom[]>;
+    iniciarJogo(appId: string): Promise<RespostaSomJogo>;
+    pararSom(): void;
+    iniciarSistema(): Promise<RespostaSomSistema>;
+    aoEncerrar(ouvinte: (fim: FimDoSomDoJogo) => void): () => void;
+  };
   readonly capturaNativa: {
     iniciar(pedido: PedidoDeCapturaNativa): Promise<RespostaDeCapturaNativa>;
     parar(id: number): void;
@@ -96,6 +115,13 @@ const CANAIS = {
   capturaNativaParar: 'tela:captura-nativa-parar',
   capturaNativaPorta: 'tela:captura-nativa-porta',
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
+  somCapacidades: 'tela:som-capacidades',
+  somListarApps: 'tela:som-listar-apps',
+  somIniciarJogo: 'tela:som-iniciar-jogo',
+  somParar: 'tela:som-parar',
+  somIniciarSistema: 'tela:som-iniciar-sistema',
+  somJogoEncerrou: 'tela:som-jogo-encerrou',
+  somJogoPorta: 'tela:som-jogo-porta',
   abrirCanal: 'tela:abrir-canal',
   estadoAoVivo: 'tela:estado-ao-vivo',
   ajustes: 'tela:ajustes',
@@ -111,6 +137,8 @@ const CANAIS = {
 
 /** Cópia de `MARCA_DA_PORTA` em `ponte.ts`. */
 const MARCA_DA_PORTA = 'tela:porta-nativa';
+/** Cópia de `MARCA_DA_PORTA_SOM` em `ponte.ts`. */
+const MARCA_DA_PORTA_SOM = 'tela:porta-som';
 
 /** Prefixo do argumento que o main põe em `additionalArguments` (`src/main/main.ts`). */
 const ARGUMENTO_VERSAO = '--tela-versao=';
@@ -212,6 +240,15 @@ const ponte: PonteDesktop = {
   escolherFonte: (id) =>
     ipcRenderer.invoke(CANAIS.escolherFonte, id === null ? null : String(id)) as Promise<boolean>,
 
+  som: {
+    capacidades: () => ipcRenderer.invoke(CANAIS.somCapacidades) as Promise<CapacidadesDeSom>,
+    listarApps: () => ipcRenderer.invoke(CANAIS.somListarApps) as Promise<readonly AppComSom[]>,
+    iniciarJogo: (appId) => ipcRenderer.invoke(CANAIS.somIniciarJogo, String(appId)) as Promise<RespostaSomJogo>,
+    pararSom: () => ipcRenderer.send(CANAIS.somParar),
+    iniciarSistema: () => ipcRenderer.invoke(CANAIS.somIniciarSistema) as Promise<RespostaSomSistema>,
+    aoEncerrar: (ouvinte) => assinar<FimDoSomDoJogo>(CANAIS.somJogoEncerrou, ouvinte),
+  },
+
   capturaNativa: {
     iniciar: (pedido) => ipcRenderer.invoke(CANAIS.capturaNativaIniciar, pedido) as Promise<RespostaDeCapturaNativa>,
     parar: (id) => ipcRenderer.send(CANAIS.capturaNativaParar, Number(id)),
@@ -229,6 +266,17 @@ ipcRenderer.on(CANAIS.capturaNativaPorta, (evento, dados: unknown) => {
   const id = typeof dados === 'object' && dados !== null ? (dados as { id?: unknown }).id : undefined;
   if (typeof id !== 'number' || evento.ports.length === 0) return;
   window.postMessage({ tipo: MARCA_DA_PORTA, id }, '*', evento.ports);
+});
+
+/*
+  A porta do PCM do "só o jogo" no Windows (D3): mesmo caminho da porta de
+  quadros — o `contextBridge` não transfere `MessagePort`, o preload a entrega
+  ao mundo da página por `window.postMessage` com a marca de `ponte.ts`.
+*/
+ipcRenderer.on(CANAIS.somJogoPorta, (evento, dados: unknown) => {
+  const id = typeof dados === 'object' && dados !== null ? (dados as { id?: unknown }).id : undefined;
+  if (typeof id !== 'number' || evento.ports.length === 0) return;
+  window.postMessage({ tipo: MARCA_DA_PORTA_SOM, id }, '*', evento.ports);
 });
 
 contextBridge.exposeInMainWorld('telaDesktop', ponte);

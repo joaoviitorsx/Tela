@@ -22,5 +22,5 @@ export function useSeletorDeFontes(
  * `CaptureSurface`). Dizer antes de escolher poupa a transmissão muda.
  */
 export function avisoDeJanela(plataforma: PlataformaDesktop): string | null {
-  return plataforma === 'win32' ? 'No Windows, transmitir uma janela não leva o som do sistema. Para o som do jogo, escolha a TELA.' : null;
+  return plataforma === 'win32' ? 'No Windows, transmitir uma janela não leva o som do sistema. Para ter som com a janela, escolha “Só o jogo” no passo ÁUDIO; ou escolha a TELA.' : null;
 }

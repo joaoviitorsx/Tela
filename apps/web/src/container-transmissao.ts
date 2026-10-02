@@ -14,6 +14,7 @@ import { appVersion, diagnosticId, scheduler, shareUrlFor, signalUrl, storage } 
 import { makeAprovados } from './core/identity/aprovados.js';
 import { BroadcastSession } from './core/media/broadcast-session.js';
 import type { MediaTransport } from './core/ports/media-transport.js';
+import type { SomDoApp } from './react/som-do-app.js';
 
 /**
  * Raiz de composição de quem TRANSMITE — a metade do front que o espectador
@@ -28,6 +29,13 @@ import type { MediaTransport } from './core/ports/media-transport.js';
 const audioCapture = makeBrowserAudioCapture();
 export const audio = audioCapture;
 export const aprovados = makeAprovados(storage);
+
+/**
+ * O passo ÁUDIO do app desktop (D3): três opções e o modo real. `null` na web,
+ * onde a home desenha o `AudioSourcePicker` do navegador; o container do
+ * desktop sobrescreve.
+ */
+export const somDoApp: SomDoApp | null = null;
 
 /** De onde vem o áudio do jogo depende do sistema. Ver `AudioSourcePicker`. */
 export const platform = makeBrowserPlatform();

@@ -1,0 +1,7 @@
+{
+  "name": "tela-wasapi-loopback",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Addon N-API: captura o áudio de um processo do Windows (WASAPI process loopback). Compilado por scripts/build-wasapi.mjs.",
+  "gypfile": true
+}

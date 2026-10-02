@@ -69,6 +69,10 @@ try {
     window.__marca = 'sem-recarregar';
   });
   await page.waitForSelector('#root *', { timeout: 10_000 });
+  // A abertura 3D roda na primeira visita da sessão, e o toque que a pula é
+  // barrado de propósito: clicar no trilho durante a cena não faz nada. Uma
+  // pessoa espera a cena; o teste também (o canvas sai do DOM no fim).
+  await page.waitForFunction(() => document.querySelector('canvas.fixed.inset-0') === null, null, { timeout: 15_000 }).catch(() => undefined);
   await esperar(2500);
 
   console.log('\n1. Carga e ponte');
@@ -86,7 +90,7 @@ try {
   console.log(`   ${JSON.stringify(estado)}`);
   ok(estado.caminho === '/', `rota inicial é a home (${estado.caminho})`);
   ok(estado.ponte !== null && estado.ponte.plataforma === process.platform, `ponte presente (${estado.ponte?.plataforma}, v${estado.ponte?.versao})`);
-  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'responderFechar', 'salvarAjustes', 'versao']), 'a ponte expõe só as operações nomeadas');
+  ok(JSON.stringify(estado.ponte?.chaves) === JSON.stringify(['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'responderFechar', 'salvarAjustes', 'som', 'versao']), 'a ponte expõe só as operações nomeadas');
   ok(!estado.node, 'nada de Node na página');
   ok(!estado.baixarApp, 'sem BAIXAR APP dentro do próprio app');
 

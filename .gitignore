@@ -33,6 +33,9 @@ e2e/cascata.sim.json
 # Binário do tela-captura (apps/desktop/nativo/linux/build.sh).
 apps/desktop/nativo/linux/build/
 
+# Addon WASAPI compilado (apps/desktop/scripts/build-wasapi.mjs, só no Windows).
+apps/desktop/native/wasapi-loopback/build/
+
 # Instaladores do Tela Desktop (apps/desktop/electron-builder.yml). Saem do
 # CI, com hash; o repositório não carrega binário de 100 MB.
 apps/desktop/release/

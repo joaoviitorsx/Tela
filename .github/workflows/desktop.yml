@@ -123,6 +123,32 @@ jobs:
           sh apps/desktop/nativo/linux/build.sh
           test -x apps/desktop/nativo/linux/build/tela-captura
 
+      # O addon do "só o jogo" no Windows (D3, docs/desktop/D3-som.md): C++ que
+      # captura o áudio de UM processo pelo WASAPI. Compila contra os
+      # cabeçalhos do Electron (scripts/build-wasapi.mjs) e o electron-builder
+      # o leva em `resources/native`. NÃO derruba o instalador se falhar: o
+      # app abre e mostra "Só o jogo" desabilitado com o motivo, e o resto da
+      # beta continua testável. O aviso abaixo é para ninguém esquecer.
+      - name: addon WASAPI (native/wasapi-loopback)
+        id: wasapi
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: pnpm --filter @tela/desktop native:win
+
+      - name: addon WASAPI não compilou
+        if: runner.os == 'Windows' && steps.wasapi.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning title=Addon WASAPI::O addon do som do jogo NÃO compilou; o instalador sai sem ele (Só o jogo aparece desabilitado). Veja o passo anterior."
+          echo "### Addon WASAPI: FALHOU. Este instalador não tem \"Só o jogo\"." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: addon WASAPI compilado
+        if: runner.os == 'Windows' && steps.wasapi.outcome == 'success'
+        shell: bash
+        run: |
+          test -f apps/desktop/native/wasapi-loopback/build/Release/wasapi_loopback.node
+          echo "### Addon WASAPI: compilado e carregou no runner." >> "$GITHUB_STEP_SUMMARY"
+
       # Na ordem das dependências: o site importa @tela/shared compilado, e o
       # app empacota o site. `turbo build --filter=@tela/desktop...` não
       # serviria — ele roda o `build` do site, que é a versão para a web, não
@@ -140,6 +166,17 @@ jobs:
       - name: empacotar (ensaio, sem publicar)
         if: github.ref_type != 'tag'
         run: pnpm --filter @tela/desktop exec electron-builder --publish never
+
+      # O addon compilado tem de ter ido para dentro do pacote (extraResources
+      # do `win` no electron-builder.yml); sem isto o app abriria com "Só o
+      # jogo" desabilitado mesmo com o addon compilado.
+      - name: addon dentro do pacote do Windows
+        if: runner.os == 'Windows' && steps.wasapi.outcome == 'success'
+        shell: bash
+        run: |
+          test -f apps/desktop/release/win-unpacked/resources/native/wasapi_loopback.node
+          test -f apps/desktop/release/win-unpacked/resources/som/utilitario-win.js
+          test -f apps/desktop/release/win-unpacked/resources/som/package.json
 
       # O instalador do Windows não é assinado: o hash é a única forma de quem
       # baixa saber que recebeu o arquivo que o CI gerou (§7).

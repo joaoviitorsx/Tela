@@ -46,10 +46,11 @@ extraResources:
   - from: ../web/dist-desktop
     to: web
 
-# Nenhum módulo nativo de Node e nenhuma dependência de runtime: o pacote é
-# main, preload e o site. Reconstruir node_modules seria trabalho à toa. O
-# tela-captura (nativo/linux) é um executável à parte, em `extraResources`
-# do Linux abaixo — não passa pelo node-gyp.
+# Nenhuma dependência de runtime: o pacote é main, preload e o site.
+# Reconstruir node_modules seria trabalho à toa. O tela-captura (nativo/linux)
+# é um executável à parte, em `extraResources` do Linux abaixo, e o addon do
+# som do jogo (native/wasapi-loopback) é um `.node` próprio, em `extraResources`
+# do Windows — o node-gyp deles roda no CI, não aqui.
 npmRebuild: false
 
 # O link `tela://assistir/<canal>` (D8, PLANO-desktop §14). O NSIS grava o
@@ -81,6 +82,28 @@ win:
   # só grava ícone e metadados no .exe. docs/desktop/BETA.md explica a quem
   # testa o caminho "Mais informações → Executar assim mesmo".
   signAndEditExecutable: true
+  # O addon do "só o jogo" (D3, native/wasapi-loopback), compilado por
+  # `pnpm native:win` ANTES do electron-builder (o CI faz). Fora do asar, de
+  # propósito: o utility process o carrega por caminho (`createRequire`), e um
+  # `.node` dentro do asar não carrega. Se não foi compilado, a pasta não
+  # existe e o electron-builder só avisa — o app abre e mostra "Só o jogo"
+  # desabilitado com o motivo, nunca em silêncio.
+  extraResources:
+    - from: native/wasapi-loopback/build/Release
+      to: native
+      filter:
+        - wasapi_loopback.node
+    # O utility process do som do jogo roda FORA do asar, pelo mesmo motivo do
+    # addon: o Node dele lê o disco de verdade, e dentro do asar o `import` e o
+    # "type": "module" (do package.json, que o asar esconde) não se resolvem.
+    # São só dois arquivos — o ponto de entrada e o protocolo que ele importa.
+    - from: dist/main/som
+      to: som
+      filter:
+        - utilitario-win.js
+        - protocolo-utilitario.js
+    - from: build/som-modulo.json
+      to: som/package.json
 
 nsis:
   # Instalador com telas: quem testa escolhe a pasta e vê o que está
@@ -132,6 +155,8 @@ deb:
     - gstreamer1.0-pipewire
     - gstreamer1.0-gl
     - gstreamer1.0-plugins-base
+    # pw-dump, pw-loopback e pw-metadata: o "só o jogo" e o "sistema" (D3).
+    - pipewire-bin
 
 # O rpm do electron-builder (fpm) não tem campo `recommends`; a tag vai
 # direto para o spec. No Fedora o nvcodec está no bad-free e os plugins GL
@@ -145,3 +170,6 @@ rpm:
     - 'Recommends: pipewire-gstreamer'
     - '--rpm-tag'
     - 'Recommends: gstreamer1-plugins-base'
+    # pw-dump, pw-loopback e pw-metadata: o "só o jogo" e o "sistema" (D3).
+    - '--rpm-tag'
+    - 'Recommends: pipewire-utils'

@@ -8,18 +8,27 @@ import { makeEncodeOnceTransport } from '../adapters/encode-once-transport.js';
 import { makeMeshTransport } from '../adapters/mesh-transport.js';
 import { CodificadorWebCodecs } from '../adapters/webcodecs-codificador.js';
 import { makeWsSignaling } from '../adapters/ws-signaling.js';
-import { appVersion, diagnosticId, scheduler } from '../container.js';
-import { aprovados, audio, uplinkMemory } from '../container-transmissao.js';
+import { appVersion, diagnosticId, scheduler, storage } from '../container.js';
+import { aprovados, audio as audioDoNavegador, uplinkMemory } from '../container-transmissao.js';
 import { linkDoCanal } from '../core/domain/link.js';
 import { BroadcastSession } from '../core/media/broadcast-session.js';
 import { ViewerSession } from '../core/media/viewer-session.js';
 import type { MediaTransport } from '../core/ports/media-transport.js';
+import type { AudioCapture } from '../core/ports/audio-capture.js';
 import type { ScreenCapture } from '../core/ports/screen-capture.js';
+import type { SomDoApp } from '../react/som-do-app.js';
+import { makeAudioDesktop } from './audio-desktop.js';
 import { makeCapturaDesktop } from './captura-desktop.js';
 import { CodificadorComutavel } from './codificador-comutavel.js';
+import urlDoWorklet from './pcm-worklet.ts?worker&url';
 import { makeLigacaoNativa } from './porta-nativa.js';
+import { makePortasDeSom } from './porta-som.js';
 import { makeSeletorDeFontes } from './seletor-de-fontes.js';
 import { sessaoAoVivo } from './sessao-ao-vivo.js';
+import { makeSomDesktop } from './som-desktop.js';
+import { comSomEscolhido } from './som-na-captura.js';
+import { criarSomDoApp } from './SomDoAppDesktop.js';
+import { contextoDoNavegador, criarTrilhaDePcm } from './trilha-pcm.js';
 import { criarTrilhaFantasma } from './trilha-fantasma.js';
 
 /**
@@ -126,7 +135,44 @@ const capturaDesktop =
         criarTrilhaFantasma,
       });
 
-const screen: ScreenCapture = capturaDesktop ?? makeBrowserScreenCapture();
+/*
+  O som (D3): a escolha mora numa loja (`som-desktop.ts`) que a interface do
+  passo ÁUDIO desenha e os dois adapters abaixo consultam. A captura de tela
+  só pede áudio ao sistema no modo "Sistema" (`som-na-captura.ts`), e o
+  `audio` é o do app — sistema no Linux, só o jogo nas duas plataformas.
+*/
+const som = ponte === undefined
+  ? null
+  : makeSomDesktop({
+      plataforma: ponte.plataforma,
+      capacidades: () => ponte.som.capacidades(),
+      listarApps: () => ponte.som.listarApps(),
+      agendar,
+      memoria: {
+        ler: () => storage.get('tela.som'),
+        gravar: (valor) => storage.set('tela.som', valor),
+      },
+    });
+
+const telaDoApp: ScreenCapture = capturaDesktop ?? makeBrowserScreenCapture();
+const screen: ScreenCapture = som === null ? telaDoApp : comSomEscolhido(telaDoApp, som);
+
+/** O `AudioCapture` da sessão: o do app com a ponte, o do navegador no dev sem Electron. */
+export const audio: AudioCapture =
+  ponte === undefined || som === null
+    ? audioDoNavegador
+    : makeAudioDesktop({
+        ponte,
+        plataforma: ponte.plataforma,
+        som,
+        navegador: audioDoNavegador,
+        portas: makePortasDeSom(window),
+        criarTrilhaDePcm: (porta) => criarTrilhaDePcm(porta, { criarContexto: contextoDoNavegador, urlDoWorklet }),
+        esperar: (ms) => new Promise((resolver) => setTimeout(resolver, ms)),
+      });
+
+/** O passo ÁUDIO do app: as três opções e o modo real (D3). `null` fora do Electron. */
+export const somDoApp: SomDoApp | null = som === null ? null : criarSomDoApp(som);
 
 /**
  * O codificador do "um encode": no app, um que escolhe entre o externo

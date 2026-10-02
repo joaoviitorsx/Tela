@@ -104,6 +104,42 @@ export type RespostaDeAjustes = {
 
 export type ModoDaJanela = 'normal' | 'compacto';
 
+/** Um aplicativo com som, para o seletor de "só o jogo" (D3). `icone` é um `data:image/png` ou `null`. */
+export type AppComSom = {
+  readonly id: string;
+  readonly nome: string;
+  /** Algum som seu está saindo agora. */
+  readonly tocando: boolean;
+  readonly icone: string | null;
+};
+
+export type CapacidadesDeSom = {
+  /**
+   * "Só o jogo" funciona neste sistema? Quando não, o motivo vai ao usuário
+   * junto da opção desabilitada — nunca se troca por "Sistema" em silêncio.
+   */
+  readonly jogo: { readonly disponivel: boolean; readonly motivo: string | null };
+};
+
+export type ErroSomJogo = 'INDISPONIVEL' | 'APP_NAO_ENCONTRADO' | 'FALHOU' | 'OCUPADO';
+
+/** O modo "Sistema" no Linux: `descricao` é o rótulo da fonte virtual no Chromium. */
+export type RespostaSomSistema =
+  | { readonly ok: true; readonly descricao: string }
+  | { readonly ok: false; readonly erro: ErroSomJogo };
+
+/**
+ * `entrada` (Linux): o som chega como dispositivo de entrada (uma fonte
+ * virtual); `descricao` é o que o Chromium escreve no rótulo dele. `porta` (Windows): PCM por uma
+ * `MessagePort` marcada com `MARCA_DA_PORTA_SOM` e este `id`.
+ */
+export type RespostaSomJogo =
+  | { readonly ok: true; readonly app: string; readonly via: 'entrada'; readonly descricao: string }
+  | { readonly ok: true; readonly app: string; readonly via: 'porta'; readonly id: number }
+  | { readonly ok: false; readonly erro: ErroSomJogo };
+
+export type FimDoSomDoJogo = { readonly motivo: 'SINK_CAIU' | 'PROCESSO_ENCERROU' | 'COMPONENTE_CAIU' };
+
 /** A resposta do diálogo "Continuar transmitindo em segundo plano?". */
 export type RespostaDeFechar = {
   readonly acao: 'segundo-plano' | 'encerrar' | 'cancelar';
@@ -172,6 +208,29 @@ export interface PonteDesktop {
    */
   escolherFonte(id: string | null): Promise<boolean>;
 
+  /** O som da transmissão (D3, `docs/desktop/D3-som.md`). */
+  readonly som: {
+    capacidades(): Promise<CapacidadesDeSom>;
+    /** Aplicativos com som agora. Vazio quando não há como listar (o motivo está em `capacidades`). */
+    listarApps(): Promise<readonly AppComSom[]>;
+    /**
+     * "Só o jogo": o main isola o som do app escolhido. O id só vale se veio
+     * da última listagem. O som é desfeito por `pararSom` — ou sozinho, se o
+     * app morrer.
+     */
+    iniciarJogo(appId: string): Promise<RespostaSomJogo>;
+    /** Devolve o roteamento ao que era. Idempotente. */
+    pararSom(): void;
+    /**
+     * Linux, modo "Sistema": cria a fonte virtual do monitor da saída padrão
+     * (o Chromium não lista monitores). `parar` a remove. No Windows o
+     * "Sistema" é o `loopback` junto da tela e isto devolve `INDISPONIVEL`.
+     */
+    iniciarSistema(): Promise<RespostaSomSistema>;
+    /** O som do jogo parou sem ninguém pedir (o sink caiu, o jogo fechou, o componente morreu). */
+    aoEncerrar(ouvinte: (fim: FimDoSomDoJogo) => void): () => void;
+  };
+
   /** O `tela-captura` (Linux com NVENC). Só existe quando `capacidades().nvenc`. */
   readonly capturaNativa: {
     /**
@@ -206,6 +265,20 @@ export const CANAIS = {
   capturaNativaPorta: 'tela:captura-nativa-porta',
   /** main → renderer, `FimDaCapturaNativa` */
   capturaNativaEncerrou: 'tela:captura-nativa-encerrou',
+  /** renderer → main (invoke) → `CapacidadesDeSom` */
+  somCapacidades: 'tela:som-capacidades',
+  /** renderer → main (invoke) → `AppComSom[]` */
+  somListarApps: 'tela:som-listar-apps',
+  /** renderer → main (invoke), `string` (id do app) → `RespostaSomJogo` */
+  somIniciarJogo: 'tela:som-iniciar-jogo',
+  /** renderer → main */
+  somParar: 'tela:som-parar',
+  /** renderer → main (invoke) → `RespostaSomSistema` */
+  somIniciarSistema: 'tela:som-iniciar-sistema',
+  /** main → renderer, `FimDoSomDoJogo` */
+  somJogoEncerrou: 'tela:som-jogo-encerrou',
+  /** main → renderer, `{ id }` com a `MessagePort` do PCM em `ports[0]` (Windows) */
+  somJogoPorta: 'tela:som-jogo-porta',
   /** main → renderer, `string` (slug já validado) */
   abrirCanal: 'tela:abrir-canal',
   /** renderer → main, `EstadoAoVivo` */
@@ -237,6 +310,9 @@ export const CANAIS = {
  * isolamento de contexto. `porta-nativa.ts` é quem escuta.
  */
 export const MARCA_DA_PORTA = 'tela:porta-nativa';
+
+/** A mesma ideia para a porta do PCM do "só o jogo" no Windows (D3). */
+export const MARCA_DA_PORTA_SOM = 'tela:porta-som';
 
 declare global {
   interface Window {

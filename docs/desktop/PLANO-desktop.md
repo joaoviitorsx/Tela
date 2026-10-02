@@ -1,6 +1,6 @@
 # Tela Desktop — análise e plano (Windows e Linux)
 
-**Data:** 2026-10-01 · **Estado:** D0 no Linux medido (`D0-relatorio-linux.md`); D1 entregue; D2 em código, à espera de validação humana (`D2-captura.md`); D4 em código (`D4-segundo-plano.md`), à espera de validação humana; falta o D0 no Windows
+**Data:** 2026-10-01 · **Estado:** D0 no Linux medido (`D0-relatorio-linux.md`); D1 entregue; D2 em código, à espera de validação humana (`D2-captura.md`); D3 em código (`D3-som.md`), Linux verificado e Windows à espera do CI e de validação humana; D4 em código (`D4-segundo-plano.md`), à espera de validação humana; falta o D0 no Windows
 **Tarefas:** TELA-027 a TELA-034 (plano global §20) · **ADR:** 0027
 
 O desktop transmite **e** assiste. O link continua um só (`tela.gg/<canal>`,
@@ -180,7 +180,7 @@ apps/desktop/                 NOVO — só o que é Electron
   src/main/                   janela (normal/compacta/escondida), bandeja, handler de
                               captura, lista de fontes, permissões, atalho, autostart
   src/preload/                ponte mínima e tipada
-  src/utility/                som do jogo no Windows (D3)
+  src/main/som/               som (D3): PipeWire no Linux; utility process do Windows (`utilitario-win.ts`)
   native/wasapi-loopback/     addon N-API em C++ (D3)
   electron-builder.yml        empacotamento
 
@@ -203,7 +203,7 @@ visível — nunca "áudio ativo" só porque existe uma trilha:
 | Opção | Windows | Linux |
 |---|---|---|
 | **Som do sistema** | `audio: 'loopback'` do Electron — tudo que toca, inclusive a call. Sem componente nativo | Monitor da saída padrão via PipeWire (o modo `monitor-device` de hoje) |
-| **Só o jogo** | **Componente nativo** (abaixo) | PipeWire: o app liga só o nó do jogo a um sink virtual do Tela e captura o monitor dele; o jogo continua tocando no fone. Evolui a TELA-010 para gerenciado. **Sem ponte nativa**: o Chromium captura como dispositivo |
+| **Só o jogo** | **Componente nativo** (abaixo) | PipeWire: o app liga só o nó do jogo a um sink virtual do Tela e expõe o monitor dele como **fonte virtual** (o Chromium não lista monitores); o jogo continua tocando no fone. Evolui a TELA-010 para gerenciado. **Sem ponte nativa**: o Chromium captura como dispositivo (`D3-som.md`) |
 | **Sem som** | Escolha explícita | Escolha explícita |
 
 ### 4.1 O componente nativo do Windows
@@ -333,7 +333,7 @@ Um marco por vez (AGENTS.md); cada um termina em relatório e decisão.
 | **D0 — Prova técnica** | TELA-027 | App Electron mínimo: a `BroadcastSession` atual na janela, captura pelo handler, transmissão para um navegador; modo escondido; `tela --benchmark`; detecção de encoder | Matriz §9 medida; **decisão na ADR 0027**: seguir, seguir com limitação (ex.: Linux NVIDIA a 720p) ou abrir TELA-034 |
 | **D1 — Shell** | TELA-028 | `app://`, preload, container desktop, URLs configuradas, importação do código de recuperação, Origin no Worker, moldura da §11 | Telas do site rodando no app; testes de IPC |
 | **D2 — Captura** | TELA-029 | **Feito em código** (`D2-captura.md`): seletor próprio com miniaturas (Windows, Linux X11); portal no Wayland; `tela-captura` com NVENC no Linux (sonda ao abrir, token do portal, fim de fonte); empacotado como `resources/nativo` | Matriz de limitações por ambiente — **falta a validação humana** (Windows com jogo, Wayland com portal e token, X11) |
-| **D3 — Som** | TELA-030 | Sistema / só o jogo / sem som nas duas plataformas; addon WASAPI no Windows; PipeWire gerenciado no Linux | Aceite da §4.1 com jogo + call |
+| **D3 — Som** | TELA-030 | **Feito em código** (`D3-som.md`): Sistema / só o jogo / sem som nas duas plataformas com o modo real sempre visível; Linux: sink + fonte virtual do PipeWire gerenciados pelo app, com limpeza de resíduos (**testado aqui, inclusive no Chromium real**); Windows: addon WASAPI (process loopback) num utility process → AudioWorklet, compilado e empacotado pelo CI | Aceite da §4.1 com jogo + call — **falta a validação humana** (o addon C++ não foi compilado aqui; lista em `D3-som.md` §7) |
 | **D4 — Segundo plano** | TELA-031 | **Feito em código** (`D4-segundo-plano.md`): bandeja (com detecção de AppIndicator no Linux), modo compacto, política de fechar com pergunta lembrada, painel NO AR, autostart oculto, suspensão encerra com motivo, queda do renderer mostra "A TRANSMISSÃO CAIU". Atalho global **adiado** (Wayland) | Política da §5 nos dois sistemas — **falta a validação humana** (bandeja no Windows, GNOME sem AppIndicator, KDE, autostart, suspensão; lista em `D4-segundo-plano.md` §7) |
 | **D5 — Distribuição** | TELA-032 | NSIS, AppImage, RPM, DEB, atualizador, página de download | Instalar/atualizar/desinstalar em máquina limpa |
 | **D6 — Homologação** | TELA-033 | Relatório por plataforma e modo, contra o orçamento da §1.2 | Liberar, liberar com limitação publicada, ou bloquear |

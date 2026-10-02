@@ -436,6 +436,19 @@ APIs: `VideoEncoder`, `VideoDecoder`, `MediaStreamTrackProcessor`, `MediaStreamT
 
 Os scripts de NVENC gravam um cache de fontes sem perdas em `os.tmpdir()/tela-estudo-fontes` (185 MB para os três clipes de 4 s); apague quando terminar.
 
+
+## Aplicado (2026-10-02): VBV do NVENC de 4 para 2 quadros
+
+`VBV_EM_QUADROS` 4 → 2 em `tela-captura.c`, só no início e na troca de tamanho (o VBV com o fluxo andando solta IDR; não há caminho novo de IDR). Medido com `h264_nvenc` (ffmpeg), 12 Mbps CBR, 1080p60, p4/ull, baseline, 4 s; "corte" = mandelbrot 2 s + testsrc2 2 s:
+
+| fonte | VBV | IDR inicial | maior P | PSNR-Y |
+|---|---|---|---|---|
+| mandelbrot | 1 / **2** / 4 | 27,2 / **42,0** / 67,9 KB | 25,8 / 30,0 / 29,9 KB | 28,669 / **28,734** / 28,739 dB |
+| testsrc2 | 1 / **2** / 4 | 28,8 / **38,8** / 57,2 KB | 24,4 / 26,2 / 34,5 KB | 32,782 / **32,900** / 32,902 dB |
+| corte | 1 / **2** / 4 | 27,2 / **42,0** / 67,9 KB | 25,8 / 29,4 / 29,9 KB | 29,074 / **29,122** / 29,124 dB |
+
+VBV 2: IDR −38 % (mandelbrot) e −32 % (testsrc2) por −0,005 e −0,002 dB; o 1 daria o −50 % do estudo, mas a −0,07 a −0,12 dB. O maior quadro P depois do corte de cena ficou igual ao de VBV 4 (29 KB), então a folga para troca de cena em jogo se mantém. Medido só o encoder: o efeito no IDR do `tela-captura` real (e se o IDR "borrado" da ADR 0010 aparece no espectador que entra) precisa de humano com GPU: transmitir, entrar um espectador novo, comparar o tamanho do 1º quadro-chave (`keyFramesDecoded`/bytes do `inbound-rtp`).
+
 ## Referências
 
 **Documentos do repositório:** `AGENTS.md` (R1–R8), `docs/desktop/D0b-um-encode-n-envios.md`, `docs/engenharia/complexidade.md` §C4, ADR 0010, 0016, 0017, 0018, 0019, 0020, 0029, 0030.

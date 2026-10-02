@@ -473,6 +473,22 @@ Todos em máquina Linux com `ip netns` + `tc netem` (precisa de root; `e2e/banda
 
 ---
 
+
+## Aplicado (2026-10-02): T1 medido, T6 NÃO aplicado
+
+`e2e/bench/estudo-rampa-sondas.mjs`: Chromium headless, transmissor com `makeMeshTransport` em 1080p60 (teto do degrau 12 Mbps), um espectador estável e um segundo que entra 12 s depois (o "caminho novo"); amostra a 5 Hz, desde o `connected`, o par de candidatos SELECIONADO (`transport.selectedCandidatePairId`: a primeira versão lia um par ocioso e viu o `availableOutgoingBitrate` sumir), com 4 braços aplicados de fora na descrição remota do transmissor: `base` (o produto: só `x-google-start-bitrate=12000`), `maxbr` (`x-google-max-bitrate=12000`), `as` (`b=AS:12000`) e `maxbr40` (`…=40000`, a montagem do E1). 3 repetições, braços intercalados, mediana, caminho novo:
+
+| braço | alvo do encoder @1 s | @6 s | tempo até alvo ≥ 75 % do teto | `available` | resolução @6 s |
+|---|---|---|---|---|---|
+| base | 3,65 Mbps | 6,35 | **8,0 s** | 6,1 → 6,9 → 8,5 (@1/3/6 s) | 1280 (caiu de 1920 aos ~4 s) |
+| maxbr | 7,94 | 10,77 | 0 s | **12,00 fixo** | 1920 |
+| as | 7,97 | 10,70 | 0,2 s | **12,00 fixo** | 1920 |
+| maxbr40 | 16,17 | 16,17 | 0 s | **40,00 fixo** | 1920 |
+
+Leitura: (1) **Não há assinatura de sonda no `base`**: subida suave, +6–8 %/s, zero saltos ≥ 2× em 5 Hz nas 3 repetições (um salto isolado em um braço com hint). O `available` começa em 12 (o start-bitrate) e cai a ~6 Mbps em 0,6 s, que é `1,5 × acked` com o encoder partindo de ~4 Mbps; depois sobe em 8–10 s até o teto do degrau. A premissa de T6 (sondas presas a 5 Mbps, rampa de ~24 s) **não é o que acontece**: o caminho já nasce acima de 5 Mbps pelo `x-google-start-bitrate` que o produto já usa. (2) Com `x-google-max-bitrate` ou `b=AS` o `available` fica **igual ao valor que escrevemos, imutável, nas 9 execuções com hint**: o número deixa de medir o caminho e passa a ecoar a atuação — a armadilha da ADR 0018 no estado puro. O ganho de ~8 s na rampa do encoder existe (e a imagem não perde resolução na entrada), mas é pago com a leitura que o governador, a malha de banda e o `stats-sampler` usam. (3) O teto no SDP é uma constante da negociação: se o degrau sobe depois (o usuário troca o preset ao vivo), um `max` antigo tamparia a estimativa para sempre.
+
+**Decisão: não aplicar.** O custo (o BWE vira constante em loopback; o comportamento sob congestão real não pôde ser medido) supera um ganho confinado aos ~8 s iniciais de cada caminho novo. **O que loopback NÃO mostra:** reação a gargalo real (RTT ~0, sem fila: o estimador por atraso nunca vê sobreuso), o impacto da sonda de entrada nos vizinhos (E4) e o comportamento de `x-google-max-bitrate` abaixo da capacidade; o encoder é por software, então o `acked` pode diferir de produção. Para reabrir T6: E1 com `ip netns` + `tc netem rate 8mbit delay 20ms` (root), medindo se com o hint o `available` ainda desce sob congestão e em quanto tempo, e E4 (sala de 10, vizinhos). Portões do simulador sem alteração de código de malha: `--portao` = 72/0/0/128/83 (igual ao de referência), `--escala --portao` = 0/0/0/0; `mesh.e2e.mjs` e `um-encode.e2e.mjs` passam.
+
 ## 7. Referências
 
 **Código (libwebrtc `main`, lido em 2026-10-02):**

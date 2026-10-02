@@ -349,6 +349,24 @@ O que **não** recomendo: trocar `<video>` por canvas/WebGL no espectador (sem g
 
 ---
 
+
+## Aplicado (2026-10-02): rotas lazy, guarda de overlay, ociosidade nativa
+
+**1. `React.lazy` por rota (`App.tsx`, `pagina-home.tsx`).** Cada rota é um chunk; a abertura (`useAbertura`/`Abertura`) mudou para dentro do chunk da home e o three.js continua sob `import()` dentro dele. A home baixa o chunk da transmissão em `requestIdleCallback` (o clique em COMEÇAR não cai no fallback); o espectador nunca passa por lá. Fallback: o grafite do app e o rótulo SINTONIZANDO… com `animation-delay` de 400 ms, então um chunk em cache não pisca nada. Medido com `vite build` (gzip):
+
+| | antes | depois |
+|---|---|---|
+| web, entrada (`index`) | 153,4 kB | 82,8 kB |
+| web, o que o ESPECTADOR baixa (JS) | 153,4 kB | **127,8 kB** (−25,6 kB, −17 %): `index` 82,8 + `container` 32,6 + `Viewer` 8,8 + 4 chunks de 0,3–1,4 |
+| web, a home | 153,4 kB | 138,1 kB (+ 13,7 kB de transmissão em tempo ocioso) |
+| desktop (`desktop-*.js`, entrada) | 159,8 kB | 123,4 kB |
+
+Menos que os 45–70 kB da estimativa [H]: o `container` (32,6 kB gzip) é compartilhado e carrega `BroadcastSession`, `mesh-topology`, `malha-de-banda`, `uplink-governor` e o codificador "um encode" (por tamanho de fonte, ~65 % dele é lado transmissor) porque `createViewerSession` e `createBroadcastSession` moram no mesmo módulo. **Não feito (fora do que eu podia editar):** separar `container.ts` em viewer/comum e `container-transmissao.ts`, com `Broadcast`/`Home` importando o segundo; estimativa [H] de −15 a −20 kB gzip a mais para o espectador. O GLB já era carregado só em `/` (`index.html`).
+
+**2. Guarda de overlay (`src/viewer-sobre-o-video.test.tsx`).** Monta a rota `Viewer` real (sessão real sobre `FakeMediaTransport`, container parcialmente trocado) em happy-dom e falha se QUALQUER elemento da árvore, exceto o `<video>`, tiver `filter`/`backdrop-filter`/`mix-blend-mode` ou animação infinita. Escopo é a árvore inteira e não só os irmãos depois do vídeo, porque um filtro num antepassado também filtra o vídeo. Sem CSS compilado no vitest, as fontes são (a) os utilitários do Tailwind por padrão (`backdrop-*`, `blur-*`, `mix-blend-*`, `animate-spin|ping|pulse|bounce`, `[filter:…]`…), (b) as REGRAS de `globals.css`, parseadas do disco (qualquer seletor lá com esses efeitos vira proibição, inclusive classes criadas depois) e (c) o `style` inline. Exceção nomeada: `.led-pisca` (o LED de 8×8 px da barra, que o produto declara como a única animação em laço); o teste exige que seja no máximo um e tenha `h-2 w-2`. Cobre assistindo (com áudio) e controles escondidos. Limite: não pega efeito injetado por JS em tempo de execução nem CSS fora de `globals.css`.
+
+**3. Ociosidade no caminho nativo (era a "possível lacuna" de §3.3).** Confirmada por leitura do código: a trilha-fantasma nunca implementou `applyConstraints`. Agora a fantasma intercepta `applyConstraints({ frameRate })` (`captura-desktop.ts`, `fpsPedido`) e manda a ordem `teto <fps>` ao `tela-captura`; o main valida (`ordemValida`, `teto 0..240`); o helper guarda `teto_fps` atômico, e `ao_capturar` descarta o quadro antes de subir à GPU quando passou o período do teto. Independente do `alvo`: não recicla o pipeline, não gera IDR, não entra em `descartados` (que sinaliza sobrecarga), e um IDR pedido NÃO espera o período do teto (um espectador entrando numa sala a 5 fps pagaria 200 ms). Com teto, o fator `alvo.fps/fps_medido` do bitrate é suspenso (5 fps o dobraria) e `fps_medido` não é atualizado; ao sair do teto o bitrate volta. Testes: `captura-desktop.test.ts`, `captura-nativa.test.ts`. **Não verificado (precisa de GPU/portal):** o consumo real. Procedimento de §3.3 (`pidstat -p $(pgrep tela-captura) 5` e `nvidia-smi dmon -s u` por 2 min sem espectador, antes e depois). Esperado [H]: `enc` do NVENC cai a ~8 % do uso; o PipeWire ainda entrega quadros do compositor a taxa cheia (renegociar o fluxo seria um ciclo de pipeline), então o custo de captura em si não zera.
+
 ## Referências
 
 **Lidas nesta sessão (primárias)**

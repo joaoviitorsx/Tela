@@ -3,7 +3,7 @@ import { Emitter } from '../core/emitter.js';
 import { StatsSampler } from '../core/media/stats-sampler.js';
 import { isRelayed } from '../core/mesh/ice-config.js';
 import { IceLifecycle } from '../core/mesh/ice-lifecycle.js';
-import { MeshTopology, type PeerInfo } from '../core/mesh/mesh-topology.js';
+import type { MeshTopology, PeerInfo } from '../core/mesh/mesh-topology.js';
 import { JITTER_INICIAL_MS, PeerLink } from '../core/mesh/peer-link.js';
 import { PeerRecovery } from '../core/mesh/peer-recovery.js';
 import type {
@@ -68,6 +68,12 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
   return {
     async host(slug, ownerToken, opcoes) {
+      // Sob demanda: a topologia (1,1 mil linhas de adaptação coletiva) é coisa
+      // de quem transmite. O espectador usa este mesmo transporte para `watch`
+      // e não pode pagar por ela — vira um pedaço à parte, pedido só aqui.
+      // ANTES de abrir o canal: esperar o módulo depois dele deixaria um
+      // espectador que entra nesse intervalo sem quem ouvisse o aviso.
+      const { MeshTopology: Topologia } = await import('../core/mesh/mesh-topology.js');
       const opened = await deps.channel.host(slug, ownerToken, opcoes);
       // O servidor é quem decide o teto, mas nunca acima do que este
       // transmissor serve: um servidor antigo ignora `capacidade` e responde
@@ -91,7 +97,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         return recovery;
       };
 
-      const mesh = new MeshTopology({
+      const mesh = new Topologia({
         iceServers: opened.iceServers,
         send: (payload, to) => deps.channel.send(payload, to),
         createConnection,

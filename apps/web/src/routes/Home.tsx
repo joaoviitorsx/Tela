@@ -20,16 +20,14 @@ import {
   type OpcaoDeResolucao,
 } from '../components/SeletorDeResolucao.js';
 import { Vitrine } from '../components/Vitrine.js';
+import { audioCue, identity, ofereceApp } from '../container.js';
 import {
-  audioCue,
   capturaSuportada,
-  identity,
-  ofereceApp,
   platform,
   preferences,
   presetSustentavel,
   volumeTransmissaoPreference,
-} from '../container.js';
+} from '../container-transmissao.js';
 import { espiarNomeRecusado, limparNomeRecusado, sugerirNomes } from '../core/identity/nome-recusado.js';
 import { isPresetId } from '../core/media/presets.js';
 import { useAudioSources } from '../react/use-audio-sources.js';

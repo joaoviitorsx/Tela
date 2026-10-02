@@ -18,14 +18,8 @@ import { AbasDeResolucao } from '../components/AbasDeResolucao.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
 import { PainelOsd } from '../components/PainelOsd.js';
 import type { Vaga } from '../components/SalaVagas.js';
-import {
-  createBroadcastSession,
-  identity,
-  ofereceApp,
-  sondaDeRede,
-  volumeTransmissaoPreference,
-  audioCue,
-} from '../container.js';
+import { audioCue, identity, ofereceApp } from '../container.js';
+import { createBroadcastSession, sondaDeRede, volumeTransmissaoPreference } from '../container-transmissao.js';
 import { registrarNomeRecusado } from '../core/identity/nome-recusado.js';
 import { APRESENTACAO_DA_FALHA } from '../core/media/apresentacao-da-falha.js';
 import { useAutoHide } from '../react/use-auto-hide.js';

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { audio } from '../container.js';
+import { audio } from '../container-transmissao.js';
 import type { AudioDevice } from '../core/ports/audio-capture.js';
 
 /**

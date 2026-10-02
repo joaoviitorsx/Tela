@@ -1,16 +1,18 @@
 /**
- * A decisão do plugin de build do desktop: quem pede o container da web recebe
- * o do desktop.
+ * A decisão do plugin de build do desktop: quem pede um container da web
+ * (`container.ts` ou `container-transmissao.ts`) recebe o do desktop.
  *
- * Rotas e hooks importam `../container.js` e nunca ficam sabendo que existe
- * outro. O `container.desktop.ts` faz `export * from '../container.js'` e
- * sobrescreve o que muda (link público, sinalização, transporte) — por isso é
- * o único importador que NÃO é redirecionado: redirecioná-lo seria um import
- * de si mesmo.
+ * Rotas e hooks importam `../container.js` e `../container-transmissao.js` e
+ * nunca ficam sabendo que existe outro. O `container.desktop.ts` faz
+ * `export *` dos dois e sobrescreve o que muda (link público, sinalização,
+ * transporte) — por isso NÃO é redirecionado: seria um import de si mesmo.
+ * O `container-transmissao.ts` também fica de fora: ele importa o `container.ts`
+ * (storage, scheduler), e redirecionar isso fecharia um ciclo com o desktop.
  *
  * Função pura, sem Vite: o plugin em `vite.desktop.config.ts` só a chama.
  */
 export const CONTAINER_WEB = 'src/container.ts';
+export const CONTAINER_TRANSMISSAO = 'src/container-transmissao.ts';
 export const CONTAINER_DESKTOP = 'src/desktop/container.desktop.ts';
 
 /** Caminhos como o Vite entrega: separador `/`, sem a query `?v=` do dev. */
@@ -31,9 +33,12 @@ export function destinoDoContainer(
   importador: string | undefined,
 ): string | null {
   const base = normalizar(raiz);
-  const web = `${base}/${CONTAINER_WEB}`;
   const desktop = `${base}/${CONTAINER_DESKTOP}`;
-  if (normalizar(resolvido) !== web) return null;
-  if (importador !== undefined && normalizar(importador) === desktop) return null;
+  const alvo = normalizar(resolvido);
+  if (alvo !== `${base}/${CONTAINER_WEB}` && alvo !== `${base}/${CONTAINER_TRANSMISSAO}`) return null;
+  if (importador !== undefined) {
+    const quem = normalizar(importador);
+    if (quem === desktop || quem === `${base}/${CONTAINER_TRANSMISSAO}`) return null;
+  }
   return desktop;
 }

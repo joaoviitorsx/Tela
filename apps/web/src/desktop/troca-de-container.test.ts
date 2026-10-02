@@ -3,12 +3,26 @@ import { CONTAINER_DESKTOP, destinoDoContainer } from './troca-de-container.js';
 
 const RAIZ = '/repo/apps/web';
 const WEB = `${RAIZ}/src/container.ts`;
+const TRANSMISSAO = `${RAIZ}/src/container-transmissao.ts`;
 const DESKTOP = `${RAIZ}/${CONTAINER_DESKTOP}`;
 
 describe('destinoDoContainer', () => {
   it('redireciona rota e hook que importam o container da web', () => {
     expect(destinoDoContainer(RAIZ, WEB, `${RAIZ}/src/routes/Home.tsx`)).toBe(DESKTOP);
     expect(destinoDoContainer(RAIZ, WEB, `${RAIZ}/src/react/use-vitrine.ts`)).toBe(DESKTOP);
+  });
+
+  it('redireciona também o container de quem transmite', () => {
+    expect(destinoDoContainer(RAIZ, TRANSMISSAO, `${RAIZ}/src/routes/Broadcast.tsx`)).toBe(DESKTOP);
+    expect(destinoDoContainer(RAIZ, TRANSMISSAO, `${RAIZ}/src/react/use-audio-sources.ts`)).toBe(DESKTOP);
+  });
+
+  it('deixa o container desktop importar o de transmissão para estender', () => {
+    expect(destinoDoContainer(RAIZ, TRANSMISSAO, DESKTOP)).toBeNull();
+  });
+
+  it('não fecha ciclo: o container de transmissão lê o da web de verdade', () => {
+    expect(destinoDoContainer(RAIZ, WEB, TRANSMISSAO)).toBeNull();
   });
 
   it('deixa o container desktop importar o da web para estender', () => {

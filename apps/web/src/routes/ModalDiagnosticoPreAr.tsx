@@ -1,7 +1,7 @@
 import { DiagnosticoPreAr } from '../components/DiagnosticoPreAr.js';
 import { Dialogo } from '../components/Dialogo.js';
 import { TesteDeRede } from '../components/TesteDeRede.js';
-import { capacidadeDeEspectadores, pecasAusentesDoUmEncode, sondaDeRede, umEncode } from '../container.js';
+import { capacidadeDeEspectadores, pecasAusentesDoUmEncode, sondaDeRede, umEncode } from '../container-transmissao.js';
 import { useDialogo } from '../react/use-dialogo.js';
 import { BLOCOS_DO_TESTE, medidaDaConexaoDireta, useTesteDeRede } from '../react/use-teste-de-rede.js';
 

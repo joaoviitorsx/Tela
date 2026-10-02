@@ -13,9 +13,9 @@ import { proxyDeDev, versaoDoBuild } from './vite.config';
  *
  * - a entrada é `desktop.html`, sem Open Graph (ninguém cola `app://` no
  *   Discord) e com uma CSP própria;
- * - o container é `src/desktop/container.desktop.ts`, que estende o da web.
- *   Rotas e hooks continuam importando `../container.js`; é o plugin abaixo
- *   que troca o destino no build;
+ * - o container é `src/desktop/container.desktop.ts`, que estende os da web
+ *   (`container.ts` e `container-transmissao.ts`). Rotas e hooks continuam
+ *   importando os da web; é o plugin abaixo que troca o destino no build;
  * - a saída vai para `dist-desktop/`, que o Electron serve de `app://tela`.
  *
  * Em dev (`pnpm --filter @tela/web dev:desktop`) a porta é a 5174, para
@@ -29,7 +29,7 @@ function containerDesktop(): Plugin {
     enforce: 'pre',
     async resolveId(fonte, importador, opcoes) {
       // Só o que pode ser o container: o resto não paga a resolução dupla.
-      if (!/container(\.js|\.ts)?$/.test(fonte)) return null;
+      if (!/container(-transmissao)?(\.js|\.ts)?$/.test(fonte)) return null;
       const resolvido = await this.resolve(fonte, importador, { ...opcoes, skipSelf: true });
       if (resolvido === null) return null;
       return destinoDoContainer(RAIZ, resolvido.id, importador) ?? resolvido;

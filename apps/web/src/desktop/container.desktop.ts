@@ -8,7 +8,8 @@ import { makeEncodeOnceTransport } from '../adapters/encode-once-transport.js';
 import { makeMeshTransport } from '../adapters/mesh-transport.js';
 import { CodificadorWebCodecs } from '../adapters/webcodecs-codificador.js';
 import { makeWsSignaling } from '../adapters/ws-signaling.js';
-import { appVersion, aprovados, audio, diagnosticId, scheduler, uplinkMemory } from '../container.js';
+import { appVersion, diagnosticId, scheduler } from '../container.js';
+import { aprovados, audio, uplinkMemory } from '../container-transmissao.js';
 import { linkDoCanal } from '../core/domain/link.js';
 import { BroadcastSession } from '../core/media/broadcast-session.js';
 import { ViewerSession } from '../core/media/viewer-session.js';
@@ -38,9 +39,11 @@ import { criarTrilhaFantasma } from './trilha-fantasma.js';
  *   (`codificador-comutavel.ts`).
  *
  * O plugin em `vite.desktop.config.ts` faz rotas e hooks lerem este arquivo
- * quando importam `../container.js`.
+ * quando importam `../container.js` OU `../container-transmissao.js`: por isso
+ * ele exporta tudo dos dois (o que é local aqui vence o `export *`).
  */
 export * from '../container.js';
+export * from '../container-transmissao.js';
 
 /** Em dev o app roda em `http://localhost:5174`; aí a própria origem serve. */
 function origemHttp(): string | null {

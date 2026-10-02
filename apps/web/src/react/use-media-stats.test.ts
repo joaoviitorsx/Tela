@@ -34,6 +34,21 @@ describe('useMediaStats (C-02)', () => {
     expect(result.current.fps).not.toMatch(/\./);
   });
 
+  it('CODIFICA diz onde e quanto, sem chutar (D9)', () => {
+    const ler = (encoderImplementation: string | null, msPorQuadro: number | null = 3.14) =>
+      renderHook(() => useMediaStats(stats({ encoderImplementation, msPorQuadro }))).result.current;
+    expect(ler('WebCodecs·hardware')).toMatchObject({ encoder: 'hardware', codifica: 'GPU · 3,1 ms' });
+    expect(ler('nativo·NVENC')).toMatchObject({ encoder: 'hardware', codifica: 'GPU · 3,1 ms' });
+    // Era lido como hardware: o rótulo não casava a lista de software.
+    expect(ler('WebCodecs·software')).toMatchObject({ encoder: 'software', codifica: 'CPU · 3,1 ms' });
+    expect(ler('WebCodecs·software·GPU caiu').codifica).toBe('CPU · 3,1 ms');
+    expect(ler('OpenH264').codifica).toBe('CPU · 3,1 ms');
+    expect(ler('WebCodecs')).toMatchObject({ encoder: 'desconhecido', codifica: '3,1 ms' });
+    expect(ler('WebCodecs', null).codifica).toBe('desconhecido');
+    expect(ler('WebCodecs·hardware', null).codifica).toBe('GPU');
+    expect(ler(null, null).codifica).toBe('—');
+  });
+
   it('sem medida, traço', () => {
     const { result } = renderHook(() => useMediaStats(null));
     expect(result.current.fps).toBe('—');

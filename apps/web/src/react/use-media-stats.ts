@@ -57,6 +57,12 @@ export type ReadableStats = {
   readonly travou: boolean;
   /** Custo do encoder por quadro. Acima de 16,7ms ele não faz 60fps. */
   readonly msPorQuadro: string;
+  /**
+   * A linha CODIFICA do console: onde e quanto — `GPU · 3,1 ms`,
+   * `CPU · 14,2 ms`. Só o tempo quando não se sabe onde (D9): o tempo
+   * sozinho não distingue uma GPU disputada pelo jogo de uma CPU folgada.
+   */
+  readonly codifica: string;
   /** `true` quando o encoder não acompanha o framerate pedido. */
   readonly encoderLento: boolean;
   /** `true` quando o QP passou do limiar em que o quality scaler age. */
@@ -89,7 +95,17 @@ const QP_LIMIAR = 37;
 /** O orçamento de tempo de um quadro a 60fps. */
 const QUADRO_60FPS_MS = 1000 / 60;
 
-const EM_SOFTWARE = /libvpx|libaom|openh264|ffmpeg|dav1d|libx264/i;
+const EM_SOFTWARE = /libvpx|libaom|openh264|ffmpeg|dav1d|libx264|software/i;
+
+/**
+ * O codificador único do app (D9) diz o que SABE: `WebCodecs·hardware`,
+ * `WebCodecs·software…` ou só `WebCodecs` quando o Chromium escolheu sem
+ * contar. Esse último não é hardware — é não saber.
+ */
+function classeDoEncoder(impl: string): 'hardware' | 'software' | 'desconhecido' {
+  if (EM_SOFTWARE.test(impl)) return 'software';
+  return impl === 'WebCodecs' ? 'desconhecido' : 'hardware';
+}
 
 const MOTIVOS: Record<MediaStats['limitation'], string | null> = {
   none: null,
@@ -120,10 +136,14 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         congelado: '—',
         travou: false,
         msPorQuadro: '—',
+        codifica: '—',
         encoderLento: false,
       };
     }
     const impl = stats.encoderImplementation;
+    const classe = impl === null ? null : classeDoEncoder(impl);
+    const ms = stats.msPorQuadro === null ? '—' : formatarMsPorQuadro(stats.msPorQuadro);
+    const onde = classe === 'hardware' ? 'GPU' : classe === 'software' ? 'CPU' : null;
     return {
       resolution: stats.width > 0 ? `${stats.width}×${stats.height}` : '—',
       fps: formatarFps(stats.fps),
@@ -137,7 +157,7 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
         stats.repasse !== undefined && stats.repasse.filhos > 0
           ? `${stats.repasse.repassadores} → ${stats.repasse.filhos}`
           : null,
-      encoder: impl === null ? '—' : EM_SOFTWARE.test(impl) ? 'software' : 'hardware',
+      encoder: classe ?? '—',
       qp: stats.qp === null ? '—' : stats.qp.toFixed(0),
       // `kHighH264QpThreshold = 37` no libwebrtc: é onde o quality scaler age.
       qpAlto: stats.qp !== null && stats.qp >= QP_LIMIAR,
@@ -165,7 +185,8 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
           ? '—'
           : `${stats.recepcao.tempoCongeladoS.toFixed(1).replace('.', ',')}s`,
       travou: (stats.recepcao?.congelamentos ?? 0) > 0,
-      msPorQuadro: stats.msPorQuadro === null ? '—' : formatarMsPorQuadro(stats.msPorQuadro),
+      msPorQuadro: ms,
+      codifica: onde === null ? (ms === '—' ? (classe ?? '—') : ms) : ms === '—' ? onde : `${onde} · ${ms}`,
       /*
         16,7ms é o orçamento de um quadro a 60fps. Acima disso o encoder não
         acompanha, e em captura de tela isso é quase sempre encode em software

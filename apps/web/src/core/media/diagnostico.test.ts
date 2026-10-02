@@ -10,6 +10,17 @@ const stats: MediaStats = {
 };
 
 describe('Diario', () => {
+  it('guarda o rótulo do codificador único do app (D9), e ainda recusa endereço', () => {
+    const diario = new Diario('transmissor');
+    diario.iniciar('s', null);
+    for (const encoder of ['WebCodecs·hardware', 'WebCodecs·software·GPU caiu', 'nativo·falhou(PORTAL)']) {
+      diario.registrar({ ...stats, encoderImplementation: encoder }, 1);
+      expect(diario.relatorio('Chrome/152').encoder).toBe(encoder);
+    }
+    diario.registrar({ ...stats, encoderImplementation: 'nativo·(192.0.2.1)' }, 2);
+    expect(diario.relatorio('Chrome/152').encoder).toBeNull();
+  });
+
   it('exporta falha antes da primeira amostra sem dados sensíveis', () => {
     const diario = new Diario('espectador');
     diario.iniciar('sessao:segredo', 'build@invalido');

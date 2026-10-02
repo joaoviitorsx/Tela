@@ -20,6 +20,7 @@ const STATS: ReadableStats = {
   congelado: '—',
   travou: false,
   msPorQuadro: '—',
+  codifica: 'GPU',
   encoderLento: false,
   qpAlto: false,
 };

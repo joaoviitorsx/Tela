@@ -881,7 +881,7 @@ function configurarPermissoes(): void {
     if (SELETOR_PROPRIO) {
       const escolha = escolhaPendente;
       escolhaPendente = null;
-      const resposta = respostaDeCaptura(escolha, process.platform, pedido.audioRequested);
+      const resposta = respostaDeCaptura(escolha);
       responder(resposta === null ? {} : resposta);
       return;
     }

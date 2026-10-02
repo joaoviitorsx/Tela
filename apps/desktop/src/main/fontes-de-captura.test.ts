@@ -87,17 +87,11 @@ describe('escolhaValida (IPC tela:escolher-fonte)', () => {
 describe('respostaDeCaptura (setDisplayMediaRequestHandler)', () => {
   const fonte = { id: 'screen:0:0', name: 'Entire Screen' };
   it('sem escolha: vazio, e a página recebe NotAllowedError → DENIED', () => {
-    expect(respostaDeCaptura(null, 'win32', true)).toBeNull();
+    expect(respostaDeCaptura(null)).toBeNull();
   });
-  it('Windows + tela + áudio pedido: loopback', () => {
-    expect(respostaDeCaptura({ fonte, tipo: 'tela' }, 'win32', true)).toEqual({ video: fonte, audio: 'loopback' });
-  });
-  it('Windows + janela: sem áudio, porque janela no Windows é muda', () => {
-    expect(respostaDeCaptura({ fonte, tipo: 'janela' }, 'win32', true)).toEqual({ video: fonte });
-  });
-  it('Windows sem áudio pedido, e Linux sempre: só vídeo', () => {
-    expect(respostaDeCaptura({ fonte, tipo: 'tela' }, 'win32', false)).toEqual({ video: fonte });
-    expect(respostaDeCaptura({ fonte, tipo: 'tela' }, 'linux', true)).toEqual({ video: fonte });
+  it('só vídeo, tela ou janela: o loopback do sistema levaria a call junto', () => {
+    expect(respostaDeCaptura({ fonte, tipo: 'tela' })).toEqual({ video: fonte });
+    expect(respostaDeCaptura({ fonte, tipo: 'janela' })).toEqual({ video: fonte });
   });
 });
 

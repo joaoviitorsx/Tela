@@ -117,21 +117,15 @@ export type EscolhaPendente<F> = {
  *
  * `null` = responder vazio: o `getDisplayMedia` da página rejeita com
  * `NotAllowedError`, que o adapter traduz em `DENIED` — cancelar o seletor é
- * escolha da pessoa, não falha (R4). O áudio `loopback` (som do sistema) só
- * existe no Windows e só faz sentido com a TELA: capturar uma janela no
- * Windows é mudo, e o `surface` que a sessão recebe tem de dizer a verdade
- * para a interface avisar.
+ * escolha da pessoa, não falha (R4).
+ *
+ * Só vídeo, sempre, mesmo que a página peça áudio: o `audio: 'loopback'` do
+ * Electron é o som do sistema INTEIRO, com a call do Discord junto. O som do
+ * app vem do componente de som (D3): "Sistema" é tudo menos a call, e não
+ * passa pela captura de tela.
  */
-export function respostaDeCaptura<F>(
-  escolha: EscolhaPendente<F> | null,
-  plataforma: NodeJS.Platform,
-  audioPedido: boolean,
-): { readonly video: F; readonly audio?: 'loopback' } | null {
-  if (escolha === null) return null;
-  if (plataforma === 'win32' && audioPedido && escolha.tipo === 'tela') {
-    return { video: escolha.fonte, audio: 'loopback' };
-  }
-  return { video: escolha.fonte };
+export function respostaDeCaptura<F>(escolha: EscolhaPendente<F> | null): { readonly video: F } | null {
+  return escolha === null ? null : { video: escolha.fonte };
 }
 
 /**

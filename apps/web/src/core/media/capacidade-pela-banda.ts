@@ -95,7 +95,20 @@ export function pisoPorEspectador(prioridade: Prioridade, reservaAudio: number):
 
 export function capacidadePelaBanda(e: EntradaDeCapacidade): number {
   const maquina = Math.max(1, Math.floor(e.capacidadeDaMaquina));
-  const chao = Math.max(1, e.caminhos);
+  /*
+    O chão é o teto de sempre (5), não quem já está dentro.
+
+    A conta usa `0,75 × enviado` como evidência de banda — e o que o encoder
+    envia é o que a CENA pede, não o que o link aguenta; o estimador do
+    navegador também não passa de 1,5 × o enviado (ADR 0018). Com um amigo
+    assistindo uma cena leve (~2 Mbps), a conta dava menos de uma vaga, a porta
+    fechava em 1/1 e nunca reabria: para abrir a segunda, exigia ~4,4 Mbps de
+    envio que a cena jamais pede. Era o amigo número 2 vendo "SEM VAGA · 1/1"
+    (relato de 02/10). A porta existe para não deixar a sala crescer ACIMA do
+    que o link paga (ADR 0030); abaixo de 5 é a sala de sempre, e o
+    simulador já só conta "afogando" acima disso.
+  */
+  const chao = Math.min(maquina, Math.max(1, e.caminhos, CAPACIDADE_ATE_MEDIR));
   const limitar = (n: number): number => Math.min(maquina, Math.max(chao, Math.floor(n)));
 
   // Sem medição não há evidência para abrir nem fechar: fica como está.

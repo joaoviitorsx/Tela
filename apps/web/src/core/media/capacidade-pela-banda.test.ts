@@ -97,3 +97,35 @@ describe('capacidadePelaBanda (ADR 0030)', () => {
     expect(capacidadePelaBanda({ ...e, encoderOcioso: false })).toBeLessThan(26);
   });
 });
+
+describe('capacidadePelaBanda — nunca fecha abaixo do teto de sempre (relato "SEM VAGA · 1/1")', () => {
+  it('um amigo, cena leve (~2 Mbps enviados): continua cabendo 5', () => {
+    expect(
+      capacidadePelaBanda({
+        orcamento: 2_500_000,
+        enviadoPorCaminho: 2_000_000,
+        caminhos: 1,
+        encoderOcioso: false,
+        reservaAudio: 141_000,
+        prioridade: 'fluidez',
+        capacidadeDaMaquina: 50,
+        atual: 5,
+      }),
+    ).toBe(CAPACIDADE_ATE_MEDIR);
+  });
+
+  it('máquina que só serve 3: o chão respeita a máquina', () => {
+    expect(
+      capacidadePelaBanda({
+        orcamento: 500_000,
+        enviadoPorCaminho: 400_000,
+        caminhos: 1,
+        encoderOcioso: false,
+        reservaAudio: 0,
+        prioridade: 'fluidez',
+        capacidadeDaMaquina: 3,
+        atual: 3,
+      }),
+    ).toBe(3);
+  });
+});

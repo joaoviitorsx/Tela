@@ -23,7 +23,12 @@ export type LinhaEspectador = {
   readonly tom: Tom;
 };
 
+/** A resposta em português a "meus amigos estão vendo bem?" (C-05). */
+export type Veredito = { readonly tom: Tom; readonly texto: string };
+
 export type Diagnostico = {
+  /** O que ler primeiro; a grade técnica fica atrás de VER DETALHES. */
+  readonly veredito: Veredito;
   readonly resumo: readonly CelulaDiagnostico[];
   readonly espectadores: readonly LinhaEspectador[];
   readonly audio: { readonly texto: string; readonly tom: Tom };
@@ -65,6 +70,61 @@ function espectador(peer: EstadoAoVivo['peers'][number], indice: number): LinhaE
   };
 }
 
+const amigos = (n: number): string => (n === 1 ? '1 amigo' : `${n} amigos`);
+
+/**
+ * Uma frase, com o LED do tom: o que está acontecendo e o que fazer. Os casos
+ * vão do mais grave ao mais leve, e o primeiro que casa vence — quem lê só
+ * tem tempo para uma coisa.
+ */
+function montarVeredito(estado: EstadoAoVivo, stats: ReadableStats): Veredito {
+  const conectados = estado.peers.filter((p) => p.connectionState === 'connected').length;
+  const viaRelay = estado.peers.filter((p) => p.usingRelay).length;
+  const saindo = stats.resolution === '—' ? '' : ` ${stats.resolution}`;
+
+  if (estado.peers.length === 0) {
+    return {
+      tom: 'neutro',
+      texto: 'Aguardando o primeiro amigo. Quando alguém entrar, a qualidade e a conexão aparecem aqui.',
+    };
+  }
+  if (estado.motivoDegradacao === 'cpu') {
+    return {
+      tom: 'alerta',
+      texto: `! O seu computador não está dando conta de codificar: enviando${saindo}. Feche programas pesados.`,
+    };
+  }
+  if (estado.motivoDegradacao === 'bandwidth') {
+    return {
+      tom: 'alerta',
+      texto: `! Sua subida não sustenta esta qualidade: enviando${saindo}. Volta sozinha quando a rede sobrar.`,
+    };
+  }
+  // O mesmo aviso que o console já mostra no banner: veredito e banner não se contradizem.
+  if (stats.warning !== null) {
+    return { tom: 'alerta', texto: `! ${stats.warning}. Enviando${saindo || ' uma imagem menor'}.` };
+  }
+  if (conectados < estado.peers.length) {
+    const faltam = estado.peers.length - conectados;
+    return {
+      tom: 'alerta',
+      texto: `! ${amigos(faltam)} ainda ${faltam === 1 ? 'não está recebendo' : 'não estão recebendo'} a imagem: conectando ou sem conexão.`,
+    };
+  }
+  if (viaRelay > 0) {
+    return {
+      tom: 'alerta',
+      texto: `! ${amigos(viaRelay)} ${viaRelay === 1 ? 'está' : 'estão'} pela rota alternativa (TURN): funciona, com um pouco mais de atraso.`,
+    };
+  }
+  const audio = TEXTO_AUDIO[estado.audio];
+  if (audio.tom === 'alerta') return { tom: 'alerta', texto: `! ${audio.texto}` };
+  return {
+    tom: 'ok',
+    texto: `Tudo certo: ${amigos(conectados)} recebendo${saindo}${stats.fps === '—' ? '' : ` a ${stats.fps}`}, em conexão direta.`,
+  };
+}
+
 /**
  * O que o modal de diagnóstico mostra, e NADA que a sessão não saiba.
  *
@@ -94,6 +154,7 @@ export function montarDiagnostico(estado: EstadoAoVivo, stats: ReadableStats): D
           };
 
   return {
+    veredito: montarVeredito(estado, stats),
     resumo: [
       {
         rotulo: 'ESPECTADORES',
@@ -133,7 +194,7 @@ export function montarDiagnostico(estado: EstadoAoVivo, stats: ReadableStats): D
         nota:
           stats.msPorQuadro === '—'
             ? 'custo por quadro ainda sem medida'
-            : `${stats.msPorQuadro} por quadro${stats.encoderLento ? ': não dá conta de 60fps' : ''}`,
+            : `${stats.msPorQuadro} por quadro${stats.encoderLento ? ': não dá conta de 60 fps' : ''}`,
         tom: stats.encoderLento || stats.encoder === 'software' ? 'alerta' : 'neutro',
       },
     ],

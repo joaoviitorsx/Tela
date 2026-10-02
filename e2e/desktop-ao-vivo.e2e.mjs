@@ -103,11 +103,18 @@ try {
   const noAr = await host.evaluate(() => ({
     caminho: location.pathname,
     texto: document.body.innerText.replace(/\s+/g, ' '),
-    trilho: [...document.querySelectorAll('nav button')].map((b) => b.disabled),
+    trilho: [...document.querySelectorAll('nav button')].map((b) => ({ texto: b.textContent.trim(), travado: b.disabled || b.getAttribute('aria-disabled') === 'true' })),
   }));
   ok(noAr.caminho === '/transmitir', `rota de transmissão (${noAr.caminho})`);
   ok(noAr.texto.includes(`${new URL(WEB).host}/${slug}`), 'o link mostrado é a origem pública, não app://');
-  ok(noAr.trilho.length > 0 && noAr.trilho.every(Boolean), 'trilho travado ao vivo');
+  // Ao vivo a tecla da transmissão vira "NO AR"; as outras ficam aria-disabled
+  // (focáveis, com a explicação lida por teclado e toque — auditoria D-02).
+  const travadoAoVivo = (t) => t.some((i) => /NO AR/.test(i.texto)) && t.filter((i) => !/NO AR/.test(i.texto)).every((i) => i.travado);
+  ok(travadoAoVivo(noAr.trilho), `trilho travado ao vivo (${JSON.stringify(noAr.trilho)})`);
+  // E clicar numa tecla travada não tira a pessoa da transmissão.
+  await host.getByRole('button', { name: /ASSISTIR/ }).first().click({ force: true });
+  await esperar(400);
+  ok((await host.evaluate(() => location.pathname)) === '/transmitir', 'tecla travada não navega');
 
   console.log('\n1b. Link tela://assistir/<canal> ao vivo não tira a pessoa da transmissão');
   await app.evaluate(({ app: a }) => a.emit('second-instance', {}, ['tela', '--', '"tela://assistir/outrocanal"'], ''));
@@ -115,11 +122,11 @@ try {
   const comLink = await host.evaluate(() => ({
     caminho: location.pathname,
     aviso: document.body.innerText.includes('Você está ao vivo'),
-    trilho: [...document.querySelectorAll('nav button')].map((b) => b.disabled),
+    trilho: [...document.querySelectorAll('nav button')].map((b) => ({ texto: b.textContent.trim(), travado: b.disabled || b.getAttribute('aria-disabled') === 'true' })),
   }));
   ok(comLink.caminho === '/transmitir', `continua em /transmitir (${comLink.caminho})`);
   ok(comLink.aviso, 'aviso "Você está ao vivo" aparece, sem bloquear');
-  ok(comLink.trilho.every(Boolean), 'ASSISTIR e o resto do trilho seguem travados');
+  ok(travadoAoVivo(comLink.trilho), 'ASSISTIR e o resto do trilho seguem travados');
 
   console.log(`\n2. Espectador web em ${WEB}/${slug}`);
   navegador = await chromium.launch({ headless: true });

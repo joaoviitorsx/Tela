@@ -1,5 +1,6 @@
 import { FRAMERATE_POR_PRIORIDADE, PRESETS, PRESET_ORDER, type PresetId, type Prioridade } from '@tela/shared';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Aviso } from '../components/Aviso.js';
 import { AudioSourcePicker } from '../components/AudioSourcePicker.js';
 import { BarraAjuda } from '../components/BarraAjuda.js';
 import { Botao, LinkTecla } from '../components/Botao.js';
@@ -7,9 +8,11 @@ import { BotoesDoCabecalho } from '../components/BotoesDoCabecalho.js';
 import { Cabecalho } from '../components/Cabecalho.js';
 import { CampoCanal } from '../components/CampoCanal.js';
 import { CanalFlash, EstaticaTroca, VidroCrt } from '../components/EfeitosTv.js';
+import { IconChave } from '../components/Icon.js';
 import { Medidor } from '../components/Medidor.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
 import { PainelOsd } from '../components/PainelOsd.js';
+import { SemCaptura } from '../components/SemCaptura.js';
 import { Passos, type Passo } from '../components/Passos.js';
 import {
   SeletorDeResolucao,
@@ -19,6 +22,7 @@ import {
 import { Vitrine } from '../components/Vitrine.js';
 import {
   audioCue,
+  capturaSuportada,
   identity,
   ofereceApp,
   platform,
@@ -26,6 +30,7 @@ import {
   presetSustentavel,
   volumeTransmissaoPreference,
 } from '../container.js';
+import { espiarNomeRecusado, limparNomeRecusado, sugerirNomes } from '../core/identity/nome-recusado.js';
 import { isPresetId } from '../core/media/presets.js';
 import { useAudioSources } from '../react/use-audio-sources.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
@@ -102,6 +107,24 @@ const IDS_POR_PASSO: Record<NumeroDoPasso, readonly string[]> = {
  */
 export function Home({ onStart }: Props) {
   const [slug, setSlug] = useState(() => identity.savedSlug() ?? '');
+  // Sem `getDisplayMedia` (celular) não há o que fazer nos passos: avisa antes (B-06).
+  const [podeTransmitir] = useState(capturaSuportada);
+  /*
+    O nome que o servidor recusou na tentativa anterior (B-02): nome em uso só
+    se descobre ao ir ao ar, então o aviso volta com a pessoa para o passo 1.
+    Lido sem apagar no inicializador (StrictMode o chama duas vezes) e apagado
+    num efeito.
+  */
+  const [recusado] = useState(espiarNomeRecusado);
+  useEffect(() => {
+    limparNomeRecusado();
+    if (recusado === null) return;
+    const campo = document.getElementById('slug');
+    if (campo instanceof HTMLInputElement) {
+      campo.focus();
+      campo.select();
+    }
+  }, [recusado]);
   const [presetId, setPresetId] = useState<PresetId>(() => {
     const saved = preferences.read();
     return isPresetId(saved) ? saved : 'p1080p60';
@@ -279,8 +302,11 @@ export function Home({ onStart }: Props) {
           aoBaixarApp={ofereceApp ? () => setModal('app') : undefined}
         />
         <LinkTecla href="/recuperar">
-          <span className="hidden lg:inline">CÓDIGO DE RECUPERAÇÃO</span>
-          <span className="lg:hidden">RECUPERAR</span>
+          <IconChave className="h-3 w-3 text-accent" />
+          {/* Abaixo de 360 px só o ícone: em 320 px a faixa transbordava (W-04). */}
+          <span className="hidden lg:inline">CÓDIGO DO CANAL</span>
+          <span className="hidden min-[360px]:inline lg:hidden">CÓDIGO</span>
+          <span className="sr-only min-[360px]:hidden">Código do canal</span>
         </LinkTecla>
       </Cabecalho>
 
@@ -290,46 +316,85 @@ export function Home({ onStart }: Props) {
           Passo {passo} de 4: {NOMES[passo]}
         </p>
 
-        <div className="mx-auto w-full max-w-[1180px] px-4 pt-6 sm:px-6 sm:pt-7">
-          <Passos passos={trilha} />
-        </div>
+        {podeTransmitir && (
+          <div className="mx-auto w-full max-w-[1180px] px-4 pt-6 sm:px-6 sm:pt-7">
+            <Passos passos={trilha} />
+          </div>
+        )}
 
         {passo === 1 && (
           <section
             aria-labelledby="titulo-canal"
             className="mx-auto my-auto grid w-full max-w-[1180px] items-center gap-10 px-4 py-9 sm:px-6 sm:py-12 lg:grid-cols-[minmax(0,1fr)_auto]"
           >
-            <div className="flex min-w-0 max-w-[860px] flex-col gap-6">
-              <div className="flex flex-col gap-2">
-                <h1 id="titulo-canal" data-vidro="texto" className="rotulo m-0 !text-[13px] !text-muted">
-                  DÊ UM NOME AO SEU CANAL
-                </h1>
-                <p data-vidro="texto" className="m-0 text-[12px] leading-relaxed text-muted">
-                  Vira o endereço que seus amigos vão abrir. Letras, números e hífen.
-                </p>
-              </div>
+            {podeTransmitir ? (
+              <div className="flex min-w-0 max-w-[860px] flex-col gap-6">
+                <div className="flex flex-col gap-2">
+                  <h1 id="titulo-canal" data-vidro="texto" className="rotulo m-0 !text-[13px] !text-muted">
+                    DÊ UM NOME AO SEU CANAL
+                  </h1>
+                  <p data-vidro="texto" className="m-0 text-[12px] leading-relaxed text-muted">
+                    Vira o endereço que seus amigos vão abrir. Letras, números e hífen.
+                  </p>
+                </div>
 
-              <CampoCanal
-                value={slug}
-                onChange={setSlug}
-                onEnter={() => irParaPasso(2)}
-                status={check.status === 'ok' ? 'free' : check.status === 'invalid' ? 'invalid' : 'idle'}
-                error={check.status === 'invalid' ? check.message : null}
-              />
+                {recusado !== null && slug.trim().toLowerCase() === recusado.slug && (
+                  <div className="flex flex-col gap-3">
+                    <Aviso tom="alerta" anuncia>
+                      {recusado.motivo === 'em-uso' ? (
+                        <>
+                          <span className="text-accent-hi">tela.gg/{recusado.slug}</span> está em uso por
+                          outra pessoa. Escolha outro nome para o seu canal.
+                        </>
+                      ) : (
+                        <>O Tela não aceitou o nome “{recusado.slug}”. Escolha outro.</>
+                      )}
+                    </Aviso>
+                    {sugerirNomes(recusado.slug).length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rotulo">QUE TAL</span>
+                        {sugerirNomes(recusado.slug).map((sugestao) => (
+                          <button
+                            key={sugestao}
+                            type="button"
+                            className="tecla"
+                            onClick={() => {
+                              setSlug(sugestao);
+                              focaOCampo();
+                            }}
+                          >
+                            {sugestao}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              <div data-vidro="acento" className="w-full sm:w-auto sm:self-start">
-                <Botao
-                  tom="primaria"
-                  grande
-                  bloco
-                  onClick={() => irParaPasso(2)}
-                  disabled={!valido}
-                  icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
-                >
-                  TRANSMITIR
-                </Botao>
+                <CampoCanal
+                  value={slug}
+                  onChange={setSlug}
+                  onEnter={() => irParaPasso(2)}
+                  status={check.status === 'ok' ? 'free' : check.status === 'invalid' ? 'invalid' : 'idle'}
+                  error={check.status === 'invalid' ? check.message : null}
+                />
+
+                <div data-vidro="acento" className="w-full sm:w-auto sm:self-start">
+                  <Botao
+                    tom="primaria"
+                    grande
+                    bloco
+                    onClick={() => irParaPasso(2)}
+                    disabled={!valido}
+                    icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
+                  >
+                    TRANSMITIR
+                  </Botao>
+                </div>
               </div>
-            </div>
+            ) : (
+              <SemCaptura />
+            )}
 
             <Vitrine canvasRef={vitrine.canvasRef} montado={vitrine.disponivel} />
           </section>
@@ -463,5 +528,9 @@ export function Home({ onStart }: Props) {
 }
 
 function RodapeDoPasso({ children }: { readonly children: React.ReactNode }) {
-  return <div className="flex gap-2 border-t-2 border-line p-3.5">{children}</div>;
+  /*
+    Preso na base da janela (B-01): o botão principal do passo nunca fica
+    abaixo da dobra, mesmo em 1366×768 com a prévia e o menu por cima.
+  */
+  return <div className="sticky bottom-0 z-10 flex gap-2 border-t-2 border-line bg-surface p-3.5">{children}</div>;
 }

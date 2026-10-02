@@ -5,6 +5,7 @@ import { Botao } from '../components/Botao.js';
 import { Cabecalho } from '../components/Cabecalho.js';
 import { CapturePreview } from '../components/CapturePreview.js';
 import { Dialogo } from '../components/Dialogo.js';
+import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
 import { DiagnosticoConteudo } from '../components/DiagnosticoConteudo.js';
 import { VidroCrt } from '../components/EfeitosTv.js';
 import { FaixaLink } from '../components/FaixaLink.js';
@@ -25,7 +26,8 @@ import {
   volumeTransmissaoPreference,
   audioCue,
 } from '../container.js';
-import type { BroadcastFailure } from '../core/media/broadcast-session.js';
+import { registrarNomeRecusado } from '../core/identity/nome-recusado.js';
+import { APRESENTACAO_DA_FALHA } from '../core/media/apresentacao-da-falha.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useAvisosAoVivo } from '../react/use-avisos-ao-vivo.js';
 import { useBipeDePedido } from '../react/use-bipe-de-pedido.js';
@@ -33,6 +35,7 @@ import { useBroadcast } from '../react/use-broadcast.js';
 import { useCopia } from '../react/use-copia.js';
 import { useDiagnostico } from '../react/use-diagnostico.js';
 import { useDialogo } from '../react/use-dialogo.js';
+import { useEncerrar } from '../react/use-encerrar.js';
 import { BLOCOS_DO_TESTE, medidaDaConexaoDireta, useTesteDeRede } from '../react/use-teste-de-rede.js';
 import { useResumoDaTransmissao } from '../react/use-resumo-da-transmissao.js';
 import { FimDeTransmissao } from '../components/FimDeTransmissao.js';
@@ -54,48 +57,9 @@ type Props = {
   readonly onExit: () => void;
 };
 
-/**
- * `Record<BroadcastFailure, string>`, não `Record<string, string>`: um motivo
- * novo na união quebra a compilação aqui, em vez de deixar o usuário cair
- * silenciosamente num texto genérico.
- */
-const MOTIVOS: Record<BroadcastFailure, string> = {
-  CAPTURE_DENIED: 'Você cancelou o compartilhamento de tela, ou o navegador não tem permissão para capturá-la.',
-  CAPTURE_FAILED:
-    'O navegador não conseguiu capturar a tela — não foi escolha sua. Tente de novo; se repetir, feche outros programas que estejam gravando ou compartilhando a tela.',
-  CAPTURE_UNSUPPORTED:
-    'Este navegador não permite capturar a tela. Use Chrome ou Firefox no desktop.',
-  CAPTURE_ENDED: 'O compartilhamento de tela foi encerrado.',
-  SLUG_TAKEN: 'Esse link já está sendo usado por outra pessoa. Escolha outro nome.',
-  SLUG_INVALID: 'Esse nome de link não é válido.',
-  RATE_LIMITED: 'Muitas tentativas. Espere um minuto.',
-  OUTDATED: 'O Tela foi atualizado desde que esta página abriu. Recarregue e transmita de novo.',
-  SIGNALING_UNAVAILABLE: 'Não foi possível falar com o servidor de sinalização.',
-  TRANSPORT_FAILED: 'A conexão de vídeo caiu.',
-  USER_STOPPED: 'Transmissão encerrada.',
-};
-
 /** Rótulo do degrau para o resumo da tela de fim. Estável: vive fora do componente. */
 const rotuloDoPresetId = (id: string): string =>
   isPresetId(id) ? PRESETS[id].label.replace(' econômico', ' eco') : id;
-
-/** O único motivo que não é falha. Todo o resto merece o tom de alerta. */
-const ENCERRAMENTO_NORMAL: BroadcastFailure = 'USER_STOPPED';
-
-/**
- * Onde tentar de novo AQUI resolve (TELA-013). Nome ocupado ou inválido pede
- * outro nome, que se escolhe no início; navegador sem captura não muda com
- * insistência. O resto recomeça sem recarregar a página — e o clique é o
- * gesto que o seletor de tela exige.
- */
-const REPETIVEL: ReadonlySet<BroadcastFailure> = new Set<BroadcastFailure>([
-  'CAPTURE_DENIED',
-  'CAPTURE_FAILED',
-  'CAPTURE_ENDED',
-  'RATE_LIMITED',
-  'SIGNALING_UNAVAILABLE',
-  'TRANSPORT_FAILED',
-]);
 
 const AJUDA_PRIORIDADE = {
   fluidez:
@@ -246,15 +210,14 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
     };
   }, [session, start, slug, presetId, audioDeviceId, prioridadeInicial]);
 
-  const handleStop = useCallback(() => {
-    // Só pergunta se tem gente assistindo. Confirmar quando o usuário está
-    // sozinho é atrito puro.
-    if (vivo !== null && vivo.peers.length > 0) {
-      const ok = window.confirm(`${vivo.peers.length} pessoa(s) assistindo. Encerrar mesmo assim?`);
-      if (!ok) return;
-    }
-    void stop();
-  }, [vivo, stop]);
+  /*
+    Só pergunta se tem gente assistindo (C-03). Sozinho, confirmar é atrito
+    puro, e a tela de fim já oferece TRANSMITIR DE NOVO.
+  */
+  const parar = useCallback(() => void stop(), [stop]);
+  const encerrar = useEncerrar(vivo?.peers.length ?? 0, parar);
+  const seguroRef = useRef<HTMLButtonElement>(null);
+  const dialogoEncerrar = useDialogo(encerrar.confirmando, encerrar.cancelar, seguroRef);
 
   /** Ver `core/media/diagnostico.ts`. Nada sai da máquina sozinho. */
   const copiarDiag = diagCopia.copiar;
@@ -294,23 +257,35 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   /* ─────────────── estados que não são "ao vivo" ─────────────── */
 
   if (state.status === 'ended') {
-    const falhou = state.reason !== ENCERRAMENTO_NORMAL;
+    const ap = APRESENTACAO_DA_FALHA[state.reason];
     const relatorio = session.diagnostico(navigator.userAgent);
     const recomecar = () =>
       void start(slug, identity.ownerToken(), presetId, audioDeviceId, prioridadeInicial);
+    /*
+      Nome recusado: não adianta insistir. Volta ao passo 1 levando o motivo,
+      que o assistente mostra junto do campo (B-02).
+    */
+    const escolherOutroNome = () => {
+      registrarNomeRecusado({ slug, motivo: state.reason === 'SLUG_TAKEN' ? 'em-uso' : 'invalido' });
+      onExit();
+    };
+    const principal =
+      ap.acao === 'tentar-de-novo'
+        ? recomecar
+        : ap.acao === 'escolher-nome'
+          ? escolherOutroNome
+          : ap.acao === 'recarregar'
+            ? () => window.location.reload()
+            : null;
     return (
       <div className="flex min-h-dvh flex-col bg-void">
         <VidroCrt />
         <Cabecalho marcaHref="/" />
         <main className="flex flex-1 items-center justify-center p-4 sm:p-8">
           <FimDeTransmissao
-            falhou={falhou}
-            titulo={falhou ? 'SEM SINAL' : 'FIM DA TRANSMISSÃO'}
-            mensagem={
-              falhou
-                ? (MOTIVOS[state.reason] ?? 'A transmissão caiu.')
-                : 'Seus amigos já não recebem imagem. O link continua seu: é só transmitir de novo.'
-            }
+            tom={ap.tom}
+            titulo={ap.titulo}
+            mensagem={ap.mensagem}
             canal={`${window.location.host}/${slug}`}
             resumo={
               resumo === null
@@ -332,14 +307,18 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             }
             acoes={
               <>
-                {(!falhou || REPETIVEL.has(state.reason)) && (
+                {principal !== null && (
                   <Botao
                     tom="primaria"
                     grande
-                    onClick={recomecar}
-                    icone={<span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />}
+                    onClick={principal}
+                    icone={
+                      ap.acao === 'tentar-de-novo' && ap.tom === 'normal' ? (
+                        <span aria-hidden="true" className="h-3 w-3 bg-[#b3261a] shadow-[inset_0_0_0_2px_#14100a]" />
+                      ) : undefined
+                    }
                   >
-                    {falhou ? 'TENTAR DE NOVO' : 'TRANSMITIR DE NOVO'}
+                    {ap.rotuloAcao}
                   </Botao>
                 )}
                 <Botao grande onClick={onExit}>
@@ -348,7 +327,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
               </>
             }
             diagnostico={
-              relatorio === null ? null : (
+              relatorio === null || !ap.comDiagnostico ? null : (
                 <details className="w-full border-2 border-line bg-surface text-[12px] text-muted">
                   <summary className="flex min-h-11 cursor-pointer items-center px-4">
                     ver diagnóstico da tentativa
@@ -387,7 +366,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             <p className="m-0 max-w-[52ch] text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
               {pedindoTela
                 ? 'Prefira "Tela inteira": é o único modo em que o áudio do sistema acompanha o vídeo, e é o caminho mais barato para a sua placa.'
-                : 'Se o nome já estiver em uso, você volta para a tela inicial com o aviso: nada é enviado antes disso.'}
+                : 'Se o nome já estiver em uso, você escolhe outro: nada é enviado antes disso.'}
             </p>
           </div>
         </PainelOsd>
@@ -647,6 +626,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
                     <label className="flex min-h-11 cursor-pointer items-center gap-2 text-[11px] text-muted">
                       <input
                         type="checkbox"
+                        className="h-6 w-6 shrink-0 accent-[#f2a93b]"
                         checked={pausaComSom}
                         onChange={(e) => setPausaComSom(e.target.checked)}
                       />
@@ -665,9 +645,14 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
                     </Botao>
                   </>
                 )}
-                <div className="grid grid-cols-2 gap-2">
-                  <Botao onClick={() => void switchSource()}>TROCAR FONTE</Botao>
-                  <Botao tom="perigo" onClick={handleStop}>
+                <Botao onClick={() => void switchSource()}>TROCAR FONTE</Botao>
+                {/*
+                  ENCERRAR sozinho, afastado de TROCAR FONTE por um divisor:
+                  a ação que não desfaz não fica a 8px de uma que se usa
+                  várias vezes por sessão (C-03, Fitts).
+                */}
+                <div className="mt-3 border-t-2 border-line pt-4">
+                  <Botao tom="perigo" bloco onClick={encerrar.pedir}>
                     <span aria-hidden="true" className="h-2 w-2 bg-live-hi" />
                     ENCERRAR
                   </Botao>
@@ -707,6 +692,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
       >
         {diagnostico !== null && (
           <DiagnosticoConteudo
+            veredito={diagnostico.veredito}
             resumo={[...diagnostico.resumo, medidaDaConexaoDireta(teste)]}
             espectadores={diagnostico.espectadores}
             audio={diagnostico.audio}
@@ -723,6 +709,18 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
           />
         )}
       </Dialogo>
+      <DialogoConfirmar
+        titulo="ENCERRAR A TRANSMISSÃO?"
+        dialogRef={dialogoEncerrar.ref}
+        aoClicarNoFundo={dialogoEncerrar.aoClicar}
+        rotuloSeguro="CONTINUAR NO AR"
+        seguroRef={seguroRef}
+        aoSeguro={encerrar.cancelar}
+        rotuloAcao="ENCERRAR"
+        aoAcao={encerrar.confirmar}
+      >
+        {encerrar.texto}
+      </DialogoConfirmar>
       <ModalApp aberto={appAberto} aoFechar={fecharApp} />
     </div>
   );

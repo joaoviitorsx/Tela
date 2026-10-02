@@ -55,7 +55,7 @@ export function VolumeBlocos({ volume, mudo, ajustavel, onVolume, onAlternar, pa
       <button
         type="button"
         onClick={onAlternar}
-        aria-label={mudo ? 'Ativar o som' : 'Silenciar'}
+        aria-label="Silenciar"
         aria-pressed={mudo}
         className="flex h-11 w-11 items-center justify-center border-0 bg-transparent p-0 text-text hover:bg-key hover:text-accent-hi"
       >

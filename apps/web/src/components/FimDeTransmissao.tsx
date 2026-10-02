@@ -2,8 +2,12 @@ import type { ReactNode } from 'react';
 import { Medidor, type Medida } from './Medidor.js';
 
 type Props = {
-  readonly falhou: boolean;
-  /** Linha grande do tubo: "FIM DA TRANSMISSÃO" ou "SEM SINAL". */
+  /**
+   * `normal`: a TV desligando. `aviso`: escolha da pessoa ou algo que ela
+   * resolve (moldura âmbar, sem alarme). `falha`: barras de cor e chiado.
+   */
+  readonly tom: 'normal' | 'aviso' | 'falha';
+  /** Linha grande do tubo: o motivo, em poucas palavras. */
   readonly titulo: string;
   readonly mensagem: string;
   /** "tela.gg/canal". */
@@ -19,7 +23,7 @@ const BARRAS = ['#c9c3b0', '#c9b23a', '#3aa8a8', '#3aa84a', '#a83aa0', '#a8403a'
 /**
  * A tela depois do ar: a TV desligando.
  *
- * Fim normal: a imagem colapsa numa linha, vira um ponto e apaga — o CRT
+ * Fim normal (e aviso): a imagem colapsa numa linha, vira um ponto e apaga — o CRT
  * perdendo o feixe —, e a mensagem acende no tubo escuro. Falha: barras de cor
  * e chiado, o "fora do ar" de qualquer TV. As duas usam o mesmo aparelho das
  * telas de antes (moldura do tubo, vidro, fonte de placar), então o fim parece
@@ -27,7 +31,8 @@ const BARRAS = ['#c9c3b0', '#c9b23a', '#3aa8a8', '#3aa84a', '#a83aa0', '#a8403a'
  *
  * Sem movimento (`prefers-reduced-motion`), tudo aparece já no estado final.
  */
-export function FimDeTransmissao({ falhou, titulo, mensagem, canal, resumo, acoes, diagnostico }: Props) {
+export function FimDeTransmissao({ tom, titulo, mensagem, canal, resumo, acoes, diagnostico }: Props) {
+  const falhou = tom === 'falha';
   return (
     <div className="mx-auto flex w-full max-w-[920px] flex-col items-center gap-6">
       <div
@@ -35,7 +40,7 @@ export function FimDeTransmissao({ falhou, titulo, mensagem, canal, resumo, acoe
           // Largura limitada pela ALTURA da janela: o tubo e os botões cabem sem rolar.
           'relative aspect-video w-[min(100%,calc(52dvh*16/9))] overflow-hidden rounded-[28px] border-[3px] bg-black',
           'shadow-[inset_0_0_140px_rgb(0_0_0_/_0.95),0_0_0_2px_#000,0_30px_80px_rgb(0_0_0_/_0.6)]',
-          falhou ? 'border-danger-edge' : 'border-edge',
+          falhou ? 'border-danger-edge' : tom === 'aviso' ? 'border-warn-edge' : 'border-edge',
         ].join(' ')}
       >
         {falhou ? (
@@ -82,7 +87,13 @@ export function FimDeTransmissao({ falhou, titulo, mensagem, canal, resumo, acoe
             <span className="rotulo !text-muted">CANAL · {canal}</span>
             <h1
               className={[
-                'numeral m-0 text-[clamp(32px,6vw,92px)] leading-[0.9]',
+                'numeral m-0 leading-[0.9]',
+                // Título de motivo ("NÃO FOI POSSÍVEL CAPTURAR A TELA") não cabe em 92px.
+                titulo.length > 22
+                  ? 'text-[clamp(24px,4vw,52px)]'
+                  : titulo.length > 14
+                    ? 'text-[clamp(28px,5vw,72px)]'
+                    : 'text-[clamp(32px,6vw,92px)]',
                 falhou
                   ? 'text-danger [text-shadow:0_0_22px_rgb(255_106_82_/_0.45),3px_3px_0_#000]'
                   : 'text-accent-hi [text-shadow:0_0_22px_rgb(242_169_59_/_0.5),3px_3px_0_#000]',
@@ -92,7 +103,7 @@ export function FimDeTransmissao({ falhou, titulo, mensagem, canal, resumo, acoe
             </h1>
             <p
               role="status"
-              className={`m-0 max-w-[52ch] text-[13px] leading-relaxed [text-wrap:pretty] ${falhou ? 'text-warn' : 'text-muted'}`}
+              className={`m-0 max-w-[52ch] text-[13px] leading-relaxed [text-wrap:pretty] ${tom === 'normal' ? 'text-muted' : 'text-warn'}`}
             >
               {mensagem}
             </p>

@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { posicaoDoPopover } from './posicao-do-popover.js';
 
 /** Uma vaga OCUPADA. As livres não viram objeto: são `total − vagas.length`. */
 export type Vaga = {
@@ -28,6 +29,10 @@ const CELULA = {
  */
 const LISTA_COMPLETA_ATE = 8;
 
+/** Popover nativo: top layer, Esc e clique fora de graça. Sem ele cai no `hidden`. */
+const temPopover = (): boolean =>
+  typeof HTMLElement !== 'undefined' && typeof HTMLElement.prototype.showPopover === 'function';
+
 /**
  * As vagas da sala: "12/50" e, aberto, quem ocupa cada uma.
  *
@@ -37,10 +42,16 @@ const LISTA_COMPLETA_ATE = 8;
  * por vaga, acesa quando ocupada, como um medidor de memória), e a lista só
  * tem quem está dentro, com as livres resumidas numa linha.
  *
- * Disclosure nativo (`<details>`): teclado (`Enter`/`Space`), estado e leitor
- * de tela sem código. No protótipo abria com o mouse por cima; aqui abre com
- * clique/toque/tecla, porque o transmissor está no jogo e um popover que
- * aparece por acaso cobre o que importa.
+ * # Top layer (C-01)
+ *
+ * A lista é um `popover` nativo, e não um `<div>` absoluto: dentro da faixa do
+ * link ela ficava num contexto de empilhamento abaixo da prévia do vídeo
+ * (`z-41`, acima do vidro) e aparecia cortada. No top layer nada a cobre.
+ * O botão tem `popovertarget`, então abrir, fechar, `Esc` e clique fora são do
+ * navegador, e o `aria-expanded` acompanha o evento `toggle`.
+ *
+ * Abre com clique/toque/tecla, não com o mouse por cima: o transmissor está
+ * no jogo, e um popover que aparece por acaso cobre o que importa.
  *
  * Não há contas: o nome é o apelido que a pessoa deu ao entrar, ou a ordem de
  * chegada, e a linha diz o que se sabe — assistindo, conectando, via TURN.
@@ -51,24 +62,63 @@ export function SalaVagas({ vagas, total, icone }: Props) {
   const listaCompleta = total <= LISTA_COMPLETA_ATE;
   const celulas = Array.from({ length: total }, (_, i) => vagas[i]?.tom ?? 'vazio');
 
+  const id = useId();
+  const botaoRef = useRef<HTMLButtonElement>(null);
+  const painelRef = useRef<HTMLDivElement>(null);
+  const [aberto, setAberto] = useState(false);
+  const nativo = temPopover();
+
+  useEffect(() => {
+    const painel = painelRef.current;
+    if (painel === null || !nativo) return;
+    // Ancora o painel embaixo do botão, na hora de abrir: o top layer não
+    // segue o fluxo da página.
+    const aoAbrir = (e: Event) => {
+      const botao = botaoRef.current;
+      if ((e as Event & { newState?: string }).newState !== 'open' || botao === null) return;
+      const pos = posicaoDoPopover(botao.getBoundingClientRect(), window.innerWidth);
+      painel.style.top = `${pos.topo}px`;
+      painel.style.right = `${pos.direita}px`;
+    };
+    const aoAlternar = (e: Event) => setAberto((e as Event & { newState?: string }).newState === 'open');
+    painel.addEventListener('beforetoggle', aoAbrir);
+    painel.addEventListener('toggle', aoAlternar);
+    return () => {
+      painel.removeEventListener('beforetoggle', aoAbrir);
+      painel.removeEventListener('toggle', aoAlternar);
+    };
+  }, [nativo]);
+
   return (
-    <details
-      className="group relative"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') e.currentTarget.removeAttribute('open');
-      }}
-    >
-      <summary
-        className="flex min-h-11 cursor-pointer list-none items-center gap-2 px-4 marker:hidden [&::-webkit-details-marker]:hidden"
+    <div className="relative">
+      <button
+        ref={botaoRef}
+        type="button"
+        {...(nativo ? { popoverTarget: id } : { onClick: () => setAberto((v) => !v) })}
+        aria-expanded={aberto}
+        className="flex min-h-11 cursor-pointer items-center gap-2 border-0 bg-transparent px-4"
         aria-label={`Sala: ${ocupadas} de ${total} vagas ocupadas. Ver quem está assistindo`}
       >
         {icone}
         <span className="numeral text-[26px]">
           {ocupadas}/{total}
         </span>
-      </summary>
+      </button>
 
-      <div className="absolute right-0 top-full z-30 flex w-[min(300px,calc(100vw-32px))] flex-col border-2 border-edge bg-surface shadow-[0_0_0_2px_#000,0_18px_40px_rgb(0_0_0_/_0.6)]">
+      <div
+        ref={painelRef}
+        id={id}
+        popover="auto"
+        {...(nativo || aberto ? {} : { hidden: true })}
+        onKeyDown={(e) => {
+          if (!nativo && e.key === 'Escape') setAberto(false);
+        }}
+        className={[
+          'm-0 w-[min(300px,calc(100vw-32px))] flex-col border-2 border-edge bg-surface p-0 text-text shadow-[0_0_0_2px_#000,0_18px_40px_rgb(0_0_0_/_0.6)]',
+          // Sem o popover nativo o painel volta a ser absoluto, como antes.
+          nativo ? 'inset-auto [&:popover-open]:flex' : 'absolute right-0 top-full z-30 flex',
+        ].join(' ')}
+      >
         <div className="titulo-osd">
           <span className="text-[12px]">SALA ▸ VAGAS</span>
           <div className="flex-1" />
@@ -131,6 +181,6 @@ export function SalaVagas({ vagas, total, icone }: Props) {
           Cada vaga é uma cópia inteira do vídeo saindo da sua máquina. O que limita é a sua subida.
         </p>
       </div>
-    </details>
+    </div>
   );
 }

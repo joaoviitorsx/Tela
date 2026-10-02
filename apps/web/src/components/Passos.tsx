@@ -13,7 +13,9 @@ type Props = { readonly passos: readonly Passo[] };
  *
  * Lista ordenada de verdade (`<ol>`): quem lê com leitor de tela ouve "lista,
  * 4 itens" e o passo atual marcado com `aria-current="step"`. Passo alcançável
- * é botão; o resto é texto — um botão desabilitado é ruído na tabulação.
+ * é botão; o resto é texto — um botão desabilitado é ruído na tabulação. `faint`
+ * (2,7:1) é só para o `bloqueado` de verdade: "04 NO AR" é o destino do
+ * assistente e informação, então lê em `muted`.
  *
  * O "✓" do feito é conteúdo, não decoração: cor sozinha não diz "concluído".
  */
@@ -28,9 +30,9 @@ export function Passos({ passos }: Props) {
             ? 'bg-accent text-ink border-accent'
             : feito
               ? 'bg-surface text-ok border-line'
-              : p.aoIr !== undefined
-                ? 'bg-surface text-muted border-line'
-                : 'bg-surface text-faint border-line';
+              : p.estado === 'bloqueado'
+                ? 'bg-surface text-faint border-line'
+                : 'bg-surface text-muted border-line';
           const conteudo = (
             <>
               <span className="numeral text-[22px]">{p.n}</span>

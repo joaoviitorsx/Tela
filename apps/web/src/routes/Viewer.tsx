@@ -2,21 +2,26 @@ import { P2P_LIMITS } from '@tela/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AbertoNoApp } from '../components/AbertoNoApp.js';
 import { AudioUnlock } from '../components/AudioUnlock.js';
-import { BarraEspectador } from '../components/BarraEspectador.js';
+import { BarraEspectador, type PropsDaBarra } from '../components/BarraEspectador.js';
+import { BarraEspectadorCompacta } from '../components/BarraEspectadorCompacta.js';
 import { EntradaDeApelido } from '../components/EntradaDeApelido.js';
 import { VidroCrt } from '../components/EfeitosTv.js';
 import { IconOlho } from '../components/Icon.js';
 import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
-import { abrirNoApp, createViewerSession, espectador, semAppMarca, volumePreference } from '../container.js';
+import { abrirNoApp, audioCue, createViewerSession, espectador, semAppMarca, volumePreference } from '../container.js';
+import { formatarMs } from '../core/domain/formatar-medidas.js';
+import { horaCurta } from '../core/media/aviso-de-canal.js';
 import { apelidoValido } from '../core/identity/espectador.js';
 import type { EstadoAudio } from '../core/media/audio-state.js';
 import type { ViewerState } from '../core/media/viewer-session.js';
 import { useAbrirNoApp } from '../react/use-abrir-no-app.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useCopia } from '../react/use-copia.js';
+import { useBarraCompacta, useMediaQuery } from '../react/use-media-query.js';
 import { useMediaStats } from '../react/use-media-stats.js';
-import { useHotkeys, useTabTitle } from '../react/use-page-effects.js';
+import { useAvisoDeCanal } from '../react/use-aviso-de-canal.js';
+import { useHotkeys } from '../react/use-page-effects.js';
 import { useFrameLatency } from '../react/use-frame-latency.js';
 import { usePictureInPicture } from '../react/use-picture-in-picture.js';
 import { useViewer } from '../react/use-viewer.js';
@@ -159,7 +164,13 @@ export function Viewer({ slug }: Props) {
    */
   const reconectando = state.status === 'reconnecting' && state.stream !== null;
   const comImagem = watching || reconectando;
-  const controls = useAutoHide(2_000, watching && !somAtivo);
+  /*
+    Celular: barra compacta de uma linha, e um toque no vídeo mostra ou
+    esconde (V-01, V-02). Com mouse o comportamento é o de sempre.
+  */
+  const compacta = useBarraCompacta();
+  const comDedo = useMediaQuery('(pointer: coarse)');
+  const controls = useAutoHide(2_000, watching && !somAtivo, compacta && comDedo ? 'alterna' : 'revela');
   const stats = useMediaStats(watching ? state.stats : null);
   /*
     Lido do estado, que muda uma vez por segundo com as estatísticas — e não a
@@ -184,7 +195,11 @@ export function Viewer({ slug }: Props) {
   );
   useFrameLatency(videoEl, comImagem, registrar);
 
-  useTabTitle(watching ? `● ${slug} · Tela` : `${slug} · Tela`);
+  /*
+    Título e favicon dizem de relance se o canal já entrou no ar, e a fase
+    separa "acabou" de "ainda não começou" (V-03, V-04).
+  */
+  const canal = useAvisoDeCanal(slug, state.status, comImagem, audioCue.bipe);
 
   /**
    * O apelido do pedido (ADR 0025). `null` = ainda não disse quem é: a sessão
@@ -343,7 +358,6 @@ export function Viewer({ slug }: Props) {
         '=': zoom.aumentar,
         '-': zoom.diminuir,
         m: som.alternarMudo,
-        ' ': som.alternarMudo,
         arrowup: () => som.empurrar(PASSO_VOLUME),
         arrowdown: () => som.empurrar(-PASSO_VOLUME),
       }),
@@ -389,7 +403,7 @@ export function Viewer({ slug }: Props) {
 
   if (!comImagem) {
     // O relay só explica falha de REDE. Conectou e o quadro não veio: é mídia.
-    const motivo: Motivo =
+    const motivoDaSessao: Motivo =
       state.status === 'sem-conexao' && state.etapa === 'midia'
         ? 'sem-video'
         : state.status === 'sem-conexao' && state.relayStatus === 'unavailable'
@@ -397,6 +411,12 @@ export function Viewer({ slug }: Props) {
           : state.status === 'sem-conexao' && state.relayStatus === 'not-configured'
             ? 'relay-nao-configurado'
             : MOTIVO[state.status];
+    // A imagem existia e acabou: enquanto a sessão sonda de novo (offline ou
+    // conectando), a tela diz "encerrada", e não "aguardando sinal".
+    const motivo: Motivo =
+      canal.fase === 'encerrada' && (motivoDaSessao === 'offline' || motivoDaSessao === 'conectando')
+        ? 'encerrada'
+        : motivoDaSessao;
     const relatorio = session.diagnostico(navigator.userAgent);
     return (
       <main>
@@ -405,6 +425,7 @@ export function Viewer({ slug }: Props) {
         <OfflineState
           slug={slug}
           motivo={motivo}
+          {...(canal.terminouEm === null ? {} : { encerradaEm: horaCurta(canal.terminouEm) })}
           // O teto é do TRANSMISSOR, não do produto: 5 em quem codifica por
           // peer, 50 em quem codifica uma vez. O servidor diz qual ao recusar;
           // um servidor antigo não diz, e aí resta o teto do produto.
@@ -452,6 +473,50 @@ export function Viewer({ slug }: Props) {
   const avisoAudio = watching ? (AVISO_AUDIO[state.audio] ?? null) : null;
   const barraVisivel = !escondida && controls.visible;
 
+  const propsDaBarra: PropsDaBarra = {
+    canal: slug,
+    viewers: watching ? state.viewers : null,
+    reconectando,
+    latencia: medida.ms === null ? stats.latencia : formatarMs(medida.ms),
+    latenciaAlta: medida.alta,
+    latenciaTitulo:
+      medida.ms === null
+        ? `rede ${stats.rtt}`
+        : `rede ${stats.rtt} · medido no quadro (${
+            medida.origem === 'captura' ? 'ponta a ponta' : 'só a recepção'
+          })`,
+    imagem: stats.resolution,
+    travado: stats.travou ? stats.congelado : null,
+    avisoAudio,
+    temAudio: hasAudio,
+    volume: {
+      valor: som.volume,
+      mudo: som.mudo,
+      ajustavel: som.ajustavel,
+      passo: PASSO_VOLUME,
+      aoAjustar: som.ajustar,
+      aoAlternar: som.alternarMudo,
+      aoAtivar: setSomAtivo,
+    },
+    zoom: {
+      porcento: `${Math.round(zoom.zoom * 100)}%`,
+      ampliado: zoom.zoom > 1,
+      aoAumentar: zoom.aumentar,
+      aoDiminuir: zoom.diminuir,
+      aoResetar: zoom.resetar,
+    },
+    aoEsconder: () => setEscondida(true),
+    pip: pip.disponivel ? { ativo: pip.ativo, aoAlternar: pip.alternar } : null,
+    emTelaCheia,
+    aoTelaCheia: toggleFullscreen,
+    copiouDiagnostico: diagCopia.copiado,
+    aoCopiarDiagnostico: copiarDiagnostico,
+    abrirNoApp: app.oferece
+      ? { aoAbrir: app.abrir, tentando: app.manual === 'tentando', falhou: app.manual === 'falhou' }
+      : null,
+  };
+
+
   return (
     <main
       ref={paginaRef}
@@ -463,7 +528,8 @@ export function Viewer({ slug }: Props) {
         tela cheia.
       */
       className="relative h-dvh w-full overflow-hidden bg-black"
-      onMouseMove={controls.show}
+      // No toque o `mousemove` do gesto não pode revelar: quem decide é `alternar`.
+      onMouseMove={compacta && comDedo ? undefined : controls.show}
       onDoubleClick={toggleFullscreen}
     >
       {/*
@@ -478,7 +544,11 @@ export function Viewer({ slug }: Props) {
         onWheel={zoom.aoRodar}
         onPointerDown={zoom.aoPressionar}
         onPointerMove={zoom.aoMover}
-        onPointerUp={zoom.aoSoltar}
+        onPointerUp={(e) => {
+          zoom.aoSoltar(e);
+          // Toque no vídeo mostra/esconde a barra compacta; com zoom o dedo está arrastando.
+          if (compacta && comDedo && e.pointerType === 'touch' && zoom.zoom === 1) controls.alternar();
+        }}
         onPointerCancel={zoom.aoSoltar}
         className={[
           'absolute inset-0 overflow-hidden',
@@ -519,51 +589,7 @@ export function Viewer({ slug }: Props) {
           barraVisivel ? 'opacity-100' : 'pointer-events-none opacity-0',
         ].join(' ')}
       >
-        <BarraEspectador
-          canal={slug}
-          viewers={watching ? state.viewers : null}
-          reconectando={reconectando}
-          latencia={medida.ms === null ? stats.latencia : `${Math.round(medida.ms)}ms`}
-          latenciaAlta={medida.alta}
-          latenciaTitulo={
-            medida.ms === null
-              ? `rede ${stats.rtt}`
-              : `rede ${stats.rtt} · medido no quadro (${
-                  medida.origem === 'captura' ? 'ponta a ponta' : 'só a recepção'
-                })`
-          }
-          imagem={stats.resolution}
-          travado={stats.travou ? stats.congelado : null}
-          avisoAudio={avisoAudio}
-          temAudio={hasAudio}
-          volume={{
-            valor: som.volume,
-            mudo: som.mudo,
-            ajustavel: som.ajustavel,
-            passo: PASSO_VOLUME,
-            aoAjustar: som.ajustar,
-            aoAlternar: som.alternarMudo,
-            aoAtivar: setSomAtivo,
-          }}
-          zoom={{
-            porcento: `${Math.round(zoom.zoom * 100)}%`,
-            ampliado: zoom.zoom > 1,
-            aoAumentar: zoom.aumentar,
-            aoDiminuir: zoom.diminuir,
-            aoResetar: zoom.resetar,
-          }}
-          aoEsconder={() => setEscondida(true)}
-          pip={pip.disponivel ? { ativo: pip.ativo, aoAlternar: pip.alternar } : null}
-          emTelaCheia={emTelaCheia}
-          aoTelaCheia={toggleFullscreen}
-          copiouDiagnostico={diagCopia.copiado}
-          aoCopiarDiagnostico={copiarDiagnostico}
-          abrirNoApp={
-            app.oferece
-              ? { aoAbrir: app.abrir, tentando: app.manual === 'tentando', falhou: app.manual === 'falhou' }
-              : null
-          }
-        />
+        {compacta ? <BarraEspectadorCompacta {...propsDaBarra} /> : <BarraEspectador {...propsDaBarra} />}
       </div>
 
       {/*

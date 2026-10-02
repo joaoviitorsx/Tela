@@ -23,7 +23,7 @@
  * | line          | divisor DECORATIVO (invisível de prop.) | 1,25       | 1,19          |
  * | edge          | contorno de controle INTERATIVO         | 3,26       | 3,12          |
  * | faint         | desabilitado / decoração                | 2,68       | 2,57          |
- * | dim           | rótulo pequeno legível                  | 5,14       | 4,92          |
+ * | dim           | rótulo pequeno legível                  | 7,34       | 7,03          |
  * | muted         | texto secundário                        | 8,60       | 8,23          |
  * | text          | conteúdo                                | 15,33      | 14,68         |
  * | accent        | ação primária, seleção, foco            | 9,80       | 9,38          |
@@ -32,6 +32,11 @@
  * | warn          | funcionando pior (sempre com "!")       | 11,97      | 11,45         |
  * | danger        | texto de parar e de erro                | 8,53       | 8,16          |
  * | live-hi       | LED e AO VIVO no cabeçalho              | 6,93       | 6,63          |
+ *
+ * `dim` sobe de #8a8272 para #a69e8a (auditoria W-01): o antigo dava 4,47 sobre
+ * `key` e ~3,7 no pior caso sob a scanline (16% de preto por cima do glifo);
+ * o novo fica em 4,6 a 5,5 nesse mesmo pior caso, sobre qualquer fundo do
+ * produto. Continua abaixo de `muted` (8,60), então a hierarquia se mantém.
  *
  * Pares de texto sobre cor de preenchimento: ink sobre accent 9,49; ink sobre
  * accent-hover 11,01; branco sobre live 6,54; danger-ink sobre danger-bg 9,42;
@@ -52,7 +57,7 @@
   --color-line: #26231b;
   --color-edge: #6b6252;
   --color-faint: #5c5648;
-  --color-dim: #8a8272;
+  --color-dim: #a69e8a;
   --color-muted: #b5ab96;
   --color-text: #ece3cf;
 

@@ -2,7 +2,7 @@ import { IconOlho, IconOlhoRisco, IconPip, IconSairTelaCheia, IconTelaCheia } fr
 import { Led } from './Led.js';
 import { VolumeBlocos } from './VolumeBlocos.js';
 
-type Props = {
+export type PropsDaBarra = {
   readonly canal: string;
   readonly viewers: number | null;
   readonly reconectando: boolean;
@@ -63,7 +63,7 @@ type Props = {
  * (`H`, `F`, `P`, `M`, `+`/`-`) estão nos rótulos: descobrir tecla lendo é o
  * único jeito que o espectador tem.
  */
-export function BarraEspectador(p: Props) {
+export function BarraEspectador(p: PropsDaBarra) {
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 p-3 sm:p-5">
       <div className="pointer-events-auto flex flex-wrap items-stretch border-2 border-edge bg-[rgb(10_10_12_/_0.93)]">
@@ -233,7 +233,7 @@ function Campo({
   );
 }
 
-function BotaoBarra({
+export function BotaoBarra({
   rotulo,
   aoClicar,
   largo = false,

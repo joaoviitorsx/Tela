@@ -59,13 +59,44 @@ export function useBeforeUnload(active: boolean, onUnload: () => void): void {
   }, [active, onUnload]);
 }
 
-/** Atalhos de teclado. Ignora quando o foco está num campo de texto. */
+const ALVOS_COM_TECLA_PROPRIA = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A', 'SUMMARY']);
+const PAPEIS_COM_TECLA_PROPRIA = new Set([
+  'slider',
+  'radio',
+  'button',
+  'link',
+  'checkbox',
+  'switch',
+  'menuitem',
+  'tab',
+  'textbox',
+  'spinbutton',
+]);
+
+/**
+ * O foco está num controle que já usa a tecla? Botão usa Enter e Espaço,
+ * slider usa as setas, campo usa tudo. Interceptar aqui é falha de WCAG 2.1.1
+ * e 4.1.2: o atalho de página tem de ceder ao controle focado.
+ */
+export function alvoTemTeclaPropria(alvo: EventTarget | null): boolean {
+  if (alvo === null || !('tagName' in alvo)) return false;
+  const el = alvo as HTMLElement;
+  if (ALVOS_COM_TECLA_PROPRIA.has(el.tagName) || el.isContentEditable) return true;
+  const papel = el.getAttribute?.('role');
+  return papel !== null && papel !== undefined && PAPEIS_COM_TECLA_PROPRIA.has(papel);
+}
+
+/**
+ * Atalhos de teclado de página. Não agem com Ctrl, Alt ou Meta (são do
+ * navegador) nem quando o foco está num controle que usa a tecla (ver
+ * `alvoTemTeclaPropria`).
+ */
 export function useHotkeys(map: Record<string, () => void>, enabled = true): void {
   useEffect(() => {
     if (!enabled) return;
     const handler = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.isContentEditable)) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (alvoTemTeclaPropria(event.target)) return;
       const action = map[event.key.toLowerCase()];
       if (!action) return;
       event.preventDefault();

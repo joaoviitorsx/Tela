@@ -69,7 +69,11 @@ export function SeletorDeResolucao({
     <div className="flex flex-col">
       <div className="flex flex-col items-center gap-4 px-4 pb-2 pt-5 sm:px-6">
         {/* O quadro: 1080p tracejado ao fundo, a imagem escolhida por cima. */}
-        <div className="relative aspect-video w-full max-w-[520px] border-2 border-dashed border-line bg-deep">
+        {/*
+          A largura sai da ALTURA disponível (24dvh em 16:9): a prévia é
+          decorativa e, a 1366×768, empurrava CONTINUAR para fora da tela (B-01).
+        */}
+        <div className="relative aspect-video w-[min(100%,520px,calc(24dvh*16/9))] border-2 border-dashed border-line bg-deep">
           <div
             className="absolute bottom-0 left-0 flex items-end justify-start border-2 border-accent bg-[radial-gradient(ellipse_at_30%_30%,rgb(242_169_59_/_0.28),rgb(242_169_59_/_0.06))] p-2 shadow-[0_0_24px_rgb(242_169_59_/_0.25)] transition-[width,height] duration-500 ease-[cubic-bezier(.2,.8,.2,1)] motion-reduce:transition-none"
             style={{ width: `${escalaL}%`, height: `${escalaA}%` }}

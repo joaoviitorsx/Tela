@@ -6,6 +6,7 @@ import { Marca } from './Marca.js';
 export type Motivo =
   | 'conectando'
   | 'offline'
+  | 'encerrada'
   | 'reconectando'
   | 'cheio'
   | 'sem-conexao'
@@ -37,6 +38,8 @@ type Props = {
   /** Como o pedido aparece para quem transmite (ADR 0025). */
   readonly nome?: string;
   readonly diagnostico?: ReactNode;
+  /** "21:07": a hora em que a imagem parou, só para `encerrada`. */
+  readonly encerradaEm?: string;
 };
 
 const ETAPAS = {
@@ -70,8 +73,9 @@ export function OfflineState({
   acaoSecundaria,
   nome = '',
   diagnostico,
+  encerradaEm = '',
 }: Props) {
-  const { rotulo, corpo, tom, espera } = TEXTO[motivo](maxPeers, nome);
+  const { rotulo, corpo, tom, espera } = TEXTO[motivo](maxPeers, nome, encerradaEm);
   const sintonizando = motivo === 'conectando';
 
   return (
@@ -164,7 +168,7 @@ type Conteudo = {
  * Os `rotulo` de `offline`, `conectando`, `cheio`, `pedido-*` são os que o E2E
  * (`e2e/mesh.e2e.mjs`) procura no texto da página. Não mude sem mudar lá.
  */
-const TEXTO: Record<Motivo, (maxPeers: number, nome: string) => Conteudo> = {
+const TEXTO: Record<Motivo, (maxPeers: number, nome: string, hora: string) => Conteudo> = {
   conectando: () => ({
     rotulo: 'conectando',
     corpo: 'Procurando a transmissão e negociando a conexão direta.',
@@ -174,6 +178,16 @@ const TEXTO: Record<Motivo, (maxPeers: number, nome: string) => Conteudo> = {
   offline: () => ({
     rotulo: 'aguardando sinal',
     corpo: 'Deixe esta aba aberta. O vídeo começa sozinho, sem precisar atualizar.',
+    tom: 'muted',
+    espera: true,
+  }),
+  /*
+    Acabou de verdade: já houve imagem e quem transmite saiu. Não é "ainda não
+    começou" — o texto diz isso, e que a aba continua escutando (V-03).
+  */
+  encerrada: (_maxPeers, _nome, hora) => ({
+    rotulo: 'transmissão encerrada',
+    corpo: `${hora === '' ? 'A imagem parou.' : `Terminou às ${hora}.`} Se o canal voltar ao ar, o vídeo recomeça sozinho: deixe esta aba aberta.`,
     tom: 'muted',
     espera: true,
   }),

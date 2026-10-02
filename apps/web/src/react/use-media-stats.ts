@@ -1,5 +1,12 @@
 import { BPP_PISO } from '@tela/shared';
 import { useMemo } from 'react';
+import {
+  formatarBpp,
+  formatarFps,
+  formatarMbps,
+  formatarMs,
+  formatarMsPorQuadro,
+} from '../core/domain/formatar-medidas.js';
 import type { MediaStats } from '../core/ports/media-transport.js';
 
 export type ReadableStats = {
@@ -113,11 +120,11 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
     const impl = stats.encoderImplementation;
     return {
       resolution: stats.width > 0 ? `${stats.width}×${stats.height}` : '—',
-      fps: stats.fps > 0 ? `${stats.fps}fps` : '—',
-      bitrate: stats.bitrateBps > 0 ? `${(stats.bitrateBps / 1_000_000).toFixed(1)} Mbps` : '—',
-      rtt: stats.rttMs > 0 ? `${stats.rttMs}ms` : '—',
+      fps: formatarFps(stats.fps),
+      bitrate: formatarMbps(stats.bitrateBps),
+      rtt: formatarMs(stats.rttMs),
       warning: MOTIVOS[stats.limitation] ?? null,
-      bpp: stats.bpp > 0 ? stats.bpp.toFixed(3).replace('.', ',') : '—',
+      bpp: formatarBpp(stats.bpp),
       // Só acusa com leitura de verdade: `0` é ausência de medida, não fome.
       bppBaixo: stats.bpp > 0 && stats.bpp < BPP_PISO,
       encoder: impl === null ? '—' : EM_SOFTWARE.test(impl) ? 'software' : 'hardware',
@@ -138,17 +145,17 @@ export function useMediaStats(stats: MediaStats | null): ReadableStats {
       */
       latencia:
         stats.rttMs > 0
-          ? `${Math.round(
+          ? formatarMs(
               stats.rttMs / 2 +
                 (stats.recepcao?.processamentoMs ?? stats.recepcao?.jitterBufferMs ?? 0),
-            )}ms`
+            )
           : '—',
       congelado:
         stats.recepcao === null || stats.recepcao.tempoCongeladoS <= 0
           ? '—'
           : `${stats.recepcao.tempoCongeladoS.toFixed(1).replace('.', ',')}s`,
       travou: (stats.recepcao?.congelamentos ?? 0) > 0,
-      msPorQuadro: stats.msPorQuadro === null ? '—' : `${stats.msPorQuadro.toFixed(1)}ms`,
+      msPorQuadro: stats.msPorQuadro === null ? '—' : formatarMsPorQuadro(stats.msPorQuadro),
       /*
         16,7ms é o orçamento de um quadro a 60fps. Acima disso o encoder não
         acompanha, e em captura de tela isso é quase sempre encode em software

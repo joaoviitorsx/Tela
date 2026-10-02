@@ -1,13 +1,14 @@
 import { ConteudoApp } from '../components/ConteudoApp.js';
 import { Dialogo } from '../components/Dialogo.js';
 import { MenuOsd } from '../components/MenuOsd.js';
+import { urlDosLancamentos } from '../container.js';
 import { useDialogo } from '../react/use-dialogo.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
 import { IDS_PREVIA_APP, usePreviaApp } from '../react/use-previa-app.js';
 
 type Props = { readonly aberto: boolean; readonly aoFechar: () => void };
 
-/** "BAIXAR ▸ APP DESKTOP": prévia do app, com downloads em breve. */
+/** "BAIXAR ▸ APP DESKTOP": beta público, com download pela página de lançamentos. */
 export function ModalApp({ aberto, aoFechar }: Props) {
   const dialogo = useDialogo(aberto, aoFechar);
   const previa = usePreviaApp();
@@ -15,6 +16,7 @@ export function ModalApp({ aberto, aoFechar }: Props) {
   return (
     <Dialogo titulo="BAIXAR ▸ APP DESKTOP" dialogRef={dialogo.ref} aoClicar={dialogo.aoClicar} aoFechar={aoFechar}>
       <ConteudoApp
+        urlDosLancamentos={urlDosLancamentos}
         posicao={menu.posicao}
         menu={
           <MenuOsd

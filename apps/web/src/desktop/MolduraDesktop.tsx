@@ -47,7 +47,7 @@ export function MolduraDesktop({ children, sobreposicao, ponte }: Props) {
         aoCancelar={assistir.fechar}
       />
       {porLink.aviso !== null && (
-        <div className="fixed bottom-4 left-[92px] z-50 max-w-[420px]">
+        <div className="fixed bottom-4 left-[120px] z-50 max-w-[420px]">
           <Aviso tom="alerta" anuncia>
             <span className="flex items-start gap-3">
               <span>{porLink.aviso}</span>

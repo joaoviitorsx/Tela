@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, render } from '@testing-library/react';
+import { createRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useDialogo } from './use-dialogo.js';
 
@@ -48,5 +49,23 @@ describe('useDialogo', () => {
 
     act(() => dialogo(container).click());
     expect(aoFechar).toHaveBeenCalledTimes(1);
+  });
+
+  it('dá o foco inicial ao elemento pedido ao abrir (a saída segura)', () => {
+    const foco = createRef<HTMLButtonElement>();
+    function ComFoco({ aberto }: { aberto: boolean }) {
+      const d = useDialogo(aberto, () => undefined, foco);
+      return (
+        <dialog ref={d.ref}>
+          <button type="button">perigo</button>
+          <button type="button" ref={foco}>
+            seguro
+          </button>
+        </dialog>
+      );
+    }
+    const { rerender, getByText } = render(<ComFoco aberto={false} />);
+    rerender(<ComFoco aberto />);
+    expect(document.activeElement).toBe(getByText('seguro'));
   });
 });

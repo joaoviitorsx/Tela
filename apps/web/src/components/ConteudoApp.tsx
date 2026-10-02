@@ -3,19 +3,23 @@ import { Led } from './Led.js';
 import { Marca } from './Marca.js';
 
 type Props = {
+  /** A página de lançamentos: pré-lançamento não aparece em `/releases/latest`. */
+  readonly urlDosLancamentos: string;
   /** O menu de prévia, montado por quem tem o estado. */
   readonly menu: ReactNode;
   readonly posicao: string;
 };
 
 /**
- * "BAIXAR ▸ APP DESKTOP", do protótipo — com o app ainda por fazer.
+ * "BAIXAR ▸ APP DESKTOP": o app existe, em beta público.
  *
- * Os downloads ficam visíveis e DESLIGADOS com "em breve": um link para um
- * instalador que não existe seria pior que nenhum botão. O resto é prévia do
- * que o app vai fazer, escrito como plano.
+ * Os botões levam à página de lançamentos do GitHub, e não a um instalador
+ * fixo: é pré-lançamento (então `/releases/latest` não o acha) e cada sistema
+ * tem o seu arquivo. O aviso do SmartScreen está escrito aqui porque é a
+ * primeira coisa que a pessoa vê ao abrir o instalador, e o app ainda não é
+ * assinado. O menu ao lado segue como prévia do que vem.
  */
-export function ConteudoApp({ menu, posicao }: Props) {
+export function ConteudoApp({ urlDosLancamentos, menu, posicao }: Props) {
   return (
     <div className="grid items-start gap-6 p-4 sm:p-5 lg:grid-cols-2">
       <div className="flex flex-col gap-4">
@@ -28,24 +32,33 @@ export function ConteudoApp({ menu, posicao }: Props) {
           </div>
           <p className="m-0 text-[12px] leading-relaxed text-muted [text-wrap:pretty]">
             Captura mais confiável, só o áudio do jogo e a transmissão em segundo plano. Mesmo link,
-            mesma sala. <strong className="text-warn">Ainda não foi lançado</strong> — isto é o que
-            vem.
+            mesma sala. <strong className="text-warn">É um beta público</strong>: pode ter
+            arestas, e o site continua funcionando igual.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {['WINDOWS · .EXE', 'LINUX · .APPIMAGE'].map((rotulo) => (
-            <button
+          {[
+            { rotulo: 'WINDOWS', formato: '.EXE' },
+            { rotulo: 'LINUX', formato: 'APPIMAGE · DEB · RPM' },
+          ].map(({ rotulo, formato }) => (
+            <a
               key={rotulo}
-              type="button"
-              disabled
-              aria-disabled="true"
-              className="tecla flex min-h-13 cursor-not-allowed flex-col items-center justify-center gap-0.5 opacity-70"
+              href={urlDosLancamentos}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="tecla tecla-primaria flex min-h-13 flex-col items-center justify-center gap-0.5 whitespace-normal"
             >
               <span>{rotulo}</span>
-              <span className="text-[10px] text-dim">EM BREVE</span>
-            </button>
+              <span className="text-[10px]">{formato}</span>
+            </a>
           ))}
         </div>
+        <p className="m-0 text-[11px] leading-relaxed text-muted [text-wrap:pretty]">
+          Abre a página de lançamentos no GitHub: escolha o arquivo do seu sistema.{' '}
+          <strong className="text-text">No Windows</strong>, o SmartScreen pode avisar que o app é de
+          um editor desconhecido (o beta ainda não é assinado): clique em{' '}
+          <strong className="text-text">Mais informações → Executar assim mesmo</strong>.
+        </p>
         <div className="flex flex-col border-2 border-edge bg-surface">
           <div className="flex items-center border-b-2 border-line px-3.5 py-2">
             <span className="rotulo !text-accent">O QUE MUDA NO APP</span>

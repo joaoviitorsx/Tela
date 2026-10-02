@@ -11,7 +11,7 @@ type Props = {
 
 const MENSAGEM = {
   idle: 'Use de 3 a 25 caracteres: letras, números e hífen.',
-  free: 'Esse nome é válido. Se alguém já usa, você descobre ao transmitir.',
+  free: 'Nome válido. Se outra pessoa estiver no ar com ele, você saberá ao ir ao ar.',
   invalid: '3 a 25 caracteres: letras minúsculas, números e hífen. Não pode começar nem terminar com hífen.',
 } as const;
 

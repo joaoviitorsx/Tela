@@ -1,11 +1,15 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
 import { Botao } from '../components/Botao.js';
 import { Cabecalho } from '../components/Cabecalho.js';
+import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
 import { VidroCrt } from '../components/EfeitosTv.js';
 import { PainelOsd } from '../components/PainelOsd.js';
 import { identity } from '../container.js';
+import { mascararCodigo } from '../core/identity/mascara.js';
 import { useCopia } from '../react/use-copia.js';
+import { useDialogo } from '../react/use-dialogo.js';
+import { useRevelar } from '../react/use-revelar.js';
 
 type Props = { readonly onBack: () => void };
 
@@ -33,8 +37,22 @@ export function Recover({ onBack }: Props) {
   const [input, setInput] = useState('');
   const [imported, setImported] = useState(false);
   const copia = useCopia(1_500);
+  const revelar = useRevelar(10_000);
+  const [confirmando, setConfirmando] = useState(false);
+  const cancelarRestaurar = useCallback(() => setConfirmando(false), []);
+  const seguroRef = useRef<HTMLButtonElement>(null);
+  const dialogo = useDialogo(confirmando, cancelarRestaurar, seguroRef);
 
   const slugAtual = identity.savedSlug();
+  const temSlug = slugAtual !== null && slugAtual !== '';
+
+  const restaurar = () => {
+    setConfirmando(false);
+    identity.importToken(input);
+    setToken(identity.exportToken());
+    setInput('');
+    setImported(true);
+  };
 
   return (
     <div className="flex min-h-dvh flex-col bg-void">
@@ -45,7 +63,7 @@ export function Recover({ onBack }: Props) {
 
       <main className="mx-auto flex w-full max-w-[980px] flex-1 flex-col gap-5 px-4 py-6 sm:px-6 sm:py-8">
         <div className="flex flex-col gap-2.5">
-          <h1 className="rotulo m-0 text-[12px]">O QUE É ESTE CÓDIGO</h1>
+          <h1 className="rotulo m-0 text-[12px]">CÓDIGO DO CANAL</h1>
           <p className="m-0 max-w-[70ch] text-[13px] leading-relaxed text-text [text-wrap:pretty]">
             Ele é a única coisa que prova que o seu link é seu. Não há e-mail para redefinir, nem
             senha para lembrar: guarde-o onde você guardaria uma senha. Limpar os dados deste
@@ -53,15 +71,33 @@ export function Recover({ onBack }: Props) {
           </p>
         </div>
 
+        {/* Fixo, e não dispensável: esta página é aberta justo na hora de transmitir a tela. */}
+        <Aviso tom="alerta">
+          Não deixe esta tela aberta durante uma transmissão de tela inteira, e não compartilhe
+          capturas dela: quem tem o código é dono do seu canal.
+        </Aviso>
+
         <div className="grid items-stretch gap-5 lg:grid-cols-2">
           <PainelOsd titulo="MENU ▸ GUARDAR ESTE NAVEGADOR">
             <div className="flex flex-1 flex-col justify-center gap-4 p-4 sm:p-5">
-              <code className="block break-all border-2 border-edge bg-deep p-3 text-[13px] leading-relaxed text-accent-hi">
-                {token}
+              {/* Mascarado por padrão; COPIAR funciona sem revelar. */}
+              <code
+                data-testid="codigo"
+                className="block break-all border-2 border-edge bg-deep p-3 text-[13px] leading-relaxed text-accent-hi"
+              >
+                {revelar.revelado ? token : mascararCodigo(token)}
               </code>
-              <Botao bloco onClick={() => copia.copiar(token)}>
-                {copia.copiado ? 'CÓDIGO COPIADO' : 'COPIAR CÓDIGO'}
-              </Botao>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Botao
+                  aria-pressed={revelar.revelado}
+                  onClick={revelar.alternar}
+                >
+                  {revelar.revelado ? 'ESCONDER' : 'MOSTRAR (10 s)'}
+                </Botao>
+                <Botao onClick={() => copia.copiar(token)}>
+                  {copia.copiado ? 'CÓDIGO COPIADO' : 'COPIAR CÓDIGO'}
+                </Botao>
+              </div>
             </div>
           </PainelOsd>
 
@@ -78,7 +114,7 @@ export function Recover({ onBack }: Props) {
                 acrescenta dado nenhum ao produto — só mostra, no momento da
                 decisão, o que a decisão custa.
               */}
-              {slugAtual !== null && slugAtual !== '' && (
+              {temSlug && (
                 <Aviso tom="alerta">
                   Este navegador transmite hoje como{' '}
                   <span className="text-accent-hi">tela.gg/{slugAtual}</span>. Restaurar outro código
@@ -88,6 +124,7 @@ export function Recover({ onBack }: Props) {
 
               <input
                 id="token"
+                type="password"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 placeholder="cole aqui"
@@ -95,27 +132,38 @@ export function Recover({ onBack }: Props) {
                 autoComplete="off"
                 className="min-h-12 border-2 border-edge bg-deep px-3 text-[13px] text-text outline-none placeholder:text-faint focus:border-accent"
               />
-              <Botao
-                bloco
-                disabled={input.trim().length < 43}
-                onClick={() => {
-                  identity.importToken(input);
-                  setToken(identity.exportToken());
-                  setInput('');
-                  setImported(true);
-                }}
-              >
+              <Botao bloco disabled={input.trim().length < 43} onClick={() => setConfirmando(true)}>
                 RESTAURAR
               </Botao>
               {imported && (
-                <p role="status" className="m-0 text-[12px] text-ok">
-                  Pronto. Volte e digite o slug do link para transmitir.
-                </p>
+                <div role="status" className="flex flex-col gap-3">
+                  <p className="m-0 text-[12px] leading-relaxed text-ok">
+                    Código restaurado. Este navegador agora transmite com o canal desse código.
+                  </p>
+                  <Botao tom="primaria" onClick={onBack}>
+                    IR PARA O INÍCIO
+                  </Botao>
+                </div>
               )}
             </div>
           </PainelOsd>
         </div>
       </main>
+
+      <DialogoConfirmar
+        titulo="TROCAR O CANAL DESTE NAVEGADOR?"
+        dialogRef={dialogo.ref}
+        aoClicarNoFundo={dialogo.aoClicar}
+        rotuloSeguro="CANCELAR"
+        seguroRef={seguroRef}
+        aoSeguro={cancelarRestaurar}
+        rotuloAcao="TROCAR O CANAL"
+        aoAcao={restaurar}
+      >
+        {temSlug
+          ? `Isto troca o canal deste navegador (tela.gg/${slugAtual}). Sem o código dele, esse link não volta.`
+          : 'Isto troca a identidade deste navegador pelo código colado. Sem o código da atual, ela não volta.'}
+      </DialogoConfirmar>
     </div>
   );
 }

@@ -81,10 +81,10 @@ try {
   ok(!estado.baixarApp, 'sem BAIXAR APP dentro do próprio app');
 
   console.log('\n2. Trilho: troca de rota sem recarregar');
-  await page.getByRole('button', { name: /canal/i }).first().click();
+  await page.getByRole('button', { name: /^CÓDIGO$/ }).first().click();
   await esperar(500);
   const naRecuperacao = await page.evaluate(() => ({ caminho: location.pathname, marca: window.__marca }));
-  ok(naRecuperacao.caminho === '/recuperar', `CANAL abre /recuperar (${naRecuperacao.caminho})`);
+  ok(naRecuperacao.caminho === '/recuperar', `CÓDIGO abre /recuperar (${naRecuperacao.caminho})`);
   ok(naRecuperacao.marca === 'sem-recarregar', 'sem recarregar a página');
   await page.getByRole('button', { name: /transmitir/i }).first().click();
   await esperar(500);

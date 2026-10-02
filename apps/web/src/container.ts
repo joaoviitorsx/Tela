@@ -135,6 +135,9 @@ export const semAppMarca = {
 /** A web oferece o app desktop (BAIXAR APP); o próprio app sobrescreve com `false`. */
 export const ofereceApp: boolean = true;
 
+/** Pré-lançamento não aparece em `/releases/latest`: o link é a página de lançamentos. */
+export const urlDosLancamentos = 'https://github.com/joaoviitorsx/Tela/releases';
+
 export const shareUrlFor = (slug: string): string => linkDoCanal(window.location.origin, slug);
 
 /** Cada sessão recebe um transporte novo: canal reaberto não é canal reusado. */
@@ -192,6 +195,9 @@ function createTransportDoTransmissor(): MediaTransport {
     ? makeEncodeOnceTransport({ channel, scheduler, criarWorker })
     : makeMeshTransport({ channel, scheduler });
 }
+
+/** Este navegador sabe capturar a tela? Celular quase nunca: a home avisa antes dos passos. */
+export const capturaSuportada = (): boolean => makeBrowserScreenCapture().isSupported();
 
 export function createBroadcastSession(): BroadcastSession {
   return new BroadcastSession({

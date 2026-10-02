@@ -471,7 +471,10 @@ await host.evaluate(async () => {
 await viewer.waitForTimeout(4000);
 const depoisDaQueda = await viewer.textContent('body');
 ok(
-  depoisDaQueda.includes('aguardando sinal') || depoisDaQueda.includes('conectando'),
+  // Já tinha imagem e ela acabou: a tela diz "transmissão encerrada" (V-03), e não "aguardando sinal".
+  depoisDaQueda.includes('transmissão encerrada') ||
+    depoisDaQueda.includes('aguardando sinal') ||
+    depoisDaQueda.includes('conectando'),
   'espectador voltou ao estado offline em vez de travar',
 );
 

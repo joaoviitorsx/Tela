@@ -300,6 +300,9 @@ export class IpLimiter {
   }
 }
 
+/** Ver `ChannelRoom.estadoPublico`. */
+export type EstadoPublico = { readonly noAr: boolean; readonly espectadores: number };
+
 export class ChannelRoom {
   constructor(
     private readonly ctx: DurableContext,
@@ -478,6 +481,22 @@ export class ChannelRoom {
   private versaoRecusada(protocol: number | undefined): SignalingErrorCode | null {
     if (protocol === undefined) return 'BAD_MESSAGE';
     return protocol === PROTOCOL_VERSION ? null : 'PROTOCOL_MISMATCH';
+  }
+
+  /**
+   * O que a prévia do link e o `/tela` do Discord podem saber do canal: se
+   * alguém transmite e QUANTOS assistem. Só leitura, sem storage, sem `await`.
+   *
+   * Nada de nome, IP ou impressão de espectador: a resposta sai do servidor
+   * para quem colou o link, e quem colou não precisa saber quem está lá.
+   * O número é o mesmo que a plateia recebe em `viewers` — pedido pendente
+   * (ADR 0025) ainda não assiste, e não conta.
+   *
+   * "No ar" é ter host conectado: o cliente só reivindica o canal DEPOIS da
+   * captura (`BroadcastSession.start`), então host sem tela não existe.
+   */
+  estadoPublico(): EstadoPublico {
+    return { noAr: this.host() !== null, espectadores: this.viewers().length };
   }
 
   accept(socket: HibernatableSocket, ip?: string): void {

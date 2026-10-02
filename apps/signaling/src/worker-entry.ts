@@ -6,6 +6,7 @@ import {
 import { describeIceSettings, parseIceSettings } from './ice-settings.js';
 import { DEFAULT_LIMITS } from './limits.js';
 import { listaDeOrigens, origemPermitida } from './origem.js';
+import { ROTA_ESTADO } from './estado-do-canal.js';
 
 /**
  * Ponto de entrada do Cloudflare Worker.
@@ -61,6 +62,14 @@ export class ChannelDurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
+    // Pergunta interna do Worker (prévia do link, `/tela` do Discord): só lê.
+    // Não acorda socket, não grava nada. Ver `estado-do-canal.ts`.
+    if (request.headers.get('Upgrade') !== 'websocket' && new URL(request.url).pathname === ROTA_ESTADO) {
+      return new Response(JSON.stringify(this.room.estadoPublico()), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
     this.slug = request.headers.get(SLUG_HEADER) ?? '';
 
     const pair = new WebSocketPair();

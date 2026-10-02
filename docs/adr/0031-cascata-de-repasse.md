@@ -1,7 +1,7 @@
 # ADR 0031 — Cascata de repasse: espectadores com boa subida repassam o quadro
 
 **Data:** 2026-10-02
-**Estado:** **proposta** (nada implementado; depende de quatro respostas do dono e do experimento E2)
+**Estado:** **aceita** (2026-10-02 — respostas do dono em "Respostas do dono"; implementação começa pelo experimento E2)
 **Complementa:** 0029 (um encode, teto de 50 — "o passo seguinte, já decidido pelo dono"), 0030 (porta pela banda) · **Mantém:** 0005 (sem servidor de mídia), R2, R5, R8 · **Altera, se aceita:** o modelo de privacidade da sala (IP entre espectadores) e o "teto 50 pela banda" da 0030 (a capacidade passa a somar vagas de repassadores)
 **Origem:** `docs/engenharia/estudo/2-transporte-e-topologia.md` §4 (T2) e `e2e/cascata.sim.mjs` (novo, desta ADR)
 
@@ -183,12 +183,12 @@ Esforço: 3–5 semanas de uma pessoa [H], sem base de medição. **Recomendaç�
 
 ## Respostas do dono (2026-10-02)
 
-1. **IP entre espectadores: oculto.** Conexão direta revela o IP aos dois
-   lados — o repasse só esconde passando por TURN. Opções levadas ao dono:
-   (a) TURN da Cloudflare só nas arestas de repasse (~160 GB/h numa sala de 50
-   a ~8 Mbps: a cota grátis de 1 TB acaba em ~6 h de sala cheia, depois
-   ~US$ 8/h); (b) direto só entre quem tem o app, com aviso; (c) **TURN
-   próprio (coturn)**, custo fixo — recomendado. *Aguardando a escolha.*
+1. **IP entre espectadores: como hoje, sem TURN.** A malha já expõe o IP
+   entre o host e cada espectador; o repasse estende isso entre espectadores,
+   em conexão direta, sem custo de retransmissão. Decisão do dono: **a
+   interface não fala de IP** (nenhuma tela mostra endereço — conferido: o
+   diagnóstico só diz "direta"/"TURN"). As opções de TURN (Cloudflare por uso,
+   coturn próprio) ficam registradas para se a decisão mudar.
 2. **Repassador: app e navegador** (Chromium, onde o Encoded Transform de
    recepção existe).
 3. **Atraso: o mínimo possível.** Profundidade máxima de UM repassador entre

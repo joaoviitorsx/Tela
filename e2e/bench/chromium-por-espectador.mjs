@@ -50,7 +50,9 @@ function ticksDaArvore(raiz) {
 }
 
 async function medirSala(n) {
-  const hostBrowser = await chromium.launch({ headless: true });
+  // `launchServer` expõe o processo do navegador; `launch` não.
+  const hostServer = await chromium.launchServer({ headless: true });
+  const hostBrowser = await chromium.connect(hostServer.wsEndpoint());
   const espectadores = await chromium.launch({ headless: true });
   try {
     const host = await (await hostBrowser.newContext()).newPage();
@@ -104,7 +106,7 @@ async function medirSala(n) {
       await p.goto(`${WEB}/${slug}`, { waitUntil: 'domcontentloaded' });
     }
     await esperar(AQUECIMENTO * 1000);
-    const pid = hostBrowser.process()?.pid;
+    const pid = hostServer.process()?.pid;
     if (pid === undefined) throw new Error('sem pid do host');
     const t0 = ticksDaArvore(pid);
     const inicio = Date.now();
@@ -120,6 +122,7 @@ async function medirSala(n) {
   } finally {
     await espectadores.close();
     await hostBrowser.close();
+    await hostServer.close();
   }
 }
 

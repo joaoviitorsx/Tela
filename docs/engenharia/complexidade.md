@@ -406,3 +406,17 @@ O que NÃO fazer: otimizar a cópia por sender (A2) — é inerente e barata; "a
 - `E = 90` objetos por relatório é uma estimativa de relatório do Chromium; o número real varia com candidatos ICE (CGNAT + TURN sobem E). Não muda a conclusão de B1 (JS barato), muda a de B2 (serialização cara) na mesma direção.
 - A latência por salto de 25–50 ms assume que o transform de recepção entrega antes do frame buffer. Se o Chromium entregar depois, h sobe para ~h + jitter buffer (60 ms+) e a árvore de d=3 custa 300 ms, não 150.
 - Citações: Kumar–Liu–Ross 2007 (limite de fluxo) e Castro et al. 2003 (SplitStream) são de memória, com confiança razoável; a referência para "altura mínima com graus heterogêneos por BFS decrescente" é folclore de algoritmos, com o argumento de troca escrito acima para não depender da citação.
+
+### Medido no navegador (2026-10-02) — Chromium de quem transmite por espectador
+
+`node e2e/bench/chromium-por-espectador.mjs` (host headless próprio, "um encode", fonte 1280x720@60, saída 1024x576@60 em `p600p60`; espectadores headless noutro processo):
+
+| Pedidos | Conectados | Núcleos (árvore do host) |
+|---|---|---|
+| 1 | 1 | 0,489 |
+| 5 | 5 | 0,730 |
+| 10 | 5 | 0,720 |
+| 20 | 5 | 0,854 |
+
+- **Custo marginal: ~0,06 núcleo por espectador** (1 → 5), a ~3 Mbps por caminho. Extrapolado, 50 espectadores somariam ~3 núcleos só de envio — o maior custo por espectador do sistema hoje. Falta decompor (isca 160x90 + Encoded Transform por sender × pacotização/SRTP/`sendmsg`): repetir variando o bitrate (custo ∝ bytes → rede; constante → isca/transform) e com `chrome://tracing`.
+- **Só 5 entraram com 10 e 20 pedidos:** a porta pela banda (ADR 0030) começa em `CAPACIDADE_ATE_MEDIR = 5`, e a estimativa de banda no loopback headless é baixa (D0: ~16 Mbps), então a sala não abriu; quem levou `CHANNEL_FULL` ficou no backoff do espectador (7,5/17/30 s). Achado de UX: o servidor deveria avisar quem espera quando a capacidade sobe.

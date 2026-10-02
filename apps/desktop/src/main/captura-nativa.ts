@@ -128,10 +128,20 @@ export function argumentosDoHelper(p: PedidoDeCapturaNativa, restaurar: string |
  * As ordens que o renderer pode mandar ao processo, e nada mais: a porta vem
  * de uma página web, e o stdin do processo não é lugar de texto livre.
  */
-const ORDEM = /^(alvo \d{1,5} \d{1,5} \d{1,3} \d{1,9}|chave|atraso \d{1,3}|parar)$/;
+const ORDEM = /^(alvo \d{1,5} \d{1,5} \d{1,3} \d{1,9}|chave|atraso \d{1,3}|teto \d{1,3}|parar)$/;
 
+/**
+ * `teto <fps>`: o teto de fps da CAPTURA, independente do `alvo` (que é o do
+ * encode). Existe para a ociosidade — sem espectador a sessão pede 5 fps e o
+ * processo para de subir quadros ao NVENC. Não recicla o pipeline nem gera IDR.
+ * Acima do fps do `alvo` (ou 0) é "sem teto".
+ */
 export function ordemValida(linha: unknown): string | null {
-  return typeof linha === 'string' && ORDEM.test(linha) ? linha : null;
+  if (typeof linha !== 'string' || !ORDEM.test(linha)) return null;
+  // `\d{1,3}` aceita até 999; o processo só entende o que cabe num monitor.
+  const teto = /^teto (\d+)$/.exec(linha);
+  if (teto !== null && Number(teto[1]) > FPS_MAXIMO) return null;
+  return linha;
 }
 
 /** O token que o portal devolve, persistido em `userData` entre transmissões. */

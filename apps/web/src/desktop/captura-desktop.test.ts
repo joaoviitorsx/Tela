@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { err, ok } from '../core/domain/result.js';
 import type { CaptureRequest, ScreenCapture } from '../core/ports/screen-capture.js';
-import { makeCapturaDesktop } from './captura-desktop.js';
+import { fpsPedido, makeCapturaDesktop } from './captura-desktop.js';
 import type { CapacidadesDesktop, FimDaCapturaNativa, FonteDeCaptura, RespostaDeCapturaNativa } from './ponte.js';
 import type { PortaReal } from './porta-nativa.js';
 
@@ -43,6 +43,7 @@ function montar(opcoes: {
   const portas = new Map<number, PortaReal>();
   const ligar = vi.fn();
   const desligar = vi.fn();
+  const postar = vi.fn();
   let fantasmas = 0;
   const captura = makeCapturaDesktop({
     ponte: {
@@ -61,7 +62,7 @@ function montar(opcoes: {
     navegador,
     ligacao: {
       aguardar: async (id) => {
-        const p: PortaReal = { postMessage: () => undefined, onmessage: null, close: () => undefined };
+        const p: PortaReal = { postMessage: postar, onmessage: null, close: () => undefined };
         portas.set(id, p);
         return p;
       },
@@ -70,7 +71,7 @@ function montar(opcoes: {
     },
     criarTrilhaFantasma: () => trilhaFalsa(`fantasma${fantasmas++}`),
   });
-  return { captura, iniciar, parar, escolherFonte, abrir, navegador, ligar, desligar, portas, trilhaReal, encerrar: (f: FimDaCapturaNativa) => aoEncerrar?.(f) };
+  return { captura, postar, iniciar, parar, escolherFonte, abrir, navegador, ligar, desligar, portas, trilhaReal, encerrar: (f: FimDaCapturaNativa) => aoEncerrar?.(f) };
 }
 
 const PRONTO = { ok: true, id: 1, fonte: { width: 2560, height: 1600 }, memoria: 'dmabuf' } as const;
@@ -105,6 +106,34 @@ describe('makeCapturaDesktop — caminho nativo', () => {
     r.value.video.addEventListener('ended', ended);
     m.encerrar({ id: 1, motivo: 'MORREU', codigo: null });
     expect(ended).not.toHaveBeenCalled();
+  });
+
+  it('applyConstraints({ frameRate }) da ociosidade vira a ordem `teto` ao processo', async () => {
+    const m = montar({ capacidades: { nvenc: true }, respostas: [PRONTO] });
+    const r = await m.captura.request(PEDIDO);
+    if (!r.ok) throw new Error();
+    // O que `BroadcastSession.aplicarCaptura` manda: o conjunto inteiro.
+    const conjunto = { width: { ideal: 1920, max: 1920 }, height: { ideal: 1080, max: 1080 }, resizeMode: 'crop-and-scale' };
+    await expect(r.value.video.applyConstraints({ frameRate: 5, ...conjunto } as MediaTrackConstraints)).resolves.toBeUndefined();
+    expect(m.postar).toHaveBeenCalledTimes(1);
+    expect(m.postar).toHaveBeenLastCalledWith({ tipo: 'ordem', linha: 'teto 5' });
+    // Repetir o mesmo teto não gasta ordem; voltar manda o fps cheio.
+    await r.value.video.applyConstraints({ frameRate: 5, ...conjunto } as MediaTrackConstraints);
+    expect(m.postar).toHaveBeenCalledTimes(1);
+    await r.value.video.applyConstraints({ frameRate: 60, ...conjunto } as MediaTrackConstraints);
+    expect(m.postar).toHaveBeenLastCalledWith({ tipo: 'ordem', linha: 'teto 60' });
+    // Sem frameRate, nada a dizer ao processo.
+    await r.value.video.applyConstraints({ width: 1280 });
+    expect(m.postar).toHaveBeenCalledTimes(2);
+  });
+
+  it('depois de parada, a fantasma não manda mais ordem nenhuma', async () => {
+    const m = montar({ capacidades: { nvenc: true }, respostas: [PRONTO] });
+    const r = await m.captura.request(PEDIDO);
+    if (!r.ok) throw new Error();
+    r.value.video.stop();
+    await r.value.video.applyConstraints({ frameRate: 5 });
+    expect(m.postar).not.toHaveBeenCalled();
   });
 
   it('o processo morrer encerra a fantasma como uma trilha real: `ended`', async () => {
@@ -212,5 +241,22 @@ describe('makeCapturaDesktop — portal do sistema', () => {
     await m.captura.request(PEDIDO);
     await m.captura.request(PEDIDO);
     expect(m.navegador.request).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('fpsPedido', () => {
+  it('lê número, exact, max e ideal, nessa ordem, e prende em 1–240', () => {
+    expect(fpsPedido({ frameRate: 5 })).toBe(5);
+    expect(fpsPedido({ frameRate: { ideal: 30, max: 20, exact: 10 } })).toBe(10);
+    expect(fpsPedido({ frameRate: { ideal: 30, max: 20 } })).toBe(20);
+    expect(fpsPedido({ frameRate: { ideal: 29.6 } })).toBe(30);
+    expect(fpsPedido({ frameRate: 0 })).toBe(1);
+    expect(fpsPedido({ frameRate: 1000 })).toBe(240);
+  });
+  it('sem fps pedido, null', () => {
+    expect(fpsPedido(undefined)).toBeNull();
+    expect(fpsPedido({})).toBeNull();
+    expect(fpsPedido({ frameRate: { min: 10 } })).toBeNull();
+    expect(fpsPedido({ frameRate: Number.NaN })).toBeNull();
   });
 });

@@ -42,6 +42,18 @@ export type CapturaDesktop = ScreenCapture & {
   motivoDoFallback(): ErroDeCapturaNativa | null;
 };
 
+/**
+ * O fps que um `MediaTrackConstraints` pede, como inteiro que o processo
+ * entende (1–240), ou `null` se não pede nenhum. `exact` > `max` > `ideal`: é
+ * a ordem em que o navegador os honraria como TETO.
+ */
+export function fpsPedido(constraints: MediaTrackConstraints | undefined): number | null {
+  const f = constraints?.frameRate;
+  const valor = typeof f === 'number' ? f : f === undefined ? undefined : (f.exact ?? f.max ?? f.ideal);
+  if (typeof valor !== 'number' || !Number.isFinite(valor)) return null;
+  return Math.min(240, Math.max(1, Math.round(valor)));
+}
+
 const SEM_CAPACIDADES: CapacidadesDesktop = { nvenc: false, nvencDetalhe: 'SEM_PONTE', seletorProprio: false };
 
 export function makeCapturaDesktop(deps: DepsDaCapturaDesktop): CapturaDesktop {
@@ -84,7 +96,8 @@ export function makeCapturaDesktop(deps: DepsDaCapturaDesktop): CapturaDesktop {
       return 'FALLBACK';
     }
     const { id } = resposta;
-    deps.ligacao.ligar(id, await deps.ligacao.aguardar(id));
+    const porta = await deps.ligacao.aguardar(id);
+    deps.ligacao.ligar(id, porta);
     const trilha = deps.criarTrilhaFantasma();
     fantasmas.add(trilha);
     vivas.set(id, trilha);
@@ -97,6 +110,21 @@ export function makeCapturaDesktop(deps: DepsDaCapturaDesktop): CapturaDesktop {
       vivas.delete(id);
       deps.ligacao.desligar(id);
       deps.ponte.capturaNativa.parar(id);
+    };
+    // A ociosidade da sessão (`track.applyConstraints({ frameRate: 5 })`) é
+    // dirigida ao `<video>` de uma captura do Chromium; aqui ela precisa virar
+    // o `teto` do processo, senão ele captura e codifica a 60 fps sem ninguém.
+    // Não chama o original: a trilha-fantasma é um canvas e rejeitaria
+    // `width`/`height` com OverconstrainedError, e a sessão leria a rejeição
+    // como "o navegador recusa" e desistiria da economia.
+    let tetoEnviado: number | null = null;
+    trilha.applyConstraints = (constraints) => {
+      const fps = fpsPedido(constraints);
+      if (fps !== null && fps !== tetoEnviado && vivas.get(id) === trilha) {
+        tetoEnviado = fps;
+        porta.postMessage({ tipo: 'ordem', linha: `teto ${fps}` });
+      }
+      return Promise.resolve();
     };
     // O portal não diz se foi monitor ou janela; no Linux o som não vem da
     // captura, então a superfície não muda o que a pessoa recebe.

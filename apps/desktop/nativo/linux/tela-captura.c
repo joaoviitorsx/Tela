@@ -31,6 +31,10 @@
  *     alvo <largura> <altura> <fps> <bitrate bps>
  *     chave
  *     atraso <quadros>
+ *     teto <fps>   teto de fps da CAPTURA, independente do `alvo` (que é o do
+ *                  encode): a ociosidade da sessão pede 5 sem espectador. Só
+ *                  decide quantos quadros sobem ao NVENC; não recicla o
+ *                  pipeline nem gera IDR. 0, ou >= `alvo.fps`, é sem teto.
  *     parar
  *   stdin fechado = o app morreu: encerra.
  *
@@ -69,11 +73,19 @@ enum { MSG_QUADRO = 1, MSG_EVENTO = 2, MSG_CAPTURA = 3 };
 /* Fila do codificador acima disto: pula quadro de captura (mesma regra do WebCodecs). */
 #define ATRASO_TOLERADO 2
 /*
- * Buffer de taxa do NVENC, em quadros. Com 1 quadro o IDR de quem entra sai
- * borrado; com muitos, o quadro grande atrasa os seguintes. O pacer do WebRTC
- * alisa o resto.
+ * Buffer de taxa do NVENC, em quadros. Com muitos, o IDR de quem entra incha
+ * (o VBV é o teto dele) e o quadro grande atrasa os seguintes; com 1, o IDR
+ * sai apertado e perde qualidade. O pacer do WebRTC alisa o resto.
+ *
+ * 2, e não 4, medido com h264_nvenc a 12 Mbps, 1080p60 (estudo 1-codec, P1;
+ * `e2e/bench/estudo-nvenc-ratecontrol.mjs`, grupo vbv): IDR de 68 → 42 KB na
+ * mandelbrot e 57 → 39 KB na testsrc2 (-38% e -32%), por -0,005 e -0,002 dB de
+ * PSNR-Y. O VBV de 1 quadro dá 27–29 KB de IDR, mas custa -0,07 a -0,12 dB, e
+ * um corte de cena em jogo precisa de folga: com 2 o maior quadro P depois do
+ * corte ficou em 29 KB, igual ao de 4. Só vale no início e na troca de tamanho
+ * (mexer no VBV com o fluxo andando faz o NVENC soltar um IDR; ver `aplicar_vbv`).
  */
-#define VBV_EM_QUADROS 4
+#define VBV_EM_QUADROS 2
 
 typedef struct {
   int width, height, fps, bitrate;
@@ -87,6 +99,8 @@ static GMutex troca_mutex;
 static Alvo alvo = {1920, 1080, 60, 12000000};
 static volatile gint atraso = 0;
 static volatile gint chave_pendente = 1;
+/* Teto de fps da captura (ordem `teto`); 0 = sem teto. Lido na thread do appsink. */
+static volatile gint teto_fps = 0;
 static volatile gint encerrando = 0;
 static guint64 ultimo_pts = GST_CLOCK_TIME_NONE;
 static guint32 seq = 0;
@@ -177,8 +191,19 @@ static void erro(const char *codigo, const char *detalhe) {
 static double fps_medido = 0;
 static guint kbps_aplicado = 0;
 
+static gboolean com_teto(void) {
+  int teto = g_atomic_int_get(&teto_fps);
+  return teto > 0 && teto < alvo.fps;
+}
+
 static void aplicar_bitrate(void) {
-  double fator = fps_medido >= 5 ? CLAMP((double)alvo.fps / fps_medido, 1.0, 2.0) : 1.0;
+  /*
+   * Com teto de captura o fps que entra no NVENC é o do teto, de propósito, e
+   * "corrigir" por ele dobraria o bitrate (5 fps → fator 2). Ninguém assiste
+   * nesse estado; e ao tirar o teto `fps_medido` ainda guarda a medida cheia
+   * (ver `enviar_stats`), então o bitrate certo volta na hora.
+   */
+  double fator = fps_medido >= 5 && !com_teto() ? CLAMP((double)alvo.fps / fps_medido, 1.0, 2.0) : 1.0;
   guint kbps = (guint)MAX(300, (int)(alvo.bitrate / 1000 * fator));
   if (kbps == kbps_aplicado) return;
   kbps_aplicado = kbps;
@@ -272,11 +297,22 @@ static GstFlowReturn ao_capturar(GstAppSink *sink, gpointer _) {
     gst_sample_unref(amostra);
     return GST_FLOW_OK;
   }
-  if (GST_CLOCK_TIME_IS_VALID(pts) && GST_CLOCK_TIME_IS_VALID(ultimo_pts) && alvo.fps > 0) {
+  /*
+   * O teto da ociosidade só conta abaixo do fps do encode. E um quadro-chave
+   * pedido NÃO espera o período do teto: quem acabou de entrar numa sala
+   * ociosa (200 ms a 5 fps) pagaria esse atraso inteiro na imagem de abertura.
+   */
+  int teto = g_atomic_int_get(&teto_fps);
+  gboolean limitado_por_teto = teto > 0 && teto < alvo.fps;
+  int fps_limite = limitado_por_teto ? teto : alvo.fps;
+  if (GST_CLOCK_TIME_IS_VALID(pts) && GST_CLOCK_TIME_IS_VALID(ultimo_pts) && fps_limite > 0 &&
+      !(chave && limitado_por_teto)) {
     /* 0,8 do período: a captura tem jitter, e cortar um quadro legítimo custa mais. */
-    GstClockTime periodo = GST_SECOND / (GstClockTime)alvo.fps;
+    GstClockTime periodo = GST_SECOND / (GstClockTime)fps_limite;
     if (pts > ultimo_pts && pts - ultimo_pts < periodo * 8 / 10) {
-      g_atomic_int_inc(&descartados);
+      /* Descarte pelo teto não é sobrecarga: não entra em `descartados`. */
+      if (!limitado_por_teto || pts - ultimo_pts < GST_SECOND / (GstClockTime)alvo.fps * 8 / 10)
+        g_atomic_int_inc(&descartados);
       gst_sample_unref(amostra);
       return GST_FLOW_OK;
     }
@@ -370,7 +406,8 @@ static gboolean enviar_stats(gpointer _) {
   g_mutex_unlock(&medida_mutex);
   int c = zerar(&capturados), q = zerar(&codificados), d = zerar(&descartados);
   /* Quadros que entraram no NVENC no último segundo, suavizado. */
-  if (q > 0) {
+  /* Com teto, `q` é o do teto: não é medida do que a fonte entrega. */
+  if (q > 0 && !com_teto()) {
     double antes = fps_medido;
     fps_medido = fps_medido > 0 ? 0.5 * fps_medido + 0.5 * q : q;
     if (antes <= 0 || fabs(fps_medido - antes) / antes > 0.05) aplicar_bitrate();
@@ -401,6 +438,12 @@ static void ordem(const char *linha) {
     pedir_chave();
   } else if (sscanf(linha, "atraso %d", &n) == 1) {
     g_atomic_int_set(&atraso, n);
+  } else if (sscanf(linha, "teto %d", &n) == 1) {
+    if (n < 0 || n > 240) return;
+    gboolean tinha = com_teto();
+    g_atomic_int_set(&teto_fps, n);
+    /* Entrou ou saiu do teto: o bitrate se reajusta (só `bitrate`, sem IDR). */
+    if (tinha != com_teto()) aplicar_bitrate();
   } else if (strcmp(linha, "parar") == 0) {
     g_main_loop_quit(laco);
   }

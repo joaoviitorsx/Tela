@@ -60,7 +60,7 @@ mudar o protocolo.
 NVENC: **2,5 ms** por quadro 1080p (entrada→saída do encoder).
 
 **Controle de taxa** (`nvh264enc` CBR, p4, ultra-low-latency, VBV de 4
-quadros), conteúdo de entropia alta: 12 Mbps pedidos → 12,3 saem; 4 → 4,1;
+quadros nesta medição; desde 2026-10-02 o código usa 2, ver estudo/1-codec.md), conteúdo de entropia alta: 12 Mbps pedidos → 12,3 saem; 4 → 4,1;
 maior quadro ≈ 1,1× o orçamento de um quadro. Troca de `bitrate` ao vivo **não**
 gera IDR; troca de `vbv-buffer-size` gera (medido) — por isso o VBV só é
 definido no início e na troca de tamanho, que já recomeça em IDR.

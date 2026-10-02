@@ -64,12 +64,14 @@ export function AudioSourcePicker({
 
       {mode === 'display-media' && (
         <>
-          <Cartao nome="SOM DO SISTEMA, VIA CHROME">
-            O seletor abre em “Tela inteira”. Seus amigos ouvem o que sai do seu PC, jogo e resto.
+          <Cartao nome="SÓ O JOGO: ESCOLHA A JANELA">
+            Na aba “Janela”, escolha o jogo e marque o áudio: vai só o som dele, sem a call do
+            Discord (Chrome 141 ou mais novo).
           </Cartao>
           <Aviso tom="alerta">
-            Na janela do Chrome, marque “Compartilhar áudio do sistema” antes de confirmar. Se
-            esquecer, a transmissão vai muda — e o painel ao vivo avisa.
+            Em “Tela inteira” com “Compartilhar áudio do sistema”, vai TUDO que toca no PC —
+            inclusive a call, e quem está nela se escuta na transmissão. O app do Tela tira a call
+            do som sozinho.
           </Aviso>
         </>
       )}

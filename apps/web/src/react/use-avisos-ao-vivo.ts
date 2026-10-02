@@ -58,7 +58,12 @@ export function montarAvisos(estado: EstadoAoVivo, avisoMomentaneo: string | nul
     estado.audioPerdidoPelaEscolha && {
       chave: 'sem-audio',
       texto:
-        'Sem áudio: o som do sistema só acompanha a tela inteira. Pare e escolha "Tela inteira" no seletor.',
+        'Sem áudio: no seletor, marque o som. Com a janela do jogo vai só o jogo; com a tela inteira vai tudo, inclusive a call.',
+    },
+    estado.somComCall === true && {
+      chave: 'som-com-call',
+      texto:
+        'O som da tela inteira leva a call do Discord junto: quem está na call se escuta na transmissão. Troque para a JANELA do jogo (o som vai só do jogo) ou use o app do Tela, que tira a call do som.',
     },
     AVISO_AUDIO[estado.audio] !== undefined && {
       chave: 'audio',

@@ -169,6 +169,13 @@ export type BroadcastState =
        */
       readonly audioPerdidoPelaEscolha: boolean;
       /**
+       * O som vem do SISTEMA inteiro (tela inteira + "compartilhar áudio do
+       * sistema"): inclui a call do Discord, e quem está nela se escuta na
+       * transmissão. A janela do jogo (Chrome 141+, `windowAudio`) e o app
+       * (modo Sistema sem a call) não têm esse problema.
+       */
+      readonly somComCall: boolean;
+      /**
        * Pausa de privacidade (TELA-022). `null` fora da pausa; dentro, se o
        * som continua. Os amigos veem o quadro neutro, a sala e a captura
        * continuam — retomar é instantâneo.
@@ -538,6 +545,7 @@ export class BroadcastSession {
     this.videoTrack = capture.video;
     this.audioTrack = capture.audio;
     this.surface = capture.surface;
+    this.somComCall = capture.audio !== null && capture.surface === 'monitor';
     this.diario.evento('capture', 'CAPTURE_READY', this.deps.scheduler.now());
 
     // Só vídeo: incluir o áudio faria o preview tocar o som do jogo de volta
@@ -675,6 +683,7 @@ export class BroadcastSession {
         this.audioTrack === null &&
         this.surface !== 'monitor' &&
         this.surface !== 'desconhecido',
+      somComCall: this.somComCall,
       pausa: null,
     });
 
@@ -1232,6 +1241,8 @@ export class BroadcastSession {
 
   /** Pausa em curso. Espelha `state.pausa`, e sobrevive a trocas de estado. */
   private pausa: { readonly comSom: boolean; readonly quadro: MediaStreamTrack | null } | null = null;
+  /** Ver `somComCall` no estado. */
+  private somComCall = false;
 
   /**
    * Oculta a transmissão sem perder a sala (TELA-022, §10.3).
@@ -1305,6 +1316,7 @@ export class BroadcastSession {
       // Trocar a tela na pausa sem som não pode religar o som.
       if (this.pausa !== null && !this.pausa.comSom) this.audioTrack.enabled = false;
       this.origemAudio = 'captura';
+      this.somComCall = surface === 'monitor';
       this.classificadorAudio.reiniciar();
       this.diario.registrarCapturaAudio(descreverCaptura(novo, fonteDaSuperficie(surface)));
       this.diario.evento('audio', 'AUDIO_SOURCE_SWITCHED', agora);
@@ -1312,6 +1324,7 @@ export class BroadcastSession {
       return;
     }
     if (this.origemAudio === 'captura') {
+      this.somComCall = false;
       await this.deps.transport.replaceAudio(null);
       this.deps.gain.close();
       this.audioTrack = null;
@@ -1475,6 +1488,7 @@ export class BroadcastSession {
         this.audioTrack === null &&
         this.surface !== 'monitor' &&
         this.surface !== 'desconhecido',
+      somComCall: this.somComCall,
     });
   }
 

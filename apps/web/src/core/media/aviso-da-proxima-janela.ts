@@ -11,7 +11,7 @@ export function avisoDaProximaJanela(modo: SystemAudioMode, noApp: boolean): str
   if (noApp) return 'Na próxima janela, escolha a tela ou o jogo. O som segue o que você marcou acima.';
   switch (modo) {
     case 'display-media':
-      return 'Na próxima janela, escolha a tela ou o jogo e marque "Compartilhar áudio do sistema".';
+      return 'Na próxima janela, escolha a JANELA do jogo e marque o áudio: vai só o jogo, sem a call. Tela inteira leva a call junto.';
     case 'monitor-device':
       return 'Na próxima janela, escolha a tela ou o jogo. O som vem da entrada escolhida aqui, não da janela.';
     case 'unsupported':

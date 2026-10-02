@@ -67,6 +67,10 @@ export function makeBrowserScreenCapture(): ScreenCapture {
           surfaceSwitching: 'include',
           selfBrowserSurface: 'exclude',
           systemAudio: options.systemAudio ? 'include' : 'exclude',
+          // Chrome 141+: escolhendo uma JANELA, o som oferecido é o DELA, não o
+          // do sistema — o jogo vai sem a call do Discord, e ninguém se escuta
+          // na transmissão. Navegador que não conhece ignora.
+          windowAudio: options.systemAudio ? 'window' : 'exclude',
         } as DisplayMediaStreamOptions);
       } catch (error) {
         /*

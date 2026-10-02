@@ -3,7 +3,7 @@ import { avisoDaProximaJanela } from './aviso-da-proxima-janela.js';
 
 describe('avisoDaProximaJanela', () => {
   it('Windows: manda marcar o áudio do sistema na caixa do navegador', () => {
-    expect(avisoDaProximaJanela('display-media', false)).toMatch(/Compartilhar áudio do sistema/);
+    expect(avisoDaProximaJanela('display-media', false)).toMatch(/JANELA do jogo.*sem a call/);
   });
   it('Linux: o som vem da entrada, não da janela', () => {
     expect(avisoDaProximaJanela('monitor-device', false)).toMatch(/entrada escolhida/);

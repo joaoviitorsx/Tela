@@ -26,12 +26,22 @@ function vivo(sobre: Partial<Vivo> = {}): Vivo {
     preview: null,
     prioridade: 'fluidez',
     audioPerdidoPelaEscolha: false,
+    somComCall: false,
     ...sobre,
   } as Vivo;
 }
 
 const chaves = (v: Vivo, momentaneo: string | null = null) =>
   montarAvisos(v, momentaneo).map((a) => a.chave);
+
+describe('montarAvisos — som da tela inteira leva a call', () => {
+  it('avisa quem transmite que os amigos estão se ouvindo, e diz o que fazer', () => {
+    const avisos = montarAvisos(vivo({ somComCall: true }), null);
+    const aviso = avisos.find((a) => a.chave === 'som-com-call');
+    expect(aviso?.texto).toMatch(/se escuta/);
+    expect(aviso?.texto).toMatch(/JANELA do jogo/);
+  });
+});
 
 describe('montarAvisos', () => {
   it('tudo bem: nenhum aviso', () => {

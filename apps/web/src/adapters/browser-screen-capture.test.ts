@@ -135,3 +135,13 @@ describe('browser-screen-capture — falha técnica tenta de novo com o pedido m
     expect(chamadas).toHaveLength(1);
   });
 });
+
+describe('browser-screen-capture — o som da janela, sem a call', () => {
+  it('pede windowAudio: window quando quer som (Chrome 141+), exclude quando não', async () => {
+    const { chamadas } = stubGetDisplayMedia();
+    await makeBrowserScreenCapture().request(PEDIDO);
+    expect(chamadas[0]?.['windowAudio']).toBe('window');
+    await makeBrowserScreenCapture().request({ ...PEDIDO, systemAudio: false });
+    expect(chamadas[1]?.['windowAudio']).toBe('exclude');
+  });
+});

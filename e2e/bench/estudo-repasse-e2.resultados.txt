@@ -1,0 +1,425 @@
+##### e2-latencia.log
+E2 — repasse sem recodificar. Máquina: {"cpu":"AMD Ryzen 7 7435HS","nucleos":16,"ramGiB":15,"chrome":"Google Chrome for Testing 151.0.7922.34","loadavgInicio":[21.6,153.46,144]}
+
+--- latência, 1 filho, tick chegada, run 1/3 (janela 60 s, loadavg 4.01/101.53/126.07 → 4.88/84.12/118.55) ---
+  A    id-lat média 47.4 med 49.4 p95 49.6 max 49.7 ms | carimbo média 29.9 med 31.7 p95 32.8 (sem carimbo 0) | 57.5 fps, pulados 168, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 38.9 med 32.7 p95 49.4 max 49.6 ms | carimbo média 23.8 med 17.9 p95 34.8 (sem carimbo 0) | 56.6 fps, pulados 227, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média 47.0 med 49.3 p95 49.5 max 49.7 ms | carimbo média 25.2 med 27.3 p95 28.4 (sem carimbo 0) | 55.6 fps, pulados 297, inválidos 0, gaps>100ms 2 (>200ms 1), gapMax 1767 | 1280x720
+  B1   id-lat média 177.9 med 215.9 p95 232.8 max 366.0 ms | carimbo média 24.1 med 24.9 p95 27.5 (sem carimbo 0) | 51.8 fps, pulados 527, inválidos 0, gaps>100ms 2 (>200ms 1), gapMax 1767 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -8.5 med -16.7 p95 0.0 | R−A: média -0.4 med -0.1
+  B1−A  média 130.3 med 166.6 p95 183.3 max 316.6 (n=2947) | B1−A2 média 139.7 med 166.7 p95 200.1 max 333.4
+  decodif.: A 60.0 fps chaves 4 | R 58.2 fps chaves 4 | B 58.0fps/chaves 4/frz 1/perda 0/jb 13ms
+  CPU (núcleos): host 1.25 A 0.72 R 0.78 B(2 pgs) 1.31
+  R: recebidos 3498 (chaves 4), injetados 3486, cópia 0.100/0.200 ms (p50/p95), chegada→isca 156.60/178.00/297.6 ms, pedidos acima 1 (feitos 1), replays 0
+  join dos filhos (ms até 1º quadro): 336 | metadata recepção: {"captureTime":11945.4,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11947.60000000894,"rtpTimestamp":771939075,"senderCaptureTimeOffset":0,"synchronizationSource":1117262866,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":546307386,"synchronizationSource":1530064410,"dependencies":[607],"frameId":608,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- latência, 1 filho, tick chegada, run 2/3 (janela 60 s, loadavg 4.46/78.88/116.09 → 5.42/65.61/109.19) ---
+  A    id-lat média 41.4 med 49.1 p95 49.5 max 49.7 ms | carimbo média 21.3 med 28.1 p95 30.0 (sem carimbo 0) | 54.1 fps, pulados 370, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 47.3 med 49.3 p95 49.5 max 66.2 ms | carimbo média 28.5 med 30.4 p95 31.4 (sem carimbo 0) | 56.3 fps, pulados 245, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 400 | 1280x720
+  R    id-lat média 46.7 med 49.3 p95 49.5 max 49.7 ms | carimbo média 24.9 med 27.3 p95 28.3 (sem carimbo 0) | 55.2 fps, pulados 316, inválidos 0, gaps>100ms 2 (>200ms 1), gapMax 1583 | 1280x720
+  B1   id-lat média 296.4 med 282.8 p95 449.3 max 599.5 ms | carimbo média 24.1 med 24.8 p95 27.6 (sem carimbo 0) | 51.1 fps, pulados 568, inválidos 0, gaps>100ms 2 (>200ms 1), gapMax 1600 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 6.0 med 0.0 p95 16.7 | R−A: média 5.2 med 0.0
+  B1−A  média 253.5 med 233.5 p95 416.7 max 566.7 (n=2738) | B1−A2 média 247.7 med 250.0 p95 400.1 max 566.7
+  decodif.: A 60.0 fps chaves 4 | R 58.3 fps chaves 4 | B 57.9fps/chaves 4/frz 1/perda 0/jb 13ms
+  CPU (núcleos): host 1.23 A 0.70 R 0.78 B(2 pgs) 1.31
+  R: recebidos 3508 (chaves 4), injetados 3482, cópia 0.100/0.200 ms (p50/p95), chegada→isca 225.60/394.30/547.8 ms, pedidos acima 1 (feitos 1), replays 0
+  join dos filhos (ms até 1º quadro): 351 | metadata recepção: {"captureTime":11968.4,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11969.90000000596,"rtpTimestamp":2066496375,"senderCaptureTimeOffset":0,"synchronizationSource":3779471806,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":2354547602,"synchronizationSource":1329593657,"dependencies":[604],"frameId":605,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- latência, 1 filho, tick chegada, run 3/3 (janela 60 s, loadavg 4.48/60.54/106.36 → 5.46/49.73/99.52) ---
+  A    id-lat média 44.0 med 49.2 p95 49.4 max 99.1 ms | carimbo média 27.2 med 32.0 p95 33.4 (sem carimbo 0) | 55.3 fps, pulados 296, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 100 | 1280x720
+  A2   id-lat média 36.4 med 32.6 p95 49.3 max 99.1 ms | carimbo média 15.4 med 11.9 p95 28.8 (sem carimbo 0) | 56.4 fps, pulados 241, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média 42.7 med 49.2 p95 49.5 max 99.2 ms | carimbo média 20.9 med 26.7 p95 28.4 (sem carimbo 0) | 53.6 fps, pulados 415, inválidos 0, gaps>100ms 4 (>200ms 1), gapMax 1267 | 1280x720
+  B1   id-lat média 318.6 med 349.2 p95 566.0 max 749.5 ms | carimbo média 24.5 med 24.8 p95 29.6 (sem carimbo 0) | 51.4 fps, pulados 550, inválidos 0, gaps>100ms 4 (>200ms 1), gapMax 1283 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -7.5 med -16.6 p95 16.6 | R−A: média -1.4 med 0.1
+  B1−A  média 274.9 med 300.1 p95 533.3 max 716.7 (n=2836) | B1−A2 média 280.9 med 316.7 p95 533.4 max 716.8
+  decodif.: A 59.7 fps chaves 4 | R 58.3 fps chaves 4 | B 57.7fps/chaves 4/frz 2/perda 0/jb 13ms
+  CPU (núcleos): host 1.25 A 0.71 R 0.78 B(2 pgs) 1.31
+  R: recebidos 3507 (chaves 4), injetados 3471, cópia 0.100/0.200 ms (p50/p95), chegada→isca 297.20/516.00/694.5 ms, pedidos acima 2 (feitos 1), replays 0
+  join dos filhos (ms até 1º quadro): 335 | metadata recepção: {"captureTime":11918.7,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11920.09999999404,"rtpTimestamp":1608509743,"senderCaptureTimeOffset":0,"synchronizationSource":3828520468,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":2091044684,"synchronizationSource":2158367258,"dependencies":[606],"frameId":607,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- latência, 1 filho, tick livre, run 1/3 (janela 60 s, loadavg 3.96/45.14/96.40 → 4.82/37.95/90.72) ---
+  A    id-lat média 48.6 med 49.3 p95 49.5 max 49.6 ms | carimbo média 30.4 med 31.0 p95 31.9 (sem carimbo 0) | 58.4 fps, pulados 113, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 44.8 med 49.1 p95 49.4 max 66.1 ms | carimbo média 31.5 med 35.6 p95 36.7 (sem carimbo 0) | 56.5 fps, pulados 234, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 417 | 1280x720
+  R    id-lat média 48.7 med 49.2 p95 49.4 max 49.5 ms | carimbo média 26.9 med 27.4 p95 28.2 (sem carimbo 0) | 58.4 fps, pulados 127, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  B1   id-lat média 57.0 med 49.4 p95 66.1 max 82.9 ms | carimbo média 23.2 med 24.4 p95 29.1 (sem carimbo 0) | 53.5 fps, pulados 424, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 83 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -3.9 med -0.1 p95 0.0 | R−A: média 0.1 med -0.1
+  B1−A  média 8.4 med 0.0 p95 16.7 max 33.4 (n=3101) | B1−A2 média 12.2 med 16.6 p95 33.4 max 50.1
+  decodif.: A 60.1 fps chaves 4 | R 60.0 fps chaves 4 | B 60.0fps/chaves 4/frz 0/perda 0/jb 10ms
+  CPU (núcleos): host 1.27 A 0.75 R 0.86 B(2 pgs) 1.38
+  R: recebidos 3608 (chaves 4), injetados 3604, cópia 0.100/0.200 ms (p50/p95), chegada→isca 4.80/11.90/16.3 ms, pedidos acima 14 (feitos 2), replays 0
+  join dos filhos (ms até 1º quadro): 392 | metadata recepção: {"captureTime":11941.3,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11942.20000000298,"rtpTimestamp":2168184903,"senderCaptureTimeOffset":0,"synchronizationSource":3498960898,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":1738287309,"synchronizationSource":194107982,"dependencies":[1293],"frameId":1294,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- latência, 1 filho, tick livre, run 2/3 (janela 60 s, loadavg 5.16/35.36/88.46 → 4.43/29.70/83.19) ---
+  A    id-lat média 44.8 med 49.3 p95 49.5 max 49.8 ms | carimbo média 24.8 med 29.0 p95 30.2 (sem carimbo 0) | 56.6 fps, pulados 219, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 45.1 med 49.4 p95 49.6 max 66.3 ms | carimbo média 26.4 med 30.4 p95 31.5 (sem carimbo 0) | 56.1 fps, pulados 256, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média 49.1 med 49.3 p95 49.5 max 65.9 ms | carimbo média 27.3 med 27.5 p95 28.4 (sem carimbo 0) | 58.6 fps, pulados 110, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  B1   id-lat média 56.8 med 49.5 p95 66.2 max 82.9 ms | carimbo média 21.3 med 22.9 p95 27.3 (sem carimbo 0) | 53.7 fps, pulados 412, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 83 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 0.4 med 0.0 p95 16.7 | R−A: média 4.2 med 0.0
+  B1−A  média 12.6 med 16.6 p95 16.8 max 33.4 (n=3016) | B1−A2 média 12.0 med 16.6 p95 33.3 max 50.0
+  decodif.: A 60.0 fps chaves 4 | R 60.0 fps chaves 4 | B 60.0fps/chaves 4/frz 0/perda 0/jb 10ms
+  CPU (núcleos): host 1.25 A 0.72 R 0.84 B(2 pgs) 1.35
+  R: recebidos 3605 (chaves 4), injetados 3603, cópia 0.100/0.200 ms (p50/p95), chegada→isca 4.60/11.60/16.8 ms, pedidos acima 12 (feitos 2), replays 0
+  join dos filhos (ms até 1º quadro): 384 | metadata recepção: {"captureTime":11974.7,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11976.5,"rtpTimestamp":1402389255,"senderCaptureTimeOffset":0,"synchronizationSource":1839393650,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":2391767981,"synchronizationSource":2365067826,"dependencies":[1293],"frameId":1294,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- latência, 1 filho, tick livre, run 3/3 (janela 60 s, loadavg 4.51/28.47/81.93 → 4.34/24.07/77.07) ---
+  A    id-lat média 47.5 med 49.4 p95 49.6 max 49.7 ms | carimbo média 27.7 med 29.5 p95 30.4 (sem carimbo 0) | 57.6 fps, pulados 157, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 38.3 med 32.8 p95 49.5 max 66.1 ms | carimbo média 19.0 med 13.8 p95 30.6 (sem carimbo 0) | 57.2 fps, pulados 191, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 417 | 1280x720
+  R    id-lat média 49.0 med 49.4 p95 49.5 max 49.7 ms | carimbo média 27.2 med 27.6 p95 28.4 (sem carimbo 0) | 58.5 fps, pulados 122, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  B1   id-lat média 56.8 med 49.4 p95 66.2 max 82.9 ms | carimbo média 23.4 med 24.6 p95 29.3 (sem carimbo 0) | 53.2 fps, pulados 440, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 83 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -9.1 med -16.6 p95 0.0 | R−A: média 1.5 med -0.0
+  B1−A  média 9.6 med 16.5 p95 16.7 max 49.9 (n=3038) | B1−A2 média 18.5 med 16.6 p95 33.4 max 50.1
+  decodif.: A 60.0 fps chaves 4 | R 60.0 fps chaves 4 | B 60.0fps/chaves 4/frz 0/perda 0/jb 10ms
+  CPU (núcleos): host 1.25 A 0.73 R 0.84 B(2 pgs) 1.34
+  R: recebidos 3605 (chaves 4), injetados 3605, cópia 0.100/0.200 ms (p50/p95), chegada→isca 4.70/11.60/15.8 ms, pedidos acima 16 (feitos 2), replays 0
+  join dos filhos (ms até 1º quadro): 383 | metadata recepção: {"captureTime":11989,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11991.29999999702,"rtpTimestamp":1838601904,"senderCaptureTimeOffset":0,"synchronizationSource":894824359,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":3085829085,"synchronizationSource":3417546487,"dependencies":[1291],"frameId":1292,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+##### e2-filhos.log
+E2 — repasse sem recodificar. Máquina: {"cpu":"AMD Ryzen 7 7435HS","nucleos":16,"ramGiB":15,"chrome":"Google Chrome for Testing 151.0.7922.34","loadavgInicio":[4.34,24.07,77.07]}
+
+--- custo: R com transform e 0 filhos, tick livre (janela 40 s, loadavg 4.29/23.09/75.90 → 2.97/20.43/72.78) ---
+  A    id-lat média 40.4 med 32.8 p95 49.5 max 49.6 ms | carimbo média 20.9 med 14.0 p95 30.6 (sem carimbo 0) | 54.6 fps, pulados 226, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 34.9 med 32.8 p95 49.5 max 49.7 ms | carimbo média 16.7 med 14.7 p95 31.5 (sem carimbo 0) | 58.7 fps, pulados 71, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média 41.7 med 49.3 p95 49.6 max 49.7 ms | carimbo média 20.2 med 27.1 p95 28.6 (sem carimbo 0) | 55.4 fps, pulados 209, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 217 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -5.5 med 0.0 p95 16.7 | R−A: média 1.1 med 0.1
+  decodif.: A 60.1 fps chaves 2 | R 59.8 fps chaves 2 | B 
+  CPU (núcleos): host 1.13 A 0.64 R 0.66 B(1 pgs) 0.64
+  R: recebidos 2401 (chaves 2), injetados 0, cópia 0.000/0.200 ms (p50/p95), chegada→isca n/d/n/d/n/d ms, pedidos acima 0 (feitos 0), replays 0
+  join dos filhos (ms até 1º quadro):  | metadata recepção: {"captureTime":11461.7,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11463.29999999702,"rtpTimestamp":3346795103,"senderCaptureTimeOffset":0,"synchronizationSource":3247937709,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: null | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 1 filho(s), tick livre (janela 40 s, loadavg 3.59/19.71/71.71 → 4.97/18.09/68.97) ---
+  A    id-lat média 43.0 med 49.3 p95 49.5 max 49.7 ms | carimbo média 25.5 med 31.4 p95 32.7 (sem carimbo 0) | 55.2 fps, pulados 205, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 67 | 1280x720
+  A2   id-lat média 37.4 med 32.7 p95 49.4 max 66.0 ms | carimbo média 16.4 med 11.9 p95 28.7 (sem carimbo 0) | 57.2 fps, pulados 129, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 400 | 1280x720
+  R    id-lat média 48.8 med 49.4 p95 49.6 max 49.7 ms | carimbo média 27.1 med 27.6 p95 28.5 (sem carimbo 0) | 58.9 fps, pulados 69, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  B1   id-lat média 56.6 med 49.5 p95 66.2 max 82.9 ms | carimbo média 21.0 med 22.1 p95 27.3 (sem carimbo 0) | 54.1 fps, pulados 265, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 83 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -5.5 med -0.1 p95 16.6 | R−A: média 5.9 med 0.1
+  B1−A  média 14.4 med 16.6 p95 16.7 max 33.4 (n=1975) | B1−A2 média 19.3 med 16.7 p95 33.4 max 50.1
+  decodif.: A 60.0 fps chaves 4 | R 60.0 fps chaves 4 | B 60.0fps/chaves 4/frz 0/perda 0/jb 10ms
+  CPU (núcleos): host 1.24 A 0.70 R 0.84 B(2 pgs) 1.33
+  R: recebidos 2407 (chaves 4), injetados 2404, cópia 0.100/0.200 ms (p50/p95), chegada→isca 4.70/11.70/18.5 ms, pedidos acima 14 (feitos 2), replays 0
+  join dos filhos (ms até 1º quadro): 393 | metadata recepção: {"captureTime":11961.4,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":11962.79999999702,"rtpTimestamp":2300307638,"senderCaptureTimeOffset":0,"synchronizationSource":285071974,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":657089082,"synchronizationSource":1280198181,"dependencies":[1297],"frameId":1298,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 3 filho(s), tick livre (janela 40 s, loadavg 4.54/16.71/66.89 → 7.37/15.88/64.49) ---
+  A    id-lat média 48.5 med 49.3 p95 49.6 max 66.1 ms | carimbo média 32.7 med 33.4 p95 34.8 (sem carimbo 0) | 57.6 fps, pulados 110, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 51.1 med 49.5 p95 66.2 max 66.4 ms | carimbo média 31.2 med 29.5 p95 46.1 (sem carimbo 0) | 55.4 fps, pulados 207, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 367 | 1280x720
+  R    id-lat média 45.3 med 49.3 p95 49.6 max 66.2 ms | carimbo média 23.1 med 26.9 p95 28.1 (sem carimbo 0) | 45.9 fps, pulados 592, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 1700 | 1280x720
+  B1   id-lat média 61.5 med 65.9 p95 82.8 max 83.0 ms | carimbo média 27.6 med 27.2 p95 44.8 (sem carimbo 0) | 42.0 fps, pulados 750, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 1700 | 1280x720
+  B2   id-lat média 537.9 med 199.5 p95 1732.8 max 1982.6 ms | carimbo média 501.0 med 172.3 p95 1693.2 (sem carimbo 0) | 37.8 fps, pulados 988, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 1833 | 1280x720
+  B3   id-lat média 555.5 med 166.0 p95 1832.6 max 2049.4 ms | carimbo média 515.1 med 125.9 p95 1792.7 (sem carimbo 0) | 37.4 fps, pulados 1027, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 1850 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 2.6 med 0.1 p95 16.8 | R−A: média -3.1 med 0.0
+  B1−A  média 13.2 med 16.7 p95 33.4 max 50.1 (n=1599) | B1−A2 média 9.7 med 0.1 p95 33.3 max 50.1
+  B2−A  média 445.7 med 150.0 p95 1700.0 max 1933.2 (n=1377) | B2−A2 média 440.5 med 149.9 p95 1699.7 max 1933.2
+  B3−A  média 458.5 med 116.7 p95 1783.3 max 2000.0 (n=1344) | B3−A2 média 452.9 med 100.0 p95 1783.2 max 1999.9
+  decodif.: A 60.1 fps chaves 7 | R 50.2 fps chaves 7 | B 50.1fps/chaves 7/frz 5/perda 0/jb 10ms ; 51.4fps/chaves 7/frz 5/perda 0/jb 219ms ; 52.3fps/chaves 7/frz 5/perda 0/jb 223ms
+  CPU (núcleos): host 1.36 A 0.78 R 0.91 B(4 pgs) 2.39
+  R: recebidos 2014 (chaves 7), injetados 6032, cópia 0.100/0.200 ms (p50/p95), chegada→isca 5.40/12.40/20.1 ms, pedidos acima 843 (feitos 18), replays 0
+  join dos filhos (ms até 1º quadro): 346, 1910, 1896 | metadata recepção: {"captureTime":16038.7,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":16041.09999999404,"rtpTimestamp":3930369683,"senderCaptureTimeOffset":0,"synchronizationSource":3168254979,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":4078755974,"synchronizationSource":1759152149,"dependencies":[1766],"frameId":1767,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+  (rodada contaminada por carga externa: loadavg 7.8/14.2/60.8 → 7.6/13.4/58.6; repetindo, tentativa 1/4)
+
+--- custo: R com 6 filho(s), tick livre (janela 40 s, loadavg 3.55/11.10/54.99 → 5.85/10.70/52.78) ---
+  A    id-lat média 46.7 med 49.2 p95 49.5 max 66.1 ms | carimbo média 28.5 med 30.5 p95 32.9 (sem carimbo 0) | 55.5 fps, pulados 210, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 52.1 med 49.4 p95 65.9 max 66.1 ms | carimbo média 38.6 med 36.8 p95 52.1 (sem carimbo 0) | 52.6 fps, pulados 335, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 417 | 1280x720
+  R    id-lat média 47.2 med 49.1 p95 49.4 max 66.0 ms | carimbo média 24.5 med 26.2 p95 28.5 (sem carimbo 0) | 33.7 fps, pulados 1098, inválidos 0, gaps>100ms 10 (>200ms 10), gapMax 2033 | 1280x720
+  B1   id-lat média 67.4 med 65.9 p95 82.6 max 82.8 ms | carimbo média 30.8 med 33.9 p95 42.3 (sem carimbo 0) | 28.9 fps, pulados 1294, inválidos 0, gaps>100ms 10 (>200ms 10), gapMax 2033 | 1280x720
+  B2   id-lat média 377.0 med 82.1 p95 1548.8 max 1648.9 ms | carimbo média 332.3 med 40.4 p95 1506.6 (sem carimbo 0) | 28.0 fps, pulados 1431, inválidos 0, gaps>100ms 10 (>200ms 10), gapMax 2233 | 1280x720
+  B3   id-lat média 544.5 med 199.1 p95 1582.4 max 1682.7 ms | carimbo média 498.7 med 158.5 p95 1550.6 (sem carimbo 0) | 27.8 fps, pulados 1449, inválidos 0, gaps>100ms 9 (>200ms 9), gapMax 2250 | 1280x720
+  B4   id-lat média 503.2 med 82.3 p95 1665.8 max 2132.4 ms | carimbo média 450.3 med 40.7 p95 1600.4 (sem carimbo 0) | 28.3 fps, pulados 1438, inválidos 0, gaps>100ms 9 (>200ms 9), gapMax 2283 | 1280x720
+  B5   id-lat média 517.1 med 82.5 p95 1866.0 max 2532.8 ms | carimbo média 461.4 med 43.4 p95 1826.2 (sem carimbo 0) | 28.2 fps, pulados 1464, inválidos 0, gaps>100ms 9 (>200ms 9), gapMax 2317 | 1280x720
+  B6   id-lat média 553.2 med 82.4 p95 1999.1 max 2649.1 ms | carimbo média 489.6 med 41.1 p95 1943.0 (sem carimbo 0) | 27.7 fps, pulados 1496, inválidos 0, gaps>100ms 9 (>200ms 9), gapMax 2400 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 5.2 med 0.0 p95 16.7 | R−A: média -1.0 med -0.1
+  B1−A  média 19.8 med 16.7 p95 33.4 max 50.0 (n=1031) | B1−A2 média 10.4 med 16.6 p95 33.4 max 50.1
+  B2−A  média 258.5 med 33.2 p95 1499.9 max 1600.0 (n=925) | B2−A2 média 261.7 med 16.7 p95 1483.3 max 1583.3
+  B3−A  média 435.5 med 149.8 p95 1449.8 max 1633.2 (n=910) | B3−A2 média 439.8 med 133.3 p95 1516.5 max 1633.3
+  B4−A  média 404.8 med 33.2 p95 1633.2 max 2083.2 (n=930) | B4−A2 média 405.6 med 16.7 p95 1633.2 max 2083.2
+  B5−A  média 419.8 med 33.4 p95 1850.0 max 2483.2 (n=913) | B5−A2 média 415.6 med 16.8 p95 1833.4 max 2483.3
+  B6−A  média 452.8 med 33.3 p95 1966.5 max 2599.9 (n=899) | B6−A2 média 462.3 med 16.7 p95 1950.0 max 2599.9
+  decodif.: A 60.0 fps chaves 14 | R 37.0 fps chaves 14 | B 37.0fps/chaves 14/frz 10/perda 0/jb 9ms ; 39.1fps/chaves 14/frz 10/perda 0/jb 147ms ; 38.9fps/chaves 14/frz 9/perda 0/jb 223ms ; 38.2fps/chaves 14/frz 9/perda 0/jb 130ms ; 38.3fps/chaves 14/frz 9/perda 0/jb 159ms ; 38.3fps/chaves 14/frz 9/perda 0/jb 188ms
+  CPU (núcleos): host 1.34 A 0.76 R 0.94 B(7 pgs) 3.34
+  R: recebidos 1493 (chaves 14), injetados 8942, cópia 0.100/0.200 ms (p50/p95), chegada→isca 5.40/12.50/19.7 ms, pedidos acima 1892 (feitos 37), replays 0
+  join dos filhos (ms até 1º quadro): 391, 1898, 1899, 1884, 1915, 1849 | metadata recepção: {"captureTime":22327.1,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":22329.40000000596,"rtpTimestamp":2746637492,"senderCaptureTimeOffset":0,"synchronizationSource":3507725698,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":3142259238,"synchronizationSource":1460208421,"dependencies":[2506],"frameId":2507,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+##### e2-filhos-semR-120.log
+E2 — repasse sem recodificar. Máquina: {"cpu":"AMD Ryzen 7 7435HS","nucleos":16,"ramGiB":15,"chrome":"Google Chrome for Testing 151.0.7922.34","loadavgInicio":[3.56,4.31,26.18]}
+
+--- custo: R com transform e 0 filhos, tick livre (janela 40 s, loadavg 3.52/4.26/25.81 → 2.95/4.07/24.84) ---
+  A    id-lat média 47.4 med 49.5 p95 49.6 max 49.8 ms | carimbo média 30.3 med 32.3 p95 33.1 (sem carimbo 0) | 58.4 fps, pulados 74, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 40.3 med 32.9 p95 49.6 max 49.7 ms | carimbo média 24.4 med 17.5 p95 34.1 (sem carimbo 0) | 59.0 fps, pulados 57, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 417 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  A2−A (ruído de fase entre navegadores): média -7.1 med -0.1 p95 0.1 | R−A: média n/d med n/d
+  decodif.: A 60.0 fps chaves 2 | R 59.7 fps chaves 2 | B 
+  CPU (núcleos): host 1.13 A 0.66 R 0.29 B(1 pgs) 0.64
+  R: recebidos 2398 (chaves 2), injetados 0 de 0 vagas de isca, cópia 0.100/0.100 ms (p50/p95), chegada→isca n/d/n/d/n/d ms, pedidos acima 0 (feitos 0), replays 0
+  join dos filhos (ms até 1º quadro):  | metadata recepção: {"captureTime":12932.4,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":12934.5,"rtpTimestamp":606991661,"senderCaptureTimeOffset":0,"synchronizationSource":2359138031,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: null | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 1 filho(s), tick livre (janela 40 s, loadavg 4.28/4.30/24.58 → 5.37/4.60/23.83) ---
+  A    id-lat média 47.8 med 49.3 p95 49.5 max 49.6 ms | carimbo média 27.0 med 28.4 p95 29.3 (sem carimbo 0) | 58.5 fps, pulados 71, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 42.6 med 49.2 p95 49.4 max 49.7 ms | carimbo média 23.2 med 29.3 p95 30.5 (sem carimbo 0) | 57.4 fps, pulados 121, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 367 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 56.1 med 49.4 p95 66.1 max 82.8 ms | carimbo média 21.9 med 21.7 p95 30.6 (sem carimbo 0) | 53.6 fps, pulados 277, inválidos 0, gaps>100ms 1 (>200ms 0), gapMax 183 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -5.2 med 0.0 p95 0.1 | R−A: média n/d med n/d
+  B1−A  média 8.4 med 0.1 p95 16.8 max 33.4 (n=2074) | B1−A2 média 13.5 med 16.7 p95 33.4 max 50.1
+  decodif.: A 60.0 fps chaves 3 | R 59.8 fps chaves 3 | B 59.8fps/chaves 3/frz 1/perda 0/jb 11ms
+  CPU (núcleos): host 1.22 A 0.71 R 0.42 B(2 pgs) 1.31
+  R: recebidos 2398 (chaves 3), injetados 2396 de 5019 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 4.00/7.60/10.2 ms, pedidos acima 27 (feitos 2), replays 0
+  join dos filhos (ms até 1º quadro): 320 | metadata recepção: {"captureTime":13431.4,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":13433.39999999106,"rtpTimestamp":2748778384,"senderCaptureTimeOffset":0,"synchronizationSource":3016822466,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":568430906,"synchronizationSource":1381229683,"dependencies":[1293],"frameId":1294,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 3 filho(s), tick livre (janela 40 s, loadavg 4.94/4.54/22.99 → 6.40/5.02/22.38) ---
+  A    id-lat média 45.2 med 49.2 p95 49.5 max 49.7 ms | carimbo média 32.1 med 35.8 p95 37.2 (sem carimbo 0) | 56.4 fps, pulados 156, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 34.1 med 32.7 p95 49.2 max 65.9 ms | carimbo média 14.1 med 12.7 p95 29.0 (sem carimbo 0) | 56.1 fps, pulados 177, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 400 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 58.6 med 49.5 p95 82.6 max 82.9 ms | carimbo média 24.7 med 23.1 p95 42.9 (sem carimbo 0) | 42.3 fps, pulados 733, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 1717 | 1280x720
+  B2   id-lat média 578.5 med 199.5 p95 1749.2 max 1982.8 ms | carimbo média 540.3 med 171.8 p95 1717.0 (sem carimbo 0) | 38.4 fps, pulados 982, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 2000 | 1280x720
+  B3   id-lat média 570.5 med 149.4 p95 1816.0 max 1999.2 ms | carimbo média 532.8 med 121.2 p95 1785.3 (sem carimbo 0) | 38.7 fps, pulados 970, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 2017 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -11.1 med -16.6 p95 0.1 | R−A: média n/d med n/d
+  B1−A  média 14.0 med 16.7 p95 33.4 max 33.5 (n=1578) | B1−A2 média 24.3 med 16.7 p95 50.0 max 50.1
+  B2−A  média 466.8 med 150.0 p95 1716.6 max 1949.9 (n=1363) | B2−A2 média 487.0 med 166.6 p95 1716.6 max 1949.9
+  B3−A  média 468.5 med 100.1 p95 1783.3 max 1966.7 (n=1384) | B3−A2 média 485.9 med 116.7 p95 1783.4 max 1966.6
+  decodif.: A 60.1 fps chaves 7 | R 50.0 fps chaves 7 | B 49.9fps/chaves 7/frz 5/perda 0/jb 11ms ; 51.8fps/chaves 7/frz 5/perda 0/jb 259ms ; 50.3fps/chaves 7/frz 5/perda 0/jb 205ms
+  CPU (núcleos): host 1.33 A 0.74 R 0.56 B(4 pgs) 2.34
+  R: recebidos 2003 (chaves 7), injetados 5977 de 15060 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 4.10/7.90/14.6 ms, pedidos acima 918 (feitos 18), replays 0
+  join dos filhos (ms até 1º quadro): 192, 1899, 1934 | metadata recepção: {"captureTime":17450.1,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":17452.40000000596,"rtpTimestamp":3694028092,"senderCaptureTimeOffset":0,"synchronizationSource":757656473,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":1288952859,"synchronizationSource":544490539,"dependencies":[1797],"frameId":1798,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 6 filho(s), tick livre (janela 40 s, loadavg 6.36/5.08/21.48 → 5.80/5.13/20.72) ---
+  A    id-lat média 41.9 med 48.8 p95 49.6 max 66.2 ms | carimbo média 28.2 med 33.4 p95 37.1 (sem carimbo 0) | 54.0 fps, pulados 294, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 49.9 med 49.4 p95 65.9 max 66.2 ms | carimbo média 30.9 med 30.9 p95 46.7 (sem carimbo 0) | 53.7 fps, pulados 327, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 69.3 med 66.0 p95 82.7 max 82.8 ms | carimbo média 34.2 med 35.8 p95 47.2 (sem carimbo 0) | 27.8 fps, pulados 1391, inválidos 0, gaps>100ms 11 (>200ms 11), gapMax 1800 | 1280x720
+  B2   id-lat média 455.1 med 149.2 p95 1582.5 max 1749.4 ms | carimbo média 407.8 med 111.3 p95 1548.4 (sem carimbo 0) | 27.1 fps, pulados 1511, inválidos 0, gaps>100ms 11 (>200ms 10), gapMax 1967 | 1280x720
+  B3   id-lat média 476.6 med 82.5 p95 1615.8 max 2082.8 ms | carimbo média 422.5 med 40.8 p95 1574.9 (sem carimbo 0) | 28.4 fps, pulados 1477, inválidos 0, gaps>100ms 10 (>200ms 9), gapMax 1900 | 1280x720
+  B4   id-lat média 478.1 med 82.4 p95 1632.1 max 2299.4 ms | carimbo média 419.5 med 41.3 p95 1587.5 (sem carimbo 0) | 28.1 fps, pulados 1501, inválidos 0, gaps>100ms 10 (>200ms 9), gapMax 1917 | 1280x720
+  B5   id-lat média 485.9 med 82.5 p95 1882.3 max 2332.7 ms | carimbo média 420.5 med 42.3 p95 1830.7 (sem carimbo 0) | 29.8 fps, pulados 1455, inválidos 0, gaps>100ms 10 (>200ms 9), gapMax 1983 | 1280x720
+  B6   id-lat média 513.5 med 82.4 p95 1999.1 max 2749.3 ms | carimbo média 442.5 med 40.8 p95 1964.8 (sem carimbo 0) | 26.5 fps, pulados 1586, inválidos 0, gaps>100ms 10 (>200ms 9), gapMax 1950 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 7.6 med 0.0 p95 33.3 | R−A: média n/d med n/d
+  B1−A  média 27.1 med 33.3 p95 33.4 max 50.1 (n=942) | B1−A2 média 14.0 med 16.7 p95 33.4 max 50.1
+  B2−A  média 346.1 med 100.0 p95 1549.9 max 1716.6 (n=849) | B2−A2 média 356.4 med 83.5 p95 1533.3 max 1700.0
+  B3−A  média 365.1 med 33.3 p95 1700.0 max 2049.9 (n=891) | B3−A2 média 387.4 med 16.8 p95 1716.6 max 2050.0
+  B4−A  média 389.8 med 33.3 p95 1599.8 max 2249.9 (n=869) | B4−A2 média 411.2 med 16.7 p95 1583.3 max 2266.6
+  B5−A  média 373.3 med 33.3 p95 1849.9 max 2283.3 (n=914) | B5−A2 média 390.7 med 16.8 p95 1833.3 max 2266.7
+  B6−A  média 423.4 med 33.3 p95 1966.6 max 2699.9 (n=808) | B6−A2 média 437.8 med 16.7 p95 1966.7 max 2683.3
+  decodif.: A 60.2 fps chaves 13 | R 34.6 fps chaves 13 | B 34.6fps/chaves 13/frz 11/perda 0/jb 10ms ; 36.3fps/chaves 13/frz 11/perda 0/jb 180ms ; 36.0fps/chaves 13/frz 10/perda 0/jb 135ms ; 36.1fps/chaves 13/frz 10/perda 0/jb 140ms ; 36.2fps/chaves 13/frz 10/perda 0/jb 177ms ; 36.4fps/chaves 13/frz 10/perda 0/jb 212ms
+  CPU (núcleos): host 1.29 A 0.74 R 0.67 B(7 pgs) 3.17
+  R: recebidos 1405 (chaves 13), injetados 8369 de 30400 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 4.50/7.90/16.4 ms, pedidos acima 2266 (feitos 42), replays 0
+  join dos filhos (ms até 1º quadro): 210, 1885, 1884, 1853, 1912, 1911 | metadata recepção: {"captureTime":23761.7,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":23763.5,"rtpTimestamp":2700748218,"senderCaptureTimeOffset":0,"synchronizationSource":1345619788,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":2007596047,"synchronizationSource":2671021303,"dependencies":[2544],"frameId":2545,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+##### e2-filhos-semR-60.log
+E2 — repasse sem recodificar. Máquina: {"cpu":"AMD Ryzen 7 7435HS","nucleos":16,"ramGiB":15,"chrome":"Google Chrome for Testing 151.0.7922.34","loadavgInicio":[5.8,5.13,20.72]}
+
+--- custo: R com transform e 0 filhos, tick livre (janela 40 s, loadavg 3.42/4.61/19.97 → 3.08/4.34/19.22) ---
+  A    id-lat média 48.5 med 49.5 p95 49.6 max 49.8 ms | carimbo média 29.6 med 30.5 p95 31.2 (sem carimbo 0) | 58.3 fps, pulados 79, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 32.7 med 32.7 p95 32.9 max 33.0 ms | carimbo média 15.9 med 15.9 p95 16.6 (sem carimbo 0) | 58.0 fps, pulados 97, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 417 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  A2−A (ruído de fase entre navegadores): média -15.9 med -16.8 p95 -0.2 | R−A: média n/d med n/d
+  decodif.: A 60.0 fps chaves 2 | R 59.7 fps chaves 2 | B 
+  CPU (núcleos): host 1.10 A 0.63 R 0.27 B(1 pgs) 0.60
+  R: recebidos 2396 (chaves 2), injetados 0 de 0 vagas de isca, cópia 0.100/0.100 ms (p50/p95), chegada→isca n/d/n/d/n/d ms, pedidos acima 0 (feitos 0), replays 0
+  join dos filhos (ms até 1º quadro):  | metadata recepção: {"captureTime":12963.2,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":12965,"rtpTimestamp":1712409859,"senderCaptureTimeOffset":0,"synchronizationSource":1082097463,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: null | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 1 filho(s), tick livre (janela 40 s, loadavg 4.30/4.54/18.97 → 4.07/4.42/18.32) ---
+  A    id-lat média 49.1 med 49.4 p95 49.6 max 49.7 ms | carimbo média 32.2 med 32.5 p95 33.3 (sem carimbo 0) | 58.8 fps, pulados 58, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 46.1 med 49.4 p95 49.6 max 49.7 ms | carimbo média 26.4 med 29.6 p95 30.5 (sem carimbo 0) | 57.4 fps, pulados 117, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 460.7 med 132.6 p95 1782.7 max 1999.4 ms | carimbo média 418.3 med 84.7 p95 1742.5 (sem carimbo 0) | 50.2 fps, pulados 500, inválidos 0, gaps>100ms 1 (>200ms 0), gapMax 200 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -3.2 med 0.0 p95 0.1 | R−A: média n/d med n/d
+  B1−A  média 370.3 med 83.2 p95 1733.3 max 1950.0 (n=1882) | B1−A2 média 367.8 med 83.2 p95 1749.8 max 1966.5
+  decodif.: A 60.0 fps chaves 2 | R 59.9 fps chaves 2 | B 62.0fps/chaves 2/frz 1/perda 0/jb 167ms
+  CPU (núcleos): host 1.17 A 0.70 R 0.38 B(2 pgs) 1.26
+  R: recebidos 2402 (chaves 2), injetados 2401 de 2511 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 10.80/18.30/27.3 ms, pedidos acima 11 (feitos 1), replays 0
+  join dos filhos (ms até 1º quadro): 4321 | metadata recepção: {"captureTime":17403.7,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":17405.5,"rtpTimestamp":1710518669,"senderCaptureTimeOffset":0,"synchronizationSource":3741916187,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":643974009,"synchronizationSource":1166113404,"dependencies":[896],"frameId":897,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 3 filho(s), tick livre (janela 40 s, loadavg 5.09/4.62/18.09 → 5.74/4.88/17.61) ---
+  A    id-lat média 47.8 med 49.2 p95 49.5 max 65.8 ms | carimbo média 31.8 med 33.2 p95 34.2 (sem carimbo 0) | 57.6 fps, pulados 110, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 47.3 med 49.2 p95 65.8 max 66.1 ms | carimbo média 27.6 med 29.3 p95 46.0 (sem carimbo 0) | 56.2 fps, pulados 172, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 62.0 med 65.8 p95 82.6 max 99.5 ms | carimbo média 21.4 med 20.5 p95 38.0 (sem carimbo 0) | 48.9 fps, pulados 470, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 1700 | 1280x720
+  B2   id-lat média 471.3 med 166.0 p95 1632.2 max 1782.5 ms | carimbo média 428.8 med 132.0 p95 1584.5 (sem carimbo 0) | 49.3 fps, pulados 543, inválidos 0, gaps>100ms 2 (>200ms 1), gapMax 1867 | 1280x720
+  B3   id-lat média 517.0 med 149.3 p95 1815.4 max 1999.2 ms | carimbo média 473.1 med 113.1 p95 1770.3 (sem carimbo 0) | 47.2 fps, pulados 635, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 1733 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -0.6 med -0.0 p95 16.7 | R−A: média n/d med n/d
+  B1−A  média 14.3 med 16.6 p95 33.4 max 50.1 (n=1876) | B1−A2 média 14.6 med 16.7 p95 33.4 max 66.7
+  B2−A  média 387.7 med 116.6 p95 1583.2 max 1733.3 (n=1799) | B2−A2 média 385.2 med 116.6 p95 1583.2 max 1750.0
+  B3−A  média 433.1 med 100.0 p95 1766.6 max 1949.9 (n=1712) | B3−A2 média 432.7 med 100.0 p95 1766.6 max 1966.6
+  decodif.: A 60.1 fps chaves 4 | R 57.3 fps chaves 4 | B 57.2fps/chaves 4/frz 2/perda 0/jb 8ms ; 59.2fps/chaves 4/frz 2/perda 0/jb 156ms ; 59.4fps/chaves 4/frz 2/perda 0/jb 173ms
+  CPU (núcleos): host 1.31 A 0.77 R 0.55 B(4 pgs) 2.64
+  R: recebidos 2298 (chaves 4), injetados 6881 de 7530 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 10.60/18.70/30.8 ms, pedidos acima 127 (feitos 6), replays 0
+  join dos filhos (ms até 1º quadro): 255, 3887, 1912 | metadata recepção: {"captureTime":19512.3,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":19514.29999999702,"rtpTimestamp":2584826513,"senderCaptureTimeOffset":0,"synchronizationSource":1253477834,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":3751317781,"synchronizationSource":1545633404,"dependencies":[1028],"frameId":1029,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 6 filho(s), tick livre (janela 40 s, loadavg 5.08/4.76/16.96 → 10.96/6.43/16.95) ---
+  A    id-lat média 46.5 med 49.2 p95 49.6 max 66.1 ms | carimbo média 27.4 med 29.7 p95 32.6 (sem carimbo 0) | 54.8 fps, pulados 254, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 57.3 med 65.5 p95 66.1 max 81.1 ms | carimbo média 43.0 med 50.2 p95 52.3 (sem carimbo 0) | 51.2 fps, pulados 406, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 433 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 74.4 med 81.8 p95 99.1 max 99.6 ms | carimbo média 32.6 med 34.0 p95 46.9 (sem carimbo 0) | 43.5 fps, pulados 718, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 2033 | 1280x720
+  B2   id-lat média 310.5 med 149.2 p95 1499.5 max 1599.2 ms | carimbo média 267.9 med 109.6 p95 1465.1 (sem carimbo 0) | 41.8 fps, pulados 872, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 2133 | 1280x720
+  B3   id-lat média 375.0 med 165.7 p95 1548.9 max 1615.7 ms | carimbo média 327.4 med 119.3 p95 1505.1 (sem carimbo 0) | 45.7 fps, pulados 737, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 2133 | 1280x720
+  B4   id-lat média 431.0 med 182.5 p95 1565.5 max 1632.7 ms | carimbo média 382.5 med 138.2 p95 1517.8 (sem carimbo 0) | 39.8 fps, pulados 991, inválidos 0, gaps>100ms 3 (>200ms 2), gapMax 2167 | 1280x720
+  B5   id-lat média 415.0 med 166.0 p95 1549.1 max 1666.0 ms | carimbo média 363.4 med 122.9 p95 1497.1 (sem carimbo 0) | 42.1 fps, pulados 915, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 2117 | 1280x720
+  B6   id-lat média 455.0 med 149.1 p95 1799.2 max 1999.2 ms | carimbo média 399.1 med 100.1 p95 1750.9 (sem carimbo 0) | 40.9 fps, pulados 963, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 2083 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 10.8 med 16.7 p95 16.8 | R−A: média n/d med n/d
+  B1−A  média 28.6 med 33.3 p95 50.0 max 66.7 (n=1582) | B1−A2 média 17.2 med 16.6 p95 33.4 max 66.7
+  B2−A  média 230.8 med 100.0 p95 1466.6 max 1550.1 (n=1456) | B2−A2 média 220.2 med 83.4 p95 1449.9 max 1550.0
+  B3−A  média 275.0 med 116.6 p95 1333.3 max 1583.3 (n=1561) | B3−A2 média 270.6 med 99.9 p95 1333.1 max 1566.6
+  B4−A  média 337.2 med 133.3 p95 1466.6 max 1599.9 (n=1340) | B4−A2 média 335.6 med 116.7 p95 1449.9 max 1583.3
+  B5−A  média 332.0 med 116.7 p95 1500.0 max 1600.0 (n=1421) | B5−A2 média 329.5 med 100.0 p95 1483.3 max 1583.4
+  B6−A  média 370.8 med 100.0 p95 1766.5 max 1950.0 (n=1377) | B6−A2 média 360.2 med 83.3 p95 1749.8 max 1950.0
+  decodif.: A 59.6 fps chaves 6 | R 55.6 fps chaves 6 | B 55.7fps/chaves 6/frz 2/perda 0/jb 8ms ; 57.7fps/chaves 6/frz 2/perda 0/jb 122ms ; 57.8fps/chaves 6/frz 2/perda 0/jb 121ms ; 57.8fps/chaves 6/frz 2/perda 0/jb 166ms ; 57.8fps/chaves 6/frz 2/perda 0/jb 125ms ; 58.0fps/chaves 6/frz 2/perda 0/jb 151ms
+  CPU (núcleos): host 1.46 A 0.84 R 0.84 B(7 pgs) 4.77
+  R: recebidos 2245 (chaves 6), injetados 13464 de 15162 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 10.60/19.70/30.8 ms, pedidos acima 63 (feitos 6), replays 0
+  join dos filhos (ms até 1º quadro): 209, 1901, 1902, 1884, 1894, 1884 | metadata recepção: {"captureTime":23858.4,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":23859.59999999404,"rtpTimestamp":2320904950,"senderCaptureTimeOffset":0,"synchronizationSource":656196002,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":4230769120,"synchronizationSource":1418821082,"dependencies":[1279],"frameId":1280,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+##### e2-filhos-cache-idr1000.log
+E2 — repasse sem recodificar. Máquina: {"cpu":"AMD Ryzen 7 7435HS","nucleos":16,"ramGiB":15,"chrome":"Google Chrome for Testing 151.0.7922.34","loadavgInicio":[8.42,6.14,16.63]}
+
+--- custo: R com transform e 0 filhos, tick livre (janela 40 s, loadavg 4.68/5.40/15.71 → 3.20/4.90/15.10) ---
+  A    id-lat média 48.8 med 49.5 p95 49.6 max 49.8 ms | carimbo média 33.0 med 33.6 p95 34.3 (sem carimbo 0) | 58.5 fps, pulados 69, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 32.7 med 32.8 p95 32.9 max 33.1 ms | carimbo média 13.8 med 13.8 p95 14.5 (sem carimbo 0) | 58.5 fps, pulados 77, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 400 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  A2−A (ruído de fase entre navegadores): média -16.2 med -16.7 p95 -16.6 | R−A: média n/d med n/d
+  decodif.: A 60.0 fps chaves 42 | R 59.8 fps chaves 42 | B 
+  CPU (núcleos): host 1.09 A 0.63 R 0.27 B(1 pgs) 0.60
+  R: recebidos 2396 (chaves 42), injetados 0 de 0 vagas de isca, cópia 0.100/0.100 ms (p50/p95), chegada→isca n/d/n/d/n/d ms, pedidos acima 0 (feitos 0), replays 0
+  join dos filhos (ms até 1º quadro):  | metadata recepção: {"captureTime":12967.5,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":12969.5,"rtpTimestamp":3221411783,"senderCaptureTimeOffset":0,"synchronizationSource":3336372921,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: null | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 3 filho(s), tick livre (janela 40 s, loadavg 5.17/5.25/15.05 → 5.67/5.40/14.69) ---
+  A    id-lat média 42.7 med 49.3 p95 49.6 max 49.8 ms | carimbo média 23.0 med 28.9 p95 30.3 (sem carimbo 0) | 54.9 fps, pulados 219, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 38.2 med 32.8 p95 49.6 max 66.4 ms | carimbo média 19.3 med 14.1 p95 31.1 (sem carimbo 0) | 55.7 fps, pulados 192, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 143.0 med 66.2 p95 482.6 max 566.3 ms | carimbo média 24.4 med 22.6 p95 44.0 (sem carimbo 0) | 52.6 fps, pulados 352, inválidos 0, gaps>100ms 2 (>200ms 2), gapMax 300 | 1280x720
+  B2   id-lat média 73.4 med 66.0 p95 132.8 max 216.2 ms | carimbo média 26.2 med 25.2 p95 45.0 (sem carimbo 0) | 49.0 fps, pulados 468, inválidos 0, gaps>100ms 3 (>200ms 1), gapMax 233 | 1280x720
+  B3   id-lat média 123.6 med 82.5 p95 516.0 max 616.2 ms | carimbo média 27.5 med 27.7 p95 45.2 (sem carimbo 0) | 48.3 fps, pulados 494, inválidos 0, gaps>100ms 7 (>200ms 7), gapMax 583 | 1280x720
+  A2−A (ruído de fase entre navegadores): média -4.4 med 0.0 p95 16.7 | R−A: média n/d med n/d
+  B1−A  média 94.6 med 33.3 p95 433.2 max 500.0 (n=1890) | B1−A2 média 99.7 med 33.3 p95 433.2 max 500.0
+  B2−A  média 32.5 med 33.2 p95 99.9 max 166.7 (n=1774) | B2−A2 média 35.2 med 33.2 p95 83.2 max 183.3
+  B3−A  média 83.2 med 33.4 p95 466.7 max 566.7 (n=1745) | B3−A2 média 85.0 med 33.4 p95 450.0 max 583.4
+  decodif.: A 60.1 fps chaves 42 | R 59.8 fps chaves 42 | B 60.9fps/chaves 43/frz 0/perda 0/jb 8ms ; 59.9fps/chaves 43/frz 1/perda 0/jb 8ms ; 60.4fps/chaves 42/frz 1/perda 0/jb 8ms
+  CPU (núcleos): host 1.34 A 0.75 R 0.56 B(4 pgs) 2.69
+  R: recebidos 2397 (chaves 42), injetados 7269 de 7536 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 13.30/359.20/569.0 ms, pedidos acima 0 (feitos 0), replays 3
+  join dos filhos (ms até 1º quadro): 196, 195, 201 | metadata recepção: {"captureTime":14051,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":14053.29999999702,"rtpTimestamp":14163083,"senderCaptureTimeOffset":0,"synchronizationSource":1426008971,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":1548467386,"synchronizationSource":2100771917,"dependencies":[638],"frameId":639,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+  (rodada contaminada por carga externa: loadavg 8.8/6.1/14.6 → 7.8/6.2/14.3; repetindo, tentativa 1/4)
+
+--- custo: R com 6 filho(s), tick livre (janela 40 s, loadavg 4.24/5.41/13.47 → 9.64/6.61/13.49) ---
+  A    id-lat média 44.6 med 49.1 p95 49.5 max 66.2 ms | carimbo média 28.1 med 32.0 p95 34.3 (sem carimbo 0) | 52.2 fps, pulados 352, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 67 | 1280x720
+  A2   id-lat média 46.5 med 49.2 p95 64.3 max 66.3 ms | carimbo média 25.1 med 27.6 p95 30.7 (sem carimbo 0) | 50.6 fps, pulados 420, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 400 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 148.5 med 82.4 p95 632.7 max 982.7 ms | carimbo média 34.2 med 35.5 p95 47.6 (sem carimbo 0) | 46.8 fps, pulados 563, inválidos 0, gaps>100ms 11 (>200ms 11), gapMax 950 | 1280x720
+  B2   id-lat média 79.6 med 82.1 p95 99.2 max 365.8 ms | carimbo média 33.9 med 35.3 p95 47.8 (sem carimbo 0) | 45.3 fps, pulados 639, inválidos 0, gaps>100ms 3 (>200ms 3), gapMax 300 | 1280x720
+  B3   id-lat média 74.8 med 81.2 p95 99.0 max 199.5 ms | carimbo média 33.3 med 34.1 p95 47.3 (sem carimbo 0) | 44.8 fps, pulados 670, inválidos 0, gaps>100ms 2 (>200ms 0), gapMax 150 | 1280x720
+  B4   id-lat média 75.0 med 81.7 p95 99.1 max 99.5 ms | carimbo média 34.2 med 35.1 p95 48.1 (sem carimbo 0) | 43.9 fps, pulados 712, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 217 | 1280x720
+  B5   id-lat média 119.4 med 99.2 p95 299.2 max 449.4 ms | carimbo média 56.8 med 50.8 p95 101.7 (sem carimbo 0) | 45.2 fps, pulados 669, inválidos 0, gaps>100ms 5 (>200ms 5), gapMax 417 | 1280x720
+  B6   id-lat média 132.4 med 82.4 p95 666.1 max 832.7 ms | carimbo média 34.8 med 35.9 p95 47.5 (sem carimbo 0) | 44.6 fps, pulados 676, inválidos 0, gaps>100ms 15 (>200ms 15), gapMax 800 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 1.8 med 0.1 p95 16.8 | R−A: média n/d med n/d
+  B1−A  média 101.0 med 33.3 p95 583.3 max 950.0 (n=1650) | B1−A2 média 95.6 med 33.3 p95 550.0 max 950.0
+  B2−A  média 35.4 med 33.2 p95 50.0 max 316.7 (n=1606) | B2−A2 média 32.0 med 33.2 p95 49.9 max 333.2
+  B3−A  média 30.8 med 33.3 p95 50.0 max 166.7 (n=1573) | B3−A2 média 28.4 med 33.3 p95 50.0 max 150.0
+  B4−A  média 31.0 med 33.3 p95 50.0 max 66.8 (n=1533) | B4−A2 média 29.2 med 33.3 p95 50.0 max 66.7
+  B5−A  média 75.2 med 50.0 p95 250.0 max 416.6 (n=1559) | B5−A2 média 73.0 med 50.0 p95 266.6 max 416.6
+  B6−A  média 87.9 med 33.3 p95 633.3 max 799.9 (n=1565) | B6−A2 média 86.9 med 33.3 p95 649.8 max 800.0
+  decodif.: A 59.3 fps chaves 41 | R 59.0 fps chaves 41 | B 60.0fps/chaves 42/frz 0/perda 0/jb 8ms ; 59.5fps/chaves 42/frz 0/perda 0/jb 8ms ; 59.2fps/chaves 42/frz 0/perda 0/jb 8ms ; 59.0fps/chaves 42/frz 1/perda 0/jb 8ms ; 59.5fps/chaves 42/frz 1/perda 0/jb 29ms ; 59.5fps/chaves 42/frz 1/perda 0/jb 8ms
+  CPU (núcleos): host 1.47 A 0.82 R 0.85 B(7 pgs) 4.90
+  R: recebidos 2374 (chaves 41), injetados 14350 de 15198 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 10.60/161.50/919.4 ms, pedidos acima 0 (feitos 0), replays 6
+  join dos filhos (ms até 1º quadro): 193, 198, 195, 205, 212, 227 | metadata recepção: {"captureTime":15261.5,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":15265.5,"rtpTimestamp":3944372936,"senderCaptureTimeOffset":0,"synchronizationSource":179596262,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":453046533,"synchronizationSource":1763603318,"dependencies":[740],"frameId":741,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+##### e2-filhos-upstream-idr1000.log
+E2 — repasse sem recodificar. Máquina: {"cpu":"AMD Ryzen 7 7435HS","nucleos":16,"ramGiB":15,"chrome":"Google Chrome for Testing 151.0.7922.34","loadavgInicio":[9.64,6.61,13.49]}
+
+--- custo: R com transform e 0 filhos, tick livre (janela 40 s, loadavg 4.60/5.62/12.56 → 3.61/5.22/12.13) ---
+  A    id-lat média 49.1 med 49.4 p95 49.5 max 49.7 ms | carimbo média 33.7 med 33.9 p95 34.7 (sem carimbo 0) | 59.0 fps, pulados 49, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 46.9 med 49.3 p95 49.5 max 49.7 ms | carimbo média 27.7 med 30.0 p95 30.8 (sem carimbo 0) | 58.6 fps, pulados 71, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 383 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  A2−A (ruído de fase entre navegadores): média -2.3 med 0.0 p95 0.1 | R−A: média n/d med n/d
+  decodif.: A 60.0 fps chaves 42 | R 59.8 fps chaves 42 | B 
+  CPU (núcleos): host 1.12 A 0.66 R 0.29 B(1 pgs) 0.64
+  R: recebidos 2400 (chaves 42), injetados 0 de 0 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca n/d/n/d/n/d ms, pedidos acima 0 (feitos 0), replays 0
+  join dos filhos (ms até 1º quadro):  | metadata recepção: {"captureTime":12973.8,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":12975.09999999404,"rtpTimestamp":306262696,"senderCaptureTimeOffset":0,"synchronizationSource":797744677,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: null | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 3 filho(s), tick livre (janela 40 s, loadavg 4.00/5.22/12.02 → 4.82/5.35/11.75) ---
+  A    id-lat média 47.1 med 49.4 p95 49.6 max 66.2 ms | carimbo média 27.1 med 29.2 p95 30.3 (sem carimbo 0) | 56.8 fps, pulados 145, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 50 | 1280x720
+  A2   id-lat média 48.6 med 49.4 p95 66.0 max 66.3 ms | carimbo média 29.6 med 30.3 p95 46.7 (sem carimbo 0) | 55.3 fps, pulados 211, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 400 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 63.5 med 65.9 p95 82.8 max 99.6 ms | carimbo média 22.4 med 21.1 p95 41.8 (sem carimbo 0) | 49.7 fps, pulados 442, inválidos 0, gaps>100ms 3 (>200ms 2), gapMax 650 | 1280x720
+  B2   id-lat média 440.1 med 166.0 p95 1666.2 max 2016.2 ms | carimbo média 396.4 med 122.7 p95 1618.0 (sem carimbo 0) | 47.7 fps, pulados 639, inválidos 0, gaps>100ms 3 (>200ms 3), gapMax 650 | 1280x720
+  B3   id-lat média 70.5 med 66.1 p95 82.9 max 99.6 ms | carimbo média 29.4 med 30.6 p95 46.1 (sem carimbo 0) | 48.9 fps, pulados 483, inválidos 0, gaps>100ms 3 (>200ms 2), gapMax 683 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 1.4 med 0.0 p95 16.7 | R−A: média n/d med n/d
+  B1−A  média 16.7 med 16.6 p95 33.3 max 50.1 (n=1874) | B1−A2 média 14.9 med 16.6 p95 33.4 max 66.7
+  B2−A  média 340.6 med 116.6 p95 1566.7 max 1883.3 (n=1726) | B2−A2 média 355.4 med 116.7 p95 1600.0 max 1883.4
+  B3−A  média 23.8 med 16.7 p95 49.9 max 66.7 (n=1841) | B3−A2 média 21.9 med 16.6 p95 49.9 max 66.7
+  decodif.: A 60.0 fps chaves 41 | R 58.6 fps chaves 41 | B 58.5fps/chaves 41/frz 3/perda 0/jb 8ms ; 59.1fps/chaves 43/frz 3/perda 0/jb 151ms ; 58.5fps/chaves 41/frz 3/perda 0/jb 8ms
+  CPU (núcleos): host 1.36 A 0.78 R 0.57 B(4 pgs) 2.72
+  R: recebidos 2353 (chaves 41), injetados 7053 de 7551 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 10.70/18.60/30.4 ms, pedidos acima 71 (feitos 4), replays 0
+  join dos filhos (ms até 1º quadro): 649, 1353, 837 | metadata recepção: {"captureTime":16350.8,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":16352.29999999702,"rtpTimestamp":3007754976,"senderCaptureTimeOffset":0,"synchronizationSource":93109444,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":3225776828,"synchronizationSource":1306515456,"dependencies":[780],"frameId":781,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+--- custo: R com 6 filho(s), tick livre (janela 40 s, loadavg 4.88/5.27/11.52 → 8.08/6.09/11.53) ---
+  A    id-lat média 45.1 med 49.3 p95 49.7 max 66.3 ms | carimbo média 27.2 med 30.8 p95 33.5 (sem carimbo 0) | 52.9 fps, pulados 340, inválidos 0, gaps>100ms 1 (>200ms 1), gapMax 250 | 1280x720
+  A2   id-lat média 45.4 med 49.2 p95 65.1 max 66.2 ms | carimbo média 24.3 med 27.5 p95 42.7 (sem carimbo 0) | 51.3 fps, pulados 411, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 67 | 1280x720
+  R    id-lat média n/d med n/d p95 n/d max n/d ms | carimbo média n/d med n/d p95 n/d (sem carimbo 0) | 0.0 fps, pulados 0, inválidos 0, gaps>100ms 0 (>200ms 0), gapMax 0 | 0x0
+  B1   id-lat média 75.8 med 82.3 p95 99.1 max 99.6 ms | carimbo média 33.9 med 34.9 p95 47.3 (sem carimbo 0) | 42.8 fps, pulados 756, inválidos 0, gaps>100ms 5 (>200ms 5), gapMax 767 | 1280x720
+  B2   id-lat média 344.7 med 164.0 p95 1499.3 max 1632.8 ms | carimbo média 300.2 med 115.7 p95 1454.7 (sem carimbo 0) | 40.0 fps, pulados 960, inválidos 0, gaps>100ms 5 (>200ms 5), gapMax 783 | 1280x720
+  B3   id-lat média 74.6 med 81.6 p95 98.7 max 99.6 ms | carimbo média 33.0 med 33.9 p95 46.7 (sem carimbo 0) | 41.4 fps, pulados 824, inválidos 0, gaps>100ms 5 (>200ms 4), gapMax 783 | 1280x720
+  B4   id-lat média 75.3 med 81.9 p95 99.2 max 99.6 ms | carimbo média 33.7 med 35.0 p95 47.4 (sem carimbo 0) | 41.4 fps, pulados 838, inválidos 0, gaps>100ms 5 (>200ms 5), gapMax 783 | 1280x720
+  B5   id-lat média 76.4 med 82.3 p95 99.3 max 99.6 ms | carimbo média 34.9 med 35.9 p95 48.0 (sem carimbo 0) | 43.0 fps, pulados 790, inválidos 0, gaps>100ms 5 (>200ms 5), gapMax 767 | 1280x720
+  B6   id-lat média 76.8 med 82.5 p95 99.4 max 99.7 ms | carimbo média 35.2 med 36.1 p95 47.9 (sem carimbo 0) | 42.4 fps, pulados 816, inválidos 0, gaps>100ms 5 (>200ms 5), gapMax 767 | 1280x720
+  A2−A (ruído de fase entre navegadores): média 0.4 med -0.1 p95 16.6 | R−A: média n/d med n/d
+  B1−A  média 31.4 med 33.2 p95 49.9 max 66.7 (n=1506) | B1−A2 média 29.7 med 33.3 p95 50.0 max 66.8
+  B2−A  média 260.5 med 116.5 p95 1416.6 max 1533.3 (n=1338) | B2−A2 média 258.3 med 100.2 p95 1416.7 max 1550.0
+  B3−A  média 30.3 med 33.2 p95 49.9 max 66.6 (n=1440) | B3−A2 média 28.5 med 33.3 p95 50.1 max 66.8
+  B4−A  média 30.9 med 33.2 p95 49.9 max 66.7 (n=1408) | B4−A2 média 29.3 med 33.3 p95 50.1 max 66.8
+  B5−A  média 32.1 med 33.3 p95 50.0 max 66.7 (n=1462) | B5−A2 média 30.5 med 33.3 p95 50.1 max 66.8
+  B6−A  média 32.6 med 33.3 p95 50.0 max 66.7 (n=1451) | B6−A2 média 31.0 med 33.4 p95 50.1 max 66.8
+  decodif.: A 59.0 fps chaves 41 | R 54.9 fps chaves 41 | B 54.9fps/chaves 41/frz 5/perda 0/jb 8ms ; 56.1fps/chaves 42/frz 5/perda 0/jb 133ms ; 55.0fps/chaves 41/frz 5/perda 0/jb 8ms ; 55.0fps/chaves 41/frz 5/perda 0/jb 8ms ; 55.0fps/chaves 41/frz 5/perda 0/jb 8ms ; 55.0fps/chaves 41/frz 5/perda 0/jb 8ms
+  CPU (núcleos): host 1.47 A 0.82 R 0.81 B(7 pgs) 4.64
+  R: recebidos 2207 (chaves 41), injetados 13237 de 15120 vagas de isca, cópia 0.100/0.200 ms (p50/p95), chegada→isca 9.90/19.10/33.7 ms, pedidos acima 200 (feitos 10), replays 0
+  join dos filhos (ms até 1º quadro): 695, 1320, 836, 826, 894, 846 | metadata recepção: {"captureTime":19747,"contributingSources":[],"mimeType":"video/H264","payloadType":102,"receiveTime":19750.39999999106,"rtpTimestamp":847938317,"senderCaptureTimeOffset":0,"synchronizationSource":1387211793,"height":0,"spatialIndex":0,"temporalIndex":0,"width":0} | isca: {"contributingSources":[],"mimeType":"video/H264","payloadType":102,"rtpTimestamp":1922855642,"synchronizationSource":1578168227,"dependencies":[994],"frameId":995,"height":90,"spatialIndex":0,"temporalIndex":0,"width":160} | setMetadata false sendKeyFrameRequest true
+
+##### e2-chave.log
+E2 — repasse sem recodificar. Máquina: {"cpu":"AMD Ryzen 7 7435HS","nucleos":16,"ramGiB":15,"chrome":"Google Chrome for Testing 151.0.7922.34","loadavgInicio":[5.85,10.7,52.78]}
+
+--- chave: estratégia upstream, IDR periódico não ms, run 1 ---
+  entrada de filho em R (ms até 1º quadro): 193, 199, 569, 198, 194 | med 198
+  latência 2,5–4,5 s após a entrada (média, ms): filho 67, 105, 65, 61, 64 | A no mesmo instante 49, 49, 49, 49, 49
+  PLI do filho B → chave decodificada em B (ms): 106, 118, 109, 117, 116 | PLI do A direto: 156, 576, 516
+  R: pedidos acima 123 (feitos 10), replays do cache 0, chaves recebidas 13, injetadas 10, quadros 2338/1439 | host: chaves para A 4
+
+--- chave: estratégia upstream, IDR periódico não ms, run 2 ---
+  entrada de filho em R (ms até 1º quadro): 211, 196, 216, 260, 196 | med 211
+  latência 2,5–4,5 s após a entrada (média, ms): filho 106, 151, 56, 57, 56 | A no mesmo instante 40, 39, 40, 41, 41
+  PLI do filho B → chave decodificada em B (ms): 112, 116, 106, 113, 113 | PLI do A direto: 166, 521, 516
+  R: pedidos acima 82 (feitos 10), replays do cache 0, chaves recebidas 13, injetadas 10, quadros 2445/1436 | host: chaves para A 4
+
+--- chave: estratégia upstream, IDR periódico não ms, run 3 ---
+  entrada de filho em R (ms até 1º quadro): 193, 412, 950, 197, 700 | med 412
+  latência 2,5–4,5 s após a entrada (média, ms): filho 56, 70, 56, 58, 56 | A no mesmo instante 41, 42, 49, 49, 49
+  PLI do filho B → chave decodificada em B (ms): 112, 112, 104, 118, 103 | PLI do A direto: 215, 526, 533
+  R: pedidos acima 251 (feitos 12), replays do cache 0, chaves recebidas 13, injetadas 10, quadros 2317/1436 | host: chaves para A 4
+
+--- chave: estratégia upstream, IDR periódico 1000 ms, run 1 ---
+  entrada de filho em R (ms até 1º quadro): 261, 257, 204, 212, 576 | med 257
+  latência 2,5–4,5 s após a entrada (média, ms): filho 55, 56, 57, 57, 110 | A no mesmo instante 41, 46, 49, 49, 84
+  PLI do filho B → chave decodificada em B (ms): 110, 107, 111, 165, 676 | PLI do A direto: 163, 566, 476
+  R: pedidos acima 190 (feitos 11), replays do cache 0, chaves recebidas 41, injetadas 30, quadros 2168/1395 | host: chaves para A 4
+
+--- chave: estratégia upstream, IDR periódico 1000 ms, run 2 ---
+  entrada de filho em R (ms até 1º quadro): 321, 197, 192, 214, 760 | med 214
+  latência 2,5–4,5 s após a entrada (média, ms): filho 57, 75, 139, 56, 60 | A no mesmo instante 45, 49, 49, 49, 49
+  PLI do filho B → chave decodificada em B (ms): 317, 103, 110, 103, 115 | PLI do A direto: 167, 417, 516
+  R: pedidos acima 180 (feitos 11), replays do cache 0, chaves recebidas 42, injetadas 30, quadros 2392/1438 | host: chaves para A 4
+
+--- chave: estratégia upstream, IDR periódico 1000 ms, run 3 ---
+  entrada de filho em R (ms até 1º quadro): 214, 214, 198, 208, 197 | med 208
+  latência 2,5–4,5 s após a entrada (média, ms): filho 90, 81, 56, 56, 105 | A no mesmo instante 41, 41, 41, 49, 49
+  PLI do filho B → chave decodificada em B (ms): 315, 109, 164, 212, 110 | PLI do A direto: 159, 317, 457
+  R: pedidos acima 115 (feitos 10), replays do cache 0, chaves recebidas 42, injetadas 30, quadros 2425/1436 | host: chaves para A 4
+
+--- chave: estratégia cache, IDR periódico 1000 ms, run 1 ---
+  entrada de filho em R (ms até 1º quadro): 196, 145, 149, 148, 156 | med 149
+  latência 2,5–4,5 s após a entrada (média, ms): filho 1010, 382, 987, 350, 793 | A no mesmo instante 44, 49, 50, 50, 49
+  PLI do filho B → chave decodificada em B (ms): 463, 66, 394, 58, 233 | PLI do A direto: 517, 532, 514
+  R: pedidos acima 0 (feitos 0), replays do cache 10, chaves recebidas 40, injetadas 35, quadros 2378/1774 | host: chaves para A 4
+
+--- chave: estratégia cache, IDR periódico 1000 ms, run 2 ---
+  entrada de filho em R (ms até 1º quadro): 149, 153, 148, 142, 131 | med 148
+  latência 2,5–4,5 s após a entrada (média, ms): filho 749, 131, 69, 70, 505 | A no mesmo instante 41, 49, 49, 48, 49
+  PLI do filho B → chave decodificada em B (ms): 226, 50, 55, 67, 50 | PLI do A direto: 116, 522, 517
+  R: pedidos acima 0 (feitos 0), replays do cache 10, chaves recebidas 40, injetadas 32, quadros 2395/1574 | host: chaves para A 4
+
+--- chave: estratégia cache, IDR periódico 1000 ms, run 3 ---
+  entrada de filho em R (ms até 1º quadro): 159, 149, 152, 150, 148 | med 150
+  latência 2,5–4,5 s após a entrada (média, ms): filho 253, 65, 910, 234, 529 | A no mesmo instante 41, 49, 49, 49, 49
+  PLI do filho B → chave decodificada em B (ms): 59, 59, 244, 66, 50 | PLI do A direto: 57, 517, 524
+  R: pedidos acima 0 (feitos 0), replays do cache 10, chaves recebidas 41, injetadas 34, quadros 2464/1668 | host: chaves para A 4
+

@@ -198,10 +198,113 @@ Esforço: 3–5 semanas de uma pessoa [H], sem base de medição. **Recomendaç�
 4. **Automático** para quem mede upload bom.
 5. **Liga sozinha** quando a malha não basta (porta da ADR 0030 cheia).
 
+## E2 — medido
+
+Executado em 2026-10-02 por `e2e/bench/estudo-repasse-e2.mjs` (nenhum código de produção alterado; o protótipo do repassador vive dentro do script). Saída bruta das rodadas citadas: `e2e/bench/estudo-repasse-e2.resultados.txt`.
+
+### Método
+
+- **Papéis**, cada um num Chromium próprio (`chromium.launchServer`, para ler a CPU da árvore de processos em `/proc`): *host* (fonte sintética 1280×720@60 com movimento, `CodificadorWebCodecs` real, H.264 6 Mbps, injeção por `FilaDeInjecao` real, isca 160×90 por sender), *A* (espectador direto, controle), *R* (espectador que repassa), *B* (navegador dos filhos de R, mais *A2*, um segundo espectador direto do host no mesmo navegador dos filhos).
+- **Repasse sem recodificar:** em R, um `RTCRtpScriptTransform` de **recepção** copia `data`+tipo de cada quadro para a `FilaDeInjecao` do próprio worker de R e devolve o original (R continua decodificando). Cada filho tem uma `RTCPeerConnection` de R cujo sender leva uma isca 160×90 com o transform de injeção — o mesmo mecanismo do D0b, com o transform de recepção no lugar do `VideoEncoder`. A isca é "tocada" (`requestFrame`) por um relógio de R; ver "Tique" abaixo, que foi o achado principal. SDP trocado direto pelo orquestrador, sem trickle, só candidatos de host.
+- **Latência autoritativa (contador de quadro):** a fonte desenha uma faixa binária (20 bits do número do quadro + 4 de verificação) e registra `performance.timeOrigin + performance.now()` do desenho; cada espectador lê a faixa por `requestVideoFrameCallback` + canvas e registra o `expectedDisplayTime` no mesmo relógio (mesma máquina). Atraso = exibição − desenho. Efeito por salto = exibição em B − exibição em A (mesmo número de quadro). O `expectedDisplayTime` é quantizado em 16,7 ms (vsync do headless), então a **mediana** de uma diferença cai em múltiplos de 16,7 ms; o que vale é a **média** (a fase relativa varre o ciclo ao longo de 60 s) e o controle `A2 − A` (ruído de fase entre navegadores: média entre −9 e +6 ms nas rodadas abaixo).
+- **Carimbo (`abs-capture-time` + `getSynchronizationSources`)** calculado em paralelo, como em `e2e/latencia.e2e.mjs`.
+- 60 s de medida após 10 s de aquecimento, 3 rodadas por configuração; custo de CPU em 40 s. `jitterBufferTarget` = 20 ms em todos os espectadores.
+- **Limites:** Chromium for Testing **151.0.7922.34** (o 152/Electron 44 não foi exercitado); headless, codec de software (OpenH264/FFmpeg), loopback (RTT ≈ 0, sem perda, sem `tc netem` — não há root; a matriz de RTT 20/40/80 ms e perda 0/1/2 % do plano **não foi rodada**); 720p60, não 1080p60; Ryzen 7 7435HS (16 threads), 15 GiB. **A máquina é compartilhada** com outros agentes (build, e2e, Chromium): o loadavg de 1 min ficou em 3–7 durante as rodadas válidas (parte dele é o próprio experimento, ~4–5 Chromium) e chegou a **280** durante outro processo; duas rodadas contaminadas foram descartadas e refeitas (o script espera loadavg ≤ 4,5 antes de cada rodada e marca a contaminada). Pior: o Chromium de R medindo a faixa (rVFC + leitura de canvas a 60 fps) gasta ~0,45 núcleo só nisso — a CPU de R abaixo foi medida **sem** instrumentar R.
+
+### Resultado 1 — repasse sem recodificar funciona no Chromium 151
+
+Sim, no navegador (o protótipo inteiro roda numa página, então vale para "app e navegador" no que toca a API):
+
+- B decodifica 1280×720 a **60,0 fps**, 0 perda de pacote, 0 congelamentos, **3 de 3 rodadas de 60 s** (com o tique livre, abaixo); R continua decodificando a 60 fps; o decoder de B fica feliz com `data` copiado de um quadro de **recepção** injetado num quadro de **isca** — sem IDR extra. A isca só entrega ao filho a partir de um IDR na ponta (regra da `FilaDeInjecao`), então o `type` da isca é coerente com o conteúdo.
+- API sondada em runtime: `sendKeyFrameRequest()` **presente** no transformer de recepção; `RTCEncodedVideoFrame.setMetadata` **ausente** (como previsto); o metadado do quadro de recepção traz `captureTime`, `receiveTime`, `senderCaptureTimeOffset`, `rtpTimestamp`, `mimeType`, `payloadType`, mas **`width`/`height` = 0** para H.264 (o decoder lê o SPS; irrelevante na fase 1).
+- Custo de **cópia** em R: 0,1 ms (p50) / 0,2 ms (p95) por quadro; chegada → entrega à isca (com o tique livre): p50 4,6–4,8 ms, p95 11,6–11,9 ms, máx. 17 ms.
+
+### Resultado 2 — latência por salto
+
+Um filho, 60 s por rodada, B − A (média; mediana entre parênteses) e controle A2 − A:
+
+| tique da isca de R | rodada | B − A (ms) | B − A2 (ms) | A2 − A (ms) | chegada→isca p50 (ms) | B decodifica |
+|---|---|---|---|---|---|---|
+| **por chegada** (como o anfitrião de produção) | 1 | 130 (167) | 140 | −8,5 | 157 | 58,0 fps, 1 congelamento |
+| | 2 | 254 (234) | 248 | +6,0 | 226 | 57,9 fps, 1 congelamento |
+| | 3 | 275 (300) | 281 | −7,5 | 297 | 57,7 fps, 2 congelamentos |
+| **livre, 120 Hz** | 1 | **8,4** (0) | 12,2 | −3,9 | 4,8 | 60,0 fps, 0 |
+| | 2 | **12,6** (16,6) | 12,0 | +0,4 | 4,6 | 60,0 fps, 0 |
+| | 3 | **9,6** (16,5) | 18,5 | −9,1 | 4,7 | 60,0 fps, 0 |
+
+- **Com tique livre o salto custa ≈ +10 a +19 ms** (média de B − A2, o controle no mesmo navegador; ~+12 ms de B − A descontado o ruído). É o que a resposta 3 do dono estimou (+10 a +25 ms na mesma região); o limite de fase 0 (≤ 60 ms por salto a RTT 20 ms) **passa com folga, mas em loopback**: numa rede real soma-se ≈ RTT(R,B)/2 mais a serialização do quadro. Latência absoluta do host: A ≈ 41–49 ms (média; mediana 49 ms), B ≈ 57 ms (média), p95 66 ms, máx. 83 ms.
+- **Com tique por chegada (o desenho de produção copiado sem pensar) o salto custa +130 a +275 ms e NÃO é estável**: cada vaga de isca leva um quadro, a isca de R só produz vaga depois de a chegada "tocá-la" e passar pelo encoder da isca, então qualquer rajada em R vira fila permanente na `FilaDeInjecao` (chegada→isca p50 157–297 ms, até 694 ms). Nas 3 rodadas R também teve um vão de 1,3–1,8 s sem quadros no início da janela, e a fila nunca mais drenou. No **anfitrião** trocar o tique por chegada pelo livre não mudou nada (A em 32,7 ms nos dois), porque lá o encoder é o gargalo e a fila não acumula; em R não há encoder, e o relógio das vagas precisa ser **independente das chegadas** (ver implicações).
+- Quadros-chave: 4 por janela de 60 s em A, R e B (igual no controle direto; não é efeito da cascata).
+- O fps "exibido" por rVFC em B (~53) é menor que o decodificado (60,0 pelo `getStats`): artefato do headless com várias páginas no mesmo navegador lendo canvas; vale o decodificado.
+
+### Resultado 3 — `abs-capture-time` NÃO atravessa o repasse
+
+O `captureTimestamp` que B lê é o carimbo da **isca de R** (instante do tique em R), não o do anfitrião: ficou em ≈ 21–25 ms (média) em B **independentemente do atraso real** — com o tique por chegada, B estava a 130–275 ms de atraso e o carimbo dizia 24–25 ms. A cascata esconde, portanto, o primeiro salto e todo atraso acumulado em R; o HUD de latência "captura até a tela" **mentiria** para filhos de repassador. O número verdadeiro só sai do contador de quadro (autoritativo, acima). Em Chromium 151 R **lê** o `captureTime` do host no metadado do quadro recebido, mas **não consegue escrevê-lo** no quadro da isca (`setMetadata` ausente), e o transform de envio não reaproveita o carimbo.
+
+### Resultado 4 — quadro-chave: duas estratégias (host sem/ com IDR periódico)
+
+Entrada de um filho novo em R e PLI do filho (`sendKeyFrameRequest()` no transform de recepção de B), 5 entradas por rodada × 3 rodadas:
+
+| estratégia | IDR periódico no host | entrada → 1º quadro em B | PLI de B → chave decodificada | notas |
+|---|---|---|---|---|
+| **A. pedir acima** (`sendKeyFrameRequest()` de R ao host) | não | mediana 198–412 ms; saltos a 569–950 ms | 103–118 ms | cada pedido vira um IDR no host visto por **todos** (A recebeu 4); pedidos de R a menos de 2 s do anterior esbarram no limite de 2 s por sender do host |
+| **A** | 1 s | mediana 208–257 ms; saltos a 576–760 ms | 103–676 ms | idem |
+| **B. cache** (R reenvia do último IDR guardado) | 1 s | mediana **148–150 ms**, estável | 50–463 ms (mediana ≈ 60) | sem tráfego acima; porém o filho entra **atrasado**: latência 2,5–4,5 s depois da entrada com média de 65 a 1010 ms por entrada (mediana ≈ 380 ms; A: 41–50 ms) — a rajada de P guardados, a 1 quadro por vaga, não é drenada |
+
+PLI de A (direto, controle) levou 57–576 ms (a janela de coalescência de 500 ms do host). A estratégia B só serve com um mecanismo de **alcançar** (vários quadros por vaga ou pular até o próximo IDR); o protótipo tentou só vagas extras (relógio de 120 Hz) e não bastou.
+
+### Resultado 5 — custo de R por filho e o que quebra com 3 e 6 filhos
+
+CPU de R (núcleos, 40 s, R **sem** leitura de faixa; tique livre 60 Hz; sem IDR periódico): **0,27–0,29 com 0 filhos** (o transform de recepção + cópia + decodificar/renderizar) → **0,38–0,42 com 1** → **0,55–0,57 com 3** → **0,81–0,85 com 6**. Marginal ≈ **0,09–0,11 núcleo por filho** (720p60, software, esta máquina) — abaixo dos 0,2 que a ADR usa para `K_MAX = 6`. Em CPU, 6 filhos cabem; **em estabilidade, ainda não**:
+
+| configuração (40 s) | R decodifica | filhos decodificam | congelamentos nos filhos | entrada dos filhos 2..k | pedidos acima / feitos |
+|---|---|---|---|---|---|
+| 3 filhos, tique livre **120 Hz**, só pedir acima | 50 fps | 50–52 fps | 5 | 1,9 s cada | 918 / 18 |
+| 6 filhos, 120 Hz | **34,6 fps** | 35–36 fps | 10–11 | 1,9 s cada | 2266 / 42 |
+| 3 filhos, **60 Hz** | 57,3 fps | 57–59 fps | 2 | — | 127 / 6 |
+| 6 filhos, 60 Hz | 55,6 fps | 56–58 fps | 2 | — | 63 / 6 |
+| 3 filhos, 60 Hz, IDR 1 s, **cache** | 59,8 fps | 60–61 fps | 0–1 | 0,2 s | 0 / 0 (3 replays) |
+| 6 filhos, 60 Hz, IDR 1 s, **cache** | 59,0 fps | 59–60 fps | 0–1 | 0,2 s | 0 / 0 (6 replays) |
+| 3 filhos, 60 Hz, IDR 1 s, pedir acima | 58,6 fps | 58–59 fps | 3 | 0,65–1,35 s | 71 / 4 |
+| 6 filhos, 60 Hz, IDR 1 s, pedir acima | 54,9 fps | 55–56 fps | 5 | 0,7–1,3 s | 200 / 10 |
+
+(Latência dos filhos nas linhas com cache: média 75–148 ms contra 62–76 ms com pedir acima, com picos de até 1 s; ver Resultado 4.) Duas causas distintas:
+
+1. **Relógio da isca a 120 Hz × k senders** (720 frames de isca por segundo em R com 6 filhos) sobrecarrega R: o fps que o próprio R recebe cai para 35–50, porque o anfitrião reduz a fila dele. A 60 Hz o problema some. A conta é "taxa × k", não só a taxa.
+2. **Pedido de IDR acima por entrada de filho:** cada pedido de R faz o anfitrião gerar IDR e (hipótese, não instrumentada nesta rodada) fazer o sender de R esperar o IDR na ponta descartando P — **R, e com ele todos os filhos, ficam 1,3–2 s sem quadro** (vãos de 1,3–2,0 s medidos em R e nos filhos exatamente nas configurações com mais pedidos: 18 → 42 pedidos feitos por 40 s coincidem com R caindo de 50 para 35 fps). E o filho 2..k espera ~1,9 s: o limite do anfitrião é **um IDR por sender a cada 2 s**, e para o anfitrião todos os filhos de R são o mesmo sender.
+
+### O que quebrou, em uma lista
+
+1. Tique por chegada em R: +130 a +275 ms e crescendo; relógio de vagas tem de ser livre.
+2. Isca a 120 Hz com 3–6 filhos: R a 35–50 fps.
+3. Pedir IDR acima por entrada de filho: vãos de ~1,5–2 s em R e na subárvore inteira, entrada do 2º filho em ~1,9 s.
+4. Cache de GOP com 1 quadro por vaga: entra rápido (150 ms) mas fica atrasado 0,1–1 s.
+5. `abs-capture-time`: some o primeiro salto.
+6. Medir dentro de R inflou a CPU dele em ~0,45 núcleo (o instrumento falsificava o custo).
+7. Duas rodadas lidas sob loadavg 280 (outro processo na máquina) — descartadas.
+
+### Implicações para o desenho
+
+- **Relógio das vagas:** a isca de R tica **livre** (sem acoplar à chegada), a ~60 Hz por filho quando houver 3 ou mais (≈ 360 vagas/s no total é o teto observado; 120 Hz serve a 1 filho e dá +10 ms; 60 Hz custa ~+8 ms a mais, em troca de estabilidade). Vaga sem quadro novo é descartada pelo transform (já é assim), então o custo ocioso é só o encoder da isca. **Nunca** acoplar vaga a chegada em quem não tem encoder para dar contrapressão.
+- **Estratégia de quadro-chave:** não usar `sendKeyFrameRequest()` por entrada de filho. Preferir **IDR periódico do anfitrião (≈ 1 s) + cache de GOP em R** — mas o cache exige um mecanismo de **alcançar**: o desenho atual não drena. Opções a medir: (a) pular o filho para o próximo IDR (custa ≤ 1 s de imagem parada para o recém-chegado, nada para os demais); (b) vários quadros por vaga (não testado; mesmo `rtpTimestamp` na isca pode quebrar o depacketizer). E o `FilaDeInjecao` do anfitrião deve **tratar PLI de R como pedido "para os filhos"**: entregar o IDR **sem** reter os P do sender de R (hoje o sender espera IDR na ponta e descarta P) — a ser confirmado com um contador de quadros descartados, que esta rodada não instrumentou.
+- **Carimbo de captura:** a latência medida no espectador de filho precisa de **carimbo no próprio quadro** (ex.: SEI `user_data_unregistered` com o instante de captura do host, escrito uma vez pelo anfitrião e repassado intacto — não testado), ou de `setMetadata` (Chromium 152/Electron 44 com `RTCEncodedFrameSetMetadata`, não testado). Sem isso o HUD de filho deve dizer "só a recepção" (já existe a origem `recepcao` em `PeerLink`).
+- **`K_MAX`:** o custo de CPU suporta 6 (0,09–0,11 núcleo/filho a 720p60), mas a estabilidade só foi limpa com **3 filhos** (cache, IDR 1 s, tique 60 Hz) ou 6 com o cache (R 59 fps, mas filhos atrasados). Manter `K_MAX` em 3 até o mecanismo de quadro-chave estar resolvido. 1080p60 e HW não foram medidos; o custo de decodificar/copiar sobe com o bitrate (cópia medida a 6 Mbps).
+- **Plano:** E2 "passa" nos critérios de latência e de congelamento **para 1 filho, em loopback**; os critérios de RTT 20/40/80 ms e perda 0/1/2 % **não foram avaliados** (precisam de `tc netem`/root). A fase 1 pode começar sobre o relógio livre, mas o quadro-chave é decisão de projeto em aberto, não detalhe.
+
+### Reprodução
+
+```bash
+node e2e/bench/estudo-repasse-e2.mjs --cenarios=latencia --ticks=chegada,livre   # RUNS=3 SEGUNDOS=60
+MEDIR_R=0 TICK_HZ=60 node e2e/bench/estudo-repasse-e2.mjs --cenarios=filhos --filhos=1,3,6 --ticks=livre
+ESTRATEGIA=cache IDR_MS=1000 MEDIR_R=0 TICK_HZ=60 node e2e/bench/estudo-repasse-e2.mjs --cenarios=filhos --filhos=3,6 --ticks=livre
+node e2e/bench/estudo-repasse-e2.mjs --cenarios=chave --tickchave=livre
+```
+Não precisa do dev server nem do signaling; o script serve a própria página e transpila `FilaDeInjecao` e `CodificadorWebCodecs` de `apps/web/src`.
+
 ## O que continua sem verificação
 
 - **Humano:** latência glass-to-glass com a câmera a 240 fps (E2 mede um proxy por relógio comum); FPS do jogo do repassador com MangoHud; taxa de sucesso de ICE entre espectadores atrás de CGNAT brasileiro, com amigos em operadoras diferentes — **a hipótese que mais pode quebrar o ganho**.
-- **Máquina:** E2, E3, E4 (`ip netns` + `tc netem`, root). Nenhum foi executado.
+- **Máquina:** E2 foi executado em loopback (ver "E2 — medido"); falta a matriz de RTT e perda (`ip netns` + `tc netem`, root), 1080p60 e codec de hardware. E3 e E4 não foram executados.
 - Os valores de latência por salto (25–45 ms), religação (0,7–2,0 s) e esforço (3–5 semanas) são [I]/[H].
 
 ## Referências

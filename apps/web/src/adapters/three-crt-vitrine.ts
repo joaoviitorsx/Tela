@@ -70,7 +70,11 @@ const VERTEX = /* glsl */ `
 `;
 
 const FRAGMENT = /* glsl */ `
-  precision mediump float;
+  // highp, e não mediump: em GPU que honra mediump como fp16 (NVIDIA via ANGLE,
+  // por exemplo) a semente do chiado passa de 65504 em ~3 s, vira inf, e o NaN
+  // apaga o tubo inteiro — chiado e "SEM SINAL" juntos. O SwiftShader do
+  // headless é fp32 nos dois casos, por isso só aparecia em máquina de verdade.
+  precision highp float;
 
   varying vec2 vUv;
 
@@ -104,7 +108,9 @@ const FRAGMENT = /* glsl */ `
 
     // Chiado em blocos e amostrado a 24 Hz: granulado de tubo, não cintilância
     // de pixel — e não fica pior em tela de alta densidade.
-    float n = ruido(floor(vUv * 220.0) + floor(uTempo * 24.0) * vec2(37.0, 17.0));
+    // O quadro do chiado dá a volta a cada 997: a home fica aberta por horas, e
+    // seno de argumento enorme perde precisão até em fp32.
+    float n = ruido(floor(vUv * 220.0) + mod(floor(uTempo * 24.0), 997.0) * vec2(37.0, 17.0));
     cor = mix(cor, vec3(n * 0.82 + 0.06), uChiado);
 
     // Scanlines na UV do vidro. Ver a nota no topo sobre por que aqui é ao

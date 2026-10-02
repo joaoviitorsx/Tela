@@ -249,7 +249,17 @@ mesmo encoder.
   - Instrumentei o `VideoEncoder` numa cópia temporária do e2e: **um encoder criado, zero erros, zero recriações**, e os IDRs coincidem com as trocas de degrau (720p ↔ 576p) que a carga da máquina provocou.
   - O mesmo e2e contra `develop` deu 21 quadros-chave.
   - Recepção, fluidez e reconexão passaram.
-- O `latencia` passou nas duas rodadas, antes e depois. Os números absolutos da segunda rodada refletem a carga (o mesh também subiu de 50 para 293 ms).
+- Rodado de novo com a carga em ~20: **passou**, com 2 quadros-chave em 30 s, 30 fps decodificados e sem reconexão.
+- O `latencia` passou em todas as rodadas. Para separar código de carga, rodei `MODOS=um-encode` intercalando `develop` (:5173) e esta árvore (:5183):
+
+  | Rodada | Árvore | Carga | Mediana capture→display | p95 |
+  |---|---|---|---|---|
+  | 1 | develop | 13,6 | 91,9 ms | 118,2 ms |
+  | 2 | esta | 14,7 | 41,6 ms | 55,9 ms |
+  | 3 | develop | 7,8 | 42,1 ms | 55,3 ms |
+  | 4 | esta | 4,5 | 41,6 ms | 55,2 ms |
+
+  Com a máquina estável, as duas árvores dão o mesmo resultado (rodadas 3 e 4). A rodada 1 é carga, não código.
 
 **Não mexi** em orçamento, malha nem degrau, então `malhas.sim.mjs` não se
 aplica.

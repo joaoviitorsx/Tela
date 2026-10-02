@@ -4,6 +4,7 @@ import type { MediaStats, MediaTransport } from '../core/ports/media-transport.j
 import type { CodificadorUnico, DepsDoCodificador } from './codificador-unico.js';
 import type { AvisoDoWorker, MensagemAoWorker } from './injecao-worker.js';
 import { type MeshTransportDeps, makeMeshTransport } from './mesh-transport.js';
+import { criarIsca } from './isca.js';
 import { CodificadorWebCodecs } from './webcodecs-codificador.js';
 
 /**
@@ -42,42 +43,6 @@ export type EncodeOnceDeps = MeshTransportDeps & {
  * no máximo isto, e o custo (~4–8 % de bits) só existe enquanto há repasse.
  */
 export const IDR_DO_REPASSE_MS = 2_000;
-
-/**
- * A isca: um canvas 160x90 ESTÁTICO, que emite um quadro por quadro capturado.
- *
- * A primeira versão era um clone da captura, encolhido — mesmo relógio, de
- * graça. Medido: ~3 quadros-chave por segundo na isca, sem PLI nenhum. A isca
- * carregava o movimento do jogo e a detecção de troca de cena do encoder
- * inseria IDR, que o worker lia como pedido do espectador e virava IDR no
- * codificador único — 112 IDRs em 60 s e o espectador a 20 fps.
- *
- * Estática, ela não tem cena para trocar. Um pixel alterna a cada quadro só
- * para o navegador não tratar o quadro como repetido; `requestFrame` a cada
- * quadro capturado mantém uma vaga por quadro real.
- */
-function criarIsca(): { readonly trilha: MediaStreamTrack; readonly tique: () => void } {
-  const canvas = document.createElement('canvas');
-  canvas.width = 160;
-  canvas.height = 90;
-  const ctx = canvas.getContext('2d', { alpha: false });
-  if (ctx === null) throw new Error('canvas 2D indisponível para a isca');
-  ctx.fillStyle = '#101010';
-  ctx.fillRect(0, 0, 160, 90);
-  const trilha = canvas.captureStream(0).getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
-  if (trilha === undefined) throw new Error('isca sem trilha');
-  trilha.contentHint = 'motion';
-  let par = false;
-  return {
-    trilha,
-    tique: () => {
-      par = !par;
-      ctx.fillStyle = par ? '#101010' : '#111111';
-      ctx.fillRect(0, 0, 1, 1);
-      trilha.requestFrame();
-    },
-  };
-}
 
 export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   /*

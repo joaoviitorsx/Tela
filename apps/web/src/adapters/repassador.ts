@@ -3,6 +3,7 @@ import { RelogioDeCaptura, type ReferenciaDeCaptura } from '../core/media/relogi
 import { PeerLink } from '../core/mesh/peer-link.js';
 import type { RelatorioDoRepassador } from '../core/mesh/protocolo-de-repasse.js';
 import type { AvisoDoWorker, MensagemAoWorker } from './injecao-worker.js';
+import { type Isca, criarIsca } from './isca.js';
 
 /**
  * O espectador que repassa o vídeo a outros (ADR 0031, fase 1).
@@ -57,31 +58,6 @@ const INICIO_DA_ARESTA_BPS = 2_500_000;
  */
 const DESCARTE_MAXIMO = 0.05;
 const RELATORIO_A_CADA_MS = 2_000;
-
-type Isca = { readonly trilha: MediaStreamTrack; readonly tique: () => void };
-
-function criarIsca(): Isca {
-  const canvas = document.createElement('canvas');
-  canvas.width = 160;
-  canvas.height = 90;
-  const ctx = canvas.getContext('2d', { alpha: false });
-  if (ctx === null) throw new Error('canvas 2D indisponível para a isca');
-  ctx.fillStyle = '#101010';
-  ctx.fillRect(0, 0, 160, 90);
-  const trilha = canvas.captureStream(0).getVideoTracks()[0] as CanvasCaptureMediaStreamTrack | undefined;
-  if (trilha === undefined) throw new Error('isca sem trilha');
-  trilha.contentHint = 'motion';
-  let par = false;
-  return {
-    trilha,
-    tique: () => {
-      par = !par;
-      ctx.fillStyle = par ? '#101010' : '#111111';
-      ctx.fillRect(0, 0, 1, 1);
-      trilha.requestFrame();
-    },
-  };
-}
 
 /** Navegador com o que o repasse precisa: Encoded Transform no receiver e no sender. */
 export function suportaRepasse(): boolean {

@@ -2,7 +2,7 @@ import { type EncodingPreset, type Prioridade, bitsPorPixel } from '@tela/shared
 import { alvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import type { MediaStats, MediaTransport } from '../core/ports/media-transport.js';
 import type { CodificadorUnico, DepsDoCodificador } from './codificador-unico.js';
-import type { AvisoDoWorker } from './injecao-worker.js';
+import type { AvisoDoWorker, MensagemAoWorker } from './injecao-worker.js';
 import { type MeshTransportDeps, makeMeshTransport } from './mesh-transport.js';
 import { CodificadorWebCodecs } from './webcodecs-codificador.js';
 
@@ -29,7 +29,19 @@ export type EncodeOnceDeps = MeshTransportDeps & {
   readonly criarWorker: () => Worker;
   /** Quem codifica. Padrão: WebCodecs sobre a trilha capturada. */
   readonly criarCodificador?: (deps: DepsDoCodificador) => CodificadorUnico;
+  /** Liga a cascata de repasse sem esperar a malha apertar — só e2e (ADR 0031). */
+  readonly forcarRepasse?: boolean;
 };
+
+/**
+ * Com filho de repassador na sala, um IDR a cada este tanto (ADR 0031, E2).
+ *
+ * O filho que entra no repassador espera um IDR; pedir um ao anfitrião a cada
+ * entrada (o PLI subindo) deixava o repassador e todos os filhos 1,5–2 s sem
+ * quadro a partir do 3º filho. Com IDR periódico ninguém pede: a entrada leva
+ * no máximo isto, e o custo (~4–8 % de bits) só existe enquanto há repasse.
+ */
+export const IDR_DO_REPASSE_MS = 2_000;
 
 /**
  * A isca: um canvas 160x90 ESTÁTICO, que emite um quadro por quadro capturado.
@@ -82,13 +94,34 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   });
   canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
     if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo, m.data.senders);
-    else codificador.definirAtraso(m.data.quadros);
+    else if (m.data.tipo === 'atraso') codificador.definirAtraso(m.data.quadros);
   };
 
+  /** O id de cada transform: a pausa da cascata tira aquele sender da fila. */
+  const idDoSender = new WeakMap<RTCRtpSender, string>();
   /** Todo sender de vídeo que nascer ganha o transform — o mesh não sabe. */
   const anexar = (sender: RTCRtpSender | undefined): void => {
     if (sender === undefined || sender.transform !== null) return;
-    sender.transform = new RTCRtpScriptTransform(worker, { id: crypto.randomUUID() });
+    const id = crypto.randomUUID();
+    idDoSender.set(sender, id);
+    sender.transform = new RTCRtpScriptTransform(worker, { id });
+  };
+
+  let idrPeriodico: ReturnType<typeof setInterval> | null = null;
+  const repasse = {
+    ...deps.repasse,
+    anfitriao: {
+      aoPausarSender: (sender: RTCRtpSender, pausado: boolean) => {
+        const id = idDoSender.get(sender);
+        // Ao voltar, a primeira vaga recoloca o sender na fila sozinha.
+        if (id !== undefined && pausado) worker.postMessage({ tipo: 'pausa', id } satisfies MensagemAoWorker);
+      },
+      aoMudarAtividade: (ativa: boolean) => {
+        if (idrPeriodico !== null) clearInterval(idrPeriodico);
+        idrPeriodico = ativa ? setInterval(() => codificador.pedirChave('repasse', 1), IDR_DO_REPASSE_MS) : null;
+      },
+      ...(deps.forcarRepasse === true ? { forcar: true } : {}),
+    },
   };
   const base = deps.createConnection ?? ((c: RTCConfiguration) => new RTCPeerConnection(c));
   const createConnection = (config: RTCConfiguration): RTCPeerConnection => {
@@ -109,7 +142,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     return pc;
   };
 
-  const mesh = makeMeshTransport({ ...deps, createConnection });
+  const mesh = makeMeshTransport({ ...deps, createConnection, repasse });
 
   let preset: EncodingPreset | null = null;
   let orcamento: number | null = null;
@@ -204,6 +237,8 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     },
 
     async disconnect() {
+      if (idrPeriodico !== null) clearInterval(idrPeriodico);
+      idrPeriodico = null;
       codificador.parar();
       isca.trilha.stop();
       worker.terminate();

@@ -253,7 +253,10 @@ export class ArvoreDeRepasse {
   private precisa(): boolean {
     if (this.forcada) return true;
     if (this.espectadores.size < MIN_ESPECTADORES) return false;
-    return this.portaCheia || (this.orcamento !== null && this.orcamento < LIMIAR_DO_REPASSE_BPS);
+    // Sem orçamento medido não há evidência de que a malha não basta — e a
+    // porta começa fechada em 5 até a primeira medição (ADR 0030).
+    if (this.orcamento === null) return false;
+    return this.portaCheia || this.orcamento < LIMIAR_DO_REPASSE_BPS;
   }
 
   private bitrate(): number {

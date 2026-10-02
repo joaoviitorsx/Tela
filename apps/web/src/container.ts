@@ -89,9 +89,32 @@ export const urlDosLancamentos = 'https://github.com/joaoviitorsx/Tela/releases'
 
 export const shareUrlFor = (slug: string): string => linkDoCanal(window.location.origin, slug);
 
+/**
+ * O worker do repassador (ADR 0031): o mesmo de injeção, em outro papel. Só
+ * nasce se este espectador for escolhido para repassar.
+ */
+const criarWorkerDeRepasse = (): Worker =>
+  new Worker(new URL('./adapters/injecao-worker.ts', import.meta.url), { type: 'module' });
+
+/**
+ * Liga a cascata sem esperar a malha apertar. Só o teste de ponta a ponta usa:
+ * com três navegadores num loopback a malha nunca aperta.
+ */
+export function repasseForcado(): boolean {
+  try {
+    return localStorage.getItem('tela.repasse') === 'forcar';
+  } catch {
+    return false;
+  }
+}
+
 /** Cada sessão recebe um transporte novo: canal reaberto não é canal reusado. */
 function createTransport(): MediaTransport {
-  return makeMeshTransport({ channel: makeWsSignaling(signalUrl), scheduler });
+  return makeMeshTransport({
+    channel: makeWsSignaling(signalUrl),
+    scheduler,
+    repasse: { espectador: { criarWorker: criarWorkerDeRepasse } },
+  });
 }
 
 export function createViewerSession(): ViewerSession {

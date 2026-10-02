@@ -1,6 +1,7 @@
-import type { EncodingPreset } from '@tela/shared';
+import type { EncodingPreset, IceServerConfig } from '@tela/shared';
 import { Emitter } from '../core/emitter.js';
 import { StatsSampler } from '../core/media/stats-sampler.js';
+import type { ArvoreDeRepasse } from '../core/mesh/arvore-de-repasse.js';
 import { isRelayed } from '../core/mesh/ice-config.js';
 import { IceLifecycle } from '../core/mesh/ice-lifecycle.js';
 import type { MeshTopology, PeerInfo } from '../core/mesh/mesh-topology.js';
@@ -11,8 +12,16 @@ import type {
   MediaTransport,
   TransportEvents,
 } from '../core/ports/media-transport.js';
+import {
+  VERSAO_DO_REPASSE,
+  ehDoRepasse,
+  lerDoAnfitriao,
+  lerDoEspectador,
+} from '../core/mesh/protocolo-de-repasse.js';
 import type { SignalingChannel } from '../core/ports/signaling-channel.js';
 import type { Scheduler } from '../core/ports/scheduler.js';
+import { FilhoDeRepasse } from './filho-de-repasse.js';
+import { Repassador, suportaRepasse } from './repassador.js';
 
 /**
  * `MediaTransport` sobre mesh P2P — a implementação viva do produto.
@@ -27,7 +36,43 @@ export type MeshTransportDeps = {
   readonly scheduler: Scheduler;
   /** Injetada para `core/` rodar sem DOM no teste e trocar de stack na Fase 3. */
   readonly createConnection?: (config: RTCConfiguration) => RTCPeerConnection;
+  /**
+   * A cascata de repasse (ADR 0031). Sem isto, nada dela existe: o anfitrião
+   * não coordena e o espectador não repassa nem anuncia nada.
+   */
+  readonly repasse?: DepsDoRepasse;
 };
+
+export type DepsDoRepasse = {
+  /** Anfitrião com "um encode, N envios": coordena a árvore. */
+  readonly anfitriao?: {
+    /** Um sender de vídeo parou (ou voltou): quem injeta tira da fila. */
+    readonly aoPausarSender: (sender: RTCRtpSender, pausado: boolean) => void;
+    /** Há filho de repassador: o codificador passa a mandar IDR periódico. */
+    readonly aoMudarAtividade: (ativa: boolean) => void;
+    /** Liga a cascata sem esperar a malha apertar — só teste de ponta a ponta. */
+    readonly forcar?: boolean;
+  };
+  /** Espectador que pode repassar: o worker de injeção, em papel de repassador. */
+  readonly espectador?: {
+    readonly criarWorker: () => Worker;
+  };
+};
+
+/** De quanto em quanto tempo a árvore reavalia (prazos, folgas, um filho novo). */
+const TIQUE_DO_REPASSE_MS = 2_000;
+/** De quanto em quanto tempo o espectador conta ao anfitrião o que pode. */
+const ESTADO_DO_REPASSE_MS = 5_000;
+
+/** RTT do par ICE nomeado, em ms. */
+function rttDoPar(report: RTCStatsReport): number | null {
+  let rtt: number | null = null;
+  report.forEach((s: { type?: string; nominated?: boolean; state?: string; currentRoundTripTime?: number }) => {
+    if (s.type !== 'candidate-pair' || s.nominated !== true || s.state !== 'succeeded') return;
+    if (typeof s.currentRoundTripTime === 'number') rtt = Math.round(s.currentRoundTripTime * 1000);
+  });
+  return rtt;
+}
 
 /**
  * Quanto tempo a mídia pode ficar em silêncio antes de ser dada por encerrada.
@@ -45,6 +90,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   const emitter = new Emitter<TransportEvents>();
   const outbound = new StatsSampler('outbound');
   const inbound = new StatsSampler('inbound');
+  /** A recepção pelo repassador tem contadores próprios: outro amostrador. */
+  const inboundDoPai = new StatsSampler('inbound');
   const createConnection =
     deps.createConnection ?? ((config: RTCConfiguration) => new RTCPeerConnection(config));
 
@@ -57,6 +104,12 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
   let iceLifecycle: IceLifecycle | null = null;
   let viewerNeedsRebuild = false;
   const recoveries = new Map<string, PeerRecovery>();
+  let arvore: ArvoreDeRepasse | null = null;
+  /** A capacidade que a sessão calculou para os caminhos DESTE anfitrião. */
+  let capacidadeDaMalha: number | null = null;
+  let filho: FilhoDeRepasse | null = null;
+  let repassador: Repassador | null = null;
+  let iceAtual: readonly IceServerConfig[] = [];
 
   const mediaStream = (): MediaStream => (stream ??= new MediaStream());
 
@@ -104,8 +157,25 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         maxPeers,
         onIssue: (_peerId, code) => console.warn('[peer-link]', code),
         onPeerStateChange: (peerId, state) => recoveryFor(peerId).observe(state),
+        ...(deps.repasse?.anfitriao === undefined ? {} : { aoPausarSender: deps.repasse.anfitriao.aoPausarSender }),
       });
       topology = mesh;
+
+      // A árvore só existe com "um encode": sem ele o teto é 5 e a malha basta.
+      const comRepasse = deps.repasse?.anfitriao;
+      if (comRepasse !== undefined) {
+        const { ArvoreDeRepasse: Arvore } = await import('../core/mesh/arvore-de-repasse.js');
+        const a = new Arvore({
+          enviar: (mensagem, para) => deps.channel.send(mensagem, para),
+          pausarVideo: (peerId, pausado) => void mesh.pausarVideo(peerId, pausado),
+          agora: () => deps.scheduler.now(),
+          aoMudarVagas: () => reenviarCapacidade(),
+          aoMudarAtividade: comRepasse.aoMudarAtividade,
+        });
+        if (comRepasse.forcar === true) a.forcar();
+        arvore = a;
+        unsubscribes.push(deps.scheduler.every(TIQUE_DO_REPASSE_MS, () => a.tique()));
+      }
       iceLifecycle = new IceLifecycle(deps.channel, deps.scheduler, (lease) => {
         mesh.setIceServers(lease.iceServers);
       });
@@ -116,6 +186,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         mesh.on('dropped', ({ peerId }) => {
           recoveries.get(peerId)?.close();
           recoveries.delete(peerId);
+          arvore?.saiu(peerId);
         }),
         deps.channel.on('peer-joined', ({ peerId, attemptId, nome, impressao }) => {
           if (nome !== undefined && impressao !== undefined) {
@@ -128,9 +199,19 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         deps.channel.on('peer-left', ({ peerId }) => {
           recoveries.get(peerId)?.close();
           recoveries.delete(peerId);
+          arvore?.saiu(peerId);
           mesh.drop(peerId);
         }),
-        deps.channel.on('signal', ({ from, payload }) => void mesh.handleSignal(from, payload)),
+        deps.channel.on('signal', ({ from, payload }) => {
+          // Mensagem da cascata nunca chega ao PeerLink, e mensagem inválida
+          // morre aqui (vem de um espectador: entrada não confiável).
+          if (ehDoRepasse(payload)) {
+            const mensagem = lerDoEspectador(payload);
+            if (mensagem !== null) arvore?.receber(from, mensagem);
+            return;
+          }
+          void mesh.handleSignal(from, payload);
+        }),
         /**
          * Queda do canal NÃO é queda da transmissão.
          *
@@ -169,6 +250,12 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       );
 
       return { maxPeers };
+
+      /** Os caminhos da malha mais as vagas que os repassadores somam. */
+      function reenviarCapacidade(): void {
+        if (capacidadeDaMalha === null) return;
+        deps.channel.atualizarCapacidade?.(capacidadeDaMalha + (arvore?.vagas() ?? 0));
+      }
     },
 
     async watch(slug, entrada) {
@@ -184,6 +271,43 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       }
       const media = mediaStream();
       let delivered = false;
+      iceAtual = opened.iceServers;
+      /** A trilha de vídeo que vem do anfitrião: o caminho de volta do repasse. */
+      let videoDoAnfitriao: MediaStreamTrack | null = null;
+      const enviarVia = (para: string, dados: unknown) => deps.channel.send({ repasse: 'via', para, dados });
+      /**
+       * Troca a trilha de vídeo da tela entre a do pai e a do anfitrião. Os
+       * vigias da trilha do anfitrião olham `media.getTracks()`: fora da tela,
+       * a pausa dela (o anfitrião parou de mandar) não é queda.
+       */
+      const trocarVideo = (trilha: MediaStreamTrack | null) => {
+        const nova = trilha ?? videoDoAnfitriao;
+        if (nova === null) return;
+        for (const velha of media.getVideoTracks()) if (velha !== nova) media.removeTrack(velha);
+        if (!media.getTracks().includes(nova)) media.addTrack(nova);
+        emitter.emit('track', { stream: media });
+      };
+      if (deps.repasse !== undefined) {
+        filho = new FilhoDeRepasse({
+          createConnection,
+          iceServers: () => iceAtual,
+          enviarVia,
+          enviar: (mensagem) => deps.channel.send(mensagem),
+          aoTrocarVideo: trocarVideo,
+        });
+      }
+      const podeRepassar = deps.repasse?.espectador !== undefined && suportaRepasse();
+      const criarWorkerDeRepasse = deps.repasse?.espectador?.criarWorker;
+      if (podeRepassar && criarWorkerDeRepasse !== undefined) {
+        repassador = new Repassador({
+          criarWorker: criarWorkerDeRepasse,
+          createConnection,
+          iceServers: () => iceAtual,
+          enviarVia,
+          enviarRelatorio: (relatorio) => deps.channel.send(relatorio),
+          statsDaRecepcao: () => viewerLink?.stats() ?? Promise.resolve(null),
+        });
+      }
       const recovery = new PeerRecovery({
         scheduler: deps.scheduler,
         beforeRestart: () => iceLifecycle?.beforeRestart() ?? Promise.resolve(),
@@ -230,7 +354,18 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
            * simplesmente não vem, e o relógio da sessão trata como falha em
            * vez de deixar a pessoa olhando para o preto.
            */
+          if (track.kind === 'video') {
+            videoDoAnfitriao = track;
+            // Antes do primeiro pacote: depois disso o transform não pega (ver Repassador).
+            const receptor = link.connection.getReceivers().find((r) => r.track === track);
+            if (receptor !== undefined) repassador?.prepararRecepcao(receptor);
+          }
           const anunciar = () => {
+            // Com o vídeo vindo do pai, a trilha do anfitrião espera fora da tela.
+            if (track.kind === 'video' && filho?.ativo === true) {
+              delivered = true;
+              return;
+            }
             for (const old of media.getTracks()) {
               if (old !== track && old.kind === track.kind) media.removeTrack(old);
             }
@@ -295,12 +430,42 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       });
       viewerLink = link;
       iceLifecycle = new IceLifecycle(deps.channel, deps.scheduler, (lease) => {
+        iceAtual = lease.iceServers;
         viewerNeedsRebuild = viewerLink?.updateIceServers(lease.iceServers) === false;
       });
       iceLifecycle.use(opened);
 
+      if (deps.repasse !== undefined) {
+        // O espectador conta ao anfitrião se pode repassar e quão perto está.
+        // Cliente antigo nunca manda isto: fica folha do anfitrião, como sempre.
+        const contar = async () => {
+          const rttMs = await viewerLink?.stats().then(rttDoPar, () => null) ?? null;
+          deps.channel.send({ repasse: 'estado', versao: VERSAO_DO_REPASSE, podeRepassar, rttMs });
+        };
+        unsubscribes.push(deps.scheduler.every(ESTADO_DO_REPASSE_MS, () => void contar()));
+      }
+
       unsubscribes.push(
         deps.channel.on('signal', ({ payload }) => {
+          if (ehDoRepasse(payload)) {
+            const mensagem = lerDoAnfitriao(payload);
+            if (mensagem === null) return;
+            switch (mensagem.repasse) {
+              case 'pai':
+                filho?.definirPai(mensagem.pai);
+                return;
+              case 'filho':
+                repassador?.adicionar(mensagem.filho);
+                return;
+              case 'soltar':
+                repassador?.remover(mensagem.filho);
+                return;
+              case 'via':
+                if (mensagem.de === filho?.paiAtual) filho.sinal(mensagem.de, mensagem.dados);
+                else repassador?.sinal(mensagem.de, mensagem.dados);
+                return;
+            }
+          }
           void link.handleSignal(payload).catch(() => {
             emitter.emit('closed', { reason: 'NEGOTIATION_FAILED' });
           });
@@ -376,10 +541,17 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
     // porque um peer que o servidor deixou entrar e a malha recusasse ficaria
     // esperando uma oferta que nunca vem.
     atualizarCapacidade(valor) {
-      deps.channel.atualizarCapacidade?.(valor);
+      capacidadeDaMalha = valor;
+      if (arvore !== null && topology !== null) {
+        const mesh = topology;
+        const diretos = mesh.peers.filter((p) => !mesh.videoPausado(p.id)).length;
+        arvore.definirPortaCheia(valor <= diretos);
+      }
+      deps.channel.atualizarCapacidade?.(valor + (arvore?.vagas() ?? 0));
     },
 
     async setUplinkBudget(bps) {
+      arvore?.definirOrcamento(bps);
       await topology?.setOrcamento(bps);
     },
 
@@ -396,11 +568,17 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           audio: { ...stats.audio, configuracao: topology.resumoConfigAudio() },
         };
       }
+      // Vídeo vindo do pai: a recepção que importa é a dessa aresta.
+      const doPai = filho?.stats() ?? null;
+      if (doPai !== null) return inboundDoPai.read(await doPai);
       if (viewerLink !== null) return inbound.read(await viewerLink.stats());
       return null;
     },
 
     async referenciaDeCaptura() {
+      // O `abs-capture-time` não atravessa o repasse (E2, ADR 0031): o carimbo
+      // seria o da isca do pai, e o HUD mostraria uma latência que não existe.
+      if (filho?.ativo === true) return null;
       return (await viewerLink?.referenciaDeCaptura()) ?? null;
     },
 
@@ -421,6 +599,12 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       unsubscribes.length = 0;
       topology?.close();
       topology = null;
+      filho?.fechar();
+      filho = null;
+      repassador?.fechar();
+      repassador = null;
+      arvore = null;
+      capacidadeDaMalha = null;
       viewerLink?.close();
       viewerLink = null;
       viewerNeedsRebuild = false;

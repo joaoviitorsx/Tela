@@ -63,6 +63,15 @@ describe('ArvoreDeRepasse — quando liga', () => {
     expect(t.enviadas).toEqual([]);
   });
 
+  it('porta cheia sem orçamento medido não liga: a porta começa fechada até medir', () => {
+    const t = montar();
+    for (const id of ['a', 'b', 'c']) t.entra(id, true, 20);
+    t.arvore.definirPortaCheia(true);
+    t.passa(ESTABILIZAR_MS);
+    t.arvore.tique();
+    expect(t.enviadas).toEqual([]);
+  });
+
   it('a porta cheia também liga, mesmo com orçamento alto', () => {
     const t = montar();
     for (const id of ['a', 'b', 'c']) t.entra(id, true, 20);

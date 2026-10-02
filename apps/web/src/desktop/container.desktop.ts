@@ -233,7 +233,19 @@ export function createBroadcastSession(): BroadcastSession {
     diagnosticId,
     appVersion,
   });
-  sessaoAoVivo.registrar(sessao);
+  /*
+    Registra quando a sessão SAI de idle — nunca aqui. Esta função roda dentro
+    do render (`useMemo` da rota): registrar mudava o store que a moldura
+    assina, o React recomeçava o render, e cada recomeço criava outra sessão.
+    Medido: ~124 sessões em 0,3 s ao ir ao ar, cada uma com worker, isca e
+    codificador — +530 MB no renderer. Sessão que o React descarta nunca
+    começa, então nunca entra no store.
+  */
+  const cancelar = sessao.subscribe(() => {
+    if (sessao.getState().status === 'idle') return;
+    cancelar();
+    sessaoAoVivo.registrar(sessao);
+  });
   return sessao;
 }
 

@@ -52,7 +52,10 @@ export function EntradaDeApelido({ slug, valor, aoMudar, aoEnviar, invalido, pro
             <input
               value={valor}
               onChange={(e) => aoMudar(e.target.value)}
-              maxLength={APELIDO_MAX}
+              // O limite de verdade é de 24 GRAFEMAS (schema do shared, S-20):
+              // `maxLength` conta unidades UTF-16 e cortava emoji cedo. Aqui
+              // só um teto contra colar um texto enorme.
+              maxLength={APELIDO_MAX * 4}
               autoFocus
               autoComplete="nickname"
               spellCheck={false}

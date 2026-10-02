@@ -11,12 +11,14 @@ describe('espectador (ADR 0025)', () => {
     expect(storage.get(CHAVE_ESPECTADOR_KEY)).toBe(primeira);
   });
 
-  it('apelido: aparado, até 24, sem caractere de controle', () => {
+  it('apelido: aparado, até 24, limpo de controle (o schema do shared limpa em vez de recusar)', () => {
     expect(apelidoValido('  ana  ')).toBe('ana');
     expect(apelidoValido('')).toBeNull();
     expect(apelidoValido('   ')).toBeNull();
     expect(apelidoValido('x'.repeat(25))).toBeNull();
-    expect(apelidoValido('a\nb')).toBeNull();
+    // Quebra de linha vira espaço; só invisível não é nome (S-20).
+    expect(apelidoValido('a\nb')).toBe('a b');
+    expect(apelidoValido('\u200b')).toBeNull();
     expect(apelidoValido('João 🎮')).toBe('João 🎮');
   });
 

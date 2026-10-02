@@ -287,6 +287,13 @@ export type MediaTransport = {
   removeViewers(peerId?: string): void;
   /** Aceita ou recusa um pedido de entrada (ADR 0025). */
   responderPedido(peerId: string, aceitar: boolean): void;
+  /**
+   * Quantos espectadores o LINK paga agora, por cima do que a máquina declarou
+   * no `host` (ADR 0030). A sessão calcula a partir do orçamento medido e manda
+   * ao servidor, que fecha a porta para quem ainda vai entrar — nunca tira quem
+   * já está. Opcional: o transporte que não sinaliza (teste, simulador) ignora.
+   */
+  atualizarCapacidade?(valor: number): void;
 
   publishVideo(track: MediaStreamTrack, preset: EncodingPreset): Promise<void>;
   publishAudio(track: MediaStreamTrack): Promise<void>;

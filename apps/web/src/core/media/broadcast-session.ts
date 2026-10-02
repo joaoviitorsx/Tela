@@ -28,7 +28,8 @@ import {
   Diario,
   idLocal,
 } from './diagnostico.js';
-import { MalhaDeBanda } from './malha-de-banda.js';
+import { CAPACIDADE_ATE_MEDIR, capacidadePelaBanda } from './capacidade-pela-banda.js';
+import { MalhaDeBanda, encoderOcioso } from './malha-de-banda.js';
 import {
   DEFAULT_PRESET_ID,
   type PresetId,
@@ -93,6 +94,12 @@ export type BroadcastState =
       /** Apelido de quem já entrou, por `peerId`. */
       readonly nomes: Readonly<Record<string, string>>;
       readonly maxPeers: number;
+      /**
+       * Quantos o LINK paga agora, nunca acima de `maxPeers` (ADR 0030). É o
+       * número que o servidor usa na porta: acima dele a próxima pessoa recebe
+       * "sem vaga". Começa conservador e cada medição abre vagas.
+       */
+      readonly vagasPelaBanda: number;
       readonly stats: MediaStats | null;
       readonly hasAudio: boolean;
       /**
@@ -352,6 +359,8 @@ export class BroadcastSession {
   private readonly capacidade: number;
   /** Palpite até o servidor dizer o dele, no `hosting`. Nunca um número solto. */
   private maxPeers: number;
+  /** O teto pela banda em vigor (ADR 0030). Ver `ajustarPorta`. */
+  private vagasPelaBanda: number = CAPACIDADE_ATE_MEDIR;
   /** Sobrevive ao ciclo da transmissão: quem escolheu 40% quer 40% de novo. */
   private volumeTransmissao = 1;
 
@@ -605,6 +614,9 @@ export class BroadcastSession {
       return this.fail(failureFor(error));
     }
     if (this.stale(epoch)) return this.abandon();
+    // A porta começa fechada no conservador e a medição abre (ADR 0030).
+    this.vagasPelaBanda = Math.min(CAPACIDADE_ATE_MEDIR, this.maxPeers);
+    this.deps.transport.atualizarCapacidade?.(this.vagasPelaBanda);
 
     this.unsubscribes.push(
       this.deps.transport.on('pedido', (pedido) => this.onPedido(pedido)),
@@ -644,6 +656,7 @@ export class BroadcastSession {
       pedidos: this.listaDePedidos(),
       nomes: this.listaDeNomes(),
       maxPeers: this.maxPeers,
+      vagasPelaBanda: this.vagasPelaBanda,
       stats: null,
       hasAudio: this.audioTrack !== null,
       capturaSemImagem: false,
@@ -713,6 +726,7 @@ export class BroadcastSession {
     this.setState({ ...this.state, stats, audio });
     this.diario.registrar(stats, agora);
     this.applyUplinkCeiling(stats);
+    this.ajustarPorta(stats);
     this.trackPressure(stats.limitation);
     this.trackCapturaMorta(stats.fps);
     this.vigiarNitidez(stats.fps, stats.limitation);
@@ -742,6 +756,33 @@ export class BroadcastSession {
     void this.deps.transport.setUplinkBudget(decisao.orcamentoVideo).catch(() => undefined);
     this.presetPorBanda = decisao.presetPorBanda;
     this.aplicarDegrau();
+  }
+
+  /**
+   * A porta pela banda (ADR 0030): quantos espectadores o link paga agora.
+   *
+   * A malha faz todo mundo descer junto quando o upload não dá; esta parte
+   * decide quando parar de deixar ENTRAR, para a sala não descer até onde não
+   * há imagem. O número vai ao servidor, que recusa só quem ainda não entrou.
+   * A conta é pura (`capacidade-pela-banda.ts`); aqui fica o que é da sessão:
+   * o envio medido, o orçamento em vigor e a histerese contra o valor anterior.
+   */
+  private ajustarPorta(stats: MediaStats): void {
+    const enviadoPorCaminho = stats.bitrateBps / Math.max(1, stats.paresMedidos);
+    const vagas = capacidadePelaBanda({
+      orcamento: this.malha.orcamento,
+      enviadoPorCaminho,
+      caminhos: stats.paresMedidos,
+      encoderOcioso: encoderOcioso(enviadoPorCaminho, this.malha.orcamento),
+      reservaAudio: this.reservaDeAudio(),
+      prioridade: this.prioridade,
+      capacidadeDaMaquina: this.maxPeers,
+      atual: this.vagasPelaBanda,
+    });
+    if (vagas === this.vagasPelaBanda) return;
+    this.vagasPelaBanda = vagas;
+    this.deps.transport.atualizarCapacidade?.(vagas);
+    if (this.state.status === 'live') this.setState({ ...this.state, vagasPelaBanda: vagas });
   }
 
   /**
@@ -1516,6 +1557,8 @@ export class BroadcastSession {
    */
   private onSignalingRestored(): void {
     if (this.state.status !== 'live') return;
+    // O servidor que reabriu começa sem teto pela banda: manda de novo.
+    this.deps.transport.atualizarCapacidade?.(this.vagasPelaBanda);
     if (!this.state.semSinalizacao) return;
     this.setState({ ...this.state, semSinalizacao: false });
   }
@@ -1680,6 +1723,7 @@ export class BroadcastSession {
     this.preview = null;
     this.malha.reiniciar();
     this.amostras = 0;
+    this.vagasPelaBanda = CAPACIDADE_ATE_MEDIR;
     this.ociosoDesde = null;
     this.capturaOciosa = false;
 

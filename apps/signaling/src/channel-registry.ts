@@ -72,6 +72,12 @@ type Channel = {
    * por espectador declara cinco; quem tem um encode e N envios, cinquenta.
    */
   teto: number;
+  /**
+   * O que a BANDA do transmissor paga agora (ADR 0030), por cima de `teto`.
+   * `null` até ele mandar `capacidade`. Nunca passa de `teto`: a máquina
+   * limita o que a banda pode abrir, e a banda só fecha.
+   */
+  tetoPelaBanda: number | null;
   /** Momento em que o canal ficou sem transmissor. `null` enquanto há um. */
   emptySince: number | null;
 };
@@ -138,6 +144,15 @@ export function makeChannelRegistry(deps: RegistryDeps) {
   function peerIn(channel: Channel, id: string): Peer | null {
     if (channel.host?.id === id) return channel.host;
     return channel.viewers.get(id) ?? null;
+  }
+
+  /** O teto que vale na porta: servidor, máquina e banda — o menor dos três. */
+  function tetoEfetivo(channel: Channel): number {
+    return channel.tetoPelaBanda === null ? channel.teto : Math.min(channel.teto, channel.tetoPelaBanda);
+  }
+
+  function semVaga(channel: Channel): boolean {
+    return channel.viewers.size >= tetoEfetivo(channel);
   }
 
   return {
@@ -228,6 +243,8 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           existing.aprovacao = aprovacao;
           // Quem voltou com teto menor não expulsa ninguém: só não entra mais.
           existing.teto = teto;
+          // A banda é medida pela sessão nova; ela manda `capacidade` de novo.
+          existing.tetoPelaBanda = null;
         } else {
           peer = { id: deps.newPeerId('h'), role: 'host', socket };
           channels.set(slug, {
@@ -237,6 +254,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
             ownerHash,
             aprovacao,
             teto,
+            tetoPelaBanda: null,
             emptySince: null,
           });
         }
@@ -320,7 +338,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
           channelName = slug;
           cancelHelloTimer();
           if (anterior !== undefined) return entrar(channel, anterior.id, name, impressao, participantId, attemptId, anterior);
-          if (channel.viewers.size >= channel.teto) return fail('CHANNEL_FULL', channel.teto);
+          if (semVaga(channel)) return fail('CHANNEL_FULL', tetoEfetivo(channel));
           return entrar(channel, deps.newPeerId('v'), name, impressao, participantId, attemptId, undefined);
         }
 
@@ -340,7 +358,7 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         cancelHelloTimer();
         if (previous !== undefined) return entrar(channel, previous.id, name, fingerprint, participantId, attemptId, previous);
 
-        if (channel.viewers.size >= channel.teto) return fail('CHANNEL_FULL', channel.teto);
+        if (semVaga(channel)) return fail('CHANNEL_FULL', tetoEfetivo(channel));
 
         // O mesmo pedido chegando por outro socket substitui o anterior.
         const repetido = participantId === undefined ? undefined : [...channel.pedidos.values()]
@@ -360,9 +378,9 @@ export function makeChannelRegistry(deps: RegistryDeps) {
             pedido = null;
             channel.pedidos.delete(id);
             // A vaga é conferida de novo: pode ter enchido enquanto esperava.
-            if (channel.viewers.size >= channel.teto) {
+            if (semVaga(channel)) {
               channel.host?.socket.send({ type: 'join-cancelled', peerId: id });
-              return fail('CHANNEL_FULL', channel.teto);
+              return fail('CHANNEL_FULL', tetoEfetivo(channel));
             }
             entrar(channel, id, name, fingerprint, participantId, attemptId, undefined);
           },
@@ -447,6 +465,18 @@ export function makeChannelRegistry(deps: RegistryDeps) {
         if (alvo.length > 0) anunciarPlateia(channel);
       }
 
+      /**
+       * Só o transmissor atual mexe no teto pela banda (ADR 0030). Nunca acima
+       * do que a máquina declarou, e sem tirar ninguém: a vaga de quem já
+       * está é dele; o número só decide quem AINDA entra.
+       */
+      function atualizarCapacidade(valor: number): void {
+        if (peer === null || channelName === null || peer.role !== 'host') return fail('BAD_MESSAGE');
+        const channel = channels.get(channelName);
+        if (channel === undefined || channel.host !== peer) return;
+        channel.tetoPelaBanda = Math.min(channel.teto, valor);
+      }
+
       /** Espectador só fala com o transmissor; transmissor endereça por `to`. */
       function resolveTarget(channel: Channel, to: string | undefined, self: Peer): Peer | null {
         if (self.role === 'viewer') return channel.host;
@@ -509,6 +539,8 @@ export function makeChannelRegistry(deps: RegistryDeps) {
               return responder(message.peerId, false);
             case 'remove-viewers':
               return removeViewers(message.peerId);
+            case 'capacidade':
+              return atualizarCapacidade(message.valor);
             case 'refresh-ice': {
               if (peer === null || channelName === null) return fail('BAD_MESSAGE');
               const current = channels.get(channelName);

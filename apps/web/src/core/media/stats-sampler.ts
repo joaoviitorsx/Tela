@@ -1,6 +1,7 @@
 import { bitsPorPixel } from '@tela/shared';
 import type { RelatorioDePeer } from '../mesh/mesh-topology.js';
 import { AudioStatsSampler } from './audio-stats.js';
+import { ABSURDO_POR_CAMINHO, AQUECIMENTO_POR_CAMINHO } from './uplink-governor.js';
 import type {
   MediaStats,
   QualityLimitation,
@@ -65,6 +66,19 @@ function taxa(agora: ParAcumulado, antes: ParAcumulado | undefined): number | nu
 
 export class StatsSampler {
   private readonly previous = new Map<string, Reading>();
+  /**
+   * Leituras de cada caminho desde que ele nominou um par ICE (ADR 0030).
+   *
+   * O pior caminho e o motivo `bandwidth` saem só de quem passou do
+   * aquecimento por caminho: um caminho novo ainda está subindo do bitrate
+   * inicial, e a leitura dele fala da subida, não do link. Sem isto o freio
+   * rápido do codificador único (`piorAvailableBps`) cortava a sala inteira a
+   * cada entrada, e três leituras de `bandwidth` do recém-chegado viravam
+   * "colapso" para a malha. A estimativa CRUA de todos continua indo em
+   * `availablePorPeer` — o governador suaviza desde a primeira amostra e
+   * aplica o mesmo aquecimento por conta própria.
+   */
+  private readonly amostrasPorPeer = new Map<string, number>();
   /** A leitura anterior dos acumuladores, para reportar taxa e não média. */
   private acumuladores: Record<string, ParAcumulado> = {};
   /** O áudio tem contabilidade própria. Ver `audio-stats.ts`. */
@@ -77,6 +91,7 @@ export class StatsSampler {
   reset(): void {
     this.previous.clear();
     this.acumuladores = {};
+    this.amostrasPorPeer.clear();
     this.audio.reset();
   }
 
@@ -130,6 +145,8 @@ export class StatsSampler {
     let found = false;
 
     const availablePorPeer: Record<string, number> = {};
+    /** O motivo de cada caminho, para descartar `bandwidth` de quem ainda sobe. */
+    const limitacaoPorPeer = new Map<string, QualityLimitation>();
 
     entradas.forEach(({ peerId, report }) => {
       report.forEach((entry, key) => {
@@ -151,7 +168,8 @@ export class StatsSampler {
           width = Math.max(width, Number(stat['frameWidth'] ?? 0));
           height = Math.max(height, Number(stat['frameHeight'] ?? 0));
           const reason = asLimitation(stat['qualityLimitationReason']);
-          if (reason !== 'none') limitation = reason;
+          if (reason !== 'none' && reason !== 'bandwidth') limitation = reason;
+          if (reason !== 'none') limitacaoPorPeer.set(peerId, reason);
 
           /**
            * O campo depende do SENTIDO, e ler o errado dava `null` para sempre.
@@ -248,9 +266,6 @@ export class StatsSampler {
             // suavizar CADA caminho antes de tirar o mínimo.
             availablePorPeer[peerId] = Math.max(availablePorPeer[peerId] ?? 0, banda);
             available = (available ?? 0) + banda;
-            // O pior caminho é quem manda: pela R5 todos recebem o mesmo
-            // `maxBitrate`, então a média deixaria o peer fraco afogado.
-            pior = pior === null ? banda : Math.min(pior, banda);
             paresMedidos += 1;
           }
         }
@@ -278,6 +293,45 @@ export class StatsSampler {
     // Substitui o mapa inteiro: fonte que sumiu não deixa resíduo.
     this.previous.clear();
     for (const [id, reading] of current) this.previous.set(id, reading);
+
+    /*
+      Aquecimento por caminho: conta quem mediu, esquece quem saiu, e só então
+      decide quem vota no pior caminho e no motivo `bandwidth`. Um caminho em
+      aquecimento ainda vota se diz carregar menos de 60 % do que cada um
+      recebe: isso não é subida, é link fraco (`ABSURDO_POR_CAMINHO`).
+    */
+    for (const id of [...this.amostrasPorPeer.keys()]) {
+      if (!(id in availablePorPeer)) this.amostrasPorPeer.delete(id);
+    }
+    const fluxosMedidos = Math.max(1, fluxosContados);
+    const enviadoPorCaminho = bitrateBps / fluxosMedidos;
+    const assentados: string[] = [];
+    const afogando: string[] = [];
+    for (const [id, banda] of Object.entries(availablePorPeer)) {
+      const n = (this.amostrasPorPeer.get(id) ?? 0) + 1;
+      this.amostrasPorPeer.set(id, n);
+      if (n > AQUECIMENTO_POR_CAMINHO) assentados.push(id);
+      else if (enviadoPorCaminho > 0 && banda < ABSURDO_POR_CAMINHO * enviadoPorCaminho) afogando.push(id);
+    }
+    // Ninguém assentado ainda: todos votam, ficar cego seria pior.
+    const votantes =
+      assentados.length === 0 && afogando.length === 0
+        ? Object.keys(availablePorPeer)
+        : [...assentados, ...afogando];
+    for (const id of votantes) {
+      const banda = availablePorPeer[id];
+      if (banda === undefined) continue;
+      // O pior caminho é quem manda: pela R5 todos recebem o mesmo
+      // `maxBitrate`, então a média deixaria o peer fraco afogado.
+      pior = pior === null ? banda : Math.min(pior, banda);
+    }
+    // `bandwidth` só de quem assentou; `cpu` e `other` já entraram de todos.
+    if (limitation === 'none') {
+      const votam = new Set(votantes);
+      for (const [id, motivo] of limitacaoPorPeer) {
+        if (motivo === 'bandwidth' && (votam.has(id) || !(id in availablePorPeer))) limitation = 'bandwidth';
+      }
+    }
 
     /**
      * Bits por pixel POR ESPECTADOR, não do total.

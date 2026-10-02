@@ -121,9 +121,9 @@ const FIM_SEM_RETRY: Partial<Record<string, 'removido' | 'recusado' | 'desatuali
 };
 
 /** Polling de 5s com backoff até 30s: a aba pode ficar aberta a tarde inteira. */
-const POLL_MIN_MS = 5_000;
-const POLL_MAX_MS = 30_000;
-const POLL_FACTOR = 1.5;
+export const POLL_MIN_MS = 5_000;
+export const POLL_MAX_MS = 30_000;
+export const POLL_FACTOR = 1.5;
 const STATS_INTERVAL_MS = 1_000;
 /**
  * Teto para a negociação. O `watch` só entrega mídia quando o primeiro frame

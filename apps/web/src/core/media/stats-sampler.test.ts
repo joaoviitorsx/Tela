@@ -151,3 +151,66 @@ describe('StatsSampler', () => {
     expect(stats?.bitrateBps).toBe(0);
   });
 });
+
+describe('StatsSampler — aquecimento por caminho (ADR 0030)', () => {
+  const par = (banda: number) => ({
+    type: 'candidate-pair',
+    state: 'succeeded',
+    nominated: true,
+    currentRoundTripTime: 0.02,
+    availableOutgoingBitrate: banda,
+  });
+  const relatorio = (peerId: string, bytes: number, t: number, banda: number, motivo = 'none') => ({
+    peerId,
+    report: report([outbound(bytes, t, { qualityLimitationReason: motivo }, peerId.length), par(banda)]),
+  });
+
+  it('o caminho novo não puxa o pior caminho nem acusa `bandwidth` enquanto sobe', () => {
+    const sampler = new StatsSampler('outbound');
+    // Dois caminhos assentados: nove leituras.
+    for (let t = 1; t <= 9; t += 1) {
+      sampler.readMany([relatorio('a', t * 2_000_000, t * 1000, 24_000_000), relatorio('b', t * 2_000_000, t * 1000, 24_000_000)]);
+    }
+    const t = 10;
+    const stats = sampler.readMany([
+      relatorio('a', t * 2_000_000, t * 1000, 24_000_000),
+      relatorio('b', t * 2_000_000, t * 1000, 24_000_000),
+      // Recém-chegado: metade da estimativa e `bandwidth` da própria subida.
+      relatorio('novo', 0, t * 1000, 12_000_000, 'bandwidth'),
+    ]);
+    expect(stats?.piorAvailableBps).toBe(24_000_000);
+    expect(stats?.limitation).toBe('none');
+    // A leitura crua dele vai para o governador suavizar desde já.
+    expect(stats?.availablePorPeer['novo']).toBe(12_000_000);
+    expect(stats?.paresMedidos).toBe(3);
+  });
+
+  it('`cpu` de um caminho novo conta: é a máquina, não a subida', () => {
+    const sampler = new StatsSampler('outbound');
+    for (let t = 1; t <= 9; t += 1) sampler.readMany([relatorio('a', t * 2_000_000, t * 1000, 24_000_000)]);
+    const stats = sampler.readMany([
+      relatorio('a', 20_000_000, 10_000, 24_000_000),
+      relatorio('novo', 0, 10_000, 12_000_000, 'cpu'),
+    ]);
+    expect(stats?.limitation).toBe('cpu');
+  });
+
+  it('caminho novo que já afoga vota na hora', () => {
+    const sampler = new StatsSampler('outbound');
+    for (let t = 1; t <= 9; t += 1) sampler.readMany([relatorio('a', t * 2_000_000, t * 1000, 24_000_000)]);
+    // Cada caminho recebe 16 Mbps; o novo diz carregar 5.
+    const stats = sampler.readMany([
+      relatorio('a', 20_000_000, 10_000, 24_000_000),
+      relatorio('adsl', 0, 10_000, 5_000_000, 'bandwidth'),
+    ]);
+    expect(stats?.piorAvailableBps).toBe(5_000_000);
+    expect(stats?.limitation).toBe('bandwidth');
+  });
+
+  it('todos novos: todos votam', () => {
+    const sampler = new StatsSampler('outbound');
+    const stats = sampler.readMany([relatorio('a', 0, 1000, 9_000_000, 'bandwidth'), relatorio('b', 0, 1000, 7_000_000)]);
+    expect(stats?.piorAvailableBps).toBe(7_000_000);
+    expect(stats?.limitation).toBe('bandwidth');
+  });
+});

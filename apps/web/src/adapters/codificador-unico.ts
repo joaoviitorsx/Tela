@@ -32,7 +32,8 @@ export interface CodificadorUnico {
   configurar(alvo: AlvoDoCodificador): void;
   /** Troca a captura sem derrubar ninguém: o próximo quadro é IDR. */
   trocarFonte(track: MediaStreamTrack): void;
-  pedirChave(motivo?: string): void;
+  /** `senders`: a plateia vista pelo worker — a janela de coalescência escala por ela. */
+  pedirChave(motivo?: string, senders?: number): void;
   /** Fila dos senders, em quadros: acima do tolerado, pula quadro de captura. */
   definirAtraso(quadros: number): void;
   estatisticas(): EstatisticasDoCodificador;

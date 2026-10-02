@@ -226,6 +226,94 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     });
   });
 
+  /**
+   * A banda do transmissor fecha vagas ao vivo (ADR 0030): `capacidade` é o
+   * que o link paga agora, por cima do que a máquina declarou no `host`.
+   * Baixar nunca expulsa; só a próxima pessoa recebe `CHANNEL_FULL`.
+   */
+  describe('teto pela banda, ao vivo (ADR 0030)', () => {
+    it('baixa o teto para quem ainda vai entrar, com o número real no CHANNEL_FULL', async () => {
+      const d = criar({ maxPeers: 8 });
+      await d.host('h', SLUG, OWNER, { capacidade: 5 });
+      await d.send('h', { type: 'capacidade', valor: 2 });
+      await d.watch('v1', SLUG);
+      await d.watch('v2', SLUG);
+      expect(ofType(await d.watch('v3', SLUG), 'error')).toEqual([
+        { type: 'error', code: 'CHANNEL_FULL', maxPeers: 2 },
+      ]);
+    });
+
+    it('baixar abaixo da plateia NÃO expulsa ninguém; sobe de novo e a porta reabre', async () => {
+      const d = criar({ maxPeers: 8 });
+      const host = await d.host('h', SLUG, OWNER, { capacidade: 5 });
+      const v1 = await d.watch('v1', SLUG);
+      const v2 = await d.watch('v2', SLUG);
+      const v3 = await d.watch('v3', SLUG);
+      await d.send('h', { type: 'capacidade', valor: 1 });
+      for (const v of [v1, v2, v3]) {
+        expect(v.closed()).toBe(false);
+        expect(errorOf(v)).toBeUndefined();
+      }
+      expect(ofType(host, 'peer-left')).toHaveLength(0);
+      expect(errorOf(await d.watch('v4', SLUG))).toBe('CHANNEL_FULL');
+      // Um saiu: 2 ≥ 1, continua sem vaga.
+      d.disconnect('v1');
+      expect(errorOf(await d.watch('v5', SLUG))).toBe('CHANNEL_FULL');
+      await d.send('h', { type: 'capacidade', valor: 3 });
+      expect(ofType(await d.watch('v6', SLUG), 'watching')).toHaveLength(1);
+    });
+
+    it('nunca acima do que a máquina declarou nem do teto do servidor', async () => {
+      const d = criar({ maxPeers: 3 });
+      await d.host('h', SLUG, OWNER, { capacidade: 2 });
+      await d.send('h', { type: 'capacidade', valor: 50 });
+      await d.watch('v1', SLUG);
+      await d.watch('v2', SLUG);
+      expect(ofType(await d.watch('v3', SLUG), 'error')).toEqual([
+        { type: 'error', code: 'CHANNEL_FULL', maxPeers: 2 },
+      ]);
+    });
+
+    it('espectador não mexe no teto; valor fora do schema é BAD_MESSAGE', async () => {
+      const d = criar({ maxPeers: 8 });
+      await d.host('h', SLUG, OWNER, { capacidade: 5 });
+      const v = await d.watch('v', SLUG);
+      await d.send('v', { type: 'capacidade', valor: 1 });
+      expect(errorOf(v)).toBe('BAD_MESSAGE');
+      expect(v.closed()).toBe(true);
+      for (const [id, valor] of [['zero', 0], ['acima', P2P_LIMITS.maxViewers + 1], ['fracao', 1.5]] as const) {
+        const outro = criar({ maxPeers: 8 });
+        const host = await outro.host(id, SLUG, OWNER, { capacidade: 5 });
+        await outro.send(id, { type: 'capacidade', valor });
+        expect(errorOf(host), id).toBe('BAD_MESSAGE');
+      }
+    });
+
+    it('vale na sala com aprovação, na hora de aceitar', async () => {
+      const d = criar({ maxPeers: 8 });
+      const host = await d.host('h', SLUG, OWNER, { approval: true, capacidade: 5 });
+      const esperando = await d.watch('ana', SLUG, undefined, { aprovar: false });
+      const peerId = ofType(host, 'join-request')[0]!.peerId;
+      await d.watch('x', SLUG);
+      await d.send('h', { type: 'capacidade', valor: 1 });
+      await d.send('h', { type: 'admit', peerId });
+      expect(ofType(esperando, 'error')).toEqual([{ type: 'error', code: 'CHANNEL_FULL', maxPeers: 1 }]);
+    });
+
+    it('sobrevive à hibernação e é esquecido quando o transmissor reconecta', async () => {
+      const d = criar({ maxPeers: 8 });
+      await d.host('h1', SLUG, OWNER, { capacidade: 5 });
+      await d.send('h1', { type: 'capacidade', valor: 1 });
+      await d.watch('v1', SLUG);
+      d.hibernar?.();
+      expect(errorOf(await d.watch('v2', SLUG))).toBe('CHANNEL_FULL');
+      // Sessão nova mede a banda de novo e manda `capacidade` de novo.
+      d.disconnect('h1');
+      await d.host('h2', SLUG, OWNER, { capacidade: 5 });
+      expect(ofType(await d.watch('v3', SLUG), 'watching')).toHaveLength(1);
+    });
+  });
+
   it('uma nova tentativa do mesmo participante substitui a vaga sem expulsar outros', async () => {
     const d = criar();
     const host = await d.host('h', SLUG, OWNER);

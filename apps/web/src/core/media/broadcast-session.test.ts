@@ -12,6 +12,7 @@ import {
 } from '../testing/fakes.js';
 import { BroadcastSession } from './broadcast-session.js';
 import { PRESETS, PRESET_IDS } from './presets.js';
+import { CAPACIDADE_ATE_MEDIR } from './capacidade-pela-banda.js';
 
 const SLUG = 'joao';
 const TOKEN = 'o'.repeat(43);
@@ -1161,18 +1162,46 @@ describe('BroadcastSession — colapso de link não pode calar as duas malhas', 
     expect(depois.status === 'live' && depois.presetId).not.toBe(presetBaixo);
   });
 
-  it('link legitimamente pequeno, alcançado sem colapso, não é sondado', async () => {
+  it('link legitimamente pequeno — estimativa rente ao envio — não é sondado', async () => {
     const ctx = build();
     await ctx.session.start(SLUG, TOKEN);
+    /*
+      Num link saturado o AIMD recua para 0,85×acked e sobe até esbarrar de
+      novo: a estimativa fica RENTE ao envio, nunca em 1,5×. É isso, e não a
+      origem da descida, que diz "é o link, não somos nós" (ADR 0030).
+    */
+    const acked = 2_400_000;
+    ctx.transport.stats = amostra({
+      availableBps: acked * 1.05, bitrateBps: acked, availablePorPeer: { v_1: acked * 1.05 },
+    });
+    await tique(ctx, 30);
+    const tetos = ctx.transport.ceilings.length;
+    await tique(ctx, 120);
+    // Nenhuma reconfiguração nova: sem folga na estimativa não há o que sondar.
+    expect(ctx.transport.ceilings.length).toBe(tetos);
+  });
+
+  it('ADR 0030: estimativa colada em 1,5×acked é sondada mesmo sem colapso', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    /*
+      O degrau baixo prende o `acked` no teto de pixel dele e o libwebrtc
+      tampa a estimativa em 1,5×acked: a medição fala da nossa atuação, não
+      do link. Chegar aqui pelo primeiro orçamento (sem colapso) prendia a
+      sala para sempre — com N ≥ 10 nenhum degrau sobe sozinho.
+    */
     const acked = 2_400_000;
     ctx.transport.stats = amostra({
       availableBps: acked * 1.5, bitrateBps: acked, availablePorPeer: { v_1: acked * 1.5 },
     });
     await tique(ctx, 30);
+    const embaixo = ctx.session.getState();
+    const presetBaixo = embaixo.status === 'live' ? embaixo.presetId : null;
     const tetos = ctx.transport.ceilings.length;
-    await tique(ctx, 120);
-    // Nenhuma reconfiguração nova: sem colapso não há o que sondar.
-    expect(ctx.transport.ceilings.length).toBe(tetos);
+    await tique(ctx, 40);
+    expect(ctx.transport.ceilings.length).toBeGreaterThan(tetos);
+    const depois = ctx.session.getState();
+    expect(depois.status === 'live' && depois.presetId).not.toBe(presetBaixo);
   });
 
   it('cena parada de VERDADE ainda não derruba o orçamento', async () => {
@@ -2047,5 +2076,106 @@ describe('BroadcastSession — trocar a resolução ao vivo', () => {
     ctx.scheduler.advance(1_000);
     await settle(4);
     expect(ctx.screen.video.constraints.at(-1)).toMatchObject({ frameRate: 30 });
+  });
+});
+
+describe('BroadcastSession — a porta pela banda (ADR 0030)', () => {
+  const amostra = (extra: Record<string, unknown>) => ({
+    fps: 60,
+    bitrateBps: 7_000_000,
+    rttMs: 40,
+    width: 1920,
+    height: 1080,
+    limitation: 'none' as const,
+    availableBps: null,
+    bpp: 0.1,
+    encoderImplementation: null,
+    qp: null,
+    msPorQuadro: null,
+    recepcao: null,
+    audio: null,
+    paresMedidos: 1,
+    piorAvailableBps: null,
+    availablePorPeer: {},
+    ...extra,
+  });
+
+  async function tique(ctx: ReturnType<typeof build>, vezes: number) {
+    for (let i = 0; i < vezes; i += 1) {
+      ctx.scheduler.advance(1_000);
+      await settle(4);
+    }
+  }
+
+  function comCapacidade(capacidade: number) {
+    const transport = new FakeMediaTransport();
+    transport.maxPeersDoServidor = 50;
+    const scheduler = new FakeScheduler();
+    const session = new BroadcastSession({
+      transport,
+      screen: new FakeScreenCapture(),
+      audio: new FakeAudioCapture(),
+      gain: new FakeAudioGain(),
+      scheduler,
+      shareUrlFor,
+      createStream,
+      statsIntervalMs: 1_000,
+      capacidade,
+    });
+    return { transport, session, scheduler, screen: new FakeScreenCapture(), audio: new FakeAudioCapture(), seen: [] as string[] };
+  }
+
+  const vagas = (session: BroadcastSession) => {
+    const state = session.getState();
+    return state.status === 'live' ? state.vagasPelaBanda : null;
+  };
+
+  it('começa no conservador e manda ao transporte antes de medir', async () => {
+    const ctx = comCapacidade(50);
+    await ctx.session.start(SLUG, TOKEN);
+    expect(vagas(ctx.session)).toBe(CAPACIDADE_ATE_MEDIR);
+    expect(ctx.transport.capacidades).toEqual([CAPACIDADE_ATE_MEDIR]);
+    const live = ctx.session.getState();
+    expect(live.status === 'live' && live.maxPeers).toBe(50);
+  });
+
+  it('a medição abre vagas: cinco caminhos a 16 Mbps num link farto', async () => {
+    const ctx = comCapacidade(50);
+    await ctx.session.start(SLUG, TOKEN);
+    const porCaminho = 16_170_000;
+    ctx.transport.stats = amostra({
+      bitrateBps: porCaminho * 5,
+      paresMedidos: 5,
+      availableBps: porCaminho * 1.5 * 5,
+      piorAvailableBps: porCaminho * 1.5,
+      availablePorPeer: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`v_${i}`, porCaminho * 1.5])),
+    });
+    await tique(ctx, 12);
+    const aberto = vagas(ctx.session) ?? 0;
+    expect(aberto).toBeGreaterThan(CAPACIDADE_ATE_MEDIR);
+    expect(aberto).toBeLessThanOrEqual(50);
+    expect(ctx.transport.capacidades.at(-1)).toBe(aberto);
+  });
+
+  it('nunca abre acima do que a máquina codifica', async () => {
+    const ctx = comCapacidade(5);
+    await ctx.session.start(SLUG, TOKEN);
+    const porCaminho = 16_170_000;
+    ctx.transport.stats = amostra({
+      bitrateBps: porCaminho * 5, paresMedidos: 5, piorAvailableBps: porCaminho * 1.5,
+      availablePorPeer: Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`v_${i}`, porCaminho * 1.5])),
+    });
+    await tique(ctx, 12);
+    expect(vagas(ctx.session)).toBe(5);
+  });
+
+  it('o servidor que voltou recebe o teto de novo', async () => {
+    const ctx = comCapacidade(50);
+    await ctx.session.start(SLUG, TOKEN);
+    const antes = ctx.transport.capacidades.length;
+    ctx.transport.emit('signaling-lost', undefined);
+    ctx.transport.emit('signaling-restored', undefined);
+    expect(ctx.transport.capacidades.length).toBe(antes + 1);
+    expect(ctx.transport.capacidades.at(-1)).toBe(vagas(ctx.session));
   });
 });

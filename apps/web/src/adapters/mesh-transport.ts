@@ -366,6 +366,13 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
       deps.channel.responderPedido(peerId, aceitar);
     },
 
+    // Só o servidor fecha a porta: a topologia continua com o teto da máquina,
+    // porque um peer que o servidor deixou entrar e a malha recusasse ficaria
+    // esperando uma oferta que nunca vem.
+    atualizarCapacidade(valor) {
+      deps.channel.atualizarCapacidade?.(valor);
+    },
+
     async setUplinkBudget(bps) {
       await topology?.setOrcamento(bps);
     },

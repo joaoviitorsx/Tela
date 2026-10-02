@@ -71,6 +71,15 @@ export function orcamentoDeVideo(total: number, reservaAudio: number): number {
   return Math.max(ORCAMENTO_VIDEO_MINIMO, total - reservaAudio);
 }
 
+/**
+ * O encoder está mandando bem menos do que o orçamento: cena parada. A leitura
+ * baixa fala do conteúdo, não do link — nem o orçamento nem a porta (ADR 0030)
+ * descem com ela.
+ */
+export function encoderOcioso(enviadoPorCaminho: number, orcamento: number | null): boolean {
+  return orcamento !== null && enviadoPorCaminho > 0 && enviadoPorCaminho < orcamento * 0.7;
+}
+
 export class MalhaDeBanda {
   private readonly governor = new UplinkGovernor();
   /** Amostras seguidas com a banda amarrando o encoder. Ver `observar`. */
@@ -80,7 +89,8 @@ export class MalhaDeBanda {
   /** Sonda de subida. Ver `talvezSondar`. */
   private sondaEspera = SONDA_ESPERA_INICIAL;
   private sondaDesde: number | null = null;
-  private desceuPorColapso = false;
+  /** O orçamento de antes da sonda: para onde ela volta se falhar. */
+  private orcamentoAntesDaSonda: number | null = null;
   private amostra = 0;
 
   /** O orçamento em vigor, POR caminho (vídeo + áudio). `null` sem medição. */
@@ -104,7 +114,7 @@ export class MalhaDeBanda {
     this.ultimaDecisaoEm = 0;
     this.sondaEspera = SONDA_ESPERA_INICIAL;
     this.sondaDesde = null;
-    this.desceuPorColapso = false;
+    this.orcamentoAntesDaSonda = null;
     this.amostra = 0;
   }
 
@@ -205,35 +215,42 @@ export class MalhaDeBanda {
 
     const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;
     const enviado = stats.bitrateBps / Math.max(1, stats.paresMedidos);
-    const encoderOcioso = orcamento !== null && enviado > 0 && enviado < orcamento * 0.7;
+    const ocioso = encoderOcioso(enviado, orcamento);
 
     // O pior caminho medido nesta amostra, para comparar com o orçamento em
-    // vigor: é ele que distingue cena parada de link que encolheu.
+    // vigor: é ele que distingue cena parada de link que encolheu. O envio
+    // por caminho é a régua do aquecimento por caminho (ADR 0030).
     const decisao = this.governor.observe(stats.availablePorPeer, {
-      permitirQueda: colapso || (!limitadosPorPixel && !encoderOcioso),
+      permitirQueda: colapso || (!limitadosPorPixel && !ocioso),
+      enviadoPorCaminho: enviado,
     });
     // `null` na maioria das leituras: o governador só fala quando a mudança
     // compensa reconfigurar o encoder.
-    if (decisao === null) {
-      return this.talvezSondar(l, stats.bitrateBps / Math.max(1, stats.paresMedidos));
-    }
-    /*
-      Descida que só aconteceu por causa da evidência de colapso — as guardas
-      teriam segurado. É depois DESTA descida que o degrau baixo pode virar
-      armadilha, e é só aí que a sonda de subida tem trabalho a fazer. Link
-      legitimamente pequeno, alcançado pelo caminho normal, não é sondado:
-      sondar ali só troca estabilidade por reconfiguração.
-    */
-    if (colapso && (limitadosPorPixel || encoderOcioso) && decisao.bps < (orcamento ?? Infinity)) {
-      this.desceuPorColapso = true;
-    }
+    if (decisao === null) return this.talvezSondar(l, enviado);
     // Queda dentro da janela de uma sonda: ela falhou, e a próxima espera dobra.
+    let bps = decisao.bps;
     if (this.sondaDesde !== null && decisao.bps < (orcamento ?? Infinity)) {
       this.sondaEspera = Math.min(this.sondaEspera * 2, SONDA_ESPERA_MAX);
       this.sondaDesde = null;
+      /**
+       * A sonda que falha VOLTA para onde estava, não para onde a queda a
+       * levou. O sobreuso que ela mesma causou recua o estimador a 0,85 da
+       * fatia, e `0,75 ×` disso fica abaixo do orçamento que ESTAVA
+       * funcionando: medido na sala de 50 num link de 300 Mbps, sondar 720p
+       * a partir de 600p terminava em 480p — e lá ficava, porque a espera
+       * já tinha dobrado até 240 s. É a nossa atuação sendo medida de novo
+       * (ADR 0018). Se o link caiu de verdade no mesmo instante, as leituras
+       * seguintes cortam a partir do valor restaurado, como sempre.
+       */
+      const volta = this.orcamentoAntesDaSonda;
+      if (volta !== null && decisao.bps < volta) {
+        this.governor.sondar(volta);
+        bps = volta;
+      }
     }
+    this.orcamentoAntesDaSonda = null;
     this.ultimaDecisaoEm = this.amostra;
-    const paraVideo = orcamentoDeVideo(decisao.bps, l.reservaAudio);
+    const paraVideo = orcamentoDeVideo(bps, l.reservaAudio);
 
     /**
      * E AQUI está a correção que a ADR 0015 existe para registrar.
@@ -257,7 +274,7 @@ export class MalhaDeBanda {
   }
 
   /**
-   * Sonda de subida depois de uma descida por banda (TELA-015).
+   * Sonda de subida depois de uma descida por banda (TELA-015, ADR 0023).
    *
    * O problema que ela resolve é estrutural, e a ADR 0018 o descreve do outro
    * lado: no degrau baixo o `maxBitrate` fica no teto de pixel DAQUELE degrau,
@@ -273,17 +290,23 @@ export class MalhaDeBanda {
    * descer dentro da janela, a sonda falhou e a próxima espera DOBRA
    * (15 → 240 s). Não é um relógio
    * cego: sem evidência de folga ela não dispara, e cada falha a afasta.
+   *
+   * A ADR 0023 só sondava depois de uma descida por COLAPSO, para não trocar
+   * estabilidade por reconfiguração num link legitimamente pequeno. A sala
+   * grande mostrou que a restrição deixava a malha presa depois de QUALQUER
+   * descida (ADR 0030): subir sem sonda exige `alvo/aplicado ≥ 1,06` com a
+   * razão `1,125 × (1 − viés do mínimo de N)`, e o viés do mínimo de 20 ou 50
+   * caminhos suavizados come os 12,5 % inteiros — nenhum degrau sobe sozinho.
+   * O que separa "somos nós" de "é o link" nunca foi a origem da descida; é a
+   * folga da estimativa sobre o envio, que já é a condição da sonda. Num link
+   * pequeno de verdade ela não dispara; onde dispara e falha, a espera dobra.
    */
   private talvezSondar(l: LeituraDaMalha, enviadoPorPeer: number): DecisaoDaMalha | null {
     const estimativa = this.governor.estimativa;
     const porBanda = l.presetPorBanda;
-    if (!this.desceuPorColapso) return null;
     if (estimativa === null || porBanda === null || this.governor.orcamento === null) return null;
-    // De volta ao que a pessoa escolheu: não há o que sondar, e a marca sai.
-    if (menorPreset(porBanda, l.presetEscolhido) === l.presetEscolhido) {
-      this.desceuPorColapso = false;
-      return null;
-    }
+    // De volta ao que a pessoa escolheu: não há o que sondar.
+    if (menorPreset(porBanda, l.presetEscolhido) === l.presetEscolhido) return null;
 
     if (this.sondaDesde !== null) {
       // Sobreviveu à janela: a subida valeu, e a espera volta ao começo.
@@ -314,6 +337,7 @@ export class MalhaDeBanda {
     }
 
     // O governador conta o caminho inteiro; o degrau é só do vídeo.
+    this.orcamentoAntesDaSonda = this.governor.orcamento;
     this.governor.sondar(bps + l.reservaAudio);
     this.sondaDesde = this.amostra;
     this.ultimaDecisaoEm = this.amostra;

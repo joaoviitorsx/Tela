@@ -90,6 +90,12 @@ type Attachment = {
    * teto precisa valer depois da hibernação, quando o `claim` já é passado.
    */
   readonly capacidade?: number;
+  /**
+   * Só no socket do host: o que a BANDA dele paga agora (ADR 0030), mandado
+   * por `capacidade` ao longo da transmissão. Nunca acima de `capacidade`.
+   * No attachment pelo mesmo motivo: o teto tem de valer depois de hibernar.
+   */
+  readonly tetoPelaBanda?: number;
   /** Tirado pelo transmissor: some da plateia na hora, antes do close chegar. */
   readonly removido?: boolean;
   /** Janela de rate limit desta conexão, também à prova de hibernação. */
@@ -253,7 +259,10 @@ export class ChannelRoom {
    * quem codifica uma vez por espectador: cliente antigo só conhecia cinco.
    */
   private teto(): number {
-    return this.tetoPara(this.host()?.at.capacidade);
+    const host = this.host();
+    const maquina = this.tetoPara(host?.at.capacidade);
+    // Servidor, máquina e banda: o menor dos três. A banda só fecha vagas.
+    return host?.at.tetoPelaBanda === undefined ? maquina : Math.min(maquina, host.at.tetoPelaBanda);
   }
 
   private tetoPara(capacidade: number | undefined): number {
@@ -429,6 +438,9 @@ export class ChannelRoom {
       case 'remove-viewers':
         if (at === null) return this.fail(socket, 'BAD_MESSAGE');
         return this.removeViewers(socket, at, message.peerId);
+      case 'capacidade':
+        if (at === null) return this.fail(socket, 'BAD_MESSAGE');
+        return this.atualizarCapacidade(socket, at, message.valor);
       case 'refresh-ice':
         if (at === null || at.ready === false) return this.fail(socket, 'BAD_MESSAGE');
         return await this.refreshIce(socket, at, message.requestId);
@@ -809,6 +821,17 @@ export class ChannelRoom {
       if (viewer.at.ready !== false) this.send(socket, { type: 'peer-left', peerId: viewer.at.peerId });
     }
     if (alvo.length > 0) this.anunciarPlateia();
+  }
+
+  /**
+   * Só o transmissor atual mexe no teto pela banda (ADR 0030). Nunca acima do
+   * que a máquina declarou, e sem tirar ninguém: a vaga de quem já está é
+   * dele; o número só decide quem AINDA entra.
+   */
+  private atualizarCapacidade(socket: HibernatableSocket, at: Attachment, valor: number): void {
+    if (at.role !== 'host' || this.host()?.socket !== socket) return this.fail(socket, 'BAD_MESSAGE');
+    const tetoPelaBanda = Math.min(this.tetoPara(at.capacidade), valor);
+    socket.serializeAttachment({ ...at, tetoPelaBanda } satisfies Attachment);
   }
 
   private async refreshIce(socket: HibernatableSocket, at: Attachment, requestId: string): Promise<void> {

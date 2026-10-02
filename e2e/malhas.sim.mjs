@@ -12,6 +12,7 @@
  *
  *   node e2e/malhas.sim.mjs                # matriz completa (1200 cenários, ~5s)
  *   node e2e/malhas.sim.mjs --rapido       # subconjunto, para iterar
+ *   node e2e/malhas.sim.mjs --escala       # sala grande (10, 20, 50), portão próprio
  *   node e2e/malhas.sim.mjs --quedas       # só a sub-matriz de queda sustentada
  *   node e2e/malhas.sim.mjs --trace=<id>   # série temporal de um cenário
  *   node e2e/malhas.sim.mjs --premissas    # só o texto das premissas do modelo
@@ -95,6 +96,8 @@ const { BroadcastSession } = await import(W('core/media/broadcast-session.ts'));
 const { MeshTopology } = await import(W('core/mesh/mesh-topology.ts'));
 const { StatsSampler } = await import(W('core/media/stats-sampler.ts'));
 const { UplinkGovernor, UPLINK_SHARE } = await import(W('core/media/uplink-governor.ts'));
+const { POLL_MIN_MS, POLL_MAX_MS, POLL_FACTOR } = await import(W('core/media/viewer-session.ts'));
+const { pisoPorEspectador } = await import(W('core/media/capacidade-pela-banda.ts'));
 const presetsMod = await import(W('core/media/presets.ts'));
 const { PRESETS, PRESET_IDS, presetById, presetParaOrcamento } = presetsMod;
 const { BPP_PISO, BPP_TETO, tetoDeBitrate } = await import(
@@ -125,6 +128,8 @@ for (const [nome, valor] of Object.entries({
   BPP_PISO,
   BPP_TETO,
   tetoDeBitrate,
+  POLL_MIN_MS,
+  pisoPorEspectador,
 })) {
   if (valor === undefined) throw new Error(`import real quebrado: ${nome}`);
 }
@@ -252,7 +257,16 @@ class Rede {
       id: p.id,
       downBps: p.downBps,
       entraEm: p.entraEm,
-      conectaEm: p.entraEm + cfg.iceMs / 1000,
+      /**
+       * A porta pela banda (ADR 0030): o espectador pede para entrar em
+       * `entraEm`; sem vaga recebe CHANNEL_FULL e tenta de novo com o backoff
+       * do `ViewerSession` real. `conectaEm` só existe depois de admitido.
+       */
+      proximaTentativa: p.entraEm,
+      pollMs: POLL_MIN_MS,
+      recusas: 0,
+      admitidoEm: null,
+      conectaEm: null,
       conectado: false,
       bwe: 0,
       acked: null,
@@ -358,6 +372,9 @@ class SimTransport {
     this.pcPorPeer = new Map();
     this.t = 0;
     this.cpuAtiva = false;
+    /** O teto que a sessão mandou ao servidor (ADR 0030), e o histórico dele. */
+    this.teto = CAPACIDADE;
+    this.capacidades = [];
 
     this.topology = new MeshTopology({
       iceServers: [{ urls: ['stun:sim'] }],
@@ -404,6 +421,16 @@ class SimTransport {
     return this.listaPeers();
   }
 
+  /** O que o servidor receberia: a porta fecha para quem ainda vai entrar. */
+  atualizarCapacidade(valor) {
+    this.teto = valor;
+    this.capacidades.push({ t: this.t, valor });
+  }
+
+  temVaga() {
+    return this.pcPorPeer.size < this.teto;
+  }
+
   on(evento, handler) {
     const set = this.ouvintes.get(evento) ?? new Set();
     set.add(handler);
@@ -423,7 +450,7 @@ class SimTransport {
 
   listaPeers() {
     return this.rede.peers
-      .filter((p) => this.rede.cfg.tempoAgora >= p.entraEm)
+      .filter((p) => this.pcPorPeer.has(p.id))
       .map((p) => ({
         id: p.id,
         connectionState: p.conectado ? 'connected' : 'connecting',
@@ -440,6 +467,14 @@ class SimTransport {
       pc.emitState('connecting');
     }
     this.emitir('peers', this.listaPeers());
+  }
+
+  /** CHANNEL_FULL: o mesmo backoff do `ViewerSession` (advanceBackoff + scheduleRetry). */
+  recusar(peer, t) {
+    peer.recusas += 1;
+    peer.pollMs = Math.min(Math.round(peer.pollMs * POLL_FACTOR), POLL_MAX_MS);
+    peer.proximaTentativa = t + peer.pollMs / 1000;
+    peer.pollMs = Math.min(Math.round(peer.pollMs * POLL_FACTOR), POLL_MAX_MS);
   }
 
   conectar(peer) {
@@ -605,13 +640,20 @@ async function rodarCenario(cfg) {
   for (let t = 1; t <= DURACAO_S; t += 1) {
     rede.cfg.tempoAgora = t;
 
-    // Entradas e conexões deste segundo.
+    // Entradas, recusas e conexões deste segundo.
+    transport.t = t;
     for (const p of rede.peers) {
-      if (!transport.pcPorPeer.has(p.id) && t >= p.entraEm) {
-        transport.admitir(p);
-        await assentar(2);
+      if (p.admitidoEm === null && t >= p.proximaTentativa) {
+        if (transport.temVaga()) {
+          p.admitidoEm = t;
+          p.conectaEm = t + ICE_MS / 1000;
+          transport.admitir(p);
+          await assentar(2);
+        } else {
+          transport.recusar(p, t);
+        }
       }
-      if (!p.conectado && transport.pcPorPeer.has(p.id) && t >= p.conectaEm) {
+      if (!p.conectado && p.conectaEm !== null && t >= p.conectaEm) {
         transport.conectar(p);
         await assentar(2);
       }
@@ -663,11 +705,31 @@ async function rodarCenario(cfg) {
       sobrecarga:
         conectados.length === 0 ? 1 : Math.max(...conectados.map((p) => p.sobrecarga ?? 1)),
       upEm: rede.upEm(t),
+      vagas: transport.teto,
+      conectados: conectados.length,
     });
   }
 
   const ultimo = serie.at(-1);
-  const ideal = referenciaIdeal(rede.upEm(DURACAO_S), peers);
+  /**
+   * A referência é sobre quem ENTROU (ADR 0030): a porta pela banda deixa de
+   * fora quem levaria todos abaixo do piso, e comparar 27 admitidos com o que
+   * o link pagaria para 50 diria "melhor que o ideal" sem dizer nada.
+   */
+  const admitidos = peers.filter((p, i) => rede.peers[i].admitidoEm !== null);
+  const ideal = referenciaIdeal(rede.upEm(DURACAO_S), admitidos.length > 0 ? admitidos : peers);
+  const recusados = peers.length - admitidos.length;
+  const atrasos = rede.peers.filter((p) => p.admitidoEm !== null).map((p) => p.admitidoEm - p.entraEm);
+  const atrasoMax = atrasos.length === 0 ? 0 : Math.max(...atrasos);
+  /*
+    "O link pagava todos": a conta da porta sobre a capacidade VERDADEIRA. Se
+    deu CHANNEL_FULL definitivo aqui, a porta recusou quem cabia — regressão.
+  */
+  const hasAudio = session.getState().status === 'live' && session.getState().hasAudio;
+  const pisoPorPessoa = pisoPorEspectador('fluidez', hasAudio ? 141_000 : 0);
+  const menorDescida = Math.min(...peers.map((p) => p.downBps));
+  const linkPagavaTodos =
+    Math.min(rede.upEm(DURACAO_S) / peers.length, menorDescida) * UPLINK_SHARE >= pisoPorPessoa;
   const bppFinal = ultimo.bppPedido ?? 0;
 
   // Estado absorvente: chegou ao pior degrau e nunca mais subiu de lá.
@@ -742,6 +804,12 @@ async function rodarCenario(cfg) {
     pctAbaixoPiso,
     pctSobreuso: regime.length === 0 ? 0 : (100 * ticksSobreuso) / regime.length,
     picoSobrecarga: Math.max(1, ...regime.map((s) => s.sobrecarga)),
+    admitidos: admitidos.length,
+    recusados,
+    recusadoIndevido: recusados > 0 && linkPagavaTodos,
+    atrasoMax,
+    vagasFinais: transport.teto,
+    mudancasDeVagas: transport.capacidades.length,
   };
 }
 
@@ -924,7 +992,16 @@ P6  Descida do espectador "normal" = 500 Mbps, para que o uplink seja o gargalo
 
 P7  A referência "o que o link pagava" usa as funções REAIS
     (UPLINK_SHARE, presetParaOrcamento, BPP_TETO) sobre a capacidade
-    verdadeira. É o teto do próprio produto, não um ideal inventado.
+    verdadeira. É o teto do próprio produto, não um ideal inventado — e é
+    sobre quem ENTROU, porque a porta pela banda (P8) pode deixar gente fora.
+
+P8  Porta pela banda (ADR 0030). A sessão REAL calcula quantos o link paga e
+    manda ao servidor; aqui o transporte faz o papel do servidor: quem pede
+    vaga acima do teto recebe CHANNEL_FULL e tenta de novo com o backoff do
+    \`ViewerSession\` real (7,5 s, 16,9 s, 30 s…). ONDE ERRA: o servidor real
+    admite em ordem de chegada do socket; aqui é a ordem da lista. E 50
+    pessoas clicando no MESMO segundo é o pior caso — no mundo real a chegada
+    se espalha e a porta mede entre uma leva e outra.
 `;
 
 function tabela(linhas, colunas) {
@@ -991,13 +1068,18 @@ async function main() {
             { titulo: 'orcamento', valor: (s) => emMbps(s.orcamento) },
             { titulo: 'bwe_min', valor: (s) => emMbps(s.bweMin) },
             { titulo: 'cap', valor: (s) => emMbps(s.upEm) },
+            { titulo: 'N', valor: (s) => s.conectados },
+            { titulo: 'vagas', valor: (s) => s.vagas },
             { titulo: 'sobre', valor: (s) => (s.sobreuso ? `${s.sobrecarga.toFixed(2)}x` : '—') },
             { titulo: 'lim', valor: (s) => s.limitacao ?? '—' },
             { titulo: 'motivo', valor: (s) => s.motivo ?? '—' },
           ],
         ),
       );
-      console.log();
+      console.log(
+        `  admitidos ${alvo.admitidos}/${alvo.cfg.n} · recusados ${alvo.recusados}` +
+          ` · maior atraso de entrada ${alvo.atrasoMax}s · vagas no fim ${alvo.vagasFinais}\n`,
+      );
     }
   }
 
@@ -1034,6 +1116,11 @@ async function main() {
         pctAbaixoPiso: Number(r.pctAbaixoPiso.toFixed(1)),
         pctSobreuso: Number(r.pctSobreuso.toFixed(1)),
         picoSobrecarga: Number(r.picoSobrecarga.toFixed(3)),
+        admitidos: r.admitidos,
+        recusados: r.recusados,
+        recusadoIndevido: r.recusadoIndevido,
+        atrasoMax: r.atrasoMax,
+        vagasFinais: r.vagasFinais,
       })),
       null,
       1,
@@ -1107,6 +1194,18 @@ async function main() {
       `  p90 ${percentil(resultados.map((r) => r.pctSobreuso), 0.9).toFixed(1)}%` +
       `  pico de sobrecarga ${Math.max(...resultados.map((r) => r.picoSobrecarga)).toFixed(2)}×`,
   );
+  {
+    const comRecusa = resultados.filter((r) => r.recusados > 0);
+    const indevidos = resultados.filter((r) => r.recusadoIndevido);
+    const atrasados = resultados.filter((r) => r.atrasoMax > 0);
+    console.log(
+      `  porta pela banda (ADR 0030): recusou em ${comRecusa.length} cenários` +
+        ` (${indevidos.length} onde o link pagava todos)` +
+        `  entrada atrasada em ${atrasados.length}` +
+        `  atraso máx p90 ${percentil(resultados.map((r) => r.atrasoMax), 0.9)}s` +
+        `  max ${Math.max(...resultados.map((r) => r.atrasoMax))}s`,
+    );
+  }
   console.log();
 
   /* ── 2. matriz por upload × espectadores ── */
@@ -1223,6 +1322,10 @@ async function main() {
   imprimirLista(
     'AFOGANDO O LINK — > 10% das amostras pedindo mais do que a capacidade real',
     afogando.sort((a, b) => b.pctSobreuso - a.pctSobreuso),
+  );
+  imprimirLista(
+    'PORTA FECHADA INDEVIDAMENTE — recusou gente que o link pagava',
+    resultados.filter((r) => r.recusadoIndevido).sort((a, b) => b.recusados - a.recusados),
   );
 
   /* ── 4. efeito de cada eixo ── */
@@ -1357,6 +1460,7 @@ function imprimirLista(titulo, lista) {
       { titulo: '%sobre', valor: (r) => r.pctSobreuso.toFixed(0) },
       { titulo: 'mudo', valor: (r) => (r.mudo ? 'SIM' : '') },
       { titulo: 'motivo', valor: (r) => r.motivo ?? '—' },
+      { titulo: 'entrou', valor: (r) => `${r.admitidos}/${r.cfg.n}` },
     ]),
   );
   if (lista.length > 25) console.log(`  … e mais ${lista.length - 25}`);
@@ -1444,13 +1548,22 @@ const TETOS_ESCALA = {
   mudos: 0,
   absorventes: 0,
   afogando: 0,
+  // A porta pela banda (ADR 0030) só pode recusar quem o link NÃO pagava.
+  recusadosIndevidos: 0,
 };
 
 export function portaoEscala(resultados) {
   const medido = {
     mudos: resultados.filter((r) => r.mudo).length,
     absorventes: resultados.filter((r) => r.absorvente).length,
-    afogando: resultados.filter((r) => r.pctSobreuso > 10).length,
+    /*
+      Só conta sala que PASSOU dos cinco que entram antes da 1ª medição
+      (`CAPACIDADE_ATE_MEDIR`, o comportamento de antes da ADR 0029). Sala
+      de até cinco num link estreito é a matriz normal — onde a malha caça a
+      parede do link e o portão de sempre já cobra —, não a sala grande.
+    */
+    afogando: resultados.filter((r) => r.pctSobreuso > 10 && r.admitidos > 5).length,
+    recusadosIndevidos: resultados.filter((r) => r.recusadoIndevido).length,
   };
   console.log('\nPORTÃO DA SALA GRANDE (--escala)');
   let ok = true;

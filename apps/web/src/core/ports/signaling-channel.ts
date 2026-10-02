@@ -101,6 +101,11 @@ export type SignalingChannel = {
   removeViewers(peerId?: string): void;
   /** Só o transmissor: aceita ou recusa um pedido de entrada. */
   responderPedido(peerId: string, aceitar: boolean): void;
+  /**
+   * Só o transmissor: quantos espectadores a banda dele paga agora (ADR 0030).
+   * Opcional porque é fire-and-forget e nem todo canal precisa saber dela.
+   */
+  atualizarCapacidade?(valor: number): void;
   /** Renova credenciais do mesmo participante sem abrir outro socket. */
   refreshIce(): Promise<IceCredentials>;
   /** Envia payload opaco. `to` omitido = para o transmissor. */

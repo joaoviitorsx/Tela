@@ -81,7 +81,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     aoMudarFonte: () => recalcular(),
   });
   canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
-    if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo);
+    if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo, m.data.senders);
     else codificador.definirAtraso(m.data.quadros);
   };
 

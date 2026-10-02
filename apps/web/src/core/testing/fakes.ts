@@ -281,6 +281,12 @@ export class FakeMediaTransport implements MediaTransport {
     this.respostas.push({ peerId, aceitar });
   }
 
+  /** Tetos pela banda que a sessão mandou, em ordem (ADR 0030). */
+  readonly capacidades: number[] = [];
+  atualizarCapacidade(valor: number): void {
+    this.capacidades.push(valor);
+  }
+
   /**
    * Quando true, `watch` avisa `aguardando-aprovacao` e só resolve em
    * `aprovarEspera()` — ou rejeita com `DENIED` em `recusarEspera()`.
@@ -464,6 +470,10 @@ export class FakeSignalingChannel implements SignalingChannel {
   readonly respostas: { peerId: string; aceitar: boolean }[] = [];
   responderPedido(peerId: string, aceitar: boolean): void {
     this.respostas.push({ peerId, aceitar });
+  }
+  readonly capacidades: number[] = [];
+  atualizarCapacidade(valor: number): void {
+    this.capacidades.push(valor);
   }
 
   async refreshIce() {

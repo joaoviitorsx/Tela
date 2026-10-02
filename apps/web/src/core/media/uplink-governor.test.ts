@@ -279,3 +279,49 @@ describe('UplinkGovernor — a malha abre com N espectadores (ADR 0019)', () => 
 });
 
 void comPeers;
+
+describe('UplinkGovernor — aquecimento por caminho (ADR 0030)', () => {
+  const cheio = 30_000_000;
+
+  it('um caminho novo lendo baixo não derruba o mínimo enquanto sobe', () => {
+    const g = new UplinkGovernor();
+    aquecer(g, cheio);
+    g.observe(comPeers(3, cheio));
+    const antes = g.orcamento;
+    // O recém-chegado parte do bitrate inicial (metade) e sobe 8 %/s; nos
+    // oito primeiros segundos a leitura dele fala da subida, não do link.
+    const decisoes = [];
+    for (let i = 0; i < 8; i += 1) {
+      decisoes.push(g.observe({ ...comPeers(3, cheio), v_novo: cheio * 0.5 * (1 + 0.08 * i) }, { enviadoPorCaminho: cheio * 0.6 }));
+    }
+    expect(decisoes.filter((d) => d !== null)).toHaveLength(0);
+    expect(g.orcamento).toBe(antes);
+  });
+
+  it('passado o aquecimento, o caminho novo vota — e um caminho fraco de verdade derruba', () => {
+    const g = new UplinkGovernor();
+    aquecer(g, cheio);
+    g.observe(comPeers(3, cheio));
+    for (let i = 0; i < 12; i += 1) g.observe({ ...comPeers(3, cheio), v_novo: cheio * 0.4 }, { enviadoPorCaminho: cheio * 0.6 });
+    expect(g.orcamento).toBeLessThan(cheio * UPLINK_SHARE * 0.5);
+  });
+
+  it('caminho novo que já afoga (menos de 60 % do que cada um recebe) vota na hora', () => {
+    const g = new UplinkGovernor();
+    aquecer(g, cheio);
+    g.observe(comPeers(3, cheio));
+    const antes = g.orcamento ?? 0;
+    // Amigo em ADSL: lê 5 Mbps numa sala em que cada um recebe 20.
+    const d = g.observe({ ...comPeers(3, cheio), v_adsl: 5_000_000 }, { enviadoPorCaminho: 20_000_000 });
+    expect(d).not.toBeNull();
+    expect(d?.bps ?? antes).toBeLessThan(antes);
+  });
+
+  it('se ninguém assentou ainda, todos votam — ficar cego seria pior', () => {
+    const g = new UplinkGovernor();
+    // Nove leituras de três caminhos que entraram juntos: decide na nona.
+    let decisao = null;
+    for (let i = 0; i < 9; i += 1) decisao = g.observe(comPeers(3, 8_000_000), { enviadoPorCaminho: 7_000_000 });
+    expect(decisao).not.toBeNull();
+  });
+});

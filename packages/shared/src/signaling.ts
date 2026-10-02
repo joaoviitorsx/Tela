@@ -41,6 +41,12 @@ export const PeerIdSchema = z.string().min(1).max(64);
  * os schemas não são estritos, e ausente vale `maxViewersSemUmEncode` (5) —
  * exatamente o teto que o cliente antigo conhecia. Aba na 5 e o app desktop
  * já instalado continuam iguais; só quem declara ganha as 50 vagas.
+ *
+ * A mensagem `capacidade` (ADR 0030) também não subiu: o servidor vai ao ar
+ * ANTES dos clientes, e cliente antigo nunca a envia — então um servidor novo
+ * entende todo cliente que existe, e nenhum cliente fala com servidor que não
+ * entenda. Subir a versão expulsaria toda aba aberta por uma mensagem que ela
+ * nem manda.
  */
 export const PROTOCOL_VERSION = 5;
 
@@ -146,6 +152,15 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
    */
   z.object({ type: z.literal('admit'), peerId: PeerIdSchema }),
   z.object({ type: z.literal('deny'), peerId: PeerIdSchema }),
+  /**
+   * Só o transmissor: quantos espectadores o link dele paga AGORA (ADR 0030).
+   *
+   * A `capacidade` do `host` é o que a máquina codifica; esta é o que a banda
+   * carrega, e muda ao longo da transmissão. O teto do canal passa a ser o
+   * menor dos três — servidor, máquina, banda. Baixar nunca expulsa ninguém:
+   * quem já está fica, e só a próxima pessoa recebe `CHANNEL_FULL`.
+   */
+  z.object({ type: z.literal('capacidade'), valor: z.number().int().min(1).max(P2P_LIMITS.maxViewers) }),
   z.object({ type: z.literal('refresh-ice'), requestId: z.string().min(1).max(64) }),
   /**
    * Só o transmissor: tira um espectador, ou todos sem `peerId`. Não é

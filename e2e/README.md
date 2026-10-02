@@ -30,6 +30,7 @@ transmitindo".
 
 ```bash
 node e2e/malhas.sim.mjs              # 1200 cenários x 300s simulados (~5s)
+node e2e/malhas.sim.mjs --escala     # sala grande: 10, 20 e 50 espectadores (ADR 0029/0030)
 node e2e/malhas.sim.mjs --premissas  # onde o modelo pode estar errado
 node e2e/malhas.sim.mjs --trace=<id> # série temporal de um cenário
 ```
@@ -44,6 +45,13 @@ Varre upload × espectadores × espectador fraco × pressão de CPU × entrada
 escalonada × semente da sessão anterior, e reporta, por cenário: degrau final,
 bitrate, bits por pixel **pedido e entregue**, tempo até estabilizar,
 reconfigurações de encoder, e quanto ficou abaixo do que o link pagava.
+
+Com `--escala` o portão é outro (`--portao`): zero mudos, zero absorventes,
+zero afogando e zero recusas indevidas. A porta pela banda (ADR 0030) está
+modelada: quem pede vaga acima do teto que a sessão mandou recebe
+`CHANNEL_FULL` e tenta de novo com o backoff do `ViewerSession` real; o
+relatório diz quantos entraram, quantos ficaram de fora e com que atraso.
+A referência "o que o link pagava" é sobre quem entrou.
 
 `e2e/malhas.sim.json` é artefato de execução, não fonte.
 

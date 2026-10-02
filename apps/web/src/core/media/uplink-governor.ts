@@ -109,6 +109,33 @@ const CORTAR = 0.30;
 const AQUECIMENTO_AMOSTRAS = 8;
 
 /**
+ * O mesmo aquecimento, POR CAMINHO (ADR 0030).
+ *
+ * Um caminho novo nasce com a estimativa no `x-google-start-bitrate` — o que
+ * já enviamos aos outros — e sobe dali: o AIMD do libwebrtc cresce 8 %/s e só
+ * encosta no teto de `1,5 × acked` seis segundos depois (`ln 1,5 / ln 1,08`).
+ * Nesse intervalo a leitura dele é a metade da dos caminhos assentados, e
+ * entrava no mínimo CRUA, na primeira amostra: com ruído de −20 % o mínimo
+ * caía 40 %, a histerese de corte (30 %) disparava e a sala inteira descia um
+ * degrau por causa de quem acabou de chegar. Medido no simulador com entrada
+ * escalonada: 76 salas grandes presas um degrau abaixo do que o link pagava.
+ *
+ * Oito amostras é o que a média móvel leva para o peso da primeira leitura
+ * cair a 10 % (`0,75^8`) — e é o mesmo prazo que o primeiro caminho já tinha.
+ * Durante o aquecimento o caminho é suavizado mas não vota.
+ */
+export const AQUECIMENTO_POR_CAMINHO = AQUECIMENTO_AMOSTRAS;
+
+/**
+ * Exceção ao aquecimento: um caminho que diz carregar menos de 60 % do que
+ * cada caminho RECEBE não está subindo, está afogando. A subida parte do que
+ * enviamos e, no pior ruído, lê 80 % disso; abaixo de 60 % é um link fraco de
+ * verdade — e um amigo em ADSL entrando precisa derrubar a sala na hora, não
+ * oito segundos depois (R5).
+ */
+export const ABSURDO_POR_CAMINHO = 0.6;
+
+/**
  * Piso ABSOLUTO, contra estimativa absurda — não contra link ruim de verdade.
  *
  * Era o bitrate do menor preset (1,8 Mbps), e a leitura chega POR ESPECTADOR:
@@ -163,6 +190,8 @@ export class UplinkGovernor {
    * desaparece e a razão volta a 1,125 para qualquer N.
    */
   private readonly porPeer = new Map<string, number>();
+  /** Amostras de cada caminho: só vota quem passou do aquecimento. */
+  private readonly amostrasPorPeer = new Map<string, number>();
 
   /**
    * Estimativa suavizada corrente, por espectador. `null` antes da primeira
@@ -224,6 +253,7 @@ export class UplinkGovernor {
     this.aplicado = null;
     this.amostras = 0;
     this.porPeer.clear();
+    this.amostrasPorPeer.clear();
   }
 
   /** Orçamento por espectador atualmente em vigor. `null` antes do aquecimento. */
@@ -258,7 +288,11 @@ export class UplinkGovernor {
    */
   observe(
     leituras: Readonly<Record<string, number>>,
-    opcoes: { readonly permitirQueda?: boolean } = {},
+    opcoes: {
+      readonly permitirQueda?: boolean;
+      /** O que sai POR caminho agora: a régua do que é absurdo num caminho novo. */
+      readonly enviadoPorCaminho?: number;
+    } = {},
   ): DecisaoOrcamento {
     const validas = Object.entries(leituras).filter(
       ([, v]) => Number.isFinite(v) && v > 0,
@@ -267,17 +301,22 @@ export class UplinkGovernor {
 
     // Peer que saiu não pode continuar segurando o mínimo.
     const vivos = new Set(validas.map(([id]) => id));
-    for (const id of [...this.porPeer.keys()]) if (!vivos.has(id)) this.porPeer.delete(id);
+    for (const id of [...this.porPeer.keys()]) {
+      if (vivos.has(id)) continue;
+      this.porPeer.delete(id);
+      this.amostrasPorPeer.delete(id);
+    }
 
     for (const [id, valor] of validas) {
       const antes = this.porPeer.get(id);
       this.porPeer.set(id, antes === undefined ? valor : antes + SUAVIZACAO * (valor - antes));
+      this.amostrasPorPeer.set(id, (this.amostrasPorPeer.get(id) ?? 0) + 1);
     }
 
     this.amostras += 1;
     // O mínimo dos SUAVIZADOS. Ver o bloco de `porPeer` para por que a ordem
     // das duas operações decide se a malha abre ou não.
-    const pior = Math.min(...this.porPeer.values());
+    const pior = Math.min(...this.votantes(opcoes.enviadoPorCaminho ?? 0));
     // Sem segunda suavização: cada peer já foi suavizado acima, e empilhar
     // duas médias móveis só acrescenta atraso.
     this.media = pior;
@@ -319,5 +358,21 @@ export class UplinkGovernor {
 
     this.aplicado = alvo;
     return { bps: alvo };
+  }
+
+  /**
+   * Quem entra no mínimo: os caminhos assentados, mais os novos que já estão
+   * afogando (`ABSURDO_POR_CAMINHO`). Se ninguém assentou ainda — todos
+   * entraram agora —, todos votam: ficar cego seria pior que ler cedo.
+   */
+  private votantes(enviadoPorCaminho: number): number[] {
+    const assentados: number[] = [];
+    const afogando: number[] = [];
+    for (const [id, media] of this.porPeer) {
+      if ((this.amostrasPorPeer.get(id) ?? 0) > AQUECIMENTO_POR_CAMINHO) assentados.push(media);
+      else if (enviadoPorCaminho > 0 && media < ABSURDO_POR_CAMINHO * enviadoPorCaminho) afogando.push(media);
+    }
+    if (assentados.length === 0 && afogando.length === 0) return [...this.porPeer.values()];
+    return [...assentados, ...afogando];
   }
 }

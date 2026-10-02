@@ -394,6 +394,13 @@ export function makeWsSignaling(baseUrl: string): SignalingChannel {
       socket.send(JSON.stringify({ type: aceitar ? 'admit' : 'deny', peerId } satisfies ClientMessage));
     },
 
+    atualizarCapacidade(valor) {
+      // Não entra na saudação de propósito: a sessão nova mede de novo e manda
+      // de novo; o servidor que reabriu começa sem teto pela banda.
+      if (socket === null || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: 'capacidade', valor } satisfies ClientMessage));
+    },
+
     send(payload, to) {
       if (socket === null || socket.readyState !== WebSocket.OPEN) return;
       const message: ClientMessage =

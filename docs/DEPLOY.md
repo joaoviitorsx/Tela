@@ -160,6 +160,15 @@ confirma configuração, não prova que o relay transporta mídia. Credenciais
 incompletas aparecem como códigos fixos em `iceConfig.problems` e impedem
 novas conexões no Durable Object; valide também o par de secrets antes do deploy.
 
+### 4. Discord — opcional
+
+A prévia do link com o estado do canal ("AO VIVO agora · 3 assistindo") vem
+de graça com o deploy. O comando `/tela` no "+" → "Usar apps" do Discord
+precisa de um app criado no Developer Portal e de um secret
+(`DISCORD_PUBLIC_KEY`); sem ele, `/discord/interactions` responde 404. Passo a
+passo em [DISCORD.md](DISCORD.md). Só no Worker: o servidor portátil não tem
+nenhum dos dois.
+
 ---
 
 ## Caminho portátil — qualquer host de Node

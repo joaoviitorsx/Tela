@@ -6,6 +6,7 @@ import type { FonteDeVisibilidade } from '../react/use-aba-visivel.js';
 import { useDiagnosticoAberto } from '../react/painel-diagnostico.js';
 import { useDialogo } from '../react/use-dialogo.js';
 import { BarraDaJanela } from './BarraDaJanela.js';
+import { avisoNoTrilho } from './atualizacao.js';
 import { DialogoAjustes } from './DialogoAjustes.js';
 import { DialogoFechar } from './DialogoFechar.js';
 import { ModoCompacto } from './ModoCompacto.js';
@@ -61,6 +62,7 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
   const sp = useSegundoPlano({ sessao, ponte, ...(modo === undefined ? {} : { modo }), ...(visibilidade === undefined ? {} : { visibilidade }) });
   const ajustes = useAjustes(ponte);
   const atualizacao = useAtualizacao(ponte);
+  const aviso = atualizacao.estado === null ? null : avisoNoTrilho(atualizacao.estado);
   // O botão do cabeçalho do site mora no trilho (D-04); quem abre o painel é outro componente.
   const diagnostico = useDiagnosticoAberto();
 
@@ -131,6 +133,14 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
           aoEscolher={(item) => (item === 'assistir' ? assistir.abrir() : irPara(DESTINO[item]))}
           aoDiagnostico={diagnostico.abrir}
           {...(ponte === undefined ? {} : { aoAjustes: abrirAjustes })}
+          {...(aviso === null
+            ? {}
+            : {
+                atualizar: {
+                  titulo: aviso.titulo,
+                  aoClicar: aviso.acao === 'reiniciar' ? atualizacao.reiniciar : abrirAjustes,
+                },
+              })}
         />
         <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
       </div>

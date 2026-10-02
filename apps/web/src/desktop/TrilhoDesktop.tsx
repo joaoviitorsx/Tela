@@ -1,4 +1,4 @@
-import { IconChave, IconEngrenagem, IconOlho, IconSinal, IconTv } from '../components/Icon.js';
+import { IconAtualizar, IconChave, IconEngrenagem, IconOlho, IconSinal, IconTv } from '../components/Icon.js';
 import { Led } from '../components/Led.js';
 
 export type ItemDoTrilho = 'transmitir' | 'assistir' | 'canal';
@@ -12,6 +12,8 @@ type Props = {
   readonly aoAjustes?: () => void;
   /** DIAGNÓSTICO: também um painel, não uma rota — responde ao vivo (D-04). */
   readonly aoDiagnostico?: () => void;
+  /** Versão nova com algo a fazer (D5). Sem ele, o item não existe. */
+  readonly atualizar?: { readonly titulo: string; readonly aoClicar: () => void };
 };
 
 const ITENS: ReadonlyArray<{
@@ -60,7 +62,7 @@ const ID_DICA = 'trilho-dica';
  * aqui, junto de AJUSTES, e abre o mesmo painel por `painel-diagnostico`.
  */
 const ESTREITO = 'max-[759px]';
-export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes, aoDiagnostico }: Props) {
+export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes, aoDiagnostico, atualizar }: Props) {
   return (
     <nav
       aria-label="Tela Desktop"
@@ -100,6 +102,20 @@ export function TrilhoDesktop({ ativo, travado, aoEscolher, aoAjustes, aoDiagnos
           >
             NO AR. ENCERRE PARA SAIR DAQUI
           </p>
+        )}
+        {atualizar !== undefined && (
+          <button
+            type="button"
+            title={atualizar.titulo}
+            aria-label={atualizar.titulo}
+            onClick={atualizar.aoClicar}
+            className="tecla min-h-[64px] w-full flex-col gap-1.5 border-accent px-0 text-[10px] text-accent-hi"
+          >
+            <IconAtualizar className="h-5 w-5" />
+            <span aria-hidden="true" className={`${ESTREITO}:sr-only`}>
+              ATUALIZAR
+            </span>
+          </button>
         )}
         {aoDiagnostico !== undefined && (
           <button

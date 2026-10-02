@@ -120,6 +120,15 @@ export function IconSinal({ className }: IconProps) {
   );
 }
 
+/** Seta descendo até a base: há versão nova do app (D5). */
+export function IconAtualizar({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M7 1h2v7H7z M4 6h2v2H4z M10 6h2v2h-2z M6 8h4v2H6z M7 10h2v1H7z M2 13h12v2H2z" />
+    </Pixel>
+  );
+}
+
 /** A TV: o item TRANSMITIR do trilho do app. */
 export function IconTv({ className }: IconProps) {
   return (

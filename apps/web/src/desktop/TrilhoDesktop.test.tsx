@@ -75,4 +75,21 @@ describe('TrilhoDesktop', () => {
       expect(rotulo.className).toContain('max-[759px]:sr-only');
     }
   });
+
+  it('D5: ATUALIZAR só existe com aviso, e responde mesmo ao vivo', () => {
+    const aoClicar = vi.fn();
+    const { rerender } = render(<TrilhoDesktop ativo="transmitir" travado={false} aoEscolher={() => undefined} />);
+    expect(screen.queryByRole('button', { name: /atualizar/i })).toBeNull();
+
+    rerender(
+      <TrilhoDesktop
+        ativo="transmitir"
+        travado
+        aoEscolher={() => undefined}
+        atualizar={{ titulo: 'Versão 0.1.0-beta.9 baixada: reiniciar e atualizar', aoClicar }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /reiniciar e atualizar/ }));
+    expect(aoClicar).toHaveBeenCalledTimes(1);
+  });
 });

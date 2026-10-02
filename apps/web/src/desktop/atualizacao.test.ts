@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { linhaDeAtualizacao, ultimaVerificacao } from './atualizacao.js';
+import { avisoNoTrilho, linhaDeAtualizacao, ultimaVerificacao } from './atualizacao.js';
 import type { EstadoDaAtualizacao } from './ponte.js';
 
 const BASE: EstadoDaAtualizacao = {
@@ -43,5 +43,28 @@ describe('ultimaVerificacao', () => {
     expect(ultimaVerificacao(new Date(2026, 9, 2, 14, 32).getTime(), agora)).toBe('hoje às 14:32');
     expect(ultimaVerificacao(new Date(2026, 9, 1, 9, 5).getTime(), agora)).toBe('ontem às 09:05');
     expect(ultimaVerificacao(new Date(2026, 8, 20, 18, 0).getTime(), agora)).toBe('20/09 às 18:00');
+  });
+});
+
+describe('avisoNoTrilho', () => {
+  it('pronta e fora do ar: um clique reinicia', () => {
+    expect(avisoNoTrilho({ ...BASE, fase: 'pronta', versaoNova: '0.1.0-beta.9', podeReiniciar: true })).toEqual({
+      acao: 'reiniciar',
+      titulo: 'Versão 0.1.0-beta.9 baixada: reiniciar e atualizar',
+    });
+  });
+
+  it('pronta mas ao vivo: nada no trilho (instala ao sair)', () => {
+    expect(avisoNoTrilho({ ...BASE, fase: 'pronta', versaoNova: '0.1.0-beta.9', podeReiniciar: false })).toBeNull();
+  });
+
+  it('deb/rpm com versão nova: leva ao AJUSTES', () => {
+    expect(avisoNoTrilho({ ...BASE, modo: 'avisar', fase: 'disponivel', versaoNova: '0.1.0-beta.9' })?.acao).toBe('ajustes');
+  });
+
+  it('baixando, em dia, erro ou disponível com download automático: nada', () => {
+    for (const fase of ['baixando', 'em-dia', 'erro', 'verificando', 'desligada', 'disponivel'] as const) {
+      expect(avisoNoTrilho({ ...BASE, fase })).toBeNull();
+    }
   });
 });

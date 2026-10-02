@@ -46,6 +46,24 @@ export function linhaDeAtualizacao(e: EstadoDaAtualizacao): LinhaDeAtualizacao {
   }
 }
 
+/**
+ * O aviso no trilho, para quem nunca abre o AJUSTES: aparece só quando há algo
+ * a FAZER. Pronta e fora do ar, um clique reinicia; em deb/rpm, que não se
+ * atualizam sozinhos, leva ao AJUSTES, onde está o link da página.
+ */
+export type AvisoNoTrilho = { readonly acao: 'reiniciar' | 'ajustes'; readonly titulo: string };
+
+export function avisoNoTrilho(e: EstadoDaAtualizacao): AvisoNoTrilho | null {
+  const versao = e.versaoNova ?? 'nova';
+  if (e.fase === 'pronta' && e.podeReiniciar) {
+    return { acao: 'reiniciar', titulo: `Versão ${versao} baixada: reiniciar e atualizar` };
+  }
+  if (e.fase === 'disponivel' && e.modo === 'avisar') {
+    return { acao: 'ajustes', titulo: `Versão ${versao} disponível: ver em AJUSTES` };
+  }
+  return null;
+}
+
 const dois = (n: number): string => String(n).padStart(2, '0');
 
 /** "hoje às 14:32", "ontem às 09:05", "12/10 às 18:00" ou "nunca". */

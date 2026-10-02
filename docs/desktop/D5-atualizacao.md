@@ -34,6 +34,12 @@ voltar à página do release — e **nunca mexe numa transmissão no ar**. Windo
 | RPM/DEB (Linux fora de AppImage) | verifica e **avisa** (AJUSTES e bandeja) com a página do release; não baixa nem instala nada |
 | Fora do pacote (dev), macOS, `TELA_ATUALIZACAO=0` | desligada |
 
+**Aviso no trilho** (`avisoNoTrilho`, desde a beta.9): quem nunca abre o
+AJUSTES também fica sabendo. Com a versão nova baixada e fora do ar, aparece
+um item âmbar **ATUALIZAR** no trilho, acima do DIAG: um clique reinicia e
+atualiza. Em deb/rpm, com versão nova, o mesmo item leva ao AJUSTES (onde está
+o link da página). Baixando, ao vivo ou em dia, o item não existe.
+
 Cada verificação e cada download têm uma *rodada*: o que ainda responder de uma
 rodada velha (um download cancelado) é ignorado. "Ao vivo" vem da mesma fonte da
 bandeja (`EstadoAoVivo`, D4); a queda do renderer o zera.

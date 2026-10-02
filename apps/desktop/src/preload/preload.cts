@@ -101,6 +101,10 @@ interface PonteDesktop {
   aoPerguntarFechar(ouvinte: () => void): () => void;
   responderFechar(resposta: RespostaDeFechar): void;
   aoPedirEncerrar(ouvinte: () => void): () => void;
+  /** O atalho global (ou a bandeja) pediu ocultar/mostrar a transmissão. */
+  aoAlternarOculto(ouvinte: () => void): () => void;
+  /** O atalho global está registrado (`false`: outro programa o tem, ou fora do ar). */
+  aoAtalhoOculto(ouvinte: (ativo: boolean) => void): () => void;
   aoPedirParar(ouvinte: (motivo: MotivoDeParada) => void): () => void;
   paradaConcluida(): void;
   atualizacao(): Promise<EstadoDaAtualizacao | null>;
@@ -157,6 +161,8 @@ const CANAIS = {
   perguntarFechar: 'tela:perguntar-fechar',
   responderFechar: 'tela:responder-fechar',
   pedirEncerrar: 'tela:pedir-encerrar',
+  alternarOculto: 'tela:alternar-oculto',
+  atalhoOculto: 'tela:atalho-oculto',
   parar: 'tela:parar',
   paradaConcluida: 'tela:parada-concluida',
   atualizacao: 'tela:atualizacao',
@@ -279,6 +285,8 @@ const ponte: PonteDesktop = {
   aoPerguntarFechar: (ouvinte) => assinar<unknown>(CANAIS.perguntarFechar, () => ouvinte()),
   responderFechar: (resposta) => ipcRenderer.send(CANAIS.responderFechar, resposta),
   aoPedirEncerrar: (ouvinte) => assinar<unknown>(CANAIS.pedirEncerrar, () => ouvinte()),
+  aoAlternarOculto: (ouvinte) => assinar<unknown>(CANAIS.alternarOculto, () => ouvinte()),
+  aoAtalhoOculto: (ouvinte) => assinar<unknown>(CANAIS.atalhoOculto, (ativo) => ouvinte(ativo === true)),
   aoPedirParar: (ouvinte) =>
     assinar<unknown>(CANAIS.parar, (motivo) => ouvinte(motivo === 'suspensao' ? 'suspensao' : 'sair')),
   paradaConcluida: () => ipcRenderer.send(CANAIS.paradaConcluida),

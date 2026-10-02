@@ -10,7 +10,7 @@ import {
 import type { EstadoAoVivo } from './ponte.js';
 import { estadoVivo, par } from './testes-de-sessao.js';
 
-const NO_AR: EstadoAoVivo = { noAr: true, inicioMs: 1000, assistindo: 1, capacidade: 50, link: 'https://tela.gg/jv' };
+const NO_AR: EstadoAoVivo = { noAr: true, inicioMs: 1000, assistindo: 1, capacidade: 50, link: 'https://tela.gg/jv', oculto: false };
 
 describe('estadoParaOMain', () => {
   it('fora do ar não carrega link nem contagem', () => {
@@ -26,6 +26,7 @@ describe('estadoParaOMain', () => {
       assistindo: 2,
       capacidade: 50,
       link: 'https://tela.gg/jv',
+      oculto: false,
     });
   });
 });

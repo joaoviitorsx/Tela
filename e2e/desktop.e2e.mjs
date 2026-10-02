@@ -91,7 +91,7 @@ try {
   console.log(`   ${JSON.stringify(estado)}`);
   ok(estado.caminho === '/', `rota inicial é a home (${estado.caminho})`);
   ok(estado.ponte !== null && estado.ponte.plataforma === process.platform, `ponte presente (${estado.ponte?.plataforma}, v${estado.ponte?.versao})`);
-  const CHAVES = ['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoMudarAtualizacao', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'atualizacao', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'janela', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'reiniciarEAtualizar', 'responderFechar', 'salvarAjustes', 'som', 'verificarAtualizacao', 'versao'];
+  const CHAVES = ['abrirNoNavegador', 'ajustes', 'aoAbrirCanal', 'aoAlternarOculto', 'aoAtalhoOculto', 'aoMudarAtualizacao', 'aoMudarModo', 'aoMudarVisibilidade', 'aoPedirEncerrar', 'aoPedirParar', 'aoPerguntarFechar', 'atualizacao', 'capacidades', 'capturaNativa', 'enviarEstadoAoVivo', 'escolherFonte', 'janela', 'listarFontes', 'paradaConcluida', 'pedirModo', 'plataforma', 'reiniciarEAtualizar', 'responderFechar', 'salvarAjustes', 'som', 'verificarAtualizacao', 'versao'];
   // O que importa de verdade: nada genérico de IPC atravessa a ponte (§3.4).
   const GENERICAS = ['send', 'sendSync', 'invoke', 'on', 'once', 'ipcRenderer', 'require', 'postMessage'];
   ok(!(estado.ponte?.chaves ?? []).some((c) => GENERICAS.includes(c)), 'nenhuma operação genérica de IPC na ponte');

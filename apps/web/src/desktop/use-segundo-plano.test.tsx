@@ -17,7 +17,9 @@ function ponteFalsa() {
     encerrar: Array<() => void>;
     parar: Array<(m: MotivoDeParada) => void>;
     perguntar: Array<() => void>;
-  } = { encerrar: [], parar: [], perguntar: [] };
+    ocultar: Array<() => void>;
+    atalho: Array<(ativo: boolean) => void>;
+  } = { encerrar: [], parar: [], perguntar: [], ocultar: [], atalho: [] };
   const ponte: PonteDoSegundoPlano & { readonly espiao: Record<string, ReturnType<typeof vi.fn>> } = {
     enviarEstadoAoVivo: vi.fn(),
     responderFechar: vi.fn(),
@@ -34,6 +36,14 @@ function ponteFalsa() {
       ouvintes.perguntar.push(o);
       return () => undefined;
     }),
+    aoAlternarOculto: vi.fn((o: () => void) => {
+      ouvintes.ocultar.push(o);
+      return () => undefined;
+    }),
+    aoAtalhoOculto: vi.fn((o: (ativo: boolean) => void) => {
+      ouvintes.atalho.push(o);
+      return () => undefined;
+    }),
     espiao: {},
   };
   return { ponte, ouvintes };
@@ -44,8 +54,9 @@ function montar() {
   const s = sessaoFalsa();
   fonte.registrar(s.sessao);
   const { ponte, ouvintes } = ponteFalsa();
-  const hook = renderHook(() => useSegundoPlano({ sessao: fonte, ponte }));
-  return { fonte, s, ponte, ouvintes, hook };
+  const somDeOculto = vi.fn();
+  const hook = renderHook(() => useSegundoPlano({ sessao: fonte, ponte, somDeOculto }));
+  return { fonte, s, ponte, ouvintes, hook, somDeOculto };
 }
 
 describe('useSegundoPlano', () => {
@@ -67,6 +78,7 @@ describe('useSegundoPlano', () => {
       assistindo: 1,
       capacidade: 50,
       link: 'https://tela.gg/jv',
+      oculto: false,
     });
     const antes = vi.mocked(ponte.enviarEstadoAoVivo).mock.calls.length;
 
@@ -168,5 +180,41 @@ describe('useTempo', () => {
     rerender({ ativo: false });
     act(() => void vi.advanceTimersByTime(5000));
     expect(result.current).toBe('00:03');
+  });
+
+  it('atalho de privacidade: oculta sem som, mostra de novo, e confirma com som', async () => {
+    const { s, ouvintes, somDeOculto, hook } = montar();
+    act(() => s.mudar(estadoVivo()));
+    await act(async () => {
+      ouvintes.ocultar[0]?.();
+      await Promise.resolve();
+    });
+    expect(s.pausar).toHaveBeenCalledWith({ manterSom: false });
+    expect(somDeOculto).toHaveBeenLastCalledWith(true);
+    expect(hook.result.current.painel.oculto).toBe(true);
+    await act(async () => {
+      ouvintes.ocultar[0]?.();
+      await Promise.resolve();
+    });
+    expect(s.retomar).toHaveBeenCalledTimes(1);
+    expect(somDeOculto).toHaveBeenLastCalledWith(false);
+  });
+
+  it('atalho fora do ar não faz nada', async () => {
+    const { s, ouvintes, somDeOculto } = montar();
+    await act(async () => {
+      ouvintes.ocultar[0]?.();
+      await Promise.resolve();
+    });
+    expect(s.pausar).not.toHaveBeenCalled();
+    expect(somDeOculto).not.toHaveBeenCalled();
+  });
+
+  it('o painel só promete o atalho quando o main o registrou', () => {
+    const { s, ouvintes, hook } = montar();
+    act(() => s.mudar(estadoVivo()));
+    expect(hook.result.current.painel.atalhoOculto).toBeNull();
+    act(() => ouvintes.atalho[0]?.(true));
+    expect(hook.result.current.painel.atalhoOculto).toBe('CTRL+SHIFT+O');
   });
 });

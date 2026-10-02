@@ -5,7 +5,14 @@ import type { EstadoAoVivo } from './ponte.js';
  * O que a moldura mostra e conta ao main sobre a transmissão (D4). Puro: a
  * sessão entra, números e textos saem.
  */
-export const FORA_DO_AR: EstadoAoVivo = { noAr: false, inicioMs: null, assistindo: 0, capacidade: 0, link: null };
+export const FORA_DO_AR: EstadoAoVivo = {
+  noAr: false,
+  inicioMs: null,
+  assistindo: 0,
+  capacidade: 0,
+  link: null,
+  oculto: false,
+};
 
 /**
  * O estado para o main. `assistindo` é quem está de fato recebendo imagem (a
@@ -19,6 +26,7 @@ export function estadoParaOMain(state: BroadcastState, inicioMs: number | null):
     assistindo: state.peers.filter((p) => p.connectionState === 'connected').length,
     capacidade: state.maxPeers,
     link: state.shareUrl,
+    oculto: state.pausa !== null,
   };
 }
 
@@ -28,7 +36,8 @@ export function mesmoEstado(a: EstadoAoVivo, b: EstadoAoVivo): boolean {
     a.inicioMs === b.inicioMs &&
     a.assistindo === b.assistindo &&
     a.capacidade === b.capacidade &&
-    a.link === b.link
+    a.link === b.link &&
+    a.oculto === b.oculto
   );
 }
 

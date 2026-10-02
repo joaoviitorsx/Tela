@@ -17,6 +17,7 @@ export function estadoVivo(opcoes: {
     maxPeers: opcoes.maxPeers ?? 50,
     peers: opcoes.peers ?? [],
     stats,
+    pausa: null,
   } as unknown as BroadcastState;
 }
 
@@ -34,6 +35,17 @@ export function sessaoFalsa(inicial: BroadcastState = { status: 'idle' }) {
     estado = { status: 'ended', reason: 'USER_STOPPED' };
     for (const o of [...ouvintes]) o();
   });
+  const avisar = () => {
+    for (const o of [...ouvintes]) o();
+  };
+  const pausar = vi.fn(async (opcoes: { readonly manterSom?: boolean } = {}) => {
+    if (estado.status === 'live') estado = { ...estado, pausa: { comSom: opcoes.manterSom === true } };
+    avisar();
+  });
+  const retomar = vi.fn(async () => {
+    if (estado.status === 'live') estado = { ...estado, pausa: null };
+    avisar();
+  });
   const sessao: SessaoObservavel = {
     getState: () => estado,
     subscribe: (o) => {
@@ -41,10 +53,14 @@ export function sessaoFalsa(inicial: BroadcastState = { status: 'idle' }) {
       return () => ouvintes.delete(o);
     },
     stop,
+    pausar,
+    retomar,
   };
   return {
     sessao,
     stop,
+    pausar,
+    retomar,
     mudar: (novo: BroadcastState) => {
       estado = novo;
       for (const o of [...ouvintes]) o();

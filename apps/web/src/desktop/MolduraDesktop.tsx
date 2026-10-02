@@ -39,6 +39,8 @@ type Props = {
   readonly sessao?: SessaoAoVivo;
   readonly modo?: ModoDaJanelaStore;
   readonly visibilidade?: FonteDeVisibilidade;
+  /** O som que confirma ocultar/mostrar pelo atalho (`audioCue.privacidade`). */
+  readonly somDeOculto?: (oculto: boolean) => void;
 };
 
 /**
@@ -55,11 +57,25 @@ type Props = {
  * (`hidden`): a `BroadcastSession` vive na rota `/transmitir`, e desmontá-la
  * derrubaria a transmissão. Esconder não é desmontar.
  */
-export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoAoVivo, modo, visibilidade }: Props) {
+export function MolduraDesktop({
+  children,
+  sobreposicao,
+  ponte,
+  sessao = sessaoAoVivo,
+  modo,
+  visibilidade,
+  somDeOculto,
+}: Props) {
   const { caminho, travado, irPara } = useNavegacaoDesktop();
   const assistir = useAssistir(irPara);
   const porLink = useCanalPorLink(ponte, irPara);
-  const sp = useSegundoPlano({ sessao, ponte, ...(modo === undefined ? {} : { modo }), ...(visibilidade === undefined ? {} : { visibilidade }) });
+  const sp = useSegundoPlano({
+    sessao,
+    ponte,
+    ...(modo === undefined ? {} : { modo }),
+    ...(visibilidade === undefined ? {} : { visibilidade }),
+    ...(somDeOculto === undefined ? {} : { somDeOculto }),
+  });
   const ajustes = useAjustes(ponte);
   const atualizacao = useAtualizacao(ponte);
   const aviso = atualizacao.estado === null ? null : avisoNoTrilho(atualizacao.estado);
@@ -153,6 +169,9 @@ export function MolduraDesktop({ children, sobreposicao, ponte, sessao = sessaoA
           encoder={sp.painel.encoder}
           aoCompactar={sp.compactar}
           aoEncerrar={sp.encerrar.pedir}
+          oculto={sp.painel.oculto}
+          atalhoOculto={sp.painel.atalhoOculto}
+          aoAlternarOculto={sp.painel.alternarOculto}
         />
       )}
       {sobreposicao}

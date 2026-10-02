@@ -19,6 +19,8 @@ export type PonteDoSegundoPlano = Pick<
   | 'aoPerguntarFechar'
   | 'responderFechar'
   | 'aoPedirEncerrar'
+  | 'aoAlternarOculto'
+  | 'aoAtalhoOculto'
   | 'aoPedirParar'
   | 'paradaConcluida'
 >;
@@ -55,6 +57,11 @@ export function useSegundoPlano(deps: {
   readonly ponte: PonteDoSegundoPlano | undefined;
   readonly modo?: ModoDaJanelaStore;
   readonly visibilidade?: FonteDeVisibilidade;
+  /**
+   * Confirma a troca pelo atalho, que é dado com o jogo em tela cheia: a
+   * pessoa não vê a janela do Tela, então ouve (ver `AudioCue.privacidade`).
+   */
+  readonly somDeOculto?: (oculto: boolean) => void;
 }) {
   const { sessao, ponte } = deps;
   const modoStore = deps.modo ?? MODO_NORMAL;
@@ -93,10 +100,10 @@ export function useSegundoPlano(deps: {
       emissor.current = null;
     };
   }, [ponte]);
-  const { noAr: eNoAr, inicioMs: eInicio, assistindo, capacidade, link } = estado;
+  const { noAr: eNoAr, inicioMs: eInicio, assistindo, capacidade, link, oculto } = estado;
   useEffect(() => {
-    emissor.current?.empurrar({ noAr: eNoAr, inicioMs: eInicio, assistindo, capacidade, link });
-  }, [eNoAr, eInicio, assistindo, capacidade, link, ponte]);
+    emissor.current?.empurrar({ noAr: eNoAr, inicioMs: eInicio, assistindo, capacidade, link, oculto });
+  }, [eNoAr, eInicio, assistindo, capacidade, link, oculto, ponte]);
 
   /* ---- ordens do main ---- */
   const [aviso, setAviso] = useState<string | null>(null);
@@ -104,11 +111,30 @@ export function useSegundoPlano(deps: {
   const [lembrar, setLembrar] = useState(false);
   const pedirEncerrar = useRef(encerrar.pedir);
   pedirEncerrar.current = encerrar.pedir;
+  const [atalhoOculto, setAtalhoOculto] = useState(false);
+  const som = useRef(deps.somDeOculto);
+  som.current = deps.somDeOculto;
+  /** Uma troca por vez: duas teclas rápidas não podem pausar duas vezes. */
+  const trocando = useRef(false);
+  const alternarOculto = useCallback(() => {
+    if (trocando.current) return;
+    trocando.current = true;
+    void sessao
+      .alternarOculto()
+      .then((novo) => {
+        if (novo !== null) som.current?.(novo);
+      })
+      .finally(() => {
+        trocando.current = false;
+      });
+  }, [sessao]);
 
   useEffect(() => {
     if (ponte === undefined) return;
     const cancelar = [
       ponte.aoPedirEncerrar(() => pedirEncerrar.current()),
+      ponte.aoAlternarOculto(alternarOculto),
+      ponte.aoAtalhoOculto(setAtalhoOculto),
       ponte.aoPedirParar((motivo) => {
         if (motivo === 'suspensao') setAviso(AVISO_DE_SUSPENSAO);
         // `stop()` libera trilhas, peers e avisa a sala; só então o main segue.
@@ -120,7 +146,7 @@ export function useSegundoPlano(deps: {
       }),
     ];
     return () => cancelar.forEach((c) => c());
-  }, [ponte, sessao]);
+  }, [ponte, sessao, alternarOculto]);
 
   const responderFechar = useCallback(
     (acao: 'segundo-plano' | 'encerrar' | 'cancelar') => {
@@ -143,6 +169,10 @@ export function useSegundoPlano(deps: {
       rota: vivo === null ? '—' : rotaDosEspectadores(vivo),
       encoder: vivo === null ? '—' : rotuloDoEncoder(vivo),
       link: link === null ? '' : link.replace(/^https?:\/\//, ''),
+      oculto,
+      /** O atalho só aparece no painel quando o main conseguiu registrá-lo. */
+      atalhoOculto: noAr && atalhoOculto ? 'CTRL+SHIFT+O' : null,
+      alternarOculto,
     },
     encerrar,
     copiado: copia.copiado,

@@ -82,6 +82,8 @@ export type EstadoAoVivo = {
   readonly capacidade: number;
   /** O link público (https), ou `null`. */
   readonly link: string | null;
+  /** Pausa de privacidade ligada: o menu da bandeja oferece mostrar. */
+  readonly oculto: boolean;
 };
 
 export type AoFecharAoVivo = 'perguntar' | 'segundo-plano' | 'encerrar';
@@ -237,6 +239,10 @@ export interface PonteDesktop {
   responderFechar(resposta: RespostaDeFechar): void;
   /** "Encerrar transmissão" da bandeja: roda o fluxo de encerrar da própria interface, com a confirmação. */
   aoPedirEncerrar(ouvinte: () => void): () => void;
+  /** O atalho global Ctrl+Shift+O (ou a bandeja) pediu ocultar/mostrar a transmissão. */
+  aoAlternarOculto(ouvinte: () => void): () => void;
+  /** O atalho global está registrado agora (`false`: fora do ar, ou outro programa o tem). */
+  aoAtalhoOculto(ouvinte: (ativo: boolean) => void): () => void;
   /** Parar SEM perguntar (sair, suspensão): `stop()` da sessão, e então `paradaConcluida()`. */
   aoPedirParar(ouvinte: (motivo: MotivoDeParada) => void): () => void;
   paradaConcluida(): void;
@@ -368,6 +374,8 @@ export const CANAIS = {
   responderFechar: 'tela:responder-fechar',
   /** main → renderer */
   pedirEncerrar: 'tela:pedir-encerrar',
+  alternarOculto: 'tela:alternar-oculto',
+  atalhoOculto: 'tela:atalho-oculto',
   /** main → renderer, `MotivoDeParada` */
   parar: 'tela:parar',
   /** renderer → main */

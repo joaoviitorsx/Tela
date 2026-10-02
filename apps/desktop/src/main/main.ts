@@ -23,6 +23,7 @@ import {
   BrowserWindow,
   clipboard,
   desktopCapturer,
+  globalShortcut,
   type DesktopCapturerSource,
   ipcMain,
   Menu,
@@ -171,6 +172,10 @@ const CANAIS = {
   perguntarFechar: 'tela:perguntar-fechar',
   responderFechar: 'tela:responder-fechar',
   pedirEncerrar: 'tela:pedir-encerrar',
+  /** main → renderer: o atalho global (ou a bandeja) pediu ocultar/mostrar. */
+  alternarOculto: 'tela:alternar-oculto',
+  /** main → renderer, `boolean`: o atalho global está registrado agora. */
+  atalhoOculto: 'tela:atalho-oculto',
   parar: 'tela:parar',
   paradaConcluida: 'tela:parada-concluida',
   /** renderer → main (invoke) → `EstadoDaAtualizacao` */
@@ -203,6 +208,14 @@ const ENV = ambienteEfetivo(process.env, app.isPackaged);
 const USERDATA_PORTATIL = ENV['TELA_USERDATA'];
 if (USERDATA_PORTATIL !== undefined && USERDATA_PORTATIL !== '') app.setPath('userData', USERDATA_PORTATIL);
 /** Dados à parte (e2e, instalação portátil): o autostart e o registro do sistema não são tocados. */
+/**
+ * Wayland não deixa programa nenhum "agarrar" teclas globais: o atalho de
+ * privacidade (Ctrl+Shift+O) só funciona pelo portal de atalhos do desktop
+ * (GNOME 48+, KDE 6), que pergunta à pessoa uma vez. No X11 e no Windows o
+ * recurso não muda nada. Precisa estar ligado antes de o app ficar pronto.
+ */
+if (process.platform === 'linux') app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
+
 const DADOS_PORTATEIS = (USERDATA_PORTATIL !== undefined && USERDATA_PORTATIL !== '') || app.commandLine.hasSwitch('user-data-dir');
 
 /**
@@ -511,6 +524,36 @@ function alternarJanela(): void {
   else mostrarJanela();
 }
 
+/**
+ * O atalho de privacidade (Ctrl+Shift+O): oculta ou mostra a transmissão sem
+ * sair do jogo em tela cheia. Global de propósito — o app está atrás do jogo.
+ *
+ * Registrado só ENQUANTO está no ar: fora do ar ele não serve a nada e não
+ * pode roubar a combinação de outro programa. Se outro programa já a tem, o
+ * registro falha e a página fica sabendo (o painel não promete o atalho).
+ */
+const ATALHO_OCULTAR = 'CommandOrControl+Shift+O';
+let atalhoRegistrado = false;
+
+function sincronizarAtalho(): void {
+  const querer = estado.noAr;
+  if (querer === atalhoRegistrado) return;
+  if (querer) {
+    try {
+      atalhoRegistrado = globalShortcut.register(ATALHO_OCULTAR, () => {
+        if (janela !== null && !janela.isDestroyed()) janela.webContents.send(CANAIS.alternarOculto);
+      });
+    } catch {
+      atalhoRegistrado = false;
+    }
+    if (!atalhoRegistrado) console.warn('[tela] atalho de privacidade indisponível (outro programa o usa?)');
+  } else {
+    globalShortcut.unregister(ATALHO_OCULTAR);
+    atalhoRegistrado = false;
+  }
+  if (janela !== null && !janela.isDestroyed()) janela.webContents.send(CANAIS.atalhoOculto, atalhoRegistrado);
+}
+
 function aoEscolherNoMenu(id: string): void {
   switch (id) {
     case 'copiar':
@@ -518,6 +561,9 @@ function aoEscolherNoMenu(id: string): void {
       break;
     case 'mostrar':
       alternarJanela();
+      break;
+    case 'ocultar':
+      if (janela !== null && !janela.isDestroyed()) janela.webContents.send(CANAIS.alternarOculto);
       break;
     case 'encerrar':
       // O fluxo de encerrar é o da interface, com a confirmação de quem
@@ -1096,6 +1142,7 @@ function registrarIpc(): void {
       // Acabou a transmissão: o compacto não tem mais o que mostrar.
       if (modo === 'compacto') definirModo('normal');
     }
+    sincronizarAtalho();
     if (novo.noAr && tiqueDaBandeja === null) {
       // O tempo no menu anda a cada 10 s: a bandeja não precisa de segundos.
       tiqueDaBandeja = setInterval(atualizarBandeja, 10_000);
@@ -1366,6 +1413,7 @@ if (!app.requestSingleInstanceLock()) {
     espera `parar()` (alguns `pw-metadata`, dezenas de ms) e só então sai.
   */
   app.on('will-quit', (evento) => {
+    globalShortcut.unregisterAll();
     if (saindoDoSom || !somDoApp.ativo()) return;
     evento.preventDefault();
     saindoDoSom = true;

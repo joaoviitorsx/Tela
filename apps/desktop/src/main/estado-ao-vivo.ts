@@ -17,9 +17,18 @@ export type EstadoAoVivo = {
   readonly capacidade: number;
   /** O link público (http/https), ou `null`. É o que "Copiar link" copia. */
   readonly link: string | null;
+  /** A transmissão está oculta (pausa de privacidade): o menu oferece mostrar. */
+  readonly oculto: boolean;
 };
 
-export const FORA_DO_AR: EstadoAoVivo = { noAr: false, inicioMs: null, assistindo: 0, capacidade: 0, link: null };
+export const FORA_DO_AR: EstadoAoVivo = {
+  noAr: false,
+  inicioMs: null,
+  assistindo: 0,
+  capacidade: 0,
+  link: null,
+  oculto: false,
+};
 
 const TAMANHO_MAXIMO_DO_LINK = 2048;
 
@@ -74,7 +83,9 @@ export function estadoAoVivoValido(bruto: unknown): EstadoAoVivo | null {
     link = linkValido(d['link']);
     if (link === null) return null;
   }
-  return { noAr: true, inicioMs, assistindo, capacidade, link };
+  // Ausente (renderer de antes) é "não oculta".
+  const oculto = d['oculto'] === true;
+  return { noAr: true, inicioMs, assistindo, capacidade, link, oculto };
 }
 
 export function mesmoEstado(a: EstadoAoVivo, b: EstadoAoVivo): boolean {
@@ -83,7 +94,8 @@ export function mesmoEstado(a: EstadoAoVivo, b: EstadoAoVivo): boolean {
     a.inicioMs === b.inicioMs &&
     a.assistindo === b.assistindo &&
     a.capacidade === b.capacidade &&
-    a.link === b.link
+    a.link === b.link &&
+    a.oculto === b.oculto
   );
 }
 
@@ -105,7 +117,7 @@ export function rotuloDoEstado(estado: EstadoAoVivo, agora: number): string {
   return `NO AR ${tempoNoAr(estado.inicioMs, agora)} · ${estado.assistindo}/${estado.capacidade}`;
 }
 
-export type IdDoMenu = 'estado' | 'copiar' | 'mostrar' | 'atualizar' | 'encerrar' | 'sair';
+export type IdDoMenu = 'estado' | 'copiar' | 'mostrar' | 'ocultar' | 'atualizar' | 'encerrar' | 'sair';
 
 export type ItemDoMenu =
   | { readonly tipo: 'item'; readonly id: IdDoMenu; readonly rotulo: string; readonly habilitado: boolean }
@@ -140,6 +152,16 @@ export function modeloDoMenu(
     { tipo: 'separador' },
     { tipo: 'item', id: 'copiar', rotulo: 'Copiar link', habilitado: estado.noAr && estado.link !== null },
     { tipo: 'item', id: 'mostrar', rotulo: janelaVisivel ? 'Esconder' : 'Mostrar', habilitado: true },
+    ...(estado.noAr
+      ? [
+          {
+            tipo: 'item',
+            id: 'ocultar',
+            rotulo: estado.oculto ? 'Mostrar a transmissão aos amigos' : 'Ocultar a transmissão dos amigos',
+            habilitado: true,
+          } as const,
+        ]
+      : []),
     ...(atualizacao === null
       ? []
       : [{ tipo: 'item', id: 'atualizar', rotulo: atualizacao.rotulo, habilitado: atualizacao.habilitado } as const]),

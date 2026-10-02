@@ -10,7 +10,7 @@ import {
   tempoNoAr,
 } from './estado-ao-vivo.js';
 
-const NO_AR = { noAr: true, inicioMs: 1_000_000, assistindo: 3, capacidade: 50, link: 'https://tela.gg/jv' };
+const NO_AR = { noAr: true, inicioMs: 1_000_000, assistindo: 3, capacidade: 50, link: 'https://tela.gg/jv', oculto: false };
 
 describe('estadoAoVivoValido', () => {
   it('aceita um estado ao vivo completo', () => {
@@ -40,6 +40,7 @@ describe('estadoAoVivoValido', () => {
   it('mesmoEstado só é verdadeiro para estados iguais', () => {
     expect(mesmoEstado(NO_AR, { ...NO_AR })).toBe(true);
     expect(mesmoEstado(NO_AR, { ...NO_AR, assistindo: 4 })).toBe(false);
+    expect(mesmoEstado(NO_AR, { ...NO_AR, oculto: true })).toBe(false);
     expect(mesmoEstado(FORA_DO_AR, FORA_DO_AR)).toBe(true);
   });
 });
@@ -72,7 +73,23 @@ describe('rótulos e menu', () => {
     expect(por('mostrar')?.rotulo).toBe('Mostrar');
     expect(por('sair')?.rotulo).toMatch(/encerra a transmissão/);
   });
+  it('ao vivo: ocultar ou mostrar a transmissão; fora do ar, nada', () => {
+    const rotulo = (e: typeof NO_AR) =>
+      modoDoItem(modeloDoMenu(e, true, 0).filter((i) => i.tipo === 'item').find((i) => i.id === 'ocultar'));
+    expect(rotulo(NO_AR)).toBe('Ocultar a transmissão dos amigos');
+    expect(rotulo({ ...NO_AR, oculto: true })).toBe('Mostrar a transmissão aos amigos');
+    expect(modeloDoMenu(FORA_DO_AR, true, 0).some((i) => i.tipo === 'item' && i.id === 'ocultar')).toBe(false);
+  });
+  it('renderer antigo, sem o campo: não oculto', () => {
+    const { oculto: _, ...semCampo } = NO_AR;
+    expect(estadoAoVivoValido(semCampo)?.oculto).toBe(false);
+    expect(estadoAoVivoValido({ ...NO_AR, oculto: 'sim' })?.oculto).toBe(false);
+  });
 });
+
+function modoDoItem(item: { readonly rotulo?: string } | undefined): string | undefined {
+  return item?.rotulo;
+}
 
 describe('bandeja: item de atualização (D5)', () => {
   const VISTA: EstadoDaAtualizacao = {

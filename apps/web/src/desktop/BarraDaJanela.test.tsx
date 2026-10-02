@@ -93,6 +93,8 @@ describe('MolduraDesktop com a barra', () => {
       aoMudarVisibilidade: sem,
       aoPerguntarFechar: sem,
       aoPedirEncerrar: sem,
+      aoAlternarOculto: sem,
+      aoAtalhoOculto: sem,
       aoPedirParar: sem,
       aoMudarAtualizacao: sem,
       enviarEstadoAoVivo: () => undefined,

@@ -137,6 +137,31 @@ export function makeWebAudioCue(storage: Storage): AudioCue {
       });
     },
 
+    privacidade(oculto) {
+      if (mudo) return;
+      const ctx = abre();
+      if (ctx === null) return;
+      void ctx.resume();
+      // Quarta descendo = "fechou"; subindo = "voltou". Seno, curto e baixo:
+      // tem de ser ouvido por cima do jogo sem assustar ninguém na call.
+      const notas = oculto ? [880, 587.33] : [587.33, 880];
+      const agora = ctx.currentTime;
+      notas.forEach((frequencia, i) => {
+        const inicio = agora + i * 0.09;
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = frequencia;
+        const ganho = envelope(ctx, inicio, 0.008, 0.08, 0.14);
+        osc.connect(ganho).connect(ctx.destination);
+        osc.start(inicio);
+        osc.stop(inicio + 0.16);
+        osc.onended = () => {
+          osc.disconnect();
+          ganho.disconnect();
+        };
+      });
+    },
+
     estaMudo: () => mudo,
 
     alternaMudo() {

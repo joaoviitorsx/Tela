@@ -12,6 +12,11 @@ type Props = {
   readonly encoder: string;
   readonly aoCompactar: (() => void) | null;
   readonly aoEncerrar: () => void;
+  /** Pausa de privacidade ligada: os amigos veem "transmissão pausada". */
+  readonly oculto?: boolean;
+  /** O atalho global, quando o main conseguiu registrá-lo (ex.: "CTRL+SHIFT+O"). */
+  readonly atalhoOculto?: string | null;
+  readonly aoAlternarOculto?: () => void;
 };
 
 function Dado({ rotulo, valor, tom }: { readonly rotulo: string; readonly valor: string; readonly tom?: 'alerta' | undefined }) {
@@ -33,7 +38,18 @@ function Dado({ rotulo, valor, tom }: { readonly rotulo: string; readonly valor:
  * Não é `aria-live`: o tempo muda a cada segundo e o leitor de tela não
  * deve narrar um relógio. O rótulo da região diz o essencial.
  */
-export function PainelNoAr({ tempo, assistindo, capacidade, rota, encoder, aoCompactar, aoEncerrar }: Props) {
+export function PainelNoAr({
+  tempo,
+  assistindo,
+  capacidade,
+  rota,
+  encoder,
+  aoCompactar,
+  aoEncerrar,
+  oculto = false,
+  atalhoOculto = null,
+  aoAlternarOculto,
+}: Props) {
   return (
     <section
       aria-label="Transmissão no ar"
@@ -41,7 +57,7 @@ export function PainelNoAr({ tempo, assistindo, capacidade, rota, encoder, aoCom
     >
       <span className="flex items-center gap-2 font-[family-name:var(--font-pixel)] text-[12px] text-live-hi">
         <Led pisca />
-        NO AR
+        {oculto ? <span className="text-warn">OCULTA</span> : 'NO AR'}
       </span>
       <dl className="m-0 flex min-w-0 flex-1 flex-wrap items-center gap-x-6 gap-y-1">
         <Dado rotulo="TEMPO" valor={tempo} />
@@ -50,6 +66,19 @@ export function PainelNoAr({ tempo, assistindo, capacidade, rota, encoder, aoCom
         <Dado rotulo="ENCODER" valor={encoder} />
       </dl>
       <div className="flex items-center gap-2">
+        {aoAlternarOculto !== undefined && (
+          <Botao
+            onClick={aoAlternarOculto}
+            aria-pressed={oculto}
+            title={
+              (oculto ? 'Volta a mostrar a tela aos amigos' : 'Os amigos veem "transmissão pausada", sem som') +
+              (atalhoOculto === null ? '' : ` (${atalhoOculto}, de dentro do jogo)`)
+            }
+          >
+            {oculto ? 'MOSTRAR' : 'OCULTAR'}
+            {atalhoOculto !== null && <span className="ml-2 text-[9px] text-muted">{atalhoOculto}</span>}
+          </Botao>
+        )}
         {aoCompactar !== null && (
           <Botao onClick={aoCompactar} title="Reduz a janela a uma faixa com o essencial">
             COMPACTAR

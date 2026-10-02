@@ -198,6 +198,22 @@ try {
   ok(/NO AR/.test(textoDoPainel) && /\d+\/\d+/.test(textoDoPainel), `painel mostra NO AR e n/N (${textoDoPainel.replace(/\s+/g, ' ').slice(0, 120)})`);
   ok(/direta|TURN|mista|—/.test(textoDoPainel) && /ENCODER/.test(textoDoPainel), 'painel mostra rota e encoder');
 
+  // Atalho de privacidade: registrado só ao vivo; a ordem do main alterna a pausa.
+  const registrado = await app.evaluate(({ globalShortcut }) => globalShortcut.isRegistered('CommandOrControl+Shift+O'));
+  if (registrado) {
+    ok(/CTRL\+SHIFT\+O/.test(textoDoPainel), 'painel mostra o atalho de privacidade');
+  } else {
+    // Sessão Wayland sem portal de atalhos, ou outro programa com a combinação.
+    console.log('   (atalho global indisponível nesta sessão: só a ordem do main é testada)');
+  }
+  const ordemDeOcultar = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('tela:alternar-oculto'));
+  await ordemDeOcultar();
+  await esperar(1500);
+  ok(/OCULTA(?!R)/.test((await painel.textContent()) ?? ''), 'a ordem do atalho oculta a transmissão');
+  await ordemDeOcultar();
+  await esperar(1500);
+  ok(/NO AR/.test((await painel.textContent()) ?? '') && !/OCULTA(?!R)/.test((await painel.textContent()) ?? ''), 'a mesma ordem mostra de novo');
+
   // Compacto pelo IPC: a MESMA janela encolhe; a transmissão e a rota seguem.
   const grande = await janelaInfo();
   await host.evaluate(() => window.telaDesktop.pedirModo('compacto'));

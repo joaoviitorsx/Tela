@@ -21,6 +21,12 @@ export type AudioCue = {
    * silencioso se estiver mudo.
    */
   readonly bipe: () => void;
+  /**
+   * A transmissão foi ocultada (`true`, dois tons descendo) ou voltou
+   * (`false`, subindo). Quem aperta o atalho está no jogo em tela cheia e não
+   * vê a janela do Tela: ouve. Silencioso se estiver mudo.
+   */
+  readonly privacidade: (oculto: boolean) => void;
   readonly estaMudo: () => boolean;
   readonly alternaMudo: () => void;
 };

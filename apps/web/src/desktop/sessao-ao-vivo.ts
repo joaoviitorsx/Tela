@@ -12,7 +12,7 @@ import type { BroadcastSession, BroadcastState } from '../core/media/broadcast-s
  *
  * Sem React e sem DOM (R1/R3): só a porta mínima da sessão.
  */
-export type SessaoObservavel = Pick<BroadcastSession, 'getState' | 'subscribe' | 'stop'>;
+export type SessaoObservavel = Pick<BroadcastSession, 'getState' | 'subscribe' | 'stop' | 'pausar' | 'retomar'>;
 
 export type InstantaneoDaSessao = {
   readonly state: BroadcastState;
@@ -34,6 +34,11 @@ export type SessaoAoVivo = {
   readonly instantaneo: () => InstantaneoDaSessao;
   /** Para a sessão que está no ar, sem perguntar. Resolve quando acabou de liberar tudo. */
   readonly parar: () => Promise<void>;
+  /**
+   * Oculta ou mostra a transmissão no ar (pausa de privacidade, TELA-022).
+   * Resolve com o estado novo (`true` = oculta), ou `null` fora do ar.
+   */
+  readonly alternarOculto: () => Promise<boolean | null>;
 };
 
 export function criarSessaoAoVivo(agora: () => number = Date.now): SessaoAoVivo {
@@ -90,6 +95,20 @@ export function criarSessaoAoVivo(agora: () => number = Date.now): SessaoAoVivo 
       const r = escolhida();
       if (r === null || encerrada(r.sessao.getState())) return;
       await r.sessao.stop('USER_STOPPED');
+    },
+    alternarOculto: async () => {
+      const r = escolhida();
+      const s = r?.sessao.getState();
+      if (r === null || s?.status !== 'live') return null;
+      if (s.pausa === null) {
+        // Pelo atalho, no meio do jogo: a imagem some e o som também — é o
+        // gesto de "não quero mostrar isto agora". O botão do console deixa
+        // escolher manter o som.
+        await r.sessao.pausar({ manterSom: false });
+        return true;
+      }
+      await r.sessao.retomar();
+      return false;
     },
   };
 }

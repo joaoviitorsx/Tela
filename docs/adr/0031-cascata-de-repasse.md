@@ -1,7 +1,7 @@
 # ADR 0031 — Cascata de repasse: espectadores com boa subida repassam o quadro
 
 **Data:** 2026-10-02
-**Estado:** **aceita** (2026-10-02 — respostas do dono em "Respostas do dono"; implementação começa pelo experimento E2)
+**Estado:** **aceita; fase 1 implementada** (2026-10-02 — respostas do dono em "Respostas do dono"; E2 medido; fase 1 em "Fase 1 — como ficou")
 **Complementa:** 0029 (um encode, teto de 50 — "o passo seguinte, já decidido pelo dono"), 0030 (porta pela banda) · **Mantém:** 0005 (sem servidor de mídia), R2, R5, R8 · **Altera, se aceita:** o modelo de privacidade da sala (IP entre espectadores) e o "teto 50 pela banda" da 0030 (a capacidade passa a somar vagas de repassadores)
 **Origem:** `docs/engenharia/estudo/2-transporte-e-topologia.md` §4 (T2) e `e2e/cascata.sim.mjs` (novo, desta ADR)
 
@@ -301,10 +301,118 @@ node e2e/bench/estudo-repasse-e2.mjs --cenarios=chave --tickchave=livre
 ```
 Não precisa do dev server nem do signaling; o script serve a própria página e transpila `FilaDeInjecao` e `CodificadorWebCodecs` de `apps/web/src`.
 
+## Fase 1 — como ficou
+
+Implementada em 2026-10-02 sobre as respostas do dono e o E2. Onde o desenho
+acima e o código divergem, vale o código, e o motivo está aqui.
+
+### Peças
+
+| Peça | Onde | O quê |
+|---|---|---|
+| Protocolo | `core/mesh/protocolo-de-repasse.ts` | Envelope `repasse` dentro do `payload` opaco. Espectador → anfitrião: `estado` (versão, pode repassar, RTT), `relatorio` (filhos, pior estimativa de saída, sobrecarga), `com-pai`, `sem-pai`, `via`. Anfitrião → espectador: `pai`, `filho`, `soltar`, `via`. Tudo validado como entrada não confiável. O servidor não muda; `PROTOCOL_VERSION` segue 5 |
+| Árvore | `core/mesh/arvore-de-repasse.ts` | Pura, no anfitrião. Decide quem repassa para quem e manda as mensagens; não toca mídia |
+| Pausa | `MeshTopology.pausarVideo` | `replaceTrack(null)` no sender de vídeo do filho; sai da coleta da malha coletiva e da fila de injeção |
+| Repassador | `adapters/repassador.ts` + `injecao-worker.ts` (papel `repassador`) | Transform de recepção copia o quadro para a `FilaDeInjecao`; isca 160×90 por filho com relógio livre de 75 Hz no worker |
+| Filho | `adapters/filho-de-repasse.ts` | Liga no pai, troca a trilha de vídeo da tela no primeiro quadro, vigia de 700 ms |
+| Fiação | `mesh-transport.ts`, `encode-once-transport.ts`, containers | Hub de `via` no anfitrião; IDR periódico; capacidade somada |
+| Teste | `core/mesh/*.test.ts`, `e2e/repasse.e2e.mjs` | 23 testes de unidade da árvore e do protocolo; e2e com anfitrião e 3 espectadores reais |
+
+### Decisões, e por quê
+
+1. **Só o vídeo passa pelo repassador; o áudio vem sempre do anfitrião.**
+   141 kbps por pessoa não pesam a ninguém, e assim não existe isca de áudio
+   nem sincronia entre duas fontes de RTP. O vídeo chega ao filho uns
+   10–20 ms depois do áudio (E2), abaixo do limiar em que se percebe
+   dessincronia com o áudio adiantado.
+2. **O anfitrião é sempre o pai reserva, e a troca é sem buraco.** O filho
+   mantém a ligação com o anfitrião. O anfitrião só pausa o vídeo direto
+   depois do `com-pai` (o primeiro quadro do pai já está na tela). Na volta,
+   `sem-pai` despausa. Medido no e2e: com o repassador fechado à força, o filho
+   decodifica de novo pelo anfitrião em ~3 s, sem recarregar a página. São
+   ~0,7 s de vigia, mais o PLI e o IDR do anfitrião.
+3. **Quadro-chave: IDR periódico de 2 s no anfitrião, só enquanto há filho.**
+   É a saída que o E2 recomendou, porque pedir IDR acima por filho deixava a
+   subárvore 1,5–2 s sem quadro. Ninguém pede: o filho entra no próximo IDR
+   (≤ 2 s). Custo estimado em 4–8 % de bits, só com repasse ativo.
+4. **Relógio livre a 75 Hz e tolerância de entrada de 4 quadros.** Acoplado à
+   chegada, o E2 mediu +130 a +275 ms. 75 Hz fica acima dos 60 quadros da
+   fonte, para drenar a entrada com tolerância, e abaixo dos 120 Hz que, com 3
+   filhos, derrubavam o repassador. A `FilaDeInjecao` ganhou
+   `toleranciaDeEntrada`: o relógio livre pode perder o instante em que o IDR
+   é a ponta. O anfitrião continua com 0.
+5. **O transform de recepção nasce no `ontrack`, em modo de passagem.** Medido:
+   no Chromium 151, `receiver.transform` atribuído com a mídia já fluindo não
+   recebe quadro nenhum. Por isso todo espectador que PODE repassar liga o
+   transform antes do primeiro pacote. Sem filho, o worker só devolve o
+   quadro, sem cópia nem relógio. Medido no `e2e/latencia.e2e.mjs`, A/B na
+   mesma máquina:
+
+   | | sem transform | com transform |
+   |---|---|---|
+   | mesh | 49,6 / 57,2 ms | 49,8 / 49,8 ms |
+   | um encode | 41,6 / 41,5 ms | 41,6 / 41,8 ms |
+
+   Diferença dentro do ruído. O worker vive a sessão inteira: tirar o
+   transform com vídeo fluindo não é seguro.
+6. **Quem repassa:** Chromium (app e navegador, resposta 2) com
+   `RTCRtpScriptTransform` no receiver, fora de celular (`userAgentData.mobile`
+   ou ponteiro grosso): a bateria e o plano de dados seriam de outra pessoa.
+7. **Quando liga:** orçamento por caminho medido abaixo do piso do 720p60
+   (6,2 Mbps), ou a porta pela banda (ADR 0030) cheia, com 3 ou mais
+   espectadores que anunciaram `estado`. Sem orçamento medido não liga: a
+   porta começa fechada em 5 até a primeira medição.
+8. **Vagas automáticas pela banda medida (resposta 4).**
+   - Todo repassador começa com UMA vaga.
+   - Ganha outra a cada 10 s em que a pior aresta mostra ≥ 1,25 × o bitrate.
+   - Teto: `K_MAX = 3`, pelo E2.
+   - Abaixo de 0,85 × o bitrate, ou com quadro descartado ou congelado no
+     próprio repassador, devolve o filho mais novo ao anfitrião.
+   - Arestas com menos de 10 s não são julgadas.
+   - Nenhuma regra mexe no degrau de todos: a malha coletiva (R5) continua
+     olhando só os caminhos do anfitrião, e o simulador não muda (portões
+     `--portao` e `--escala --portao` rodados, sem regressão).
+9. **Falha de aresta.**
+   - O filho tem 8 s para confirmar a imagem.
+   - Se não confirmar, volta ao anfitrião, e o repassador espera 8 s antes de
+     tentar de novo.
+   - Duas falhas seguidas tiram o repassador por 60 s. É o caso provável de
+     ICE entre espectadores atrás de CGNAT.
+10. **Capacidade:** a do canal passa a ser a capacidade da malha mais as
+    vagas dos repassadores. O servidor não sabe que há árvore.
+11. **Latência no HUD do filho:** `referenciaDeCaptura` devolve `null`, porque
+    o `abs-capture-time` não atravessa o salto (E2, resultado 3). O HUD não
+    mostra um número falso.
+12. **Nada na interface fala de repasse nem de IP** (resposta 1).
+
+### Medido (`e2e/repasse.e2e.mjs`)
+
+Ambiente: Chromium 151 headless, loopback, anfitrião sintético 1280×720 a
+30 fps, H.264, "um encode", 3 espectadores, cascata forçada.
+
+- A árvore se forma: um repassador com dois filhos.
+- Os filhos decodificam a 28–30 fps pelo repassador, com 0–1 congelamento em
+  15 s.
+- O repassador segue a 30 fps.
+- O anfitrião manda vídeo a 1 caminho, não a 3.
+- Repassador fechado: o filho volta ao anfitrião em ~3 s.
+- Regressão: `mesh.e2e`, `um-encode.e2e` e `latencia.e2e` passam; os portões
+  do simulador não mudam.
+
+### Fica para a fase 2
+
+- Botão "parar de ajudar" no repassador. A saída hoje é automática, por
+  sobrecarga.
+- Carimbo de captura atravessando o salto (SEI ou `setMetadata`), para o HUD
+  do filho.
+- Matriz de RTT e perda com `tc netem`.
+- Porte do modelo para `malhas.sim.mjs`.
+
 ## O que continua sem verificação
 
 - **Humano:** latência glass-to-glass com a câmera a 240 fps (E2 mede um proxy por relógio comum); FPS do jogo do repassador com MangoHud; taxa de sucesso de ICE entre espectadores atrás de CGNAT brasileiro, com amigos em operadoras diferentes — **a hipótese que mais pode quebrar o ganho**.
-- **Máquina:** E2 foi executado em loopback (ver "E2 — medido"); falta a matriz de RTT e perda (`ip netns` + `tc netem`, root), 1080p60 e codec de hardware. E3 e E4 não foram executados.
+- **Máquina:** E2 e a fase 1 rodaram em loopback (ver "E2 — medido" e "Fase 1 — como ficou"); falta a matriz de RTT e perda (`ip netns` + `tc netem`, root), 1080p60 e codec de hardware. E3 e E4 não foram executados.
+- **Humano, fase 1:** uma sala real com 4 ou mais amigos em casas diferentes e o anfitrião com subida fraca (ou o console mostrando orçamento abaixo de 6,2 Mbps). O que observar: ninguém perde imagem, e o upload do anfitrião cai. Para ver a árvore sem esperar a malha apertar, abra o console do anfitrião, rode `localStorage.setItem('tela.repasse','forcar')` e recarregue antes de ir ao ar.
 - Os valores de latência por salto (25–45 ms), religação (0,7–2,0 s) e esforço (3–5 semanas) são [I]/[H].
 
 ## Referências

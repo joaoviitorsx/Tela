@@ -17,6 +17,7 @@ function props(sobre: Partial<PropsDaBarra> = {}): PropsDaBarra {
     imagem: '1920×1080',
     travado: null,
     avisoAudio: null,
+    avisoImagem: null,
     temAudio: true,
     volume: { valor: 1, mudo: false, ajustavel: true, passo: 0.05, aoAjustar: vi.fn(), aoAlternar: vi.fn(), aoAtivar: vi.fn(), deslizanteNaCompacta: false },
     zoom: { porcento: '100%', ampliado: false, aoAumentar: vi.fn(), aoDiminuir: vi.fn(), aoResetar: vi.fn() },

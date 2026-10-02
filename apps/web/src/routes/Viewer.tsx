@@ -26,6 +26,7 @@ import { useFrameLatency } from '../react/use-frame-latency.js';
 import { usePictureInPicture } from '../react/use-picture-in-picture.js';
 import { useViewer } from '../react/use-viewer.js';
 import { PASSO_VOLUME, useVolume } from '../react/use-volume.js';
+import type { CausaDaLentidao } from '../core/media/vigia-de-fluidez.js';
 import { useZoomPan } from '../react/use-zoom-pan.js';
 
 type Props = { readonly slug: string };
@@ -60,6 +61,23 @@ const MOTIVO: Record<Exclude<ViewerState['status'], 'watching'>, Motivo> = {
  * no `title`. Silêncio curto não aparece: só depois de 20s o classificador
  * afirma `sem-sinal`, e pode ser o jogo calado mesmo — o texto não culpa ninguém.
  */
+/**
+ * Por que a imagem está aos saltos, quando a causa é do lado de quem assiste
+ * (`vigia-de-fluidez.ts`) — a única em que ele pode agir. Diz o que fazer.
+ */
+const AVISO_IMAGEM: Record<CausaDaLentidao, { rotulo: string; titulo: string }> = {
+  rede: {
+    rotulo: 'sua conexão',
+    titulo:
+      'a imagem chega aos saltos porque a sua conexão está perdendo pacotes — Wi-Fi longe do roteador, download pesado ou rede móvel; cabo ou outra rede resolvem',
+  },
+  decodificacao: {
+    rotulo: 'seu computador',
+    titulo:
+      'a imagem chega, mas este computador não está dando conta de mostrá-la — feche abas e programas pesados, ou confira a aceleração por hardware do navegador',
+  },
+};
+
 const AVISO_AUDIO: Partial<Record<EstadoAudio, { rotulo: string; titulo: string }>> = {
   perda: {
     rotulo: 'som picotando',
@@ -471,6 +489,7 @@ export function Viewer({ slug }: Props) {
   }
 
   const avisoAudio = watching ? (AVISO_AUDIO[state.audio] ?? null) : null;
+  const avisoImagem = watching && state.lentidao != null ? AVISO_IMAGEM[state.lentidao] : null;
   const barraVisivel = !escondida && controls.visible;
 
   const propsDaBarra: PropsDaBarra = {
@@ -493,9 +512,11 @@ export function Viewer({ slug }: Props) {
               ? 'captura até a tela'
               : 'só a recepção (sem captura)'
           }${medida.janela === null ? '' : ` · mediana de ${medida.janela.amostras} quadros · p95 ${formatarMs(medida.janela.p95)}`}`,
-    imagem: stats.resolution,
+    // Com os quadros por segundo: "slide" vira um número que quem assiste pode repetir.
+    imagem: stats.fps === '—' ? stats.resolution : `${stats.resolution} · ${stats.fps}`,
     travado: stats.travou ? stats.congelado : null,
     avisoAudio,
+    avisoImagem,
     temAudio: hasAudio,
     volume: {
       valor: som.volume,

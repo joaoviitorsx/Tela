@@ -13,6 +13,8 @@ export type PropsDaBarra = {
   /** "2,1s travado", ou `null` quando nunca travou: silêncio é boa notícia. */
   readonly travado: string | null;
   readonly avisoAudio: { readonly rotulo: string; readonly titulo: string } | null;
+  /** A imagem está aos saltos por causa de quem assiste: rede ou computador. */
+  readonly avisoImagem: { readonly rotulo: string; readonly titulo: string } | null;
 
   readonly temAudio: boolean;
   readonly volume: {
@@ -117,6 +119,14 @@ export function BarraEspectador(p: PropsDaBarra) {
         {p.travado !== null && (
           <Campo rotulo="TRAVOU" titulo="Tempo total de imagem congelada nesta sessão">
             <span className="numeral text-[22px] text-warn">{p.travado}</span>
+          </Campo>
+        )}
+
+        {p.avisoImagem !== null && (
+          <Campo rotulo="TRAVANDO" titulo={p.avisoImagem.titulo}>
+            <span className="font-[family-name:var(--font-pixel)] text-[11px] text-warn">
+              ! {p.avisoImagem.rotulo}
+            </span>
           </Campo>
         )}
 

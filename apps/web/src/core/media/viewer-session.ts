@@ -1,4 +1,5 @@
 import { Emitter } from '../emitter.js';
+import { type CausaDaLentidao, VigiaDeFluidez } from './vigia-de-fluidez.js';
 import { ClassificadorDeAudio, type EstadoAudio } from './audio-state.js';
 import { CODIGO_AUDIO, type Diagnostico, Diario, idLocal } from './diagnostico.js';
 import { JITTER_MINIMO_MS } from '../mesh/peer-link.js';
@@ -32,6 +33,12 @@ export type ViewerState =
       readonly stats: MediaStats | null;
       /** O que dá para afirmar sobre o som que chega. Ver `audio-state.ts`. */
       readonly audio: EstadoAudio;
+      /**
+       * Por que a imagem está aos saltos, do lado de quem assiste — ou
+       * `undefined`/`null` quando está fluida ou não dá para afirmar. Ver
+       * `vigia-de-fluidez.ts`.
+       */
+      readonly lentidao?: CausaDaLentidao | null;
     }
   /**
    * A mídia hesitou, mas ela AINDA ESTÁ AQUI — e é por isso que o stream vem
@@ -166,6 +173,7 @@ export class ViewerSession {
   private readonly diario = new Diario('espectador');
 
   private readonly classificadorAudio = new ClassificadorDeAudio();
+  private readonly fluidez = new VigiaDeFluidez();
   /**
    * O que a PÁGINA sabe sobre a reprodução, e a sessão não: se o navegador
    * bloqueou o autoplay e se a pessoa silenciou. Informado pela UI.
@@ -331,6 +339,7 @@ export class ViewerSession {
     this.latencia.reset();
     this.relogioDeCaptura.reset();
     this.classificadorAudio.reiniciar();
+    this.fluidez.reiniciar();
     this.diario.iniciar((this.deps.diagnosticId ?? idLocal)(), this.deps.appVersion ?? null);
     this.diario.evento('session', 'START', this.deps.scheduler.now());
     await this.dropTransport();
@@ -664,7 +673,11 @@ export class ViewerSession {
       agora,
     });
     if (audio !== this.state.audio) this.diario.evento('audio', CODIGO_AUDIO[audio], agora);
-    this.setState({ ...this.state, stats, audio });
+    const lentidao = this.fluidez.observar(stats.recepcao, stats.fps, agora);
+    if (lentidao !== (this.state.lentidao ?? null)) {
+      this.diario.evento('video', lentidao === null ? 'SMOOTH' : lentidao === 'rede' ? 'SLOW_NETWORK' : 'SLOW_DECODE', agora);
+    }
+    this.setState({ ...this.state, stats, audio, lentidao });
     void this.lerReferenciaDeCaptura();
 
     // Devolve latência quando a conexão prova que aguenta, e a retoma no

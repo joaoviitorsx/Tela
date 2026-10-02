@@ -106,6 +106,15 @@ export function BarraEspectadorCompacta(p: PropsDaBarra) {
           {p.latencia}
         </span>
 
+        {p.avisoImagem !== null && (
+          <span
+            className="flex items-center px-1.5 font-[family-name:var(--font-pixel)] text-[10px] text-warn"
+            title={p.avisoImagem.titulo}
+          >
+            ! {p.avisoImagem.rotulo}
+          </span>
+        )}
+
         {p.travado !== null && (
           <span className="numeral flex items-center px-1.5 text-[18px] text-warn" title="Imagem congelada nesta sessão">
             {p.travado}

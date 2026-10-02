@@ -505,6 +505,7 @@ export function Viewer({ slug }: Props) {
       aoAjustar: som.ajustar,
       aoAlternar: som.alternarMudo,
       aoAtivar: setSomAtivo,
+      deslizanteNaCompacta: !comDedo,
     },
     zoom: {
       porcento: `${Math.round(zoom.zoom * 100)}%`,

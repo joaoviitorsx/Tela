@@ -18,7 +18,7 @@ function props(sobre: Partial<PropsDaBarra> = {}): PropsDaBarra {
     travado: null,
     avisoAudio: null,
     temAudio: true,
-    volume: { valor: 1, mudo: false, ajustavel: true, passo: 0.05, aoAjustar: vi.fn(), aoAlternar: vi.fn(), aoAtivar: vi.fn() },
+    volume: { valor: 1, mudo: false, ajustavel: true, passo: 0.05, aoAjustar: vi.fn(), aoAlternar: vi.fn(), aoAtivar: vi.fn(), deslizanteNaCompacta: false },
     zoom: { porcento: '100%', ampliado: false, aoAumentar: vi.fn(), aoDiminuir: vi.fn(), aoResetar: vi.fn() },
     aoEsconder: vi.fn(),
     pip: { ativo: false, aoAlternar: vi.fn() },
@@ -68,5 +68,19 @@ describe('BarraEspectadorCompacta', () => {
     render(<BarraEspectadorCompacta {...props({ reconectando: true, temAudio: false })} />);
     expect(screen.getByText('RECONECTANDO')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Silenciar' })).toBeNull();
+  });
+});
+
+describe('BarraEspectadorCompacta — volume', () => {
+  it('com mouse (janela baixa no PC) vai o deslizante, não só o mudo', () => {
+    const p = props();
+    render(<BarraEspectadorCompacta {...p} volume={{ ...p.volume, deslizanteNaCompacta: true }} />);
+    expect(screen.getByRole('slider', { name: 'Volume da transmissão' })).toBeTruthy();
+  });
+
+  it('transmissão sem som: o controle fica à vista, dizendo por quê', () => {
+    render(<BarraEspectadorCompacta {...props({ temAudio: false })} />);
+    expect(screen.getByText('SEM SOM')).toBeTruthy();
+    expect(screen.queryByRole('slider')).toBeNull();
   });
 });

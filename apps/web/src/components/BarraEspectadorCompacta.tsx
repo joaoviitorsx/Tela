@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
 import { BotaoBarra, type PropsDaBarra } from './BarraEspectador.js';
+import { VolumeBlocos } from './VolumeBlocos.js';
 import { IconMudo, IconOlho, IconOlhoRisco, IconPip, IconSairTelaCheia, IconSom, IconTelaCheia } from './Icon.js';
 import { Led } from './Led.js';
 
@@ -10,7 +11,8 @@ import { Led } from './Led.js';
  * de `⋯`. A de duas ou três linhas comia 31% de um celular deitado.
  *
  * Mesmos dados e mesmos callbacks da barra cheia (`PropsDaBarra`): só muda o
- * desenho. O volume é o do aparelho; aqui fica o botão de mudo.
+ * desenho. No celular o volume é o do aparelho e aqui fica o botão de mudo;
+ * com mouse (janela baixa no PC) vai o deslizante inteiro.
  */
 export function BarraEspectadorCompacta(p: PropsDaBarra) {
   const [mais, setMais] = useState(false);
@@ -111,7 +113,18 @@ export function BarraEspectadorCompacta(p: PropsDaBarra) {
         )}
 
         <div className="ml-auto flex items-center">
-          {p.temAudio && (
+          {!p.temAudio || p.volume.deslizanteNaCompacta ? (
+            <VolumeBlocos
+              volume={p.volume.valor}
+              mudo={p.volume.mudo}
+              ajustavel={p.volume.ajustavel}
+              passo={p.volume.passo}
+              onVolume={p.volume.aoAjustar}
+              onAlternar={p.volume.aoAlternar}
+              onAtivo={p.volume.aoAtivar}
+              semSom={!p.temAudio}
+            />
+          ) : (
             <BotaoBarra
               rotulo="Silenciar"
               aoClicar={p.volume.aoAlternar}

@@ -13,6 +13,12 @@ type Props = {
   readonly passo: number;
   /** Avisa a barra para não sumir enquanto a pessoa mira, arrasta ou tabula. */
   readonly onAtivo: (ativo: boolean) => void;
+  /**
+   * A transmissão chegou sem trilha de som (quem transmite escolheu "sem
+   * som"). O controle continua à vista, desligado e dizendo por quê: sumir com
+   * ele fazia parecer que o produto não tinha volume.
+   */
+  readonly semSom?: boolean;
 };
 
 /**
@@ -30,7 +36,7 @@ type Props = {
  *
  * O botão de mudo e o range ficam ambos com 44px de altura.
  */
-export function VolumeBlocos({ volume, mudo, ajustavel, onVolume, onAlternar, passo, onAtivo }: Props) {
+export function VolumeBlocos({ volume, mudo, ajustavel, onVolume, onAlternar, passo, onAtivo, semSom = false }: Props) {
   const [arrastando, setArrastando] = useState(false);
   const [comFoco, setComFoco] = useState(false);
   const porcento = Math.round(volume * 100);
@@ -39,6 +45,19 @@ export function VolumeBlocos({ volume, mudo, ajustavel, onVolume, onAlternar, pa
   useEffect(() => {
     onAtivo(arrastando || comFoco);
   }, [arrastando, comFoco, onAtivo]);
+
+  if (semSom) {
+    return (
+      <div
+        role="status"
+        title="Quem transmite não está mandando som"
+        className="flex h-11 items-center gap-1.5 px-1.5 text-dim"
+      >
+        <IconMudo className="h-[18px] w-[18px]" />
+        <span className="font-[family-name:var(--font-pixel)] text-[10px]">SEM SOM</span>
+      </div>
+    );
+  }
 
   return (
     <div

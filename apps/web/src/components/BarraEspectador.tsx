@@ -23,6 +23,11 @@ export type PropsDaBarra = {
     readonly aoAjustar: (v: number) => void;
     readonly aoAlternar: () => void;
     readonly aoAtivar: (ativo: boolean) => void;
+    /**
+     * Na barra compacta, também o deslizante — não só o mudo. `false` no
+     * celular, onde o volume é o do aparelho (botões laterais).
+     */
+    readonly deslizanteNaCompacta: boolean;
   };
 
   readonly zoom: {
@@ -123,19 +128,18 @@ export function BarraEspectador(p: PropsDaBarra) {
           </Campo>
         )}
 
-        {p.temAudio && (
-          <div className="flex items-center border-l-2 border-line px-1.5">
-            <VolumeBlocos
-              volume={p.volume.valor}
-              mudo={p.volume.mudo}
-              ajustavel={p.volume.ajustavel}
-              passo={p.volume.passo}
-              onVolume={p.volume.aoAjustar}
-              onAlternar={p.volume.aoAlternar}
-              onAtivo={p.volume.aoAtivar}
-            />
-          </div>
-        )}
+        <div className="flex items-center border-l-2 border-line px-1.5">
+          <VolumeBlocos
+            volume={p.volume.valor}
+            mudo={p.volume.mudo}
+            ajustavel={p.volume.ajustavel}
+            passo={p.volume.passo}
+            onVolume={p.volume.aoAjustar}
+            onAlternar={p.volume.aoAlternar}
+            onAtivo={p.volume.aoAtivar}
+            semSom={!p.temAudio}
+          />
+        </div>
 
         <div className="flex items-center border-l-2 border-line" role="group" aria-label="Zoom">
           <BotaoBarra rotulo="Diminuir zoom (−)" aoClicar={p.zoom.aoDiminuir}>

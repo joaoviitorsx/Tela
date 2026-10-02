@@ -6,7 +6,8 @@ import {
 import { describeIceSettings, parseIceSettings } from './ice-settings.js';
 import { DEFAULT_LIMITS } from './limits.js';
 import { listaDeOrigens, origemPermitida } from './origem.js';
-import { ROTA_ESTADO } from './estado-do-canal.js';
+import { ROTA_ESTADO, comMemoria, consultarPeloObjeto, type ConsultarEstado } from './estado-do-canal.js';
+import { type Reescritor, servirComPrevia } from './previa.js';
 
 /**
  * Ponto de entrada do Cloudflare Worker.
@@ -25,6 +26,19 @@ declare const WebSocketPair: {
   new (): { 0: HibernatableSocket; 1: HibernatableSocket & { accept(): void } };
 };
 declare const crypto: WebCryptoLike;
+declare const HTMLRewriter: { new (): Reescritor };
+
+/**
+ * A consulta de estado com memória vive no escopo do módulo, que é o escopo
+ * do isolate: é o que faz a memória de 30 s valer entre requisições. Criada
+ * na primeira, porque o namespace só chega com o `env`.
+ */
+let consultarEstado: ConsultarEstado | null = null;
+
+function consultaDoIsolate(env: Env): ConsultarEstado {
+  consultarEstado ??= comMemoria(consultarPeloObjeto(env.CHANNELS));
+  return consultarEstado;
+}
 
 /**
  * O que o runtime entrega, declarado à mão para não depender dos tipos do
@@ -196,7 +210,16 @@ export default {
      * sem variável de build e sem uma segunda publicação para esquecer de
      * fazer. E requisição de asset estático não conta na cota de Workers.
      */
-    if (env.ASSETS !== undefined) return await env.ASSETS.fetch(request);
+    const assets = env.ASSETS;
+    if (assets !== undefined) {
+      // `/<slug>` pedido por robô de prévia ganha o estado do canal; o resto
+      // passa direto. Ver `previa.ts`.
+      return await servirComPrevia(request, {
+        assets: (pedido) => assets.fetch(pedido),
+        consultar: consultaDoIsolate(env),
+        reescritor: () => new HTMLRewriter(),
+      });
+    }
     return new Response('front não publicado neste Worker', { status: 404 });
   },
 };

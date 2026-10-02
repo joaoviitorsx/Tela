@@ -30,9 +30,24 @@ command = "node ../../scripts/check-artifacts.mjs"
 directory = "../web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-# O Worker precisa ver a requisição ANTES dos assets, senão /signal nunca
-# chega ao Durable Object.
-run_worker_first = ["/signal/*", "/health"]
+# O Worker precisa ver a requisição ANTES dos assets, senão `/signal/*` nunca
+# chega ao Durable Object e `/health` cai no SPA.
+#
+# `/*` cobre os dois — o wrangler recusa listá-los junto, por redundância — e
+# também o link do canal, `/<slug>`: o robô de prévia do Discord/WhatsApp
+# recebe ali o estado do canal (src/previa.ts). `*` casa em qualquer
+# profundidade e exceção (`!`) vence, então ficam de fora todo arquivo (slug
+# não tem ponto), os assets com hash e as rotas do front que não são canal.
+# Requisição de asset que NÃO passa pelo Worker não conta na cota — é por isso
+# que a lista não é simplesmente `true`.
+run_worker_first = [
+  "/*",
+  "!/",
+  "!/*.*",
+  "!/assets/*",
+  "!/transmitir",
+  "!/recuperar",
+]
 
 [[durable_objects.bindings]]
 name = "CHANNELS"

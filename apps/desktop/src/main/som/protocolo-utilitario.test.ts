@@ -1,19 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { appsDasSessoes, pedidoValido, pidValido, respostaValida } from './protocolo-utilitario.js';
+import { addonSabeExcluir, appsDasSessoes, pedidoValido, pidValido, respostaValida } from './protocolo-utilitario.js';
 
 describe('pedidoValido (o que o utility aceita do main)', () => {
-  it('aceita os quatro pedidos', () => {
+  it('aceita os cinco pedidos', () => {
     expect(pedidoValido({ t: 'sondar' })).toEqual({ t: 'sondar' });
     expect(pedidoValido({ t: 'listar' })).toEqual({ t: 'listar' });
     expect(pedidoValido({ t: 'parar' })).toEqual({ t: 'parar' });
-    expect(pedidoValido({ t: 'capturar', pid: 1234 })).toEqual({ t: 'capturar', pid: 1234 });
+    expect(pedidoValido({ t: 'capturar', pid: 1234, modo: 'incluir' })).toEqual({ t: 'capturar', pid: 1234, modo: 'incluir' });
+    expect(pedidoValido({ t: 'capturar', pid: 1234, modo: 'excluir' })).toEqual({ t: 'capturar', pid: 1234, modo: 'excluir' });
+    expect(pedidoValido({ t: 'trocar', pid: 1234, modo: 'excluir' })).toEqual({ t: 'trocar', pid: 1234, modo: 'excluir' });
+  });
+
+  it('capturar e trocar sem um modo conhecido são recusados: o modo decide se a call vai junto', () => {
+    for (const modo of [undefined, '', 'tudo', 'EXCLUIR', 1, true]) {
+      expect(pedidoValido({ t: 'capturar', pid: 1234, modo }), String(modo)).toBeNull();
+      expect(pedidoValido({ t: 'trocar', pid: 1234, modo }), String(modo)).toBeNull();
+    }
   });
 
   it('descarta campos a mais e pedidos mal formados', () => {
     expect(pedidoValido({ t: 'listar', extra: 1 })).toEqual({ t: 'listar' });
-    for (const ruim of [null, 3, 'listar', {}, { t: 'x' }, { t: 'capturar' }, { t: 'capturar', pid: '12' }, { t: 'capturar', pid: 4 }, { t: 'capturar', pid: -1 }, { t: 'capturar', pid: 1.5 }]) {
+    for (const ruim of [null, 3, 'listar', {}, { t: 'x' }, { t: 'capturar' }, { t: 'capturar', pid: '12', modo: 'incluir' }, { t: 'capturar', pid: 4, modo: 'incluir' }, { t: 'capturar', pid: -1, modo: 'incluir' }, { t: 'trocar', pid: 1.5, modo: 'excluir' }]) {
       expect(pedidoValido(ruim)).toBeNull();
     }
+  });
+});
+
+describe('addonSabeExcluir', () => {
+  it('só a 1.1 em diante: uma 1.0 capturaria SÓ o alvo (a call)', () => {
+    expect(['1.1.0', '1.2.3', '2.0.0', '1.10.0'].map(addonSabeExcluir)).toEqual([true, true, true, true]);
+    expect(['1.0.0', '0.9.0', '', 'x', '1'].map(addonSabeExcluir)).toEqual([false, false, false, false, false]);
   });
 });
 

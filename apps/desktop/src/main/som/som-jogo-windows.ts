@@ -1,6 +1,6 @@
 /**
- * "Só o jogo" no Windows (D3, PLANO-desktop §4.1): o main orquestra, o utility
- * process captura.
+ * O som no Windows (D3, PLANO-desktop §4.1) — "só o jogo" e "sistema": o main
+ * orquestra, o utility process captura.
  *
  *     main ──fork──► utility process ── addon C++ (WASAPI process loopback)
  *       │  controle (parentPort)            │ PCM float32 48 kHz, blocos de 10 ms
@@ -10,9 +10,19 @@
  * ele. Se o addon cair, cai o utility — o renderer vê o fim da fonte
  * (`encerrou`) e mostra "som do jogo parou" sem derrubar o vídeo.
  *
- * Nunca cai em silêncio para o som do sistema: sem addon ou com Windows
- * antigo, `disponibilidade()` diz por quê e a interface mostra a opção
- * desabilitada com o motivo.
+ * Os dois modos são o MESMO process loopback com um pid e um modo:
+ *
+ *  - **só o jogo**: `incluir` o pid do jogo escolhido;
+ *  - **sistema**: `excluir` o pid do app de voz (`apps-de-voz.ts`) — tudo que
+ *    toca, menos a call. O loopback exclui UMA árvore de processos por vez;
+ *    a cada `PERIODO_DA_REAVALIACAO_MS` o main lista as sessões no MESMO
+ *    utility e, se o app de voz mudou (o Discord abriu depois), pede `trocar`:
+ *    a captura reabre com o alvo novo na mesma porta (um corte curto no som).
+ *
+ * Nunca cai em silêncio para outro som: sem addon ou com Windows antigo,
+ * `disponibilidade()` diz por quê e a interface mostra as opções
+ * desabilitadas com o motivo — o modo Sistema NÃO volta ao `loopback` do
+ * Electron, que levaria a call junto.
  *
  * Tudo que toca o Electron (`utilityProcess`, `MessageChannelMain`) é
  * injetado: a máquina de estados roda nos testes com um utility de mentira.
@@ -20,12 +30,14 @@
 import type { Result } from '../captura-nativa.js';
 import {
   appsDasSessoes,
+  type CodigoDeErroDoUtilitario,
   type PedidoAoUtilitario,
   pidValido,
   type RespostaDoUtilitario,
   respostaValida,
 } from './protocolo-utilitario.js';
 import { type ErroSomJogo, type FimDoSomDoJogo, windowsSuportaLoopbackPorProcesso } from './protocolo-som.js';
+import { alvoDaExclusao } from './apps-de-voz.js';
 
 export type ProcessoUtilitario = {
   postMessage(mensagem: PedidoAoUtilitario, transferir?: readonly unknown[]): void;
@@ -44,6 +56,8 @@ export type DepsDoSomWindows<P> = {
   agendar(fn: () => void, ms: number): () => void;
   /** Pids do próprio Tela: o áudio dele não é "o jogo". */
   pidsDoTela(): ReadonlySet<number>;
+  /** O processo principal do Tela: a raiz da árvore que o modo sistema exclui quando não há app de voz. */
+  pidPrincipal(): number;
   /** `os.release()`. */
   release(): string;
   /** O `.node` está no pacote? Sem ele nem vale subir o utility. */
@@ -57,20 +71,102 @@ export type SaidasDoSomWindows = { readonly encerrou: (fim: FimDoSomDoJogo) => v
 export const PRAZO_DA_SONDA_MS = 8000;
 export const PRAZO_DA_LISTAGEM_MS = 5000;
 export const PRAZO_DA_ATIVACAO_MS = 6000;
+/** De quanto em quanto tempo o modo sistema confere se o app de voz mudou. */
+export const PERIODO_DA_REAVALIACAO_MS = 5000;
 const PRAZO_DO_ENCERRAMENTO_MS = 1000;
 
 const MOTIVOS: Record<string, string> = {
-  ADDON_AUSENTE: 'O componente de áudio do jogo não carregou nesta instalação.',
+  ADDON_AUSENTE: 'O componente de áudio não carregou nesta instalação.',
   ATIVACAO_RECUSADA: 'O Windows recusou capturar o áudio desse programa.',
   PROCESSO_INVALIDO: 'Esse programa não está mais aberto.',
-  FALHOU: 'O componente de áudio do jogo falhou.',
+  FALHOU: 'O componente de áudio falhou.',
 };
 
+type FimDaCaptura = 'PROCESSO_ENCERROU' | 'DISPOSITIVO' | 'FALHOU';
+
+/**
+ * A conversa com UM utility vivo: um ouvinte só, um pedido por vez. O
+ * `ProcessoUtilitario` não tem como remover ouvinte; o modo sistema pergunta
+ * a cada 5 s por horas, e um ouvinte por pergunta seria um vazamento.
+ */
+class Conversa {
+  private esperando: ((r: RespostaDoUtilitario) => boolean) | null = null;
+  private aoFimDaCaptura: ((motivo: FimDaCaptura) => void) | null = null;
+  private fimGuardado: FimDaCaptura | null = null;
+  private saiu = false;
+  private readonly aoSairDoProcesso: Array<() => void> = [];
+
+  constructor(
+    readonly proc: ProcessoUtilitario,
+    private readonly agendar: (fn: () => void, ms: number) => () => void,
+  ) {
+    proc.aoMensagem((m) => {
+      const r = respostaValida(m);
+      if (r === null) return;
+      if (r.t === 'fim') {
+        if (this.aoFimDaCaptura === null) this.fimGuardado ??= r.motivo;
+        else this.aoFimDaCaptura(r.motivo);
+        return;
+      }
+      this.esperando?.(r);
+    });
+    proc.aoSair(() => {
+      this.saiu = true;
+      for (const o of this.aoSairDoProcesso.splice(0)) o();
+    });
+  }
+
+  /**
+   * Manda o pedido e espera a primeira resposta de um dos tipos `espera` (ou
+   * um `erro`). `null` no prazo, com o utility morto ou com outro pedido em curso.
+   */
+  pedir(
+    pedido: PedidoAoUtilitario,
+    prazoMs: number,
+    espera: readonly RespostaDoUtilitario['t'][],
+    transferir?: readonly unknown[],
+  ): Promise<RespostaDoUtilitario | null> {
+    if (this.esperando !== null || this.saiu) return Promise.resolve(null);
+    return new Promise((resolver) => {
+      let pronto = false;
+      const terminar = (r: RespostaDoUtilitario | null): void => {
+        if (pronto) return;
+        pronto = true;
+        cancelar();
+        this.esperando = null;
+        resolver(r);
+      };
+      const cancelar = this.agendar(() => terminar(null), prazoMs);
+      this.esperando = (r) => {
+        if (r.t !== 'erro' && !espera.includes(r.t)) return false;
+        terminar(r);
+        return true;
+      };
+      this.aoSair(() => terminar(null));
+      this.proc.postMessage(pedido, transferir);
+    });
+  }
+
+  /** O fim da captura que o addon avisou (o jogo fechou, o dispositivo caiu…). */
+  aoFim(ouvinte: (motivo: FimDaCaptura) => void): void {
+    this.aoFimDaCaptura = ouvinte;
+    if (this.fimGuardado !== null) ouvinte(this.fimGuardado);
+  }
+
+  aoSair(ouvinte: () => void): void {
+    if (this.saiu) ouvinte();
+    else this.aoSairDoProcesso.push(ouvinte);
+  }
+}
+
 type Ativa<P> = {
-  readonly proc: ProcessoUtilitario;
+  readonly conversa: Conversa;
   readonly canal: CanalDePcm<P>;
   readonly id: number;
-  readonly app: string;
+  readonly modo: 'jogo' | 'sistema';
+  /** O pid que a captura inclui (jogo) ou exclui (sistema). */
+  alvo: number;
+  cancelarReavaliacao: (() => void) | null;
   encerrada: boolean;
 };
 
@@ -181,6 +277,44 @@ export class SomDoJogoWindows<P> {
       return { ok: false, error: 'APP_NAO_ENCONTRADO' };
     }
 
+    const nome = this.nomes.get(pid) ?? `Programa ${pid}`;
+    const r = await this.abrir('jogo', saidas, () => Promise.resolve(pid));
+    return r.ok ? { ok: true, value: { app: nome, id: r.value.id, porta: r.value.porta } } : r;
+  }
+
+  /**
+   * "Sistema": tudo que toca, MENOS a call. Lista as sessões no próprio
+   * utility que vai capturar, escolhe o app de voz a excluir
+   * (`alvoDaExclusao`) e abre o loopback em modo `excluir`. Ao vivo, reavalia
+   * o alvo a cada `PERIODO_DA_REAVALIACAO_MS`.
+   */
+  async iniciarSistema(saidas: SaidasDoSomWindows): Promise<Result<{ readonly id: number; readonly porta: P }, ErroSomJogo>> {
+    if (this.ativa !== null || this.iniciando) return { ok: false, error: 'OCUPADO' };
+    this.iniciando = true;
+    if (!(await this.disponibilidade()).disponivel) {
+      this.iniciando = false;
+      return { ok: false, error: 'INDISPONIVEL' };
+    }
+    // Sem listagem (utility mudo), exclui o próprio Tela: a reavaliação acha a call depois.
+    return this.abrir('sistema', saidas, async (conversa) => (await this.alvoDoSistema(conversa)) ?? this.deps.pidPrincipal());
+  }
+
+  /** O pid a excluir agora, pelas sessões que o utility vê; `null` se ele não respondeu. */
+  private async alvoDoSistema(conversa: Conversa): Promise<number | null> {
+    const r = await conversa.pedir({ t: 'listar' }, PRAZO_DA_LISTAGEM_MS, ['sessoes']);
+    if (r?.t !== 'sessoes') return null;
+    return alvoDaExclusao(r.sessoes, this.deps.pidsDoTela(), this.deps.pidPrincipal()).pid;
+  }
+
+  /**
+   * Sobe o utility, descobre o alvo (`alvo` pode perguntar ao próprio utility)
+   * e abre a captura. Chamado com `iniciando` ligado; desliga ao sair.
+   */
+  private async abrir(
+    modo: 'jogo' | 'sistema',
+    saidas: SaidasDoSomWindows,
+    alvo: (conversa: Conversa) => Promise<number>,
+  ): Promise<Result<{ readonly id: number; readonly porta: P }, ErroSomJogo>> {
     let proc: ProcessoUtilitario;
     let canal: CanalDePcm<P>;
     try {
@@ -190,28 +324,20 @@ export class SomDoJogoWindows<P> {
       this.iniciando = false;
       return { ok: false, error: 'INDISPONIVEL' };
     }
+    const conversa = new Conversa(proc, this.deps.agendar);
     const id = this.proximoId++;
-    const nome = this.nomes.get(pid) ?? `Programa ${pid}`;
+    const pid = await alvo(conversa);
 
-    const resultado = await new Promise<'ok' | ErroSomJogo>((resolver) => {
-      let pronto = false;
-      const terminar = (v: 'ok' | ErroSomJogo): void => {
-        if (pronto) return;
-        pronto = true;
-        cancelar();
-        resolver(v);
-      };
-      const cancelar = this.deps.agendar(() => terminar('FALHOU'), PRAZO_DA_ATIVACAO_MS);
-      proc.aoMensagem((msg) => {
-        const r = respostaValida(msg);
-        if (r === null) return;
-        if (r.t === 'capturando') terminar('ok');
-        else if (r.t === 'erro') terminar(r.erro === 'PROCESSO_INVALIDO' ? 'APP_NAO_ENCONTRADO' : r.erro === 'ADDON_AUSENTE' ? 'INDISPONIVEL' : 'FALHOU');
-      });
-      proc.aoSair(() => terminar('FALHOU'));
-      proc.postMessage({ t: 'capturar', pid }, [canal.paraUtilitario]);
-    });
+    const r = await conversa.pedir(
+      { t: 'capturar', pid, modo: modo === 'jogo' ? 'incluir' : 'excluir' },
+      PRAZO_DA_ATIVACAO_MS,
+      ['capturando'],
+      [canal.paraUtilitario],
+    );
     this.iniciando = false;
+    const erro = r === null || r.t === 'capturando' ? null : r.t === 'erro' ? ERRO_AO_ABRIR[r.erro] : 'FALHOU';
+    // No sistema não há "programa escolhido" que sumiu: o app de voz fechou no meio, e é falha.
+    const resultado = r?.t === 'capturando' ? 'ok' : erro === null || (erro === 'APP_NAO_ENCONTRADO' && modo === 'sistema') ? 'FALHOU' : erro;
 
     if (resultado !== 'ok') {
       canal.fechar();
@@ -219,23 +345,52 @@ export class SomDoJogoWindows<P> {
       return { ok: false, error: resultado };
     }
 
-    const ativa: Ativa<P> = { proc, canal, id, app: nome, encerrada: false };
+    const ativa: Ativa<P> = { conversa, canal, id, modo, alvo: pid, cancelarReavaliacao: null, encerrada: false };
     this.ativa = ativa;
     // Depois de capturando, o que chega é o fim — ou a morte do utility.
-    proc.aoMensagem((msg) => {
-      const r = respostaValida(msg);
-      if (r?.t === 'fim') this.acabou(ativa, r.motivo === 'PROCESSO_ENCERROU' ? 'PROCESSO_ENCERROU' : 'COMPONENTE_CAIU', saidas);
-    });
-    proc.aoSair(() => this.acabou(ativa, 'COMPONENTE_CAIU', saidas));
-    return { ok: true, value: { app: nome, id, porta: canal.paraRenderer } };
+    conversa.aoFim((motivo) => this.acabou(ativa, motivo === 'PROCESSO_ENCERROU' ? 'PROCESSO_ENCERROU' : 'COMPONENTE_CAIU', saidas));
+    conversa.aoSair(() => this.acabou(ativa, 'COMPONENTE_CAIU', saidas));
+    if (modo === 'sistema') this.agendarReavaliacao(ativa, saidas);
+    return { ok: true, value: { id, porta: canal.paraRenderer } };
+  }
+
+  private agendarReavaliacao(ativa: Ativa<P>, saidas: SaidasDoSomWindows): void {
+    if (ativa.encerrada) return;
+    ativa.cancelarReavaliacao = this.deps.agendar(() => void this.reavaliar(ativa, saidas), PERIODO_DA_REAVALIACAO_MS);
+  }
+
+  /**
+   * O amigo entrou na call depois de a transmissão começar: o Discord não
+   * estava entre as sessões quando a captura abriu. Se o app de voz a excluir
+   * mudou, a captura reabre com o alvo novo — na mesma porta, com um corte de
+   * uma ativação (dezenas de ms) no som. Uma listagem que falha não muda nada;
+   * uma troca que falha encerra (a página mostra "SEM SOM · …").
+   */
+  private async reavaliar(ativa: Ativa<P>, saidas: SaidasDoSomWindows): Promise<void> {
+    ativa.cancelarReavaliacao = null;
+    if (ativa.encerrada) return;
+    const alvo = await this.alvoDoSistema(ativa.conversa);
+    if (ativa.encerrada) return;
+    if (alvo !== null && alvo !== ativa.alvo) {
+      const r = await ativa.conversa.pedir({ t: 'trocar', pid: alvo, modo: 'excluir' }, PRAZO_DA_ATIVACAO_MS, ['capturando']);
+      if (ativa.encerrada) return;
+      if (r?.t !== 'capturando') {
+        this.acabou(ativa, 'COMPONENTE_CAIU', saidas);
+        return;
+      }
+      ativa.alvo = alvo;
+    }
+    this.agendarReavaliacao(ativa, saidas);
   }
 
   private acabou(ativa: Ativa<P>, motivo: FimDoSomDoJogo['motivo'], saidas: SaidasDoSomWindows): void {
     if (ativa.encerrada) return;
     ativa.encerrada = true;
+    ativa.cancelarReavaliacao?.();
+    ativa.cancelarReavaliacao = null;
     if (this.ativa === ativa) this.ativa = null;
     ativa.canal.fechar();
-    ativa.proc.kill();
+    ativa.conversa.proc.kill();
     saidas.encerrou({ motivo });
   }
 
@@ -245,17 +400,19 @@ export class SomDoJogoWindows<P> {
     if (a === null) return;
     this.ativa = null;
     a.encerrada = true;
-    a.proc.postMessage({ t: 'parar' });
+    a.cancelarReavaliacao?.();
+    a.cancelarReavaliacao = null;
+    a.conversa.proc.postMessage({ t: 'parar' });
     // Dá um instante para o addon liberar o dispositivo antes de matar o processo.
     await new Promise<void>((resolver) => {
       const cancelar = this.deps.agendar(resolver, PRAZO_DO_ENCERRAMENTO_MS);
-      a.proc.aoSair(() => {
+      a.conversa.aoSair(() => {
         cancelar();
         resolver();
       });
     });
     a.canal.fechar();
-    a.proc.kill();
+    a.conversa.proc.kill();
   }
 
   /** O id da sessão ativa, para o main fechar a porta certa. */
@@ -263,6 +420,14 @@ export class SomDoJogoWindows<P> {
     return this.ativa?.id ?? null;
   }
 }
+
+/** O erro do utility ao abrir a captura, como a página o entende. */
+const ERRO_AO_ABRIR: Record<CodigoDeErroDoUtilitario, ErroSomJogo> = {
+  PROCESSO_INVALIDO: 'APP_NAO_ENCONTRADO',
+  ADDON_AUSENTE: 'INDISPONIVEL',
+  ATIVACAO_RECUSADA: 'FALHOU',
+  FALHOU: 'FALHOU',
+};
 
 /** Caminhos do Windows não diferenciam caixa. */
 function mesmoExecutavel(a: string, b: string): boolean {

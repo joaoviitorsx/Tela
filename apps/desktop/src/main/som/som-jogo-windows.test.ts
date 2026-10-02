@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PedidoAoUtilitario } from './protocolo-utilitario.js';
-import { type DepsDoSomWindows, type ProcessoUtilitario, SomDoJogoWindows } from './som-jogo-windows.js';
+import { type DepsDoSomWindows, PERIODO_DA_REAVALIACAO_MS, type ProcessoUtilitario, SomDoJogoWindows } from './som-jogo-windows.js';
 
 type Porta = { nome: string; fechada: boolean };
 
@@ -36,12 +36,21 @@ const SESSOES = [
   { pid: 200, nome: 'Discord', caminho: 'C:\\Discord.exe', ativa: true },
 ];
 
-function montar(opcoes: { release?: string; addon?: boolean; utilitario?: (p: PedidoAoUtilitario, ports: readonly unknown[]) => unknown[] | 'mudo'; prazo?: 'imediato' | 'nunca' } = {}) {
+function montar(
+  opcoes: {
+    release?: string;
+    addon?: boolean;
+    utilitario?: (p: PedidoAoUtilitario, ports: readonly unknown[]) => unknown[] | 'mudo';
+    prazo?: 'imediato' | 'nunca';
+  } = {},
+) {
   const sondaOk = { t: 'sonda', ok: true, versao: '1.0.0' };
   const padrao = (p: PedidoAoUtilitario): unknown[] | 'mudo' =>
     p.t === 'sondar' ? [sondaOk] : p.t === 'listar' ? [{ t: 'sessoes', sessoes: SESSOES }] : p.t === 'capturar' ? [{ t: 'capturando' }] : [];
   const processos: Array<ReturnType<typeof utilitarioFalso>> = [];
   const canais: Array<{ paraUtilitario: Porta; paraRenderer: Porta; fechar(): void }> = [];
+  /** O que está agendado, por prazo: o teste dispara a reavaliação do modo sistema na mão. */
+  const agendados: Array<{ fn: () => void; ms: number; cancelado: boolean }> = [];
   const deps: DepsDoSomWindows<Porta> = {
     forkUtilitario: () => {
       const p = utilitarioFalso(opcoes.utilitario ?? padrao);
@@ -53,15 +62,29 @@ function montar(opcoes: { release?: string; addon?: boolean; utilitario?: (p: Pe
       canais.push(c);
       return c;
     },
-    agendar: (fn) => {
+    agendar: (fn, ms) => {
       if (opcoes.prazo === 'imediato') queueMicrotask(fn);
-      return () => undefined;
+      const item = { fn, ms, cancelado: false };
+      agendados.push(item);
+      return () => {
+        item.cancelado = true;
+      };
     },
     pidsDoTela: () => new Set([999]),
+    pidPrincipal: () => 999,
     release: () => opcoes.release ?? '10.0.22631',
     addonPresente: () => opcoes.addon ?? true,
   };
-  return { som: new SomDoJogoWindows<Porta>(deps), processos, canais };
+  /** Dispara a reavaliação pendente (a de 5 s) e espera o que ela pergunta ao utility. */
+  const reavaliar = async (): Promise<void> => {
+    const item = agendados.filter((a) => a.ms === PERIODO_DA_REAVALIACAO_MS && !a.cancelado).at(-1);
+    if (item === undefined) throw new Error('nenhuma reavaliação agendada');
+    item.cancelado = true;
+    item.fn();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  };
+  const reavaliacoesPendentes = () => agendados.filter((a) => a.ms === PERIODO_DA_REAVALIACAO_MS && !a.cancelado).length;
+  return { som: new SomDoJogoWindows<Porta>(deps), processos, canais, reavaliar, reavaliacoesPendentes };
 }
 
 describe('disponibilidade', () => {
@@ -133,7 +156,8 @@ describe('iniciar / parar', () => {
     expect(r.ok && r.value.app).toBe('Jogo');
     expect(r.ok && r.value.porta).toBe(canais[0]!.paraRenderer);
     const captura = processos.at(-1)!;
-    expect(captura.pedidos).toContainEqual({ t: 'capturar', pid: 100 });
+    // "Só o jogo" INCLUI o jogo (e a árvore dele).
+    expect(captura.pedidos).toContainEqual({ t: 'capturar', pid: 100, modo: 'incluir' });
     expect(som.idAtivo()).toBe(r.ok ? r.value.id : null);
   });
 
@@ -244,5 +268,146 @@ describe('iniciar / parar', () => {
     expect(fins).toEqual([]);
     expect(som.idAtivo()).toBeNull();
     await som.parar(); // idempotente
+  });
+});
+
+describe('iniciarSistema: tudo que toca, menos a call', () => {
+  /** Um utility cujas sessões o teste troca no meio (o Discord abre depois). */
+  function comSessoes(inicial: ReadonlyArray<{ pid: number; nome: string; caminho: string; ativa: boolean }>, troca: 'ok' | 'erro' = 'ok') {
+    let sessoes = inicial;
+    const m = montar({
+      utilitario: (p) =>
+        p.t === 'sondar'
+          ? [{ t: 'sonda', ok: true, versao: '1.1.0' }]
+          : p.t === 'listar'
+            ? [{ t: 'sessoes', sessoes }]
+            : p.t === 'capturar'
+              ? [{ t: 'capturando' }]
+              : p.t === 'trocar'
+                ? [troca === 'ok' ? { t: 'capturando' } : { t: 'erro', erro: 'ATIVACAO_RECUSADA' }]
+                : [],
+    });
+    return { ...m, mudarSessoes: (novas: typeof inicial) => (sessoes = novas) };
+  }
+
+  it('exclui o Discord: pede ao utility a captura em modo "excluir" com o pid dele e entrega a porta', async () => {
+    const { som, processos, canais } = comSessoes(SESSOES);
+    const r = await som.iniciarSistema({ encerrou: () => undefined });
+    expect(r.ok && r.value.porta).toBe(canais[0]!.paraRenderer);
+    const captura = processos.at(-1)!;
+    // Lista no MESMO utility que captura: um processo a menos.
+    expect(captura.pedidos.map((p) => p.t)).toEqual(['listar', 'capturar']);
+    expect(captura.pedidos).toContainEqual({ t: 'capturar', pid: 200, modo: 'excluir' });
+    expect(som.idAtivo()).toBe(r.ok ? r.value.id : null);
+  });
+
+  it('não precisa do seletor: não depende de listar() antes', async () => {
+    const { som } = comSessoes(SESSOES);
+    expect((await som.iniciarSistema({ encerrou: () => undefined })).ok).toBe(true);
+  });
+
+  it('sem app de voz aberto, exclui o próprio Tela', async () => {
+    const { som, processos } = comSessoes([{ pid: 100, nome: 'Jogo', caminho: 'C:\\Jogo.exe', ativa: true }]);
+    await som.iniciarSistema({ encerrou: () => undefined });
+    expect(processos.at(-1)!.pedidos).toContainEqual({ t: 'capturar', pid: 999, modo: 'excluir' });
+  });
+
+  it('o Discord abre depois: a reavaliação troca o alvo na mesma captura (mesmo utility, mesma porta)', async () => {
+    const { som, processos, canais, mudarSessoes, reavaliar } = comSessoes([{ pid: 100, nome: 'Jogo', caminho: 'C:\\Jogo.exe', ativa: true }]);
+    await som.iniciarSistema({ encerrou: () => undefined });
+    const captura = processos.at(-1)!;
+    const antes = processos.length;
+
+    await reavaliar();
+    // Nada mudou: não troca.
+    expect(captura.pedidos.filter((p) => p.t === 'trocar')).toEqual([]);
+
+    mudarSessoes(SESSOES);
+    await reavaliar();
+    expect(captura.pedidos.filter((p) => p.t === 'trocar')).toEqual([{ t: 'trocar', pid: 200, modo: 'excluir' }]);
+    expect(processos.length).toBe(antes);
+    expect(canais).toHaveLength(1);
+    expect(canais[0]!.paraRenderer.fechada).toBe(false);
+
+    // E não troca de novo enquanto o alvo for o mesmo.
+    await reavaliar();
+    expect(captura.pedidos.filter((p) => p.t === 'trocar')).toHaveLength(1);
+  });
+
+  it('o Discord fecha: volta a excluir só o Tela', async () => {
+    const { som, processos, mudarSessoes, reavaliar } = comSessoes(SESSOES);
+    await som.iniciarSistema({ encerrou: () => undefined });
+    mudarSessoes([SESSOES[0]!]);
+    await reavaliar();
+    expect(processos.at(-1)!.pedidos.at(-1)).toEqual({ t: 'trocar', pid: 999, modo: 'excluir' });
+  });
+
+  it('uma troca que o Windows recusa encerra: a página mostra o motivo', async () => {
+    const { som, mudarSessoes, reavaliar, canais } = comSessoes([], 'erro');
+    const fins: string[] = [];
+    await som.iniciarSistema({ encerrou: (f) => fins.push(f.motivo) });
+    mudarSessoes(SESSOES);
+    await reavaliar();
+    expect(fins).toEqual(['COMPONENTE_CAIU']);
+    expect(som.idAtivo()).toBeNull();
+    expect(canais[0]!.paraRenderer.fechada).toBe(true);
+  });
+
+  it('o utility caindo encerra a captura e a reavaliação', async () => {
+    const { som, processos, reavaliacoesPendentes } = comSessoes(SESSOES);
+    const fins: string[] = [];
+    await som.iniciarSistema({ encerrou: (f) => fins.push(f.motivo) });
+    expect(reavaliacoesPendentes()).toBe(1);
+    processos.at(-1)!.morrer();
+    expect(fins).toEqual(['COMPONENTE_CAIU']);
+    // E a reavaliação para junto.
+    expect(reavaliacoesPendentes()).toBe(0);
+  });
+
+  it('parar cancela a reavaliação e não avisa quem pediu', async () => {
+    const { som, processos, reavaliacoesPendentes } = comSessoes(SESSOES);
+    const fins: string[] = [];
+    await som.iniciarSistema({ encerrou: (f) => fins.push(f.motivo) });
+    const parada = som.parar();
+    processos.at(-1)!.morrer();
+    await parada;
+    expect(processos.at(-1)!.pedidos.at(-1)).toEqual({ t: 'parar' });
+    expect(reavaliacoesPendentes()).toBe(0);
+    expect(fins).toEqual([]);
+    expect(som.idAtivo()).toBeNull();
+  });
+
+  it('uma sessão por vez, com o "só o jogo" também', async () => {
+    const { som } = comSessoes(SESSOES);
+    await som.listar();
+    await som.iniciarSistema({ encerrou: () => undefined });
+    expect(await som.iniciarSistema({ encerrou: () => undefined })).toEqual({ ok: false, error: 'OCUPADO' });
+    expect(await som.iniciar('pid:100', { encerrou: () => undefined })).toEqual({ ok: false, error: 'OCUPADO' });
+  });
+
+  it('indisponível (Windows antigo): não sobe a captura nem cai para o loopback do sistema', async () => {
+    const { som, processos } = montar({ release: '10.0.18363' });
+    expect(await som.iniciarSistema({ encerrou: () => undefined })).toEqual({ ok: false, error: 'INDISPONIVEL' });
+    expect(processos).toHaveLength(0);
+  });
+
+  it('ativação recusada: FALHOU e fecha a porta; addon velho: INDISPONIVEL', async () => {
+    const recusa = montar({
+      utilitario: (p) => (p.t === 'sondar' ? [{ t: 'sonda', ok: true, versao: '1.1.0' }] : p.t === 'listar' ? [{ t: 'sessoes', sessoes: SESSOES }] : [{ t: 'erro', erro: 'ATIVACAO_RECUSADA' }]),
+    });
+    expect(await recusa.som.iniciarSistema({ encerrou: () => undefined })).toEqual({ ok: false, error: 'FALHOU' });
+    expect(recusa.canais[0]!.paraRenderer.fechada).toBe(true);
+
+    const velho = montar({
+      utilitario: (p) => (p.t === 'sondar' ? [{ t: 'sonda', ok: true, versao: '1.0.0' }] : p.t === 'listar' ? [{ t: 'sessoes', sessoes: SESSOES }] : [{ t: 'erro', erro: 'ADDON_AUSENTE' }]),
+    });
+    expect(await velho.som.iniciarSistema({ encerrou: () => undefined })).toEqual({ ok: false, error: 'INDISPONIVEL' });
+  });
+
+  it('o app de voz fechou entre a listagem e a ativação: FALHOU, não "programa não encontrado"', async () => {
+    const { som } = montar({
+      utilitario: (p) => (p.t === 'sondar' ? [{ t: 'sonda', ok: true, versao: '1.1.0' }] : p.t === 'listar' ? [{ t: 'sessoes', sessoes: SESSOES }] : [{ t: 'erro', erro: 'PROCESSO_INVALIDO' }]),
+    });
+    expect(await som.iniciarSistema({ encerrou: () => undefined })).toEqual({ ok: false, error: 'FALHOU' });
   });
 });

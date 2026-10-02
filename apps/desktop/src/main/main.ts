@@ -1268,9 +1268,16 @@ function registrarIpc(): void {
     if (daInterface(evento)) void somDoApp.parar();
   });
 
-  ipcMain.handle(CANAIS.somIniciarSistema, (evento) =>
-    daInterface(evento) ? somDoApp.iniciarSistema(evento.sender) : { ok: false, erro: 'INDISPONIVEL' },
-  );
+  ipcMain.handle(CANAIS.somIniciarSistema, async (evento) => {
+    if (!daInterface(evento)) return { ok: false, erro: 'INDISPONIVEL' };
+    try {
+      return await somDoApp.iniciarSistema(evento.sender);
+    } catch (erro: unknown) {
+      console.error('[tela] som do sistema falhou:', erro);
+      await somDoApp.parar();
+      return { ok: false, erro: 'FALHOU' };
+    }
+  });
 
   ipcMain.handle(CANAIS.capturaNativaIniciar, (evento, payload: unknown) => {
     if (!daInterface(evento)) return { ok: false, erro: 'INDISPONIVEL' } as const;

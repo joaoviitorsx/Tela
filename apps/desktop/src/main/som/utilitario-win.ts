@@ -1,6 +1,7 @@
 /**
- * O utility process do som do jogo no Windows (D3): carrega o addon C++ e
- * conversa com o main pelo protocolo de `protocolo-utilitario.ts`.
+ * O utility process do som no Windows (D3): carrega o addon C++ e conversa
+ * com o main pelo protocolo de `protocolo-utilitario.ts`. Serve aos dois
+ * modos — "só o jogo" (incluir o jogo) e "sistema" (excluir a call).
  *
  * Roda FORA do processo principal de propósito: um addon que trava ou cai
  * derruba só este processo, e o renderer vê o fim da fonte. Não importa nada
@@ -9,11 +10,14 @@
  *   --addon=<caminho do wasapi_loopback.node>   (o main resolve onde ele está)
  *
  * O PCM sai direto para a porta que o main transferiu em `capturar`; este
- * arquivo só o repassa, sem copiar nem inspecionar.
+ * arquivo só o repassa, sem copiar nem inspecionar. `trocar` reabre a captura
+ * com outro alvo na mesma porta (o modo sistema, quando o app de voz muda).
  */
 import { createRequire } from 'node:module';
 import {
+  addonSabeExcluir,
   type CodigoDeErroDoUtilitario,
+  type ModoDaCaptura,
   pedidoValido,
   type RespostaDoUtilitario,
   type SessaoDeAudio,
@@ -23,7 +27,7 @@ import {
 type Addon = {
   versao(): string;
   listarSessoes(): SessaoDeAudio[];
-  capturar(pid: number, aoBloco: (dados: Float32Array) => void, aoFim: (motivo: string) => void): { parar(): void };
+  capturar(pid: number, aoBloco: (dados: Float32Array) => void, aoFim: (motivo: string) => void, modo: ModoDaCaptura): { parar(): void };
 };
 
 const pai = process.parentPort;
@@ -59,6 +63,23 @@ function carregar(): Addon | null {
 }
 
 let captura: { parar(): void } | null = null;
+/** A porta do PCM, guardada para `trocar` reabrir a captura nela. */
+let porta: { postMessage(mensagem: unknown): void } | null = null;
+/** O número do bloco segue entre trocas: o renderer vê um fluxo só. */
+let n = 0;
+
+function abrir(a: Addon, pid: number, modo: ModoDaCaptura): { parar(): void } {
+  // Uma 1.0 ignoraria o modo e capturaria SÓ o alvo — no sistema, só a call.
+  if (modo === 'excluir' && !addonSabeExcluir(a.versao())) throw new Error(`ADDON_AUSENTE: o addon ${a.versao()} não sabe excluir`);
+  return a.capturar(
+    pid,
+    (dados) => porta?.postMessage({ t: 'pcm', n: n++, dados }),
+    (motivo) => {
+      responder({ t: 'fim', motivo: motivo === 'PROCESSO_ENCERROU' || motivo === 'DISPOSITIVO' ? motivo : 'FALHOU' });
+    },
+    modo,
+  );
+}
 
 pai.on('message', (evento) => {
   const pedido = pedidoValido(evento.data);
@@ -81,20 +102,25 @@ pai.on('message', (evento) => {
       responder({ t: 'sonda', ok: true, versao: a.versao() });
     } else if (pedido.t === 'listar') {
       responder({ t: 'sessoes', sessoes: a.listarSessoes() });
-    } else {
-      const porta = evento.ports[0];
-      if (porta === undefined || captura !== null) {
+    } else if (pedido.t === 'capturar') {
+      const recebida = evento.ports[0];
+      if (recebida === undefined || captura !== null) {
         responder({ t: 'erro', erro: 'FALHOU' });
         return;
       }
-      let n = 0;
-      captura = a.capturar(
-        pedido.pid,
-        (dados) => porta.postMessage({ t: 'pcm', n: n++, dados }),
-        (motivo) => {
-          responder({ t: 'fim', motivo: motivo === 'PROCESSO_ENCERROU' || motivo === 'DISPOSITIVO' ? motivo : 'FALHOU' });
-        },
-      );
+      porta = recebida;
+      captura = abrir(a, pedido.pid, pedido.modo);
+      responder({ t: 'capturando' });
+    } else {
+      // `trocar`: a captura velha para (sem `fim`: quem pediu sabe) e a nova
+      // abre na mesma porta. Se a nova falhar, fica sem captura e o main encerra.
+      if (captura === null || porta === null) {
+        responder({ t: 'erro', erro: 'FALHOU' });
+        return;
+      }
+      captura.parar();
+      captura = null;
+      captura = abrir(a, pedido.pid, pedido.modo);
       responder({ t: 'capturando' });
     }
   } catch (erro: unknown) {

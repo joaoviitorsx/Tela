@@ -1,5 +1,6 @@
 /**
- * O protocolo entre o main e o utility process do som do jogo no Windows (D3).
+ * O protocolo entre o main e o utility process do som no Windows (D3): "só o
+ * jogo" e "sistema" usam o mesmo utility e o mesmo addon.
  *
  * Duas conversas separadas, de propósito:
  *
@@ -11,7 +12,9 @@
  *    áudio é addon → utility → renderer, sem tocar no processo principal.
  *
  * O pedido `capturar` leva a porta do PCM em `ports[0]` (transferência do
- * Electron); por isso a forma abaixo não a menciona.
+ * Electron); por isso a forma abaixo não a menciona. `trocar` reabre a captura
+ * com outro alvo na MESMA porta: a página não percebe nada além de um corte
+ * curto no som.
  */
 
 /** O formato fixo do PCM: o que o addon pede ao WASAPI e o que o worklet espera. */
@@ -30,10 +33,18 @@ export type SessaoDeAudio = {
   readonly ativa: boolean;
 };
 
+/**
+ * `incluir`: só o processo (e a árvore dele) — o "só o jogo". `excluir`: tudo
+ * MENOS o processo (e a árvore dele) — o "sistema", sem a call.
+ */
+export type ModoDaCaptura = 'incluir' | 'excluir';
+
 export type PedidoAoUtilitario =
   | { readonly t: 'sondar' }
   | { readonly t: 'listar' }
-  | { readonly t: 'capturar'; readonly pid: number }
+  | { readonly t: 'capturar'; readonly pid: number; readonly modo: ModoDaCaptura }
+  /** Com a captura de pé: para e reabre com outro alvo, na mesma porta. Responde `capturando` ou `erro`. */
+  | { readonly t: 'trocar'; readonly pid: number; readonly modo: ModoDaCaptura }
   | { readonly t: 'parar' };
 
 export type CodigoDeErroDoUtilitario =
@@ -56,6 +67,21 @@ const ehRegistro = (x: unknown): x is Record<string, unknown> => typeof x === 'o
 const ERROS: readonly string[] = ['ADDON_AUSENTE', 'ATIVACAO_RECUSADA', 'PROCESSO_INVALIDO', 'FALHOU'];
 const FINS: readonly string[] = ['PROCESSO_ENCERROU', 'DISPOSITIVO', 'FALHOU'];
 
+const MODOS: readonly string[] = ['incluir', 'excluir'];
+const modoValido = (x: unknown): x is ModoDaCaptura => typeof x === 'string' && MODOS.includes(x);
+
+/**
+ * O addon sabe excluir? O modo chegou na 1.1.0; uma 1.0 ignoraria o
+ * argumento e capturaria SÓ o alvo — no modo sistema, só a call, o contrário
+ * do pedido. O utility recusa em vez de arriscar.
+ */
+export function addonSabeExcluir(versao: string): boolean {
+  const m = /^(\d+)\.(\d+)\./.exec(versao);
+  if (m === null) return false;
+  const maior = Number(m[1]);
+  return maior > 1 || (maior === 1 && Number(m[2]) >= 1);
+}
+
 /** Um pid do Windows: inteiro positivo de 32 bits (0 é o Idle; o 4, o System). */
 export const pidValido = (x: unknown): x is number => typeof x === 'number' && Number.isInteger(x) && x > 4 && x <= 0x7fffffff;
 
@@ -68,7 +94,8 @@ export function pedidoValido(x: unknown): PedidoAoUtilitario | null {
     case 'parar':
       return { t: x['t'] };
     case 'capturar':
-      return pidValido(x['pid']) ? { t: 'capturar', pid: x['pid'] } : null;
+    case 'trocar':
+      return pidValido(x['pid']) && modoValido(x['modo']) ? { t: x['t'], pid: x['pid'], modo: x['modo'] } : null;
     default:
       return null;
   }

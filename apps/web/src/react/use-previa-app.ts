@@ -16,9 +16,9 @@ type Opcao = {
  * Windows e Linux. Mexer aqui não guarda nada.
  */
 const OPCOES: readonly Opcao[] = [
-  { id: 'boot', rotulo: 'INICIAR COM O SISTEMA', valores: ['LIGADO', 'DESLIGADO'], ajuda: 'Planejado: abrir minimizado na bandeja quando o computador liga.' },
-  { id: 'bg', rotulo: 'FECHAR = SEGUNDO PLANO', valores: ['LIGADO', 'DESLIGADO'], ajuda: 'Planejado: o X da janela esconde o Tela em vez de encerrar a transmissão.' },
-  { id: 'cap', rotulo: 'CAPTURA', valores: ['JANELA DO JOGO', 'TELA INTEIRA'], ajuda: 'Planejado: escolher a captura no app, sem o seletor do navegador a cada vez.' },
+  { id: 'boot', rotulo: 'INICIAR COM O SISTEMA', valores: ['LIGADO', 'DESLIGADO'], ajuda: 'No beta: abre escondido na bandeja quando o computador liga, sem capturar nada.' },
+  { id: 'bg', rotulo: 'FECHAR = SEGUNDO PLANO', valores: ['LIGADO', 'DESLIGADO'], ajuda: 'No beta: o X da janela esconde o Tela na bandeja (ou no modo compacto) em vez de encerrar a transmissão.' },
+  { id: 'cap', rotulo: 'CAPTURA', valores: ['JANELA DO JOGO', 'TELA INTEIRA'], ajuda: 'No beta: seletor próprio com miniaturas de janelas e telas no Windows; no Linux, o portal do sistema lembra a escolha.' },
   { id: 'aa', rotulo: 'ÁUDIO', valores: ['SÓ DO JOGO', 'SISTEMA TODO'], ajuda: 'Planejado: deixar o Discord e a música de fora. Depende de testes em Windows e Linux.' },
   { id: 'hot', rotulo: 'ATALHO NO AR', valores: ['CTRL+SHIFT+T', 'CTRL+ALT+L', 'F10'], ajuda: 'Planejado: ligar e desligar a transmissão de dentro do jogo, sem alt-tab.' },
 ];

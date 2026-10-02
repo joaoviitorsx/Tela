@@ -99,7 +99,7 @@ export function ConteudoApp({ urlDosLancamentos, menu, posicao }: Props) {
           </div>
         </div>
         <p className="m-0 max-w-[380px] text-[11px] leading-relaxed text-dim [text-wrap:pretty]">
-          Planejado: fechar a janela não derruba a transmissão — o Tela vai para a bandeja do sistema
+          No beta: fechar a janela não derruba a transmissão — o Tela vai para a bandeja do sistema
           e continua no ar enquanto você joga.
         </p>
       </div>

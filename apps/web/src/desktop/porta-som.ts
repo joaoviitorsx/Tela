@@ -13,7 +13,7 @@ export type PortasDeSom = {
 };
 
 export type JanelaDePortasDeSom = {
-  addEventListener(tipo: 'message', ouvinte: (e: { readonly data: unknown; readonly ports: readonly PortaReal[] }) => void): void;
+  addEventListener(tipo: 'message', ouvinte: (e: { readonly data: unknown; readonly ports: readonly PortaReal[]; readonly source: unknown }) => void): void;
 };
 
 export function makePortasDeSom(janela: JanelaDePortasDeSom): PortasDeSom {
@@ -21,6 +21,10 @@ export function makePortasDeSom(janela: JanelaDePortasDeSom): PortasDeSom {
   const esperas = new Map<number, (p: PortaReal) => void>();
 
   janela.addEventListener('message', (e) => {
+    // Só a própria janela: o preload repassa as portas com
+    // `window.postMessage`. Um iframe (ou qualquer outra origem que consiga
+    // postar `message` aqui) não entrega porta nenhuma (S-21).
+    if (e.source !== janela) return;
     const dados = e.data as { tipo?: unknown; id?: unknown } | null;
     if (typeof dados !== 'object' || dados === null || dados.tipo !== MARCA_DA_PORTA_SOM) return;
     const porta = e.ports[0];

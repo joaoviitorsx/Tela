@@ -4,9 +4,11 @@ import { type JanelaDePortas, makeLigacaoNativa, type PortaReal } from './porta-
 
 function janelaFalsa() {
   let ouvinte: Parameters<JanelaDePortas['addEventListener']>[1] | null = null;
+  const janela = { addEventListener: (_t: 'message', o: typeof ouvinte) => (ouvinte = o) } as JanelaDePortas;
   return {
-    janela: { addEventListener: (_t: 'message', o: typeof ouvinte) => (ouvinte = o) } as JanelaDePortas,
-    chegar: (dados: unknown, ports: PortaReal[]) => ouvinte?.({ data: dados, ports }),
+    janela,
+    chegar: (dados: unknown, ports: PortaReal[]) => ouvinte?.({ data: dados, ports, source: janela }),
+    deOutraOrigem: (dados: unknown, ports: PortaReal[]) => ouvinte?.({ data: dados, ports, source: {} }),
   };
 }
 

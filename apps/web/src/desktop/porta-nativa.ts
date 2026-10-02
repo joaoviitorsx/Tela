@@ -48,7 +48,7 @@ const MAXIMO_DE_EVENTOS_GUARDADOS = 32;
 
 /** O mínimo de `window` que isto usa: as portas chegam por `message`. */
 export type JanelaDePortas = {
-  addEventListener(tipo: 'message', ouvinte: (e: { readonly data: unknown; readonly ports: readonly PortaReal[] }) => void): void;
+  addEventListener(tipo: 'message', ouvinte: (e: { readonly data: unknown; readonly ports: readonly PortaReal[]; readonly source: unknown }) => void): void;
 };
 
 function ehMensagem(x: unknown): x is MensagemDoNativo {
@@ -67,6 +67,10 @@ export function makeLigacaoNativa(janela: JanelaDePortas): LigacaoNativa {
   const esperas = new Map<number, (p: PortaReal) => void>();
 
   janela.addEventListener('message', (e) => {
+    // Só a própria janela: o preload repassa as portas com
+    // `window.postMessage`. Um iframe (ou qualquer outra origem que consiga
+    // postar `message` aqui) não entrega porta nenhuma (S-21).
+    if (e.source !== janela) return;
     const dados = e.data as { tipo?: unknown; id?: unknown } | null;
     if (typeof dados !== 'object' || dados === null || dados.tipo !== MARCA_DA_PORTA) return;
     const porta = e.ports[0];

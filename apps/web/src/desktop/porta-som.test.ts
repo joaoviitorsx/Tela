@@ -6,13 +6,15 @@ import { makePortasDeSom } from './porta-som.js';
 const porta = (): PortaReal => ({ postMessage: () => undefined, onmessage: null, close: () => undefined });
 
 function janela() {
-  let ouvinte: ((e: { data: unknown; ports: readonly PortaReal[] }) => void) | null = null;
-  return {
+  let ouvinte: ((e: { data: unknown; ports: readonly PortaReal[]; source: unknown }) => void) | null = null;
+  const j = {
     addEventListener: (_t: 'message', o: typeof ouvinte) => {
       ouvinte = o;
     },
-    postar: (data: unknown, ports: readonly PortaReal[]) => ouvinte?.({ data, ports }),
+    postar: (data: unknown, ports: readonly PortaReal[]) => ouvinte?.({ data, ports, source: j }),
+    deOutraOrigem: (data: unknown, ports: readonly PortaReal[]) => ouvinte?.({ data, ports, source: {} }),
   };
+  return j;
 }
 
 describe('makePortasDeSom', () => {
@@ -43,6 +45,18 @@ describe('makePortasDeSom', () => {
     j.postar('texto', []);
     const p = porta();
     j.postar({ tipo: MARCA_DA_PORTA_SOM, id: 1 }, [p]);
+    expect(await espera).toBe(p);
+  });
+});
+
+describe('portas de som — só da própria janela (S-21)', () => {
+  it('ignora a porta postada por outra origem (iframe)', async () => {
+    const j = janela();
+    const portas = makePortasDeSom(j as never);
+    const espera = portas.aguardar(9);
+    j.deOutraOrigem({ tipo: MARCA_DA_PORTA_SOM, id: 9 }, [porta()]);
+    const p = porta();
+    j.postar({ tipo: MARCA_DA_PORTA_SOM, id: 9 }, [p]);
     expect(await espera).toBe(p);
   });
 });

@@ -209,7 +209,7 @@ visível — nunca "áudio ativo" só porque existe uma trilha:
 
 | Opção | Windows | Linux |
 |---|---|---|
-| **Som do sistema** | `audio: 'loopback'` do Electron — tudo que toca, inclusive a call. Sem componente nativo | Monitor da saída padrão via PipeWire (o modo `monitor-device` de hoje) |
+| **Som do sistema** | Tudo que toca, **menos a call**: o mesmo componente nativo (abaixo) em modo *excluir*, com o pid do app de voz (Discord…). O `loopback` do Electron (que levava a call) saiu — `D3-som.md` §1 | Tudo que toca na saída padrão, **menos a call**: o mesmo sink do "só o jogo", com todos os streams menos os de apps de voz (`D3-som.md` §1) |
 | **Só o jogo** | **Componente nativo** (abaixo) | PipeWire: o app liga só o nó do jogo a um sink virtual do Tela e expõe o monitor dele como **fonte virtual** (o Chromium não lista monitores); o jogo continua tocando no fone. Evolui a TELA-010 para gerenciado. **Sem ponte nativa**: o Chromium captura como dispositivo (`D3-som.md`) |
 | **Sem som** | Escolha explícita | Escolha explícita |
 

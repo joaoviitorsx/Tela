@@ -13,8 +13,13 @@
  *                                 └ retorno ─► saída real (o que o jogador ouve)
  *
  * O Chromium não lista monitores de sink como dispositivo; por isso o monitor
- * alimenta uma FONTE virtual (`Audio/Source`), que ele lista e captura. O modo
- * "sistema" usa a mesma ideia sobre o monitor da saída padrão.
+ * alimenta uma FONTE virtual (`Audio/Source`), que ele lista e captura.
+ *
+ * O modo "sistema" monta o MESMO grafo com nomes próprios (Tela-Sistema) e
+ * inverte a escolha: em vez de mover só o jogo, move TUDO que toca na saída
+ * padrão menos a call (`apps-de-voz.ts`) e o próprio Tela. A call segue
+ * tocando direto no fone de quem joga e nunca passa pelo sink — não há o que
+ * vazar para quem assiste.
  *
  * Ciclo de vida:
  *
@@ -30,36 +35,23 @@
  * testada com um PipeWire de mentira.
  */
 import type { Result } from '../captura-nativa.js';
-import {
-  type Comando,
-  criarEntradaDoJogo,
-  criarEntradaDoSistema,
-  criarSink,
-  dump,
-  FERRAMENTAS,
-  moverParaSink,
-  restaurarStream,
-  versao,
-} from './comandos-pw.js';
+import { ehAppDeVozNoLinux } from './apps-de-voz.js';
+import { type Comando, criarEntrada, criarSink, dump, FERRAMENTAS, moverParaSink, restaurarStream, versao } from './comandos-pw.js';
 import {
   type AppComSom,
   alvoFixado,
   appsComSom,
-  DESCRICAO_DA_ENTRADA_DO_JOGO,
-  DESCRICAO_DA_ENTRADA_DO_SISTEMA,
   entradaPronta,
   type GrafoPw,
   lerGrafo,
-  NOME_DA_CAPTURA_DO_JOGO,
-  NOME_DA_CAPTURA_DO_SISTEMA,
-  NOME_DA_ENTRADA_DO_JOGO,
-  NOME_DA_ENTRADA_DO_SISTEMA,
-  NOME_DO_RETORNO,
-  NOME_DO_SINK,
+  NOS_DO_JOGO,
+  NOS_DO_SISTEMA,
+  type NosDoModo,
   residuos,
   saidaAtual,
   saidaPadrao,
   streamsDoApp,
+  streamsDoSistema,
 } from './grafo-pw.js';
 import type { ErroSomJogo, FimDoSomDoJogo } from './protocolo-som.js';
 
@@ -115,6 +107,9 @@ export class SomDoJogoLinux {
   private filhos: Filho[] = [];
   /** Estamos derrubando os nós de propósito: a saída deles não é uma queda. */
   private derrubando = false;
+  /** Os nomes do grafo montado: o do jogo ou o do sistema. */
+  private nos: NosDoModo = NOS_DO_JOGO;
+  private modo: 'jogo' | 'sistema' = 'jogo';
   private appId = '';
   private appChave = '';
   private nomeDoApp = '';
@@ -190,25 +185,10 @@ export class SomDoJogoLinux {
       const padrao = saidaPadrao(g)?.nome ?? null;
       const alvo = atual !== null && atual !== padrao ? atual : null;
 
-      let sink: Comando;
-      try {
-        sink = criarSink(alvo);
-      } catch {
-        // Nome de saída com caracteres que não passam como argumento: o
-        // gerenciador escolhe a padrão, que é melhor que recusar.
-        sink = criarSink(null);
-      }
-      if (this.subir(sink) === null) return this.desistir('INDISPONIVEL');
-      if (!(await this.esperarSink())) {
-        await this.derrubarNos();
-        return this.desistir('FALHOU');
-      }
-      // O sink de pé e com retorno: agora a fonte que o Chromium enxerga.
-      if (this.subir(criarEntradaDoJogo()) === null || !(await this.esperarEntrada(NOME_DA_ENTRADA_DO_JOGO, NOME_DA_CAPTURA_DO_JOGO))) {
-        await this.derrubarNos();
-        return this.desistir('FALHOU');
-      }
+      const montado = await this.montar(NOS_DO_JOGO, alvo);
+      if (montado !== null) return this.desistir(montado);
 
+      this.modo = 'jogo';
       this.appId = app.id;
       this.appChave = `${app.nome}|${app.binario ?? ''}`;
       this.nomeDoApp = app.nome;
@@ -218,7 +198,7 @@ export class SomDoJogoLinux {
 
       this.estado = { fase: 'ativo', app: app.nome, tocando: true, modo: 'jogo' };
       this.agendarVarredura();
-      return { ok: true, value: { app: app.nome, descricao: DESCRICAO_DA_ENTRADA_DO_JOGO } };
+      return { ok: true, value: { app: app.nome, descricao: NOS_DO_JOGO.descricaoDaEntrada } };
     } catch {
       await this.restaurarTudo();
       await this.derrubarNos();
@@ -227,8 +207,10 @@ export class SomDoJogoLinux {
   }
 
   /**
-   * "Sistema" no Linux: o monitor da saída padrão como fonte virtual. Nada é
-   * movido — só se cria a fonte, e `parar()` a remove.
+   * "Sistema" no Linux: tudo que toca na saída padrão, MENOS a call. Sobe o
+   * sink Tela-Sistema (com retorno que segue a saída padrão) e a fonte dele,
+   * e move para lá todo stream que não é de app de voz nem do Tela. A
+   * varredura de 1 s pega quem começar a tocar depois — e nunca a call.
    */
   async iniciarSistema(saidas: SaidasDoJogoLinux): Promise<Result<{ readonly descricao: string }, ErroSomJogo>> {
     if (this.estado.fase !== 'ocioso') return { ok: false, error: 'OCUPADO' };
@@ -238,19 +220,58 @@ export class SomDoJogoLinux {
       const g = await this.grafo();
       if (g === null) return this.desistir('INDISPONIVEL');
       if (saidaPadrao(g) === null) return this.desistir('FALHOU');
-      if (this.subir(criarEntradaDoSistema()) === null) return this.desistir('INDISPONIVEL');
-      if (!(await this.esperarEntrada(NOME_DA_ENTRADA_DO_SISTEMA, NOME_DA_CAPTURA_DO_SISTEMA))) {
-        await this.derrubarNos();
-        return this.desistir('FALHOU');
-      }
+
+      // O retorno segue a padrão: é a saída cujo som vai ao ar.
+      const montado = await this.montar(NOS_DO_SISTEMA, null);
+      if (montado !== null) return this.desistir(montado);
+
+      this.modo = 'sistema';
+      this.appId = '';
+      this.appChave = '';
       this.nomeDoApp = 'sistema';
       this.movidos = new Map();
+      await this.mover(g, this.streamsDoSistema(g));
+
       this.estado = { fase: 'ativo', app: 'sistema', tocando: true, modo: 'sistema' };
-      return { ok: true, value: { descricao: DESCRICAO_DA_ENTRADA_DO_SISTEMA } };
+      this.agendarVarredura();
+      return { ok: true, value: { descricao: NOS_DO_SISTEMA.descricaoDaEntrada } };
     } catch {
+      await this.restaurarTudo();
       await this.derrubarNos();
       return this.desistir('FALHOU');
     }
+  }
+
+  /**
+   * Sobe o sink do modo, ESPERA o retorno ligado a uma saída, depois a fonte
+   * virtual com a captura ligada. `null` quando tudo ficou de pé; senão o
+   * erro, com os nós já derrubados — nada foi movido ainda.
+   */
+  private async montar(nos: NosDoModo, alvo: string | null): Promise<ErroSomJogo | null> {
+    let sink: Comando;
+    try {
+      sink = criarSink(alvo, nos);
+    } catch {
+      // Nome de saída com caracteres que não passam como argumento: o
+      // gerenciador escolhe a padrão, que é melhor que recusar.
+      sink = criarSink(null, nos);
+    }
+    if (this.subir(sink) === null) return 'INDISPONIVEL';
+    if (!(await this.esperarSink(nos))) {
+      await this.derrubarNos();
+      return 'FALHOU';
+    }
+    // O sink de pé e com retorno: agora a fonte que o Chromium enxerga.
+    if (this.subir(criarEntrada(nos)) === null || !(await this.esperarEntrada(nos.entrada, nos.captura))) {
+      await this.derrubarNos();
+      return 'FALHOU';
+    }
+    this.nos = nos;
+    return null;
+  }
+
+  private streamsDoSistema(g: GrafoPw): readonly number[] {
+    return streamsDoSistema(g, NOS_DO_SISTEMA.sink, this.efeitos.pidsDoTela(), ehAppDeVozNoLinux);
   }
 
   private desistir(erro: ErroSomJogo): Result<never, ErroSomJogo> {
@@ -281,13 +302,13 @@ export class SomDoJogoLinux {
   }
 
   /** O sink existe e o retorno chegou numa saída — senão o jogador ficaria sem som. */
-  private async esperarSink(): Promise<boolean> {
+  private async esperarSink(nos: NosDoModo): Promise<boolean> {
     for (let t = 0; t <= PRAZO_DO_SINK_MS; t += PASSO_DA_ESPERA_MS) {
       if (this.algumSaiu()) return false;
       const g = await this.grafo();
       if (g !== null) {
-        const sink = g.nos.find((n) => n.nome === NOME_DO_SINK);
-        const retorno = g.nos.find((n) => n.nome === NOME_DO_RETORNO);
+        const sink = g.nos.find((n) => n.nome === nos.sink);
+        const retorno = g.nos.find((n) => n.nome === nos.retorno);
         if (sink !== undefined && retorno !== undefined) {
           const ligado = g.links.some((l) => l.saida === retorno.id && g.nos.some((n) => n.id === l.entrada && n.classe === 'Audio/Sink'));
           if (ligado) return true;
@@ -314,7 +335,7 @@ export class SomDoJogoLinux {
     for (const s of streams) {
       if (this.movidos.has(s)) continue;
       const anterior = alvoFixado(g, s);
-      const r = await this.efeitos.executar(moverParaSink(s));
+      const r = await this.efeitos.executar(moverParaSink(s, this.nos.sink));
       if (r.codigo === 0) this.movidos.set(s, { stream: s, anterior });
     }
   }
@@ -324,32 +345,26 @@ export class SomDoJogoLinux {
   }
 
   /**
-   * Streams novos do jogo (um jogo abre e fecha streams o tempo todo) entram
-   * no sink; streams que sumiram saem da conta. Se o pid mudou (o jogo foi
-   * reaberto) o app é reencontrado por nome e binário.
+   * Streams novos (um jogo abre e fecha streams o tempo todo; no modo
+   * sistema, qualquer programa que comece a tocar) entram no sink; streams
+   * que sumiram saem da conta. No "só o jogo", se o pid mudou (o jogo foi
+   * reaberto), o app é reencontrado por nome e binário.
    */
   private async varrer(): Promise<void> {
     this.cancelarVarredura = null;
-    if (this.estado.fase !== 'ativo' || this.estado.modo !== 'jogo' || this.emVarredura) return;
+    if (this.estado.fase !== 'ativo' || this.emVarredura) return;
     this.emVarredura = true;
     try {
       const g = await this.grafo();
       if (g !== null && this.estado.fase === 'ativo') {
-        const excl = this.efeitos.pidsDoTela();
-        let streams = streamsDoApp(g, this.appId, excl);
-        if (streams.length === 0) {
-          const outro = appsComSom(g, excl).find((a) => `${a.nome}|${a.binario ?? ''}` === this.appChave);
-          if (outro !== undefined) {
-            this.appId = outro.id;
-            streams = outro.streams;
-          }
-        }
+        const streams = this.modo === 'sistema' ? this.streamsDoSistema(g) : this.streamsDoJogo(g);
         const vivos = new Set(streams);
         for (const id of [...this.movidos.keys()]) if (!vivos.has(id)) this.movidos.delete(id);
         await this.mover(g, streams);
-        const tocando = streams.length > 0;
+        // O sistema não "para de tocar": sem nenhum stream, segue no ar em silêncio.
+        const tocando = this.modo === 'sistema' || streams.length > 0;
         if (this.estado.fase === 'ativo' && this.estado.tocando !== tocando) {
-          this.estado = { fase: 'ativo', app: this.nomeDoApp, tocando, modo: 'jogo' };
+          this.estado = { fase: 'ativo', app: this.nomeDoApp, tocando, modo: this.modo };
           this.saidas?.mudou?.(this.estado);
         }
       }
@@ -357,6 +372,16 @@ export class SomDoJogoLinux {
       this.emVarredura = false;
       if (this.estado.fase === 'ativo') this.agendarVarredura();
     }
+  }
+
+  private streamsDoJogo(g: GrafoPw): readonly number[] {
+    const excl = this.efeitos.pidsDoTela();
+    const streams = streamsDoApp(g, this.appId, excl);
+    if (streams.length > 0) return streams;
+    const outro = appsComSom(g, excl).find((a) => `${a.nome}|${a.binario ?? ''}` === this.appChave);
+    if (outro === undefined) return streams;
+    this.appId = outro.id;
+    return outro.streams;
   }
 
   /** O `pw-loopback` morreu sem ninguém pedir: restaura o que der e avisa. */

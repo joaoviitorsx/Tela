@@ -80,13 +80,50 @@ export const NOME_DO_RETORNO = 'tela_jogo_retorno';
 export const NOME_DA_ENTRADA_DO_JOGO = 'tela_jogo_mic';
 export const NOME_DA_CAPTURA_DO_JOGO = 'tela_jogo_mic_cap';
 export const DESCRICAO_DA_ENTRADA_DO_JOGO = 'Tela-Jogo-Entrada';
-/** A fonte virtual do modo "sistema": o monitor da saída padrão, como fonte. */
+/** A fonte virtual do modo "sistema": o monitor do sink do sistema, como fonte. */
 export const NOME_DA_ENTRADA_DO_SISTEMA = 'tela_sistema_mic';
 export const NOME_DA_CAPTURA_DO_SISTEMA = 'tela_sistema_cap';
 export const DESCRICAO_DA_ENTRADA_DO_SISTEMA = 'Tela-Sistema-Entrada';
+/** O sink do modo "sistema": recebe tudo que toca na saída padrão, menos a call. */
+export const NOME_DO_SINK_DO_SISTEMA = 'tela_sistema';
+export const DESCRICAO_DO_SINK_DO_SISTEMA = 'Tela-Sistema';
+export const NOME_DO_RETORNO_DO_SISTEMA = 'tela_sistema_retorno';
 export const CLASSE_DE_FONTE = 'Audio/Source';
 export const CLASSE_DE_STREAM = 'Stream/Output/Audio';
 export const CLASSE_DE_SINK = 'Audio/Sink';
+
+/**
+ * Os quatro nós de um modo: o sink para onde os streams vão, o retorno dele
+ * para a saída real (o jogador segue ouvindo) e a fonte virtual que a página
+ * captura. "Só o jogo" e "Sistema" montam o MESMO grafo, com nomes próprios —
+ * quem olha o pavucontrol vê qual dos dois está no ar.
+ */
+export type NosDoModo = {
+  readonly sink: string;
+  readonly descricaoDoSink: string;
+  readonly retorno: string;
+  readonly entrada: string;
+  readonly captura: string;
+  readonly descricaoDaEntrada: string;
+};
+
+export const NOS_DO_JOGO: NosDoModo = {
+  sink: NOME_DO_SINK,
+  descricaoDoSink: DESCRICAO_DO_SINK,
+  retorno: NOME_DO_RETORNO,
+  entrada: NOME_DA_ENTRADA_DO_JOGO,
+  captura: NOME_DA_CAPTURA_DO_JOGO,
+  descricaoDaEntrada: DESCRICAO_DA_ENTRADA_DO_JOGO,
+};
+
+export const NOS_DO_SISTEMA: NosDoModo = {
+  sink: NOME_DO_SINK_DO_SISTEMA,
+  descricaoDoSink: DESCRICAO_DO_SINK_DO_SISTEMA,
+  retorno: NOME_DO_RETORNO_DO_SISTEMA,
+  entrada: NOME_DA_ENTRADA_DO_SISTEMA,
+  captura: NOME_DA_CAPTURA_DO_SISTEMA,
+  descricaoDaEntrada: DESCRICAO_DA_ENTRADA_DO_SISTEMA,
+};
 
 type Registro = Record<string, unknown>;
 
@@ -262,6 +299,38 @@ export function streamsDoApp(g: GrafoPw, appId: string, excluirPids: ReadonlySet
   return appsComSom(g, excluirPids).find((a) => a.id === appId)?.streams ?? [];
 }
 
+/**
+ * O modo "sistema": os streams que vão para o sink do Tela — tudo que toca na
+ * SAÍDA PADRÃO, menos a call (`ehVoz`), o próprio Tela e os nossos nós.
+ *
+ * - quem já está no nosso sink (`sinkNosso`) continua na conta: foi movido
+ *   por nós, e sair dela seria devolvê-lo no meio da transmissão;
+ * - quem ainda não está ligado a nada e não tem alvo fixado vai para a
+ *   padrão de qualquer jeito, então entra;
+ * - quem a pessoa mandou para OUTRA saída fica onde está: mover o levaria para
+ *   a saída padrão no ouvido de quem joga. É a mesma fronteira do modo antigo,
+ *   que capturava o monitor da saída padrão.
+ */
+export function streamsDoSistema(
+  g: GrafoPw,
+  sinkNosso: string,
+  excluirPids: ReadonlySet<number>,
+  ehVoz: (nome: string | null, binario: string | null) => boolean,
+): readonly number[] {
+  const padrao = sinkPadrao(g);
+  const saida: number[] = [];
+  for (const n of g.nos) {
+    if (n.classe !== CLASSE_DE_STREAM) continue;
+    if (ehNosso(n, excluirPids, pidDoNo(g, n))) continue;
+    const cliente = n.clienteId === null ? undefined : g.clientes.get(n.clienteId);
+    // O nome do nó ("WEBRTC VoiceEngine") e o do cliente ("Discord") contam os dois.
+    if (ehVoz(n.app, binarioDoNo(g, n)) || ehVoz(cliente?.app ?? null, cliente?.binario ?? null)) continue;
+    const onde = saidaAtual(g, n.id);
+    if (onde === sinkNosso || (onde !== null && onde === padrao) || (onde === null && alvoFixado(g, n.id) === null)) saida.push(n.id);
+  }
+  return saida;
+}
+
 /** O sink onde o stream toca agora (pelos links), ou `null` se não está ligado a nenhum. */
 export function saidaAtual(g: GrafoPw, streamId: number): string | null {
   for (const l of g.links) {
@@ -298,14 +367,15 @@ export function entradaPronta(g: GrafoPw, nome: string, captura: string): boolea
 }
 
 /**
- * O que ficou de uma execução anterior: os streams que ainda apontam para o
- * nosso sink pelo metadado. Os PROCESSOS órfãos NÃO saem daqui (S-12): o pid de
+ * O que ficou de uma execução anterior: os streams que ainda apontam para um
+ * dos nossos sinks pelo metadado. Os PROCESSOS órfãos NÃO saem daqui (S-12): o pid de
  * um cliente é propriedade que ele mesmo declara, então nunca vira alvo de
  * sinal — ver `filhos-registrados.ts`.
  */
 export function residuos(g: GrafoPw): { readonly streamsApontando: readonly number[] } {
+  const nossos: readonly unknown[] = [NOME_DO_SINK, NOME_DO_SINK_DO_SISTEMA];
   const apontando = g.metadados
-    .filter((e) => e.chave === 'target.object' && e.valor === NOME_DO_SINK && e.sujeito !== 0)
+    .filter((e) => e.chave === 'target.object' && nossos.includes(e.valor) && e.sujeito !== 0)
     .map((e) => e.sujeito);
   return { streamsApontando: apontando };
 }

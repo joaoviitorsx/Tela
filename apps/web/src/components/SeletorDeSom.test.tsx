@@ -17,13 +17,12 @@ function montar(props: Partial<Parameters<typeof SeletorDeSom>[0]> = {}) {
   const utils = render(
     <SeletorDeSom
       opcao="sistema"
-      jogoDisponivel={true}
-      motivoDoJogo={null}
+      componenteDisponivel={true}
+      motivoDoComponente={null}
       apps={APPS}
       appEscolhido={null}
       listando={false}
-      real={{ rotulo: 'SISTEMA · inclui a call', tom: 'ok' }}
-      avisoDoSistema={null}
+      real={{ rotulo: 'SISTEMA · tudo menos a call', tom: 'ok' }}
       aoEscolherOpcao={aoEscolherOpcao}
       aoEscolherApp={aoEscolherApp}
       aoAtualizar={aoAtualizar}
@@ -56,28 +55,33 @@ describe('SeletorDeSom: as três opções', () => {
     expect(aoEscolherOpcao).toHaveBeenLastCalledWith('jogo');
   });
 
-  it('as setas pulam "só o jogo" quando está indisponível, e o motivo aparece NA opção', () => {
-    const { aoEscolherOpcao } = montar({ jogoDisponivel: false, motivoDoJogo: 'Precisa do Windows 10 versão 2004.' });
-    const jogo = screen.getByRole('radio', { name: /SÓ O JOGO/ });
-    expect(jogo.getAttribute('aria-disabled')).toBe('true');
-    expect(jogo.textContent).toContain('Precisa do Windows 10 versão 2004.');
-    fireEvent.click(jogo);
+  it('Sistema diz que a call fica de fora', () => {
+    montar();
+    expect(screen.getByRole('radio', { name: /SISTEMA/ }).textContent).toContain('menos a call de voz');
+  });
+
+  it('sem o componente de som, Sistema e Só o jogo vêm desabilitados com o motivo NA opção; as setas os pulam', () => {
+    const { aoEscolherOpcao } = montar({ opcao: 'nenhum', componenteDisponivel: false, motivoDoComponente: 'Precisa do Windows 10 versão 2004.' });
+    for (const nome of [/SISTEMA/, /SÓ O JOGO/]) {
+      const opcao = screen.getByRole('radio', { name: nome });
+      expect(opcao.getAttribute('aria-disabled')).toBe('true');
+      expect(opcao.textContent).toContain('Precisa do Windows 10 versão 2004.');
+      fireEvent.click(opcao);
+    }
     expect(aoEscolherOpcao).not.toHaveBeenCalled();
-    fireEvent.keyDown(screen.getAllByRole('radio')[0]!, { key: 'ArrowRight' });
+    fireEvent.keyDown(screen.getByRole('radio', { name: /SEM SOM/ }), { key: 'ArrowRight' });
     expect(aoEscolherOpcao).toHaveBeenLastCalledWith('nenhum');
+    expect(screen.getByRole('radio', { name: /SEM SOM/ }).getAttribute('aria-disabled')).toBe('false');
   });
 
-  it('enquanto o sistema responde, "só o jogo" diz que está verificando', () => {
-    montar({ jogoDisponivel: null });
-    expect(screen.getByText('VERIFICANDO…')).toBeTruthy();
+  it('enquanto o sistema responde, Sistema e Só o jogo dizem que estão verificando', () => {
+    montar({ componenteDisponivel: null });
+    expect(screen.getAllByText('VERIFICANDO…')).toHaveLength(2);
   });
 
-  it('avisa do som do sistema no Windows, só quando Sistema está escolhido', () => {
-    montar({ avisoDoSistema: 'Vai junto da TELA inteira.' });
-    expect(screen.getByText('Vai junto da TELA inteira.')).toBeTruthy();
-    cleanup();
-    montar({ opcao: 'nenhum', avisoDoSistema: 'Vai junto da TELA inteira.' });
-    expect(screen.queryByText('Vai junto da TELA inteira.')).toBeNull();
+  it('nenhum aviso de "só a tela inteira leva o som": no app, janela também leva', () => {
+    montar();
+    expect(screen.queryByText(/TELA inteira/)).toBeNull();
   });
 });
 
@@ -126,7 +130,7 @@ describe('SeletorDeSom: o jogo', () => {
   });
 
   it('com "só o jogo" indisponível não há lista', () => {
-    montar({ opcao: 'jogo', jogoDisponivel: false, motivoDoJogo: 'x' });
+    montar({ opcao: 'jogo', componenteDisponivel: false, motivoDoComponente: 'x' });
     expect(screen.queryByText('PROGRAMAS COM SOM')).toBeNull();
   });
 });

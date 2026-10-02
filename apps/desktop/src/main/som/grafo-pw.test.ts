@@ -11,7 +11,9 @@ import {
   saidaAtual,
   saidaPadrao,
   streamsDoApp,
+  streamsDoSistema,
 } from './grafo-pw.js';
+import { ehAppDeVozNoLinux } from './apps-de-voz.js';
 
 /** Dumps reais do `pw-dump` (PipeWire 1.6.9), reduzidos e com os nomes trocados. */
 const fixture = (nome: string): unknown => JSON.parse(readFileSync(new URL(`./fixtures/${nome}`, import.meta.url), 'utf8')) as unknown;
@@ -127,6 +129,65 @@ describe('noDoSink / residuos', () => {
     ]);
     expect(JSON.stringify(residuos(g!))).not.toContain('1234');
     expect(Object.keys(residuos(g!))).toEqual(['streamsApontando']);
+  });
+});
+
+describe('streamsDoSistema', () => {
+  const no = (id: number, props: Record<string, unknown>) => ({ id, type: 'PipeWire:Interface:Node', info: { state: 'running', props } });
+  const link = (id: number, saida: number, entrada: number) => ({ id, type: 'PipeWire:Interface:Link', info: { props: { 'link.output.node': saida, 'link.input.node': entrada } } });
+  const stream = (id: number, extra: Record<string, unknown>) => no(id, { 'node.name': `s${id}`, 'media.class': 'Stream/Output/Audio', ...extra });
+  const g = lerGrafo([
+    no(1, { 'node.name': 'fone', 'media.class': 'Audio/Sink' }),
+    no(2, { 'node.name': 'hdmi', 'media.class': 'Audio/Sink' }),
+    no(3, { 'node.name': 'tela_sistema', 'media.class': 'Audio/Sink' }),
+    // O cliente do Discord: o nó da call só diz "WEBRTC VoiceEngine"; o binário vem do cliente.
+    { id: 30, type: 'PipeWire:Interface:Client', info: { props: { 'application.name': 'Discord', 'application.process.binary': 'Discord', 'application.process.id': 500 } } },
+    stream(10, { 'application.name': 'Jogo', 'application.process.id': 100 }),
+    stream(11, { 'application.name': 'WEBRTC VoiceEngine', 'client.id': 30 }),
+    stream(12, { 'application.name': 'Música', 'application.process.id': 101 }),
+    stream(13, { 'application.name': 'Vídeo na TV', 'application.process.id': 102 }),
+    stream(14, { 'application.name': 'Recém-aberto', 'application.process.id': 103 }),
+    stream(15, { 'application.name': 'Tela', 'application.process.id': 999 }),
+    no(16, { 'node.name': 'tela_sistema_retorno', 'media.class': 'Stream/Output/Audio' }),
+    stream(17, { 'application.name': 'Fixado', 'application.process.id': 104 }),
+    link(50, 10, 1),
+    link(51, 11, 1),
+    link(52, 12, 3),
+    link(53, 13, 2),
+    link(54, 15, 1),
+    link(55, 16, 1),
+    {
+      id: 40,
+      type: 'PipeWire:Interface:Metadata',
+      props: { 'metadata.name': 'default' },
+      metadata: [
+        { subject: 0, key: 'default.audio.sink', type: 'Spa:String:JSON', value: { name: 'fone' } },
+        { subject: 17, key: 'target.object', type: 'Spa:String', value: 'hdmi' },
+      ],
+    },
+  ])!;
+
+  it('o que toca na padrão, o que já está no nosso sink e o que ainda não ligou; nunca a call, o Tela, nossos nós ou outra saída', () => {
+    expect(streamsDoSistema(g, 'tela_sistema', new Set([999]), ehAppDeVozNoLinux)).toEqual([10, 12, 14]);
+  });
+
+  it('sem a lista de voz, a call entraria: é o predicado que a deixa de fora', () => {
+    expect(streamsDoSistema(g, 'tela_sistema', new Set([999]), () => false)).toContain(11);
+  });
+
+  it('resíduos reconhecem também o sink do sistema', () => {
+    const r = lerGrafo([
+      {
+        id: 40,
+        type: 'PipeWire:Interface:Metadata',
+        props: { 'metadata.name': 'default' },
+        metadata: [
+          { subject: 7, key: 'target.object', type: 'Spa:String', value: 'tela_sistema' },
+          { subject: 8, key: 'target.object', type: 'Spa:String', value: 'fone' },
+        ],
+      },
+    ])!;
+    expect(residuos(r).streamsApontando).toEqual([7]);
   });
 });
 

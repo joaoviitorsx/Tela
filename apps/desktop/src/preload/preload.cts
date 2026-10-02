@@ -46,7 +46,8 @@ type RespostaSomJogo =
   | { readonly ok: true; readonly app: string; readonly via: 'porta'; readonly id: number }
   | { readonly ok: false; readonly erro: 'INDISPONIVEL' | 'APP_NAO_ENCONTRADO' | 'FALHOU' | 'OCUPADO' };
 type RespostaSomSistema =
-  | { readonly ok: true; readonly descricao: string }
+  | { readonly ok: true; readonly via: 'entrada'; readonly descricao: string }
+  | { readonly ok: true; readonly via: 'porta'; readonly id: number }
   | { readonly ok: false; readonly erro: 'INDISPONIVEL' | 'APP_NAO_ENCONTRADO' | 'FALHOU' | 'OCUPADO' };
 type FimDoSomDoJogo = { readonly motivo: 'SINK_CAIU' | 'PROCESSO_ENCERROU' | 'COMPONENTE_CAIU' };
 

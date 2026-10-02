@@ -1,6 +1,7 @@
 /**
- * O som do jogo, ligado ao Electron (D3): escolhe a implementação da
- * plataforma, sobe o utility process no Windows e entrega as portas.
+ * O som do app, ligado ao Electron (D3) — "só o jogo" e "sistema" (tudo menos
+ * a call): escolhe a implementação da plataforma, sobe o utility process no
+ * Windows e entrega as portas.
  *
  * Fino de propósito — a lógica de cada plataforma está em `som-jogo-linux.ts`
  * e `som-jogo-windows.ts`, testadas com processos de mentira; aqui só se
@@ -117,7 +118,7 @@ function somLinux(opcoes: OpcoesDoSom): SomDoApp {
           if (!conteudo.isDestroyed()) opcoes.avisarEncerrou(conteudo, fim);
         },
       });
-      return r.ok ? { ok: true, descricao: r.value.descricao } : { ok: false, erro: r.error };
+      return r.ok ? { ok: true, via: 'entrada', descricao: r.value.descricao } : { ok: false, erro: r.error };
     },
     parar: () => som.parar(),
     limparResiduos: async () => {
@@ -170,9 +171,25 @@ function somWindows(opcoes: OpcoesDoSom): SomDoApp {
       return () => clearTimeout(t);
     },
     pidsDoTela,
+    pidPrincipal: () => process.pid,
     release,
     addonPresente: () => existe(addon),
   });
+
+  const avisos = (conteudo: WebContents) => ({
+    encerrou: (fim: FimDoSomDoJogo) => {
+      if (!conteudo.isDestroyed()) opcoes.avisarEncerrou(conteudo, fim);
+    },
+  });
+  /** A porta do PCM vai direto à página; o main não vê os bytes. `false` se a página já foi. */
+  const entregarPorta = (conteudo: WebContents, id: number, porta: MessagePortMain): boolean => {
+    if (conteudo.isDestroyed()) {
+      void som.parar();
+      return false;
+    }
+    conteudo.postMessage(opcoes.canalDaPorta, { id }, [porta]);
+    return true;
+  };
 
   const icones = new Map<string, string | null>();
   const iconeDe = async (caminho: string): Promise<string | null> => {
@@ -196,22 +213,19 @@ function somWindows(opcoes: OpcoesDoSom): SomDoApp {
     async iniciarJogo(conteudo, payload) {
       const id = pedidoDeJogoValido(payload);
       if (id === null) return { ok: false, erro: 'APP_NAO_ENCONTRADO' };
-      const r = await som.iniciar(id, {
-        encerrou: (fim) => {
-          if (!conteudo.isDestroyed()) opcoes.avisarEncerrou(conteudo, fim);
-        },
-      });
+      const r = await som.iniciar(id, avisos(conteudo));
       if (!r.ok) return { ok: false, erro: r.error };
-      if (conteudo.isDestroyed()) {
-        void som.parar();
-        return { ok: false, erro: 'FALHOU' };
-      }
-      // A porta do PCM vai direto à página; o main não vê os bytes.
-      conteudo.postMessage(opcoes.canalDaPorta, { id: r.value.id }, [r.value.porta]);
+      if (!entregarPorta(conteudo, r.value.id, r.value.porta)) return { ok: false, erro: 'FALHOU' };
       return { ok: true, app: r.value.app, via: 'porta', id: r.value.id };
     },
-    // No Windows o som do sistema é o `loopback` do Electron, junto da tela.
-    iniciarSistema: () => Promise.resolve({ ok: false, erro: 'INDISPONIVEL' }),
+    // O sistema MENOS a call: o mesmo addon, excluindo o app de voz. Nunca o
+    // `loopback` do Electron, que levaria a call junto.
+    async iniciarSistema(conteudo) {
+      const r = await som.iniciarSistema(avisos(conteudo));
+      if (!r.ok) return { ok: false, erro: r.error };
+      if (!entregarPorta(conteudo, r.value.id, r.value.porta)) return { ok: false, erro: 'FALHOU' };
+      return { ok: true, via: 'porta', id: r.value.id };
+    },
     parar: () => som.parar(),
     limparResiduos: () => Promise.resolve(),
     ativo: () => som.idAtivo() !== null,

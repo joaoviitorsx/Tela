@@ -23,7 +23,6 @@ function trilhaFalsa(): MediaStreamTrack & { eventos: string[] } {
 
 function montar(opcoes: {
   escolha: EscolhaDeSom;
-  plataforma?: 'win32' | 'linux';
   dispositivos?: readonly AudioDevice[][];
   iniciarJogo?: RespostaSomJogo;
   iniciarSistema?: RespostaSomSistema;
@@ -42,14 +41,13 @@ function montar(opcoes: {
   const encerrar = vi.fn();
   const portaFalsa = { postMessage: () => undefined, onmessage: null, close: () => undefined } as PortaReal;
   const audio = makeAudioDesktop({
-    plataforma: opcoes.plataforma ?? 'linux',
     ponte: {
       som: {
         capacidades: () => Promise.resolve({ jogo: { disponivel: true, motivo: null } }),
         listarApps: () => Promise.resolve([]),
         iniciarJogo: () => Promise.resolve(opcoes.iniciarJogo ?? { ok: true, app: 'Minecraft', via: 'entrada', descricao: 'Tela-Jogo-Entrada' }),
         pararSom,
-        iniciarSistema: () => Promise.resolve(opcoes.iniciarSistema ?? { ok: true, descricao: 'Tela-Sistema-Entrada' }),
+        iniciarSistema: () => Promise.resolve(opcoes.iniciarSistema ?? { ok: true, via: 'entrada', descricao: 'Tela-Sistema-Entrada' }),
         aoEncerrar: (o) => {
           fins.push(o);
           return () => fins.splice(fins.indexOf(o), 1);
@@ -103,11 +101,31 @@ describe('Linux, Sistema', () => {
   });
 });
 
-describe('Windows, Sistema', () => {
-  it('chegar ao adapter significa que a captura foi uma janela: diz o motivo', async () => {
-    const { audio, registros } = montar({ escolha: { tipo: 'sistema' }, plataforma: 'win32' });
+describe('Windows, Sistema (tudo menos a call)', () => {
+  const resposta: RespostaSomSistema = { ok: true, via: 'porta', id: 7 };
+
+  it('monta a trilha a partir da porta do PCM — tela ou janela, tanto faz', async () => {
+    const { audio, trilhaPcm, registros, navegador } = montar({ escolha: { tipo: 'sistema' }, iniciarSistema: resposta });
+    expect(await audio.capture('x')).toBe(trilhaPcm);
+    expect(registros).toEqual([{ situacao: 'ativo' }]);
+    expect(navegador.capture).not.toHaveBeenCalled();
+  });
+
+  it('parar a trilha para o addon; o componente caindo encerra a trilha e diz por quê', async () => {
+    const { audio, pararSom, fins, encerrar, registros } = montar({ escolha: { tipo: 'sistema' }, iniciarSistema: resposta });
+    const t = await audio.capture('x');
+    fins[0]!({ motivo: 'COMPONENTE_CAIU' });
+    expect(encerrar).toHaveBeenCalledTimes(1);
+    expect(registros.at(-1)).toEqual({ situacao: 'parou', motivo: 'o componente de som caiu' });
+    t.stop();
+    expect(pararSom).toHaveBeenCalledTimes(1);
+  });
+
+  it('Windows antigo ou sem addon: o motivo vem do main, nada de loopback com a call no lugar', async () => {
+    const { audio, registros, navegador } = montar({ escolha: { tipo: 'sistema' }, iniciarSistema: { ok: false, erro: 'INDISPONIVEL' } });
     await expect(audio.capture('x')).rejects.toThrow();
-    expect(registros[0]).toMatchObject({ situacao: 'falhou', motivo: expect.stringContaining('janela') });
+    expect(registros[0]).toEqual({ situacao: 'falhou', motivo: 'o componente de som não está disponível' });
+    expect(navegador.capture).not.toHaveBeenCalled();
   });
 });
 
@@ -149,7 +167,7 @@ describe('Linux, Só o jogo', () => {
     await audio.capture('x');
     fins[0]!({ motivo: 'SINK_CAIU' });
     expect(trilha.eventos).toContain('ended');
-    expect(registros.at(-1)).toEqual({ situacao: 'parou', motivo: 'o som do jogo parou' });
+    expect(registros.at(-1)).toEqual({ situacao: 'parou', motivo: 'o som parou' });
   });
 
   it('o main recusou: o motivo do erro vai à interface', async () => {
@@ -169,13 +187,13 @@ describe('Windows, Só o jogo', () => {
   const resposta: RespostaSomJogo = { ok: true, app: 'Minecraft', via: 'porta', id: 4 };
 
   it('monta a trilha a partir da porta do PCM', async () => {
-    const { audio, trilhaPcm, registros } = montar({ escolha: JOGO, plataforma: 'win32', iniciarJogo: resposta });
+    const { audio, trilhaPcm, registros } = montar({ escolha: JOGO, iniciarJogo: resposta });
     expect(await audio.capture('x')).toBe(trilhaPcm);
     expect(registros).toEqual([{ situacao: 'ativo' }]);
   });
 
   it('parar a trilha para o addon; o fim por fora encerra a trilha', async () => {
-    const { audio, pararSom, fins, encerrar, trilhaPcm } = montar({ escolha: JOGO, plataforma: 'win32', iniciarJogo: resposta });
+    const { audio, pararSom, fins, encerrar, trilhaPcm } = montar({ escolha: JOGO, iniciarJogo: resposta });
     const t = await audio.capture('x');
     fins[0]!({ motivo: 'PROCESSO_ENCERROU' });
     expect(encerrar).toHaveBeenCalledTimes(1);
@@ -185,9 +203,9 @@ describe('Windows, Só o jogo', () => {
   });
 
   it('Windows antigo ou sem addon: o motivo vem do main, nada de som do sistema no lugar', async () => {
-    const { audio, registros, navegador } = montar({ escolha: JOGO, plataforma: 'win32', iniciarJogo: { ok: false, erro: 'INDISPONIVEL' } });
+    const { audio, registros, navegador } = montar({ escolha: JOGO, iniciarJogo: { ok: false, erro: 'INDISPONIVEL' } });
     await expect(audio.capture('x')).rejects.toThrow();
-    expect(registros[0]).toEqual({ situacao: 'falhou', motivo: 'o componente do som do jogo não está disponível' });
+    expect(registros[0]).toEqual({ situacao: 'falhou', motivo: 'o componente de som não está disponível' });
     expect(navegador.capture).not.toHaveBeenCalled();
   });
 });

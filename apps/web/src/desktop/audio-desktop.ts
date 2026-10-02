@@ -9,17 +9,18 @@ import type { TrilhaDePcm } from './trilha-pcm.js';
  * O `AudioCapture` do app desktop (D3): o mesmo contrato que a
  * `BroadcastSession` usa, com as três escolhas atrás dele.
  *
- * A sessão só chama `capture()` quando a captura de TELA não trouxe áudio —
- * então o "Sistema" do Windows (o `loopback` do Electron, que vem junto da
- * tela) nem passa por aqui. O que passa:
+ * A captura de TELA nunca traz áudio no app (`som-na-captura.ts`): todo som
+ * passa por aqui.
  *
- * - **Linux, Sistema:** o main cria uma fonte virtual com o monitor da saída
- *   padrão ("Tela-Sistema-Entrada"); aqui se a captura como um microfone;
- * - **Linux, Só o jogo:** o main cria o sink "Tela-Jogo", move o app para ele
- *   e expõe o monitor como fonte virtual ("Tela-Jogo-Entrada"); aqui se a
- *   captura. (O Chromium não lista monitores de sink — por isso a fonte.)
- * - **Windows, Só o jogo:** o main sobe o utility process com o addon WASAPI;
- *   o PCM chega por uma `MessagePort` e vira trilha por um `AudioWorklet`;
+ * - **Linux, Sistema:** o main cria o sink "Tela-Sistema", move para ele
+ *   tudo que toca MENOS a call e expõe o monitor como fonte virtual
+ *   ("Tela-Sistema-Entrada"); aqui se a captura como um microfone;
+ * - **Linux, Só o jogo:** o mesmo, com o sink "Tela-Jogo" e só o app
+ *   escolhido ("Tela-Jogo-Entrada"). (O Chromium não lista monitores de sink
+ *   — por isso as fontes.)
+ * - **Windows, Sistema e Só o jogo:** o main sobe o utility process com o
+ *   addon WASAPI (excluindo o app de voz, ou incluindo só o jogo); o PCM
+ *   chega por uma `MessagePort` e vira trilha por um `AudioWorklet`;
  * - **Sem som:** a home nem pede (`audioDeviceId` nulo); se pedir, recusa.
  *
  * Toda falha vira uma exceção — a sessão transmite MUDA, em vez de não
@@ -29,7 +30,6 @@ import type { TrilhaDePcm } from './trilha-pcm.js';
  */
 export type DepsDoAudioDesktop = {
   readonly ponte: Pick<PonteDesktop, 'som'>;
-  readonly plataforma: PonteDesktop['plataforma'];
   readonly som: Pick<SomDesktop, 'escolhaAtual' | 'registrar'>;
   /** O `getUserMedia` de sempre (`adapters/browser-audio-capture.ts`). */
   readonly navegador: AudioCapture;
@@ -43,16 +43,16 @@ const TENTATIVAS_DE_ACHAR_O_MONITOR = 12;
 const PASSO_DAS_TENTATIVAS_MS = 250;
 
 const MOTIVO_DO_ERRO: Record<ErroSomJogo, string> = {
-  INDISPONIVEL: 'o componente do som do jogo não está disponível',
+  INDISPONIVEL: 'o componente de som não está disponível',
   APP_NAO_ENCONTRADO: 'esse programa não está mais tocando',
-  FALHOU: 'o som do jogo não iniciou',
-  OCUPADO: 'o som do jogo já está em uso',
+  FALHOU: 'o som não iniciou',
+  OCUPADO: 'o som já está em uso',
 };
 
 const MOTIVO_DO_FIM: Record<FimDoSomDoJogo['motivo'], string> = {
-  SINK_CAIU: 'o som do jogo parou',
+  SINK_CAIU: 'o som parou',
   PROCESSO_ENCERROU: 'o jogo fechou',
-  COMPONENTE_CAIU: 'o componente do som do jogo caiu',
+  COMPONENTE_CAIU: 'o componente de som caiu',
 };
 
 /** Casa o rótulo do dispositivo com a descrição que o main deu, sem depender de maiúsculas. */
@@ -128,13 +128,14 @@ export function makeAudioDesktop(deps: DepsDoAudioDesktop): AudioCapture {
     return trilha;
   };
 
-  const jogoNoWindows = async (id: number): Promise<MediaStreamTrack> => {
+  /** Windows: o PCM do addon chega pela porta `id` e vira trilha. */
+  const pcmPorPorta = async (id: number, oQue: string): Promise<MediaStreamTrack> => {
     let pcm: TrilhaDePcm;
     try {
       pcm = await deps.criarTrilhaDePcm(await deps.portas.aguardar(id));
     } catch {
       ponte.som.pararSom();
-      return falhar('não consegui montar o som do jogo');
+      return falhar(`não consegui montar ${oQue}`);
     }
     const parar = ligarOFim(pcm.encerrar);
     aoParar(pcm.trilha, () => {
@@ -154,20 +155,17 @@ export function makeAudioDesktop(deps: DepsDoAudioDesktop): AudioCapture {
 
       if (escolha.tipo === 'nenhum') throw new Error('sem som por escolha');
 
+      // Tudo menos a call: tela ou janela, nas duas plataformas.
       if (escolha.tipo === 'sistema') {
-        if (deps.plataforma === 'linux') {
-          const r = await ponte.som.iniciarSistema();
-          if (!r.ok) return falhar(MOTIVO_DO_ERRO[r.erro]);
-          return capturarEntrada(r.descricao, 'o som do sistema');
-        }
-        // Windows: o som do sistema vem junto da TELA. Chegar aqui é uma janela.
-        return falhar('transmitir uma janela não leva o som do sistema');
+        const r = await ponte.som.iniciarSistema();
+        if (!r.ok) return falhar(MOTIVO_DO_ERRO[r.erro]);
+        return r.via === 'entrada' ? capturarEntrada(r.descricao, 'o som do sistema') : pcmPorPorta(r.id, 'o som do sistema');
       }
 
       if (escolha.appId === null) return falhar('nenhum jogo escolhido');
       const r = await ponte.som.iniciarJogo(escolha.appId);
       if (!r.ok) return falhar(MOTIVO_DO_ERRO[r.erro]);
-      return r.via === 'entrada' ? capturarEntrada(r.descricao, 'o som do jogo') : jogoNoWindows(r.id);
+      return r.via === 'entrada' ? capturarEntrada(r.descricao, 'o som do jogo') : pcmPorPorta(r.id, 'o som do jogo');
     },
   };
 }

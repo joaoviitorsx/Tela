@@ -21,6 +21,10 @@ export type ErroSomJogo =
   | 'FALHOU'
   | 'OCUPADO';
 
+/**
+ * `jogo`: o componente que separa o som por programa existe? Vale para "só o
+ * jogo" e para o "Sistema" (que separa a call do resto) — os dois dependem dele.
+ */
 export type CapacidadesDeSom = {
   readonly jogo: { readonly disponivel: boolean; readonly motivo: string | null };
 };
@@ -35,9 +39,14 @@ export type RespostaSomJogo =
   | { readonly ok: true; readonly app: string; readonly via: 'porta'; readonly id: number }
   | { readonly ok: false; readonly erro: ErroSomJogo };
 
-/** O modo "Sistema" no Linux: a fonte virtual do monitor da saída padrão. */
+/**
+ * O modo "Sistema" — tudo que toca, menos a call — chega como no "só o jogo":
+ * `entrada` no Linux (a fonte virtual do sink Tela-Sistema), `porta` no
+ * Windows (o PCM do process loopback que exclui o app de voz).
+ */
 export type RespostaSomSistema =
-  | { readonly ok: true; readonly descricao: string }
+  | { readonly ok: true; readonly via: 'entrada'; readonly descricao: string }
+  | { readonly ok: true; readonly via: 'porta'; readonly id: number }
   | { readonly ok: false; readonly erro: ErroSomJogo };
 
 export type FimDoSomDoJogo = {

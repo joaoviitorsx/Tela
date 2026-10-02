@@ -3,7 +3,7 @@
 **Data:** 2026-10-02 · **Tarefa:** TELA-030 · **Plano:** `PLANO-desktop.md` §4, §4.1, §15 (decisão 4) · **Antes:** D2 (captura), D4 (segundo plano)
 
 O usuário escolhe, no passo ÁUDIO, entre três modos — **Sistema** (tudo que
-toca, inclusive a call), **Só o jogo** e **Sem som** — nas duas plataformas, e a
+toca, **menos a call**), **Só o jogo** e **Sem som** — nas duas plataformas, e a
 interface mostra sempre o modo REAL: "VAI SAIR · SÓ O JOGO · Minecraft". Uma
 trilha existir não diz o que está nela; quando a captura falha ou o jogo
 fecha, o rótulo vira "SEM SOM · o jogo fechou" em vez de continuar prometendo.
@@ -13,7 +13,7 @@ fecha, o rótulo vira "SEM SOM · o jogo fechou" em vez de continuar prometendo.
  ──────────────────────                         ────                          ───────
  SeletorDeSom (burro) ◄── useSyncExternalStore ── som-desktop.ts (loja: escolha, apps, real)
         │                                           ▲ registrar(resultado)
- comSomEscolhido(screen)  Sistema pede áudio à tela │
+ semSomNaCaptura(screen)  a tela nunca leva áudio  │
  audio-desktop.ts ────── ponte.som.* (IPC) ──► som-do-app.ts ──┬─ Linux:   som-jogo-linux.ts ─► pw-loopback / pw-metadata / pw-dump
         │                                                       └─ Windows: som-jogo-windows.ts ─► utility process ─► addon C++ (WASAPI)
         └─ getUserMedia (fonte virtual)  ← Linux          └ PCM por MessagePort → AudioWorklet → trilha ← Windows
@@ -23,21 +23,36 @@ fecha, o rótulo vira "SEM SOM · o jogo fechou" em vez de continuar prometendo.
 
 | Modo | Linux (PipeWire) | Windows |
 |---|---|---|
-| **Sistema** | `pw-loopback` cria a fonte virtual **Tela-Sistema-Entrada** com o monitor da saída padrão (sem alvo fixo: segue a saída padrão se trocar de fone); a página a captura como microfone | `audio: 'loopback'` do Electron, que o `setDisplayMediaRequestHandler` entrega **só quando a página pede áudio** — e só com a TELA (janela é muda; o rótulo diz) |
-| **Só o jogo** | sink **Tela-Jogo** + retorno para a saída real + fonte virtual **Tela-Jogo-Entrada**; só os streams do app escolhido são movidos (§2) | addon C++ com *WASAPI process loopback* num `utilityProcess`; PCM → `MessagePort` → `AudioWorklet` → trilha (§3) |
-| **Sem som** | nenhuma trilha de áudio; a home entrega `audioDeviceId: null` | idem; a captura de tela não pede áudio |
+| **Sistema** — tudo menos a call | sink **Tela-Sistema** + retorno para a saída padrão (segue a padrão se trocar de fone) + fonte virtual **Tela-Sistema-Entrada**; vão para o sink **todos** os streams da saída padrão **menos** os de apps de voz e os do próprio Tela, e os que começarem a tocar depois também (§2.4) | o mesmo addon do "só o jogo" em modo **excluir**: `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE` com o pid do app de voz (Discord; senão outro app de voz; senão o próprio Tela), reavaliado a cada 5 s (§3.2). Tela **ou janela** |
+| **Só o jogo** | sink **Tela-Jogo** + retorno para a saída real + fonte virtual **Tela-Jogo-Entrada**; só os streams do app escolhido são movidos (§2) | addon C++ com *WASAPI process loopback* (modo **incluir**) num `utilityProcess`; PCM → `MessagePort` → `AudioWorklet` → trilha (§3) |
+| **Sem som** | nenhuma trilha de áudio; a home entrega `audioDeviceId: null` | idem |
 
-"Só o jogo" e "Sem som" **não pedem áudio à captura de tela**
-(`som-na-captura.ts`): senão a call viria junto com o jogo no Windows. E
-nesses dois modos uma janela deixa de disparar o aviso de "sem áudio: só a tela
-inteira leva o som" (a superfície passa a `desconhecido`), porque ali a janela
-é o que a pessoa quis.
+**Os apps de voz** (`src/main/som/apps-de-voz.ts`, lista fechada e testada):
+Discord (estável, PTB, Canary), TeamSpeak 3 e 5, Teams, Zoom, Skype e Mumble;
+no Linux também os clientes alternativos do Discord (Vesktop, WebCord,
+Legcord, ArmCord) e o stream "WEBRTC VoiceEngine", que é como o Discord nativo
+toca a call no PipeWire. No Windows conta o nome do executável; no Linux, o
+`application.name` ou o `application.process.binary` do stream e do cliente
+dele. Um app fora da lista vai junto como qualquer programa — inclusive o
+Discord aberto **no navegador** (§8).
 
-Padrão ao abrir, sem escolha guardada: **Sem som** (decisão do coordenador).
-"Sistema" inclui a call do Discord, e quem assiste costuma estar na mesma call:
-ouviria a própria voz de volta, com atraso. A escolha é lembrada
-(`localStorage` `tela.som`): sistema/nenhum como foram; do jogo, o NOME — o pid
-muda a cada sessão, e o jogo volta escolhido se estiver aberto.
+**Nenhum modo pede áudio à captura de tela** (`som-na-captura.ts`), e o main
+também nunca o entrega (`respostaDeCaptura` em `fontes-de-captura.ts`): o
+`audio: 'loopback'` do Electron é o sistema inteiro, com a call. Até a D3-b o
+"Sistema" do Windows era esse loopback, e por isso só funcionava com a TELA
+(janela era muda). Hoje o som não depende do que se captura: a superfície
+passa a `desconhecido` e o aviso "só a tela inteira leva o som" não aparece.
+
+Sem o componente de som (Windows antes da 2004, addon ausente; Linux sem as
+ferramentas do PipeWire), **Sistema e Só o jogo** vêm desabilitados com o
+motivo na opção, e escolher Sistema com o componente faltando bloqueia IR AO
+AR ("SISTEMA · indisponível"). Nunca volta ao loopback com a call.
+
+Padrão ao abrir, sem escolha guardada: **Sem som** (decisão do coordenador,
+mantida). Antes o motivo era a call vir junto; hoje o "Sistema" a deixa de
+fora, mas só a dos apps reconhecidos. A escolha é lembrada (`localStorage`
+`tela.som`): sistema/nenhum como foram; do jogo, o NOME — o pid muda a cada
+sessão, e o jogo volta escolhido se estiver aberto.
 
 ## 2. Linux: "só o jogo" gerenciado
 
@@ -98,12 +113,38 @@ jogo ──target.object──► tela_jogo (sink; pw-loopback #1) ─ retorno �
   o JOGADOR ouve (não ao que os espectadores recebem). Se incomodar, é o ponto
   a medir (validação humana).
 
-## 3. Windows: "só o jogo" (componente nativo, PLANO §4.1)
+### 2.4 Linux: "Sistema" sem a call
+
+```text
+jogo, música, navegador… ──target.object──► tela_sistema (sink) ─ retorno ─► saída padrão (o jogador ouve tudo)
+                                                  └ monitor ─► tela_sistema_cap ─► tela_sistema_mic (Tela-Sistema-Entrada) ─► getUserMedia
+Discord (WEBRTC VoiceEngine) ─────────────────────────────────────────────────► saída padrão (só o jogador ouve)
+```
+
+O mesmo grafo do "só o jogo", com nomes próprios (`NOS_DO_SISTEMA` em
+`grafo-pw.ts`), e a escolha invertida — `streamsDoSistema`:
+
+- entram os streams que tocam na **saída padrão**, os que ainda não ligaram e
+  não têm alvo fixado (vão para a padrão de qualquer jeito) e os que já estão
+  no nosso sink;
+- ficam de fora os de **apps de voz**, os do **próprio Tela** e os nossos nós;
+- ficam onde estão os que a pessoa mandou para **outra saída** (o fone USB
+  enquanto o jogo toca na TV): movê-los os levaria para a saída padrão no
+  ouvido de quem joga. É a mesma fronteira do modo antigo, que capturava o
+  monitor da saída padrão.
+
+A varredura de 1 s move quem começar a tocar depois; a call que começar depois
+nunca entra. Parar, quedas e resíduos seguem o §2.2–2.3 (os resíduos
+reconhecem também `target.object=tela_sistema`).
+
+## 3. Windows: "só o jogo" e "sistema" (componente nativo, PLANO §4.1)
 
 ```text
 utilityProcess (som/utilitario-win.ts)
-  └─ wasapi_loopback.node (C++, N-API)
-       ActivateAudioInterfaceAsync(VAD\Process_Loopback, PROCESS_LOOPBACK, pid, INCLUDE_TARGET_PROCESS_TREE)
+  └─ wasapi_loopback.node (C++, N-API, 1.1.0)
+       ActivateAudioInterfaceAsync(VAD\Process_Loopback, PROCESS_LOOPBACK, pid,
+                                   INCLUDE_TARGET_PROCESS_TREE  ← só o jogo
+                                 | EXCLUDE_TARGET_PROCESS_TREE) ← sistema, pid = app de voz
        → IAudioClient (compartilhado, evento) → PCM float32 48 kHz estéreo, blocos de 10 ms
   └─ MessagePort ─────────────► renderer: AudioWorklet (anel ~60 ms, deriva) → MediaStreamAudioDestination → trilha
 ```
@@ -163,20 +204,49 @@ utilityProcess (som/utilitario-win.ts)
 > primeiro compilador. Se o passo "addon WASAPI" falhar no primeiro run, o log
 > dele é o ponto de partida; o resto do app não depende disso.
 
+### 3.2 "Sistema" sem a call
+
+- **Alvo:** ao iniciar, o main pede `listar` ao **mesmo** utility que vai
+  capturar e escolhe a árvore a excluir (`alvoDaExclusao`): o Discord (tocando
+  antes de calado), senão o primeiro outro app de voz, senão o **próprio
+  Tela** (`process.pid`, a raiz da árvore do Electron) — sem app de voz, "tudo
+  menos o Tela" é tudo. O process loopback exclui **uma** árvore por captura:
+  com Discord e TeamSpeak abertos juntos, o TeamSpeak iria junto.
+- **Reavaliação a cada 5 s:** o amigo entra na call depois de a transmissão
+  começar. O main lista as sessões no utility vivo; se o alvo mudou, pede
+  `trocar` e o utility para a captura e reabre com o alvo novo **na mesma
+  porta** — a página não percebe nada além de um corte de uma ativação
+  (dezenas de ms, não medido) no som. Uma listagem que falha não muda nada;
+  uma troca que o Windows recusa encerra a captura (`COMPONENTE_CAIU`, "SEM SOM
+  · o componente de som caiu") — nunca fica um som com a call.
+- **O alvo fechar não encerra a captura:** no modo excluir o addon não espera
+  o fim do processo-alvo; a próxima reavaliação passa a excluir o Tela.
+- **Protocolo:** `capturar` e `trocar` carregam `modo` (`incluir`/`excluir`),
+  validado no utility (`pedidoValido`) e no addon (outro valor é `TypeError`).
+  O utility só pede `excluir` a um addon ≥ 1.1.0 (`addonSabeExcluir`): uma 1.0
+  ignoraria o argumento e capturaria **só** a call.
+- **Uma conversa por utility:** o `ProcessoUtilitario` não remove ouvintes, e
+  perguntar a cada 5 s por horas com um ouvinte por pergunta seria um
+  vazamento; `Conversa` (em `som-jogo-windows.ts`) tem um ouvinte só e um
+  pedido por vez.
+
 ## 4. Interface (passo ÁUDIO, só no app)
 
 `components/SeletorDeSom.tsx` (burro) + `desktop/SomDoAppDesktop.tsx`:
 
 - três opções num `radiogroup` (setas movem a seleção; Tab entra no grupo;
-  glifos ◉ ○ × além da cor), "Só o jogo" desabilitado mostra o **motivo na
-  própria opção**;
+  glifos ◉ ○ × além da cor). Sistema diz "Tudo que toca no seu PC, menos a
+  call de voz."; sem o componente de som, Sistema e Só o jogo desabilitados
+  mostram o **motivo na própria opção**;
 - com "Só o jogo": lista de **programas com som** (ícone ou inicial, nome,
   TOCANDO / EM SILÊNCIO), também `radiogroup`, botão ATUALIZAR; a lista se
   atualiza a cada 3 s **só enquanto montada e com "só o jogo" escolhido** (no
   Windows cada listagem sobe um processo);
 - linha `role="status"` "VAI SAIR · …" com o modo real, em tom de alerta quando
   difere do escolhido (jogo fechou, captura falhou);
-- "Só o jogo" sem jogo escolhido **desabilita IR AO AR** e diz por quê;
+- "Só o jogo" sem jogo escolhido, ou Sistema/Só o jogo sem o componente,
+  **desabilita IR AO AR** e diz por quê;
+- o modo real do Sistema é "SISTEMA · tudo menos a call" (sem detalhe técnico);
 - o medidor da home mostra `SISTEMA / SÓ O JOGO / SEM SOM`.
 
 A home continua igual na web: `somDoApp` é `null` em `container-transmissao.ts`
@@ -191,10 +261,10 @@ em `container.desktop.ts`, e o `screen` agora passa por `comSomEscolhido`).
 | `tela:som-capacidades` | invoke | → `{ jogo: { disponivel, motivo } }` |
 | `tela:som-listar-apps` | invoke | → `AppComSom[]` (id, nome, tocando, ícone) |
 | `tela:som-iniciar-jogo` | invoke | `string` (id) → `RespostaSomJogo` (`entrada` com a descrição da fonte, ou `porta` com o id) |
-| `tela:som-iniciar-sistema` | invoke | → `RespostaSomSistema` (Linux) |
+| `tela:som-iniciar-sistema` | invoke | → `RespostaSomSistema` (`entrada` com a descrição da fonte no Linux, `porta` com o id no Windows) |
 | `tela:som-parar` | send | — |
 | `tela:som-jogo-encerrou` | main → renderer | `{ motivo }` |
-| `tela:som-jogo-porta` | main → renderer | `{ id }` + `MessagePort` (Windows) |
+| `tela:som-jogo-porta` | main → renderer | `{ id }` + `MessagePort` (Windows, "só o jogo" e "sistema") |
 
 Todo `invoke` confere a origem do frame; o id do app passa por
 `pedidoDeJogoValido` (regex) e é conferido contra a listagem.
@@ -226,6 +296,28 @@ Todo `invoke` confere a origem do frame; o id do app passa por
 - utility process em ESM com `Float32Array` por `MessagePortMain` e `argv`
   conferido num app Electron de teste (Linux).
 
+### 6.1 "Sistema" sem a call (D3-b, 2026-10-02)
+
+- `pnpm --filter @tela/desktop test` (350 testes, 30 arquivos) e
+  `pnpm --filter @tela/web test` (1124 testes, 130 arquivos), o portão do repo
+  (`pnpm turbo lint typecheck test build --concurrency=2`: 16 tarefas ok),
+  `pnpm depcruise` (sem violações), o eslint do repo inteiro e o
+  `build:desktop` da web: ok.
+- **Integração Linux** — `node apps/desktop/d0/audio-jogo.mjs`, agora com a
+  parte do Sistema: jogo 440 Hz, música 660 Hz e uma "call" com
+  `application.name=Discord` 880 Hz tocando na saída silenciosa. O código do
+  app montou `tela_sistema`, moveu jogo e música e deixou o Discord; a gravação
+  de 2 s da fonte **Tela-Sistema-Entrada** deu 440 Hz 0,2001 · 660 Hz 0,2001 ·
+  **880 Hz 0,0000**; `parar()` devolveu os dois streams e "nada sobrou no
+  grafo". Para não mexer no som de verdade de quem roda, o modo Sistema do
+  teste enxerga um `pw-dump` **isolado** (só os streams do teste, com a saída
+  silenciosa no papel de padrão) e o retorno vai para ela; o grafo real e a
+  padrão real não mudam.
+- **Windows:** máquina de estados com utility de mentira (exclui o Discord,
+  troca de alvo quando o Discord aparece e quando some, troca recusada
+  encerra, parar cancela a reavaliação) e o protocolo com o modo. O C++ **não
+  foi compilado** (§7).
+
 ## 7. NÃO verificado — validação humana
 
 | O quê | Como |
@@ -240,7 +332,12 @@ Todo `invoke` confere a origem do frame; o id do app passa por
 | Linux: latência do retorno no fone do jogador | Se o som do jogo chega atrasado no fone, é o `pw-loopback` do retorno |
 | Linux: jogo que abre streams depois (troca de nível) | Deve entrar no sink em ≤ 1 s; os primeiros instantes do stream novo tocam só no fone |
 | Linux: `kill -9` no app e reabrir | O jogo volta ao fone sozinho; ao reabrir não sobra `tela_*` (`limparResiduos`) |
-| Sistema no Windows com TELA | O amigo ouve tudo (jogo + call); com JANELA o rótulo diz "SEM SOM" |
+| **Windows: Sistema sem a call** (o pedido da D3-b) | Instalar a beta com o addon 1.1.0. Discord **em call** + um jogo + uma música (Spotify ou YouTube no navegador). Passo ÁUDIO → SISTEMA → IR AO AR (com TELA e depois com JANELA). Um amigo **fora da call** abre o link: ouve o jogo **e** a música, e **não** ouve a call. O rótulo diz "SISTEMA · tudo menos a call" |
+| Windows: o amigo entra na call depois | Ir ao ar com Sistema e o Discord **fechado**; abrir o Discord e entrar na call. Em até ~5 s a voz some do que o amigo ouve; o jogo segue, com no máximo um corte curto. Fechar o Discord no meio: o som segue |
+| Windows: o addon 1.1.0 compila e o modo excluir funciona | Run do CI: passo "addon WASAPI" verde com "carregou: versão 1.1.0". Se o Windows recusar o modo excluir, o rótulo vira "SEM SOM · o som não iniciou" — copiar o log `[tela-som]` do utility |
+| Windows: Discord PTB/Canary, Teams, Zoom | Mesmo roteiro do primeiro item com cada um; o nome do executável tem de bater com a lista de `apps-de-voz.ts` |
+| Linux: Sistema com o Discord de verdade | Discord nativo (ou Flatpak/Vesktop) em call + jogo + música; SISTEMA → IR AO AR. O amigo ouve jogo e música, não a call; `pw-dump` mostra o stream da call ("WEBRTC VoiceEngine", binário `Discord`) fora do `tela_sistema`. Se a call vazar, anotar o `application.name` e o `application.process.binary` do stream dela |
+| Linux: Sistema e o que toca em outra saída | Jogo no fone e música no HDMI (escolhido no pavucontrol): a música **não** vai ao ar (fronteira do §2.4) |
 
 ## 8. Decisões e limites
 
@@ -248,7 +345,9 @@ Todo `invoke` confere a origem do frame; o id do app passa por
    não listar monitores. Dois `pw-loopback` por sessão em vez de um.
 2. **`pw-*` em vez de `pactl`**: PipeWire é o alvo declarado (§4); PulseAudio
    puro fica de fora e a opção diz que faltam ferramentas.
-3. **Padrão Sistema** nas duas plataformas, sem persistência.
+3. **Padrão Sem som**, com a escolha lembrada (`tela.som`) — mantido na
+   D3-b (decisão do coordenador; o texto antigo deste item, "padrão Sistema",
+   estava desatualizado).
 4. **Build 19041** em vez de 20348 (§3).
 5. **Utility e addon fora do asar** (`extraResources`).
 6. **CI não falha com o addon** (§3.1): decisão de risco consciente, com aviso.
@@ -260,3 +359,16 @@ Todo `invoke` confere a origem do frame; o id do app passa por
    autoplay por padrão (`autoplayPolicy` não foi mudada).
 10. O `Seletor` do passo ÁUDIO consulta o main só montado; o IPC do som não tem
     estado no main além da sessão ativa.
+11. **Sistema sem a call (D3-b).** Windows: process loopback em modo excluir
+    com o pid do app de voz, uma árvore por vez (Discord primeiro). Linux: o
+    sink do "só o jogo" com tudo menos os apps de voz. A identificação é por
+    **lista fechada** de nomes; fica de fora, e vai junto como qualquer
+    programa: o Discord **no navegador** (a call sai do processo do Chrome, e
+    excluir o navegador inteiro levaria junto a música dele) e apps de voz
+    fora da lista.
+12. **Sem fallback para o loopback.** Sem o componente, Sistema fica
+    desabilitado com o motivo, como "só o jogo". Windows 10 antes da 2004 perde
+    o modo Sistema que tinha (com a call) — decisão consciente: o pedido do
+    dono é não transmitir a call.
+13. Linux: o Sistema só move o que toca na **saída padrão** (§2.4); o que a
+    pessoa mandou para outra saída não vai ao ar, como antes.

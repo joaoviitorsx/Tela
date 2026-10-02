@@ -6,8 +6,10 @@ import type { AppComSom, CapacidadesDeSom, PlataformaDesktop } from './ponte.js'
  * Três opções, nas duas plataformas, com o modo REAL sempre à vista — nunca
  * "áudio ativo" só porque existe uma trilha:
  *
- * - **sistema**: tudo que toca, inclusive a call (Windows: `loopback` do
- *   Electron junto da tela; Linux: o monitor da saída padrão);
+ * - **sistema**: tudo que toca, MENOS a call (Discord e outros apps de voz) —
+ *   Windows: addon WASAPI excluindo o app de voz; Linux: sink do Tela com
+ *   tudo menos a call. Quem assiste já está na call: ouvi-la de volta seria
+ *   eco da própria voz;
  * - **jogo**: só o app escolhido (Windows: addon WASAPI; Linux: sink do Tela);
  * - **nenhum**: sem trilha de áudio, por escolha.
  *
@@ -80,10 +82,10 @@ export type DepsDoSom = {
 };
 
 /**
- * Sem escolha guardada, o padrão é SEM SOM — não "sistema". "Sistema" inclui a
- * call do Discord, e quem assiste costuma estar NA MESMA call: ouviria a
- * própria voz de volta, com atraso. Quem quer som escolhe uma vez e o app
- * lembra. Do jogo guarda-se o NOME: o id do processo muda a cada sessão.
+ * Sem escolha guardada, o padrão é SEM SOM (decisão do coordenador, D3).
+ * "Sistema" já deixa a call de fora, mas só a dos apps de voz que o app
+ * reconhece; quem quer som escolhe uma vez e o app lembra. Do jogo guarda-se
+ * o NOME: o id do processo muda a cada sessão.
  */
 export function escolhaGuardada(valor: string | null): EscolhaDeSom {
   if (valor === 'sistema') return { tipo: 'sistema' };
@@ -110,7 +112,6 @@ const SEM_CAPACIDADES_AINDA: CapacidadesDeSom | null = null;
  */
 export function descreverReal(
   escolha: EscolhaDeSom,
-  plataforma: PlataformaDesktop,
   capacidades: CapacidadesDeSom | null,
   apps: readonly AppComSom[],
   resultado: ResultadoDoSom | null,
@@ -122,8 +123,10 @@ export function descreverReal(
   }
 
   if (escolha.tipo === 'sistema') {
-    const onde = plataforma === 'linux' ? 'saída padrão · inclui a call' : 'inclui a call';
-    return { rotulo: `SISTEMA · ${onde}`, curto: 'SISTEMA', tom: 'ok' };
+    // O componente que separa a call do resto não existe aqui: dizer, e não
+    // prometer um "sistema" que sairia mudo (ou com a call).
+    if (capacidades !== null && !capacidades.jogo.disponivel) return { rotulo: 'SISTEMA · indisponível', curto: 'SEM SOM', tom: 'alerta' };
+    return { rotulo: 'SISTEMA · tudo menos a call', curto: 'SISTEMA', tom: 'ok' };
   }
 
   if (capacidades !== null && !capacidades.jogo.disponivel) {
@@ -140,8 +143,11 @@ export function descreverReal(
   return { rotulo: `SÓ O JOGO · ${escolha.nome}`, curto: 'SÓ O JOGO', tom: 'ok' };
 }
 
-/** O motivo de ainda não dar para ir ao ar, ou `null`. Só uma escolha incompleta bloqueia. */
+/** O motivo de ainda não dar para ir ao ar, ou `null`. Só uma escolha incompleta ou impossível bloqueia. */
 export function pendenteDoSom(escolha: EscolhaDeSom, capacidades: CapacidadesDeSom | null): string | null {
+  if (escolha.tipo === 'sistema') {
+    return capacidades !== null && !capacidades.jogo.disponivel ? 'O som do sistema não está disponível. Escolha outra opção de som.' : null;
+  }
   if (escolha.tipo !== 'jogo') return null;
   if (capacidades !== null && !capacidades.jogo.disponivel) return 'Só o jogo não está disponível. Escolha outra opção de som.';
   return escolha.appId === null ? 'Escolha o jogo na lista de apps com som.' : null;
@@ -167,7 +173,7 @@ export function makeSomDesktop(deps: DepsDoSom): SomDesktop {
     apps,
     listando,
     resultado,
-    real: descreverReal(escolha, deps.plataforma, capacidades, apps, resultado),
+    real: descreverReal(escolha, capacidades, apps, resultado),
     pendente: pendenteDoSom(escolha, capacidades),
     plataforma: deps.plataforma,
   });

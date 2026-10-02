@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { SeletorDeSom, type OpcaoDeSom } from '../components/SeletorDeSom.js';
 import type { ResumoDoSom, SomDoApp } from '../react/som-do-app.js';
-import type { PlataformaDesktop } from './ponte.js';
 import type { EstadoDoSom, SomDesktop } from './som-desktop.js';
 
 /**
@@ -13,13 +12,6 @@ import type { EstadoDoSom, SomDesktop } from './som-desktop.js';
 
 /** O `audioDeviceId` que a home entrega à sessão: só avisa "há som a capturar". */
 export const ID_DE_AUDIO_DO_APP = 'app-desktop';
-
-/** Windows: o som do sistema acompanha a TELA, não a janela. Dito antes de escolher. */
-export function avisoDoSistema(plataforma: PlataformaDesktop): string | null {
-  return plataforma === 'win32'
-    ? 'No Windows, o som do sistema vai junto da TELA inteira. Se você transmitir uma janela, escolha “Só o jogo”.'
-    : null;
-}
 
 export function resumoDoSom(estado: EstadoDoSom): ResumoDoSom {
   return {
@@ -46,13 +38,12 @@ export function criarSomDoApp(som: SomDesktop): SomDoApp {
     return (
       <SeletorDeSom
         opcao={estado.escolha.tipo}
-        jogoDisponivel={estado.capacidades === null ? null : estado.capacidades.jogo.disponivel}
-        motivoDoJogo={estado.capacidades?.jogo.motivo ?? null}
+        componenteDisponivel={estado.capacidades === null ? null : estado.capacidades.jogo.disponivel}
+        motivoDoComponente={estado.capacidades?.jogo.motivo ?? null}
         apps={estado.apps}
         appEscolhido={jogo?.appId ?? null}
         listando={estado.listando}
         real={estado.real}
-        avisoDoSistema={avisoDoSistema(estado.plataforma)}
         aoEscolherOpcao={escolher}
         aoEscolherApp={(id) => {
           const app = estado.apps.find((a) => a.id === id);

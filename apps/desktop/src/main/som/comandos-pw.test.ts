@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { criarEntradaDoJogo, criarEntradaDoSistema, criarSink, moverParaSink, restaurarStream } from './comandos-pw.js';
+import { NOS_DO_SISTEMA } from './grafo-pw.js';
 
 describe('criarSink', () => {
   it('cria um sink Audio/Sink e deixa o retorno seguir a saída padrão', () => {
@@ -44,15 +45,22 @@ describe('as fontes virtuais (o Chromium não lista monitores de sink)', () => {
     expect(saida).toContain('node.description=Tela-Jogo-Entrada');
   });
 
-  it('a do sistema NÃO fixa alvo: o monitor da saída padrão, seguindo a padrão', () => {
+  it('a do sistema captura o monitor do sink Tela-Sistema — não o da saída padrão, onde a call toca', () => {
     const { args } = criarEntradaDoSistema();
-    expect(args).not.toContain('-C');
+    expect(args[args.indexOf('-C') + 1]).toBe('tela_sistema');
     expect(args[args.indexOf('-i') + 1]).toContain('stream.capture.sink=true');
     expect(args[args.indexOf('-o') + 1]).toContain('node.description=Tela-Sistema-Entrada');
   });
 
+  it('o sink do sistema tem nome, retorno e processo próprios', () => {
+    const c = criarSink(null, NOS_DO_SISTEMA);
+    expect(c.args.slice(0, 2)).toEqual(['-n', 'tela_sistema_lb']);
+    expect(c.args[c.args.indexOf('-i') + 1]).toContain('node.name=tela_sistema node.description=Tela-Sistema ');
+    expect(c.args.at(-1)).toBe('node.name=tela_sistema_retorno');
+  });
+
   it('nenhum nome nosso escapa do prefixo que a limpeza reconhece', () => {
-    for (const c of [criarSink(null), criarEntradaDoJogo(), criarEntradaDoSistema()]) {
+    for (const c of [criarSink(null), criarSink(null, NOS_DO_SISTEMA), criarEntradaDoJogo(), criarEntradaDoSistema()]) {
       const nomes = c.args.join(' ').match(/node\.name=(\S+)/g) ?? [];
       expect(nomes.length).toBeGreaterThan(0);
       for (const n of nomes) expect(n).toMatch(/^node\.name=tela_(jogo|sistema)/);
@@ -63,6 +71,7 @@ describe('as fontes virtuais (o Chromium não lista monitores de sink)', () => {
 describe('moverParaSink / restaurarStream', () => {
   it('move um stream pelo metadado default', () => {
     expect(moverParaSink(97).args).toEqual(['-n', 'default', '97', 'target.object', 'tela_jogo', 'Spa:String']);
+    expect(moverParaSink(97, 'tela_sistema').args[4]).toBe('tela_sistema');
   });
 
   it('restaurar sem alvo anterior apaga a chave', () => {

@@ -1,11 +1,18 @@
-// Addon N-API do "só o jogo" no Windows (D3, docs/desktop/D3-som.md).
+// Addon N-API do som no Windows (D3, docs/desktop/D3-som.md): "só o jogo" e
+// "sistema".
 //
-// Captura o áudio de UM processo (e dos filhos dele) com o WASAPI process
-// loopback: ActivateAudioInterfaceAsync com AUDIOCLIENT_ACTIVATION_TYPE_
-// PROCESS_LOOPBACK e o pid do jogo. É a única forma de ouvir só o jogo sem
-// pegar a call de voz que toca ao lado — o `audio: 'loopback'` do Electron é
-// o sistema inteiro. Exige Windows 10 versão 2004 (build 19041) ou mais novo;
-// o main confere a versão antes de carregar este módulo.
+// Usa o WASAPI process loopback: ActivateAudioInterfaceAsync com
+// AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK e um pid, em um de dois modos:
+//
+//   incluir  PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE — só o áudio
+//            do processo (e dos filhos dele): o "só o jogo";
+//   excluir  PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE — o áudio de
+//            TODO o sistema menos o do processo (e dos filhos): o "sistema"
+//            com o pid do Discord, para a call não ir junto.
+//
+// É a única forma de separar a call de voz do resto — o `audio: 'loopback'`
+// do Electron é o sistema inteiro. Exige Windows 10 versão 2004 (build 19041)
+// ou mais novo; o main confere a versão antes de carregar este módulo.
 //
 // API para o JavaScript (o utility process, src/main/som/utilitario-win.ts):
 //
@@ -14,9 +21,11 @@
 //       as sessões de áudio da saída padrão, uma por executável, já subidas até
 //       o processo-raiz (o Chromium toca por um processo filho; capturar a
 //       árvore da raiz pega os dois);
-//   capturar(pid, aoBloco(Float32Array), aoFim(motivo)): { parar() }
+//   capturar(pid, aoBloco(Float32Array), aoFim(motivo), modo?): { parar() }
 //       PCM float32 intercalado, 48 kHz, estéreo, blocos de 10 ms (480 quadros
-//       = 960 floats). Lança Error('CODIGO: detalhe') se não conseguir ativar.
+//       = 960 floats). `modo` é "incluir" (o padrão, como na versão 1.0) ou
+//       "excluir"; outro valor é recusado. Lança Error('CODIGO: detalhe') se
+//       não conseguir ativar.
 //
 // Decisões que valem a leitura:
 //
@@ -31,7 +40,9 @@
 //    PCM 16 bit e, por último, o mesmo float com conversão automática. O que
 //    sai para o JS é sempre float32.
 //  - O fim da captura chega com um motivo: PROCESSO_ENCERROU (o jogo fechou),
-//    DISPOSITIVO (trocou o fone / o dispositivo foi invalidado), FALHOU.
+//    DISPOSITIVO (trocou o fone / o dispositivo foi invalidado), FALHOU. No
+//    modo excluir o fim do processo-alvo NÃO encerra a captura: o Discord
+//    fechar não é motivo para o som do sistema parar (o main reavalia o alvo).
 //
 // Não foi compilado nem executado fora do CI do Windows: quem escreveu não tem
 // Windows aqui. O CI compila (node-gyp contra os cabeçalhos do Electron) e o
@@ -293,12 +304,14 @@ class Ativacao final : public IActivateAudioInterfaceCompletionHandler, public I
   ComPtr<IAudioClient> cliente_;
 };
 
-// Uma ativação do IAudioClient preso ao processo `pid` (e à árvore dele).
-HRESULT AtivarPorProcesso(DWORD pid, ComPtr<IAudioClient>* cliente) {
+// Uma ativação do IAudioClient preso ao processo `pid` (e à árvore dele):
+// só ela (`excluir` falso) ou tudo menos ela (`excluir` verdadeiro).
+HRESULT AtivarPorProcesso(DWORD pid, bool excluir, ComPtr<IAudioClient>* cliente) {
   AUDIOCLIENT_ACTIVATION_PARAMS params{};
   params.ActivationType = AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK;
   params.ProcessLoopbackParams.TargetProcessId = pid;
-  params.ProcessLoopbackParams.ProcessLoopbackMode = PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
+  params.ProcessLoopbackParams.ProcessLoopbackMode =
+      excluir ? PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE : PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE;
 
   PROPVARIANT pv{};
   PropVariantInit(&pv);
@@ -350,8 +363,8 @@ WAVEFORMATEX Formato(Amostra tipo) {
 
 class Sessao : public std::enable_shared_from_this<Sessao> {
  public:
-  Sessao(DWORD pid, Napi::ThreadSafeFunction blocos, Napi::ThreadSafeFunction fim)
-      : pid_(pid), blocos_(std::move(blocos)), fim_(std::move(fim)) {
+  Sessao(DWORD pid, bool excluir, Napi::ThreadSafeFunction blocos, Napi::ThreadSafeFunction fim)
+      : pid_(pid), excluir_(excluir), blocos_(std::move(blocos)), fim_(std::move(fim)) {
     parar_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   }
   ~Sessao() {
@@ -461,6 +474,12 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
       if (processo == nullptr && GetLastError() == ERROR_INVALID_PARAMETER) {
         erro = "PROCESSO_INVALIDO: o pid " + std::to_string(pid_) + " não existe";
       } else {
+        // Excluindo, o alvo fechar não encerra nada: o handle só serviu para
+        // saber que o pid existe, e sem ele o laço não espera o fim do processo.
+        if (excluir_ && processo != nullptr) {
+          CloseHandle(processo);
+          processo = nullptr;
+        }
         evento = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         const DWORD base = AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST;
         const Tentativa tentativas[] = {
@@ -472,7 +491,7 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
         for (const Tentativa& t : tentativas) {
           // O IAudioClient só aceita Initialize uma vez: cada tentativa é uma ativação nova.
           cliente.Reset();
-          ultimo = AtivarPorProcesso(pid_, &cliente);
+          ultimo = AtivarPorProcesso(pid_, excluir_, &cliente);
           if (FAILED(ultimo)) break;  // recusar a ativação não melhora trocando o formato
           const WAVEFORMATEX f = Formato(t.tipo);
           // 200000 × 100 ns = 20 ms de buffer, como na amostra da Microsoft.
@@ -590,6 +609,7 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
   }
 
   const DWORD pid_;
+  const bool excluir_;
   HANDLE parar_ = nullptr;
   std::thread thread_;
   Napi::ThreadSafeFunction blocos_;
@@ -603,7 +623,10 @@ class Sessao : public std::enable_shared_from_this<Sessao> {
 // ------------------------------------------------------------ exportado
 
 Napi::Value Versao(const Napi::CallbackInfo& info) {
-  return Napi::String::New(info.Env(), "1.0.0");
+  // 1.1.0: `capturar` aceita o modo ("incluir" | "excluir"). O utility confere
+  // a versão antes de pedir "excluir": uma 1.0 ignoraria o argumento e
+  // capturaria SÓ a call, o contrário do pedido.
+  return Napi::String::New(info.Env(), "1.1.0");
 }
 
 Napi::Value ListarSessoes(const Napi::CallbackInfo& info) {
@@ -631,8 +654,18 @@ Napi::Value ListarSessoes(const Napi::CallbackInfo& info) {
 Napi::Value Capturar(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
   if (info.Length() < 3 || !info[0].IsNumber() || !info[1].IsFunction() || !info[2].IsFunction()) {
-    Napi::TypeError::New(env, "FALHOU: capturar(pid, aoBloco, aoFim)").ThrowAsJavaScriptException();
+    Napi::TypeError::New(env, "FALHOU: capturar(pid, aoBloco, aoFim, modo?)").ThrowAsJavaScriptException();
     return env.Undefined();
+  }
+  bool excluir = false;
+  if (info.Length() >= 4 && !info[3].IsUndefined()) {
+    const std::string modo = info[3].IsString() ? info[3].As<Napi::String>().Utf8Value() : std::string();
+    if (modo == "excluir") {
+      excluir = true;
+    } else if (modo != "incluir") {
+      Napi::TypeError::New(env, "FALHOU: modo deve ser \"incluir\" ou \"excluir\"").ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
   }
   const double pidNum = info[0].As<Napi::Number>().DoubleValue();
   if (!(pidNum > 4 && pidNum <= 4294967295.0) || pidNum != static_cast<double>(static_cast<DWORD>(pidNum))) {
@@ -646,7 +679,7 @@ Napi::Value Capturar(const Napi::CallbackInfo& info) {
   // leva uma mensagem só, e perdê-la deixaria o app achando que ainda captura.
   auto blocos = Napi::ThreadSafeFunction::New(env, info[1].As<Napi::Function>(), "tela-wasapi-blocos", kFilaMaxima, 1);
   auto fim = Napi::ThreadSafeFunction::New(env, info[2].As<Napi::Function>(), "tela-wasapi-fim", 0, 1);
-  auto sessao = std::make_shared<Sessao>(pid, blocos, fim);
+  auto sessao = std::make_shared<Sessao>(pid, excluir, blocos, fim);
 
   const std::string erro = sessao->Iniciar();
   if (!erro.empty()) {

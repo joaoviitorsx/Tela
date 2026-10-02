@@ -18,8 +18,17 @@
  *      e NÃO há 880 Hz — só o jogo chegou;
  *   5. `parar()` e confere: o jogo voltou para a saída de antes, o sink, a
  *      fonte e os metadados sumiram;
- *   6. modo "Sistema": cria a fonte do monitor da saída padrão, confere que
- *      existe e está ligada (sem tocar som nenhum) e remove;
+ *   6. modo "Sistema" (tudo MENOS a call): a "call" passa a ser um stream com
+ *      `application.name=Discord` (880 Hz) e entra uma "música" (660 Hz). O
+ *      MESMO código do app monta o sink Tela-Sistema e a fonte
+ *      Tela-Sistema-Entrada; grava 2 s da fonte e confere: 440 e 660 Hz
+ *      chegam, 880 Hz NÃO. Depois `parar()` devolve tudo à saída de antes.
+ *
+ *      Para não tocar no áudio de verdade de quem roda o teste, o modo
+ *      Sistema enxerga um grafo ISOLADO: o `pw-dump` que o código lê só tem
+ *      os streams deste teste e diz que a saída padrão é a silenciosa; o
+ *      retorno do sink é fixado nela (no app ele segue a padrão). O grafo
+ *      real e a saída padrão real não mudam;
  *   7. limpa o que criou e confere que o grafo ficou como começou.
  *
  * Código de saída 0 só se tudo passou.
@@ -108,6 +117,38 @@ function goertzel(x, hz) {
   return Math.sqrt(s1 * s1 + s2 * s2 - c * s1 * s2) / x.length;
 }
 const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / Math.max(1, x.length));
+
+/**
+ * O `pw-dump` que o modo Sistema enxerga no teste: só os streams deste teste
+ * (e os nossos nós), e a saída silenciosa no papel de saída padrão. Assim o
+ * código do app roda inteiro sem mover nenhum stream de verdade de quem roda
+ * o teste.
+ */
+function isolar(texto, pids) {
+  const todos = JSON.parse(texto);
+  // O `pw-play` declara o pid no CLIENTE, não no nó.
+  const pidDoCliente = new Map(todos.filter((o) => String(o?.type ?? '').endsWith(':Client')).map((o) => [o.id, o?.info?.props?.['application.process.id']]));
+  const objs = todos.filter((o) => {
+    const props = o?.info?.props ?? {};
+    if (!String(o?.type ?? '').endsWith(':Node') || props['media.class'] !== 'Stream/Output/Audio') return true;
+    const pid = props['application.process.id'] ?? pidDoCliente.get(props['client.id']);
+    return String(props['node.name'] ?? '').startsWith('tela_') || pids.has(Number(pid));
+  });
+  for (const o of objs) {
+    if (!String(o?.type ?? '').endsWith(':Metadata') || o?.props?.['metadata.name'] !== 'default' || !Array.isArray(o.metadata)) continue;
+    for (const m of o.metadata) if (m.subject === 0 && m.key === 'default.audio.sink') m.value = { name: SAIDA_FALSA };
+  }
+  return JSON.stringify(objs);
+}
+
+/** No teste o retorno do sink do sistema vai para a saída silenciosa, não para os alto-falantes. */
+function retornoNaSaidaFalsa(c) {
+  const i = c.args.indexOf('-o');
+  if (i < 0 || !String(c.args[i + 1]).startsWith('node.name=tela_sistema_retorno')) return c;
+  const args = [...c.args];
+  args[i + 1] = `${args[i + 1]} target.object=${SAIDA_FALSA}`;
+  return { ...c, args };
+}
 
 async function gravar(alvo, arquivo, ms, doMonitor = true) {
   const p = spawn('pw-record', ['--target', alvo, ...(doMonitor ? ['-P', 'stream.capture.sink=true'] : []), '--rate', String(TAXA), '--channels', '2', '--format', 's16', arquivo], {
@@ -206,22 +247,63 @@ try {
   const l2 = g2.links.find((l) => l.saida === noJogo?.id);
   ok(g2.nos.find((n) => n.id === l2?.entrada)?.nome === SAIDA_FALSA, 'o jogo voltou para a saída de antes');
 
-  // 6. Modo "Sistema": só a existência e a limpeza da fonte — não há como
-  // afirmar o que toca na saída REAL sem tocar som nela.
-  const sis = await som.iniciarSistema({ encerrou: (f) => ok(false, `sistema encerrou sozinho: ${f.motivo}`) });
+  // 6. Modo "Sistema": tudo que toca, MENOS a call.
+  filhos[1]?.kill('SIGTERM'); // a "call" genérica sai; entra a do Discord
+  const musica = join(dir, 'musica.wav');
+  escreverTom(musica, 660, 30, 0.4);
+  const discord = spawn('pw-play', ['--target', SAIDA_FALSA, '-P', 'application.name=Discord', call], { stdio: 'ignore' });
+  const tocaMusica = spawn('pw-play', ['--target', SAIDA_FALSA, '-P', 'application.name=Tela-Teste-Musica', musica], { stdio: 'ignore' });
+  filhos.push(discord, tocaMusica);
+  await dormir(1200);
+
+  const real = efeitosLinux(() => new Set([process.pid]));
+  const doTeste = new Set([filhos[0]?.pid, discord.pid, tocaMusica.pid]);
+  const isolado = {
+    ...real,
+    async executar(c) {
+      const r = await real.executar(c);
+      return c.cmd === 'pw-dump' && r.codigo === 0 ? { ...r, saida: isolar(r.saida, doTeste) } : r;
+    },
+    iniciarSink: (c) => real.iniciarSink(retornoNaSaidaFalsa(c)),
+  };
+  const sistema = new SomDoJogoLinux(isolado);
+  const sis = await sistema.iniciarSistema({ encerrou: (f) => ok(false, `sistema encerrou sozinho: ${f.motivo}`) });
   ok(sis.ok && sis.value.descricao === 'Tela-Sistema-Entrada', `sistema → ${JSON.stringify(sis)}`);
-  await dormir(500);
+  await dormir(700);
+
   const g3 = grafo();
-  const fonte = g3.nos.find((n) => n.nome === 'tela_sistema_mic');
-  ok(fonte?.classe === 'Audio/Source', 'a fonte do sistema existe');
+  const destinoDoPid = (gr, pid) => {
+    const no = gr.nos.find((n) => n.classe === 'Stream/Output/Audio' && (n.pid ?? gr.clientes.get(n.clienteId)?.pid) === pid);
+    const l = gr.links.find((x) => x.saida === no?.id);
+    return gr.nos.find((n) => n.id === l?.entrada)?.nome;
+  };
+  ok(destinoDoPid(g3, filhos[0]?.pid) === 'tela_sistema', `o jogo toca no sink do sistema (${destinoDoPid(g3, filhos[0]?.pid)})`);
+  ok(destinoDoPid(g3, tocaMusica.pid) === 'tela_sistema', `a música toca no sink do sistema (${destinoDoPid(g3, tocaMusica.pid)})`);
+  ok(destinoDoPid(g3, discord.pid) === SAIDA_FALSA, `a call do Discord ficou onde estava (${destinoDoPid(g3, discord.pid)})`);
+  const retSis = g3.nos.find((n) => n.nome === 'tela_sistema_retorno');
+  const lrs = g3.links.find((x) => x.saida === retSis?.id);
+  ok(g3.nos.find((n) => n.id === lrs?.entrada)?.nome === SAIDA_FALSA, 'quem joga segue ouvindo: o retorno do sistema chega na saída');
   const cap = g3.nos.find((n) => n.nome === 'tela_sistema_cap');
   const ls = g3.links.find((l) => l.entrada === cap?.id);
-  const padrao = g3.metadados.find((m) => m.chave === 'default.audio.sink');
-  const nomePadrao = typeof padrao?.valor === 'object' && padrao.valor !== null ? padrao.valor.name : null;
-  ok(g3.nos.find((n) => n.id === ls?.saida)?.nome === nomePadrao, `a fonte do sistema lê o monitor da saída padrão (${nomePadrao})`);
-  await som.parar();
+  ok(g3.nos.find((n) => n.id === ls?.saida)?.nome === 'tela_sistema', 'a fonte do sistema lê o sink Tela-Sistema, não a saída onde a call toca');
+
+  const gravadoSis = join(dir, 'sistema.wav');
+  await gravar('tela_sistema_mic', gravadoSis, 2200, false);
+  const y = amostras(gravadoSis).slice(TAXA / 5);
+  const s440 = goertzel(y, 440);
+  const s660 = goertzel(y, 660);
+  const s880 = goertzel(y, 880);
+  console.log(`  .. ${y.length} amostras · rms ${rms(y).toFixed(3)} · 440 Hz ${s440.toFixed(4)} · 660 Hz ${s660.toFixed(4)} · 880 Hz ${s880.toFixed(4)}`);
+  ok(y.length > TAXA, 'gravou ~2 s da fonte do sistema');
+  ok(s440 > 0.05 && s660 > 0.05, 'o jogo (440 Hz) e a música (660 Hz) chegam na fonte do sistema');
+  ok(s880 < Math.min(s440, s660) / 20, 'a call do Discord (880 Hz) NÃO está na fonte do sistema');
+
+  await sistema.parar();
   await dormir(500);
-  ok(!grafo().nos.some(ehNosso), 'a fonte do sistema sumiu');
+  const g4 = grafo();
+  ok(!g4.nos.some(ehNosso), 'o sink, o retorno e a fonte do sistema sumiram');
+  ok(!g4.metadados.some((m) => m.chave === 'target.object' && m.valor === 'tela_sistema'), 'nenhum metadado aponta para o sink do sistema');
+  ok(destinoDoPid(g4, filhos[0]?.pid) === SAIDA_FALSA && destinoDoPid(g4, tocaMusica.pid) === SAIDA_FALSA, 'o jogo e a música voltaram para a saída de antes');
 } catch (erro) {
   console.error(erro);
   falhou = true;

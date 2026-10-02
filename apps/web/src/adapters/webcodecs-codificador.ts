@@ -1,5 +1,11 @@
+import {
+  type Aceleracao,
+  AceleracaoDoCodificador,
+  type MotivoDaQueda,
+} from '../core/media/aceleracao-do-codificador.js';
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
+import { VigiaDoEncoder } from '../core/media/vigia-do-encoder.js';
 import type { CodificadorUnico, EstatisticasDoCodificador } from './codificador-unico.js';
 import type { ChunkInjetado } from './injecao-worker.js';
 
@@ -7,11 +13,23 @@ import type { ChunkInjetado } from './injecao-worker.js';
  * O codificador ÚNICO do "um encode, N envios", sobre WebCodecs.
  *
  * Lê os quadros da captura (`MediaStreamTrackProcessor`), codifica H.264 Annex
- * B uma vez e entrega cada quadro codificado a quem injeta nos senders. No
- * Windows o Chromium usa o encoder de hardware quando existe (`no-preference`
- * deixa ele escolher, como no WebRTC); no Linux com NVIDIA cai em software —
- * ver docs/desktop/D0-relatorio-linux.md.
+ * B uma vez e entrega cada quadro codificado a quem injeta nos senders.
+ *
+ * Quem codifica — GPU ou CPU — é da `AceleracaoDoCodificador` (D9,
+ * docs/desktop/D9-gpu-windows.md): no app, `prefer-hardware` quando a sonda
+ * diz que há (Media Foundation no Windows: NVENC, AMF, Quick Sync), com queda
+ * para software se o encoder da GPU morrer ou travar no meio, e volta depois;
+ * na web, o `no-preference` de sempre. O `VigiaDoEncoder` mede o tempo por
+ * quadro e acusa a trava que o WebCodecs não avisa.
  */
+
+export type OpcoesDoWebCodecs = {
+  /**
+   * Pedir a GPU explicitamente (`prefer-hardware`) quando a sonda diz que
+   * há. O app liga; a web não, para não mudar o que hoje funciona.
+   */
+  readonly preferirHardware?: boolean;
+};
 
 /** Não-padrão (Chromium): o TypeScript não traz. */
 declare class MediaStreamTrackProcessor<T> {
@@ -38,11 +56,10 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private atraso = 0;
   private idrs = 0;
   private readonly pedidos: Record<string, number> = {};
-  private hardware: boolean | null = null;
   private descartesPorSobrecarga = 0;
-  private readonly entrada = new Map<number, number>(); // timestamp → quando entrou
-  private somaMs = 0;
-  private amostrasMs = 0;
+  private readonly vigia = new VigiaDoEncoder();
+  private readonly aceleracao: AceleracaoDoCodificador;
+  private parado = false;
   private marca = { t: 0, quadros: 0 };
   private quadros = 0;
 
@@ -51,25 +68,25 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     private readonly agora: () => number = () => performance.now(),
     /** Chamado a cada quadro capturado, codificado ou não: o relógio da isca. */
     private readonly aoCapturar: () => void = () => undefined,
-  ) {}
+    opcoes: OpcoesDoWebCodecs = {},
+  ) {
+    this.aceleracao = new AceleracaoDoCodificador(opcoes.preferirHardware === true);
+  }
 
   async iniciar(track: MediaStreamTrack, alvo: AlvoDoCodificador): Promise<void> {
     this.alvo = alvo;
-    this.encoder = new VideoEncoder({
-      output: (chunk) => this.saiu(chunk),
-      error: () => {
-        // Encoder morto: o próximo `configurar` recria. Sem isto a transmissão
-        // ficaria muda com os senders vivos.
-        this.encoder = null;
-        this.configurado = null;
-      },
-    });
+    this.parado = false;
+    let suportaHardware: boolean | null;
     try {
-      const s = await VideoEncoder.isConfigSupported({ ...this.config(alvo), hardwareAcceleration: 'prefer-hardware' });
-      this.hardware = s.supported === true;
+      const s = await VideoEncoder.isConfigSupported(this.config(alvo, 'prefer-hardware'));
+      suportaHardware = s.supported === true;
     } catch {
-      this.hardware = null;
+      suportaHardware = null;
     }
+    this.aceleracao.comecar(suportaHardware);
+    // `iniciar` de novo (o comutável voltou a este caminho): nada do anterior fica aberto.
+    void this.leitor?.cancel();
+    this.descartar();
     this.aplicar();
     this.marca = { t: this.agora(), quadros: 0 };
     this.lerDe(track);
@@ -77,6 +94,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
 
   configurar(alvo: AlvoDoCodificador): void {
     this.alvo = alvo;
+    // Hora de tentar a GPU de novo depois de uma queda: encoder novo, com IDR.
+    if (this.aceleracao.voltar(this.agora())) this.descartar();
     this.aplicar();
   }
 
@@ -107,24 +126,22 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const dt = Math.max(0.001, (agora - this.marca.t) / 1000);
     const fps = (this.quadros - this.marca.quadros) / dt;
     this.marca = { t: agora, quadros: this.quadros };
-    const msPorQuadro = this.amostrasMs === 0 ? null : this.somaMs / this.amostrasMs;
-    this.somaMs = 0;
-    this.amostrasMs = 0;
+    const msPorQuadro = this.vigia.lerMsPorQuadro();
     const sobrecarregado = this.descartesPorSobrecarga > 0;
     this.descartesPorSobrecarga = 0;
     const c = this.configurado;
+    const classe = this.aceleracao.classe();
     return {
       width: c?.width ?? 0,
       height: c?.height ?? 0,
       fps,
       msPorQuadro,
       bitrateAlvo: c?.bitrate ?? 0,
-      hardware: this.hardware,
+      hardware: classe === 'desconhecido' ? null : classe === 'hardware',
       sobrecarregado,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
-      implementacao:
-        this.hardware === null ? 'WebCodecs' : this.hardware ? 'WebCodecs·hardware' : 'WebCodecs·software',
+      implementacao: this.aceleracao.rotulo(),
     };
   }
 
@@ -134,17 +151,13 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   }
 
   parar(): void {
+    this.parado = true;
     void this.leitor?.cancel();
     this.leitor = null;
-    try {
-      this.encoder?.close();
-    } catch {
-      // já fechado
-    }
-    this.encoder = null;
+    this.descartar();
   }
 
-  private config(alvo: AlvoDoCodificador): VideoEncoderConfig {
+  private config(alvo: AlvoDoCodificador, aceleracao: Aceleracao): VideoEncoderConfig {
     return {
       codec: CODEC,
       width: alvo.width,
@@ -154,8 +167,47 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       latencyMode: 'realtime',
       bitrateMode: 'variable',
       avc: { format: 'annexb' },
-      hardwareAcceleration: 'no-preference',
+      hardwareAcceleration: aceleracao,
     };
+  }
+
+  /** Fecha o encoder atual, se houver; o próximo `aplicar` cria outro, com IDR. */
+  private descartar(): void {
+    const enc = this.encoder;
+    this.encoder = null;
+    this.configurado = null;
+    try {
+      enc?.close();
+    } catch {
+      // já fechado
+    }
+  }
+
+  private novoEncoder(): VideoEncoder {
+    const enc: VideoEncoder = new VideoEncoder({
+      output: (chunk) => this.saiu(chunk),
+      // Pode vir DENTRO do `configure`: o Chromium chama `error` na hora
+      // quando a configuração é recusada (medido). `aplicar` confere depois.
+      error: () => this.morreu(enc, 'erro'),
+    });
+    return enc;
+  }
+
+  /**
+   * O encoder morreu (`error`) ou travou (vigia). A política diz o modo do
+   * próximo; recriar já é numa microtarefa — nunca dentro do `configure` ou
+   * do `encode` que acabou de falhar. Sem recriar já, ele volta no próximo
+   * `configurar` (~1 s), como sempre foi: sem isso a transmissão ficaria muda
+   * com os senders vivos.
+   */
+  private morreu(enc: VideoEncoder, motivo: MotivoDaQueda): void {
+    if (enc !== this.encoder) return; // um antigo, já substituído
+    this.descartar();
+    const { recriarJa } = this.aceleracao.falhou(motivo, this.agora());
+    if (!recriarJa) return;
+    queueMicrotask(() => {
+      if (!this.parado && this.encoder === null) this.aplicar();
+    });
   }
 
   /**
@@ -164,22 +216,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
    */
   private aplicar(): void {
     const alvo = this.alvo;
-    if (alvo === null) return;
+    if (alvo === null || this.parado) return;
     if (this.encoder === null) {
-      this.encoder = new VideoEncoder({
-        output: (chunk) => this.saiu(chunk),
-        error: () => {
-          this.encoder = null;
-          this.configurado = null;
-        },
-      });
+      this.encoder = this.novoEncoder();
       this.configurado = null;
+      this.vigia.reiniciar(this.agora());
     }
+    const enc = this.encoder;
     const c = this.configurado;
     const mudouTamanho = c === null || c.width !== alvo.width || c.height !== alvo.height || c.fps !== alvo.fps;
     const mudouBitrate = c === null || Math.abs(c.bitrate - alvo.bitrate) / Math.max(1, c.bitrate) > 0.05;
     if (!mudouTamanho && !mudouBitrate) return;
-    this.encoder.configure(this.config(alvo));
+    enc.configure(this.config(alvo, this.aceleracao.modo));
+    // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
+    if (this.encoder !== enc) return;
     this.configurado = alvo;
     if (mudouTamanho) this.pedirChaveAgora = true;
   }
@@ -203,9 +253,16 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       quadro.close();
       return;
     }
+    // Oferecido e nada sai há tempo demais: driver travado. Troca de encoder.
+    if (this.vigia.travou(this.agora())) {
+      quadro.close();
+      this.morreu(enc, 'travou');
+      return;
+    }
     // O encoder não dá conta: descarta na entrada, nunca acumula.
     if (enc.encodeQueueSize > 2) {
       this.descartesPorSobrecarga += 1;
+      this.vigia.recusado();
       quadro.close();
       return;
     }
@@ -219,19 +276,13 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       this.pedirChaveAgora = false;
       this.ultimaChave = this.agora();
     }
-    this.entrada.set(quadro.timestamp, this.agora());
+    this.vigia.entrou(quadro.timestamp, this.agora());
     enc.encode(quadro, { keyFrame: chave });
     quadro.close();
   }
 
   private saiu(chunk: EncodedVideoChunk): void {
-    const entrou = this.entrada.get(chunk.timestamp);
-    if (entrou !== undefined) {
-      this.somaMs += this.agora() - entrou;
-      this.amostrasMs += 1;
-      this.entrada.delete(chunk.timestamp);
-    }
-    if (this.entrada.size > 120) this.entrada.clear();
+    this.vigia.saiu(chunk.timestamp, this.agora());
     this.quadros += 1;
     const chave = chunk.type === 'key';
     if (chave) this.idrs += 1;

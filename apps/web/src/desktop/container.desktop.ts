@@ -179,7 +179,8 @@ export const somDoApp: SomDoApp | null = som === null ? null : criarSomDoApp(som
 
 /**
  * O codificador do "um encode": no app, um que escolhe entre o externo
- * (NVENC, quando a captura é a nativa) e o WebCodecs. O externo fala com o
+ * (NVENC, quando a captura é a nativa) e o WebCodecs com `prefer-hardware`
+ * (D9: queda para software se a GPU falhar no meio). O externo fala com o
  * `tela-captura` pela ligação acima, que o adapter de captura liga à porta
  * da sessão quando ela sobe.
  */
@@ -189,7 +190,10 @@ function criarCodificador(d: DepsDoCodificador): CodificadorUnico {
   }
   return new CodificadorComutavel<CodificadorUnico>({
     nativo: () => new CodificadorExterno(ligacaoNativa.porta, d),
-    webcodecs: () => new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar),
+    // No app, a GPU explicitamente quando a sonda diz que há (D9): no Windows
+    // é o Media Foundation (NVENC/AMF/Quick Sync), e o rótulo deixa de chutar.
+    webcodecs: () =>
+      new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar, { preferirHardware: true }),
     ehNativa: (track) => capturaDesktop.ehNativa(track),
   });
 }

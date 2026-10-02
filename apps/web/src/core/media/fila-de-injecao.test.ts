@@ -477,3 +477,19 @@ describe('FilaDeInjecao — um espectador lento não segura a sala', () => {
     expect(fila.soltarArrastados()).toBe(0);
   });
 });
+
+describe('FilaDeInjecao — repassador: filho atrasado pula para o IDR', () => {
+  it('sem exigir outro em dia, o único filho atrasado por 1 s é solto', () => {
+    const { fila, codificar, passar } = montar();
+    fila.entrou('filho');
+    codificar(true);
+    fila.vaga('filho');
+    for (let i = 0; i < LIMITE_DE_ARRASTO + 3; i += 1) codificar();
+    expect(fila.soltarArrastados(false)).toBe(0);
+    passar(ARRASTO_SUSTENTADO_MS);
+    fila.vaga('filho');
+    expect(fila.soltarArrastados(false)).toBe(1);
+    codificar(true);
+    expect(fila.vaga('filho')).toMatchObject({ tipo: 'enviar', quadro: { chave: true } });
+  });
+});

@@ -45,7 +45,15 @@ export type DepsDoRepassador = {
  * (o carimbo que o filho lê é o da isca), então o filho soma este número ao
  * que mede da aresta e o HUD mostra a latência de ponta a ponta.
  */
-export type AtrasoDoPai = { readonly atrasoDoPaiMs: number };
+export type AtrasoDoPai = {
+  readonly atrasoDoPaiMs?: number;
+  /**
+   * Quadros por segundo que ESTE repassador está decodificando do anfitrião.
+   * O filho compara com os que ele mesmo decodifica: se recebe bem menos, a
+   * aresta não está entregando e ele volta ao anfitrião (`VigiaDoPai`).
+   */
+  readonly fpsDoPai?: number;
+};
 
 /** Teto do `maxBitrate` das arestas para os filhos: o teto útil do 1080p60. */
 const TETO_DA_ARESTA_BPS = 25_000_000;
@@ -206,7 +214,9 @@ export class Repassador {
     const antes = this.contadores;
     this.contadores = agora;
     let sobrecarregado = false;
+    let fpsDoPai: number | null = null;
     if (agora !== null && antes !== null) {
+      fpsDoPai = Math.max(0, agora.decodificados - antes.decodificados) / (RELATORIO_A_CADA_MS / 1000);
       const decodificados = agora.decodificados - antes.decodificados;
       const descartados = agora.descartados - antes.descartados;
       sobrecarregado =
@@ -216,8 +226,12 @@ export class Repassador {
     this.deps.enviarRelatorio({ repasse: 'relatorio', filhos: this.filhos.size, piorSaidaBps: pior, sobrecarregado });
 
     const atraso = await this.atrasoAteAqui();
-    if (atraso !== null) {
-      for (const id of this.filhos.keys()) this.deps.enviarVia(id, { atrasoDoPaiMs: atraso } satisfies AtrasoDoPai);
+    const relato: AtrasoDoPai = {
+      ...(atraso === null ? {} : { atrasoDoPaiMs: atraso }),
+      ...(fpsDoPai === null ? {} : { fpsDoPai: Math.round(fpsDoPai * 10) / 10 }),
+    };
+    if (relato.atrasoDoPaiMs !== undefined || relato.fpsDoPai !== undefined) {
+      for (const id of this.filhos.keys()) this.deps.enviarVia(id, relato);
     }
   }
 

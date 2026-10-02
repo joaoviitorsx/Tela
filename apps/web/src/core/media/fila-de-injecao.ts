@@ -221,8 +221,13 @@ export class FilaDeInjecao<D> {
    *
    * Com um sender só, ninguém é solto: aí a fila É a do único espectador, e
    * pular para IDR a cada 100 ms trocaria lentidão por IDRs em rajada.
+   *
+   * `exigirOutroEmDia = false` é o REPASSADOR (ADR 0031): lá não há codificador
+   * a segurar, e a fila de um filho que não acompanha só cresce — ele
+   * assistia em câmera lenta, cada vez mais atrasado, até o anel acabar.
+   * Solto, pula para o próximo IDR (periódico, do anfitrião).
    */
-  soltarArrastados(): number {
+  soltarArrastados(exigirOutroEmDia = true): number {
     const agora = this.agora();
     const vivo = (s: EstadoDoSender) => agora - s.ultimaVaga <= SENDER_MORTO_MS && !s.esperandoChave && s.proximo >= 0;
     let emDia = false;
@@ -234,7 +239,7 @@ export class FilaDeInjecao<D> {
         emDia = true;
       }
     }
-    if (!emDia) return 0;
+    if (exigirOutroEmDia && !emDia) return 0;
     let soltos = 0;
     for (const s of this.estados.values()) {
       if (!vivo(s) || s.atrasadoDesde === null || agora - s.atrasadoDesde < ARRASTO_SUSTENTADO_MS) continue;

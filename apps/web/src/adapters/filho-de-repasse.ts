@@ -1,6 +1,7 @@
 import type { IceServerConfig } from '@tela/shared';
 import { type ReferenciaDeCaptura, paraUnixMs } from '../core/media/relogio-de-captura.js';
 import { JITTER_INICIAL_MS, PeerLink } from '../core/mesh/peer-link.js';
+import { VigiaDoPai } from '../core/mesh/vigia-do-pai.js';
 import type { ComPai, SemPai } from '../core/mesh/protocolo-de-repasse.js';
 
 /**
@@ -10,10 +11,11 @@ import type { ComPai, SemPai } from '../core/mesh/protocolo-de-repasse.js';
  * de volta se o pai falhar. A troca é sempre "com rede de proteção":
  *
  * 1. o anfitrião manda `pai`; esta classe liga no pai e espera a imagem;
- * 2. o primeiro quadro do pai troca a trilha de vídeo da tela e manda
- *    `com-pai` — só aí o anfitrião pausa o vídeo direto;
- * 3. imagem do pai parada por mais que `VIGIA_MS`, ou a ligação caindo:
- *    volta à trilha do anfitrião e manda `sem-pai`, e o anfitrião retoma.
+ * 2. o primeiro quadro DECODIFICADO do pai troca a trilha de vídeo da tela e
+ *    manda `com-pai` — só aí o anfitrião pausa o vídeo direto;
+ * 3. imagem do pai parada por mais que `VIGIA_MS`, a ligação caindo, ou o
+ *    filho decodificando bem menos do que o pai recebe (`VigiaDoPai`): volta
+ *    à trilha do anfitrião e manda `sem-pai`, e o anfitrião retoma.
  */
 export type DepsDoFilho = {
   readonly createConnection: (config: RTCConfiguration) => RTCPeerConnection;
@@ -30,6 +32,10 @@ export type DepsDoFilho = {
  * não virar troca de fonte.
  */
 export const VIGIA_MS = 700;
+/** De quanto em quanto tempo o filho olha se o primeiro quadro do pai já decodificou. */
+const ESPERA_DO_PRIMEIRO_QUADRO_MS = 150;
+/** De quanto em quanto tempo o filho compara o que decodifica com o que o pai recebe. */
+const LEITURA_MS = 1_000;
 
 export class FilhoDeRepasse {
   private pai: string | null = null;
@@ -44,6 +50,9 @@ export class FilhoDeRepasse {
    * anfitrião descia — 20 ms a mais de latência só por estar num filho.
    */
   private jitterAlvo = JITTER_INICIAL_MS;
+  private readonly vigiaDoPai = new VigiaDoPai();
+  /** Espera do primeiro quadro, ou leitura periódica da aresta: um relógio só. */
+  private relogio: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly deps: DepsDoFilho) {}
 
@@ -70,15 +79,26 @@ export class FilhoDeRepasse {
       onTrack: (track) => {
         if (track.kind !== 'video') return;
         link.setJitterAlvo(this.jitterAlvo);
+        // A imagem do pai só vai para a tela — e o anfitrião só para de mandar
+        // direto — depois do primeiro quadro DECODIFICADO, não do primeiro
+        // pacote (ver `vigia-do-pai.ts`). Até lá a tela segue com o anfitrião.
         const assumir = () => {
-          if (this.link !== link) return;
-          const primeira = this.trilha === null;
+          if (this.link !== link || this.trilha !== null) return;
           this.trilha = track;
           this.deps.aoTrocarVideo(track);
-          if (primeira) this.deps.enviar({ repasse: 'com-pai' });
+          this.deps.enviar({ repasse: 'com-pai' });
+          this.vigiar(link);
         };
-        if (track.muted) track.addEventListener('unmute', assumir, { once: true });
-        else assumir();
+        this.pararRelogio();
+        this.relogio = setInterval(() => {
+          void decodificados(link).then((n) => {
+            if (this.link !== link || this.trilha !== null || n === null) return;
+            if (VigiaDoPai.pronto({ decodificados: n, agora: Date.now() })) {
+              this.pararRelogio();
+              assumir();
+            }
+          });
+        }, ESPERA_DO_PRIMEIRO_QUADRO_MS);
         track.addEventListener('mute', () => {
           if (this.link !== link || this.trilha !== track) return;
           this.vigia ??= setTimeout(() => {
@@ -112,9 +132,16 @@ export class FilhoDeRepasse {
 
   sinal(de: string, dados: unknown): void {
     if (de !== this.pai) return;
-    const atraso = (dados as { atrasoDoPaiMs?: unknown } | null)?.atrasoDoPaiMs;
-    if (typeof atraso === 'number') {
-      if (Number.isFinite(atraso) && atraso >= 0 && atraso <= 10_000) this.atrasoDoPai = atraso;
+    const relato = dados as { atrasoDoPaiMs?: unknown; fpsDoPai?: unknown } | null;
+    if (relato !== null && typeof relato === 'object' && ('atrasoDoPaiMs' in relato || 'fpsDoPai' in relato)) {
+      const atraso = relato.atrasoDoPaiMs;
+      if (typeof atraso === 'number' && Number.isFinite(atraso) && atraso >= 0 && atraso <= 10_000) {
+        this.atrasoDoPai = atraso;
+      }
+      const fps = relato.fpsDoPai;
+      if (typeof fps === 'number' && Number.isFinite(fps) && fps >= 0 && fps <= 240) {
+        this.vigiaDoPai.relatoDoPai(fps, Date.now());
+      }
       return;
     }
     void this.link?.handleSignal(dados).catch(() => this.falhar());
@@ -141,6 +168,23 @@ export class FilhoDeRepasse {
     this.soltar();
   }
 
+  /** Com a imagem do pai na tela: a cada segundo, ela ainda acompanha a origem? */
+  private vigiar(link: PeerLink): void {
+    this.pararRelogio();
+    this.vigiaDoPai.reiniciar();
+    this.relogio = setInterval(() => {
+      void decodificados(link).then((n) => {
+        if (this.link !== link || n === null) return;
+        if (this.vigiaDoPai.observar({ decodificados: n, agora: Date.now() })) this.falhar();
+      });
+    }, LEITURA_MS);
+  }
+
+  private pararRelogio(): void {
+    if (this.relogio !== null) clearInterval(this.relogio);
+    this.relogio = null;
+  }
+
   /** A imagem do pai parou: volta ao anfitrião e avisa. */
   private falhar(): void {
     if (this.pai === null) return;
@@ -151,6 +195,8 @@ export class FilhoDeRepasse {
   private soltar(): void {
     if (this.vigia !== null) clearTimeout(this.vigia);
     this.vigia = null;
+    this.pararRelogio();
+    this.vigiaDoPai.reiniciar();
     const usava = this.trilha !== null;
     this.trilha = null;
     this.link?.close();
@@ -158,5 +204,18 @@ export class FilhoDeRepasse {
     this.pai = null;
     this.atrasoDoPai = null;
     if (usava) this.deps.aoTrocarVideo(null);
+  }
+}
+
+/** Quadros de vídeo decodificados na aresta, acumulado; `null` sem leitura. */
+async function decodificados(link: PeerLink): Promise<number | null> {
+  try {
+    let n: number | null = null;
+    (await link.stats()).forEach((s: { type?: string; kind?: string; framesDecoded?: number }) => {
+      if (s.type === 'inbound-rtp' && s.kind === 'video' && typeof s.framesDecoded === 'number') n = s.framesDecoded;
+    });
+    return n;
+  } catch {
+    return null;
   }
 }

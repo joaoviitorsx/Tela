@@ -120,6 +120,10 @@ escopo.onmessage = (e) => {
     setInterval(() => {
       if (fila.senders() > 0) avisar({ tipo: 'repasse', recebidos, senders: fila.senders() });
     }, 1_000);
+    // Filho que não acompanha pula para o próximo IDR em vez de ver câmera lenta.
+    setInterval(() => {
+      if (fila.senders() > 0) fila.soltarArrastados(false);
+    }, 100);
     return;
   }
   porta.onmessage = (msg: MessageEvent<ChunkInjetado>) => {

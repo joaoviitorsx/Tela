@@ -273,6 +273,54 @@ for (const { i } of filhos) {
   }
 }
 
+if (process.env.CONTA_GOTAS !== '0') {
+  // O relato de 02/10: repassador que entrega a conta-gotas (subida estrangulada).
+  // O filho tem de perceber pelo que DECODIFICA e voltar sozinho ao anfitrião.
+  console.log('\n3b. Repassador entregando a conta-gotas (3 de 30 quadros): o filho volta ao anfitrião sozinho');
+  const r = papeis.repassadores[0];
+  await espectadores[r].p.evaluate(async () => {
+    // A isca dos senders para os filhos passa a soltar 3 quadros por segundo:
+    // cada quadro dela é uma vaga, então o filho recebe a conta-gotas enquanto
+    // o repassador continua recebendo 30 do anfitrião.
+    const c = document.createElement('canvas');
+    c.width = 160;
+    c.height = 90;
+    const x = c.getContext('2d');
+    const lenta = c.captureStream(3).getVideoTracks()[0];
+    let t = 0;
+    window.__pinta = setInterval(() => {
+      t += 1;
+      x.fillStyle = t % 2 ? '#101010' : '#111111';
+      x.fillRect(0, 0, 1, 1);
+    }, 333);
+    for (const [i, pc] of (window.__pcs ?? []).entries()) {
+      if (i === 0 || pc.connectionState !== 'connected') continue;
+      for (const s of pc.getSenders()) if (s.track?.kind === 'video') await s.replaceTrack(lenta);
+    }
+  });
+  const alvo = filhos[0].i;
+  const desde = Date.now();
+  const base0 = (await lerConexoes(espectadores[alvo].p))[0]?.dec ?? 0;
+  let voltouSozinho = false;
+  let ultimoLog = 0;
+  while (Date.now() - desde < 20_000) {
+    const d = await lerConexoes(espectadores[alvo].p);
+    if (process.env.DEPURAR === '1' && Date.now() - ultimoLog > 2000) {
+      ultimoLog = Date.now();
+      console.log('   [3b]', JSON.stringify(d.map((c) => ({ a: c.anfitriao, v: c.viva, dec: c.dec }))));
+    }
+    if ((d[0]?.dec ?? 0) - base0 >= 15) {
+      voltouSozinho = true;
+      break;
+    }
+    await esperar(250);
+  }
+  const s3b = ((Date.now() - desde) / 1000).toFixed(1);
+  console.log(`   filho ${alvo} decodifica pelo anfitrião de novo em ${s3b} s`);
+  ok(voltouSozinho, `com o repassador a conta-gotas, o filho volta ao anfitrião sozinho (${s3b} s)`);
+  await espectadores[r].p.evaluate(() => clearInterval(window.__pinta));
+}
+
 console.log('\n4. O repassador sai: o filho volta ao anfitrião');
 const repassador = papeis.repassadores[0];
 const filhoIdx = filhos[0].i;

@@ -8,6 +8,17 @@ import type { CaptureSurface, ScreenCapture } from '../core/ports/screen-capture
  * porque é regra de produto (R5) e precisa valer também no app nativo, onde
  * este adapter não existe.
  */
+/** Versão do Chrome que oferece o som da janela escolhida (`windowAudio`). */
+export const CHROME_COM_SOM_DA_JANELA = 141;
+
+export function chromeComSomDaJanela(
+  nav: { readonly userAgent?: string; readonly userAgentData?: { readonly brands?: ReadonlyArray<{ brand: string; version: string }> } } = navigator,
+): boolean {
+  const marca = nav.userAgentData?.brands?.find((b) => b.brand === 'Google Chrome' || b.brand === 'Chromium');
+  const versao = marca !== undefined ? Number(marca.version) : Number(/Chrome\/(\d+)/.exec(nav.userAgent ?? '')?.[1] ?? NaN);
+  return Number.isFinite(versao) && versao >= CHROME_COM_SOM_DA_JANELA;
+}
+
 /** Só o nome, e só letras: a mensagem pode trazer nome de janela ou caminho. */
 function nomeDoErro(error: unknown): string {
   const nome = error instanceof Error ? error.name : '';
@@ -57,7 +68,11 @@ export function makeBrowserScreenCapture(): ScreenCapture {
             frameRate: { ideal: options.frameRate, max: options.frameRate },
             resizeMode: 'crop-and-scale',
 
-            displaySurface: 'monitor',
+            // Chrome 141+ leva o som da JANELA (`windowAudio` abaixo): o seletor
+            // abre nela, onde vai só o jogo. Antes disso a janela era muda no
+            // Windows e a tela inteira era o único jeito de levar som — com a
+            // call do Discord junto.
+            displaySurface: options.systemAudio && chromeComSomDaJanela() ? 'window' : 'monitor',
           },
           audio,
 

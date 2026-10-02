@@ -145,3 +145,13 @@ describe('browser-screen-capture — o som da janela, sem a call', () => {
     expect(chamadas[1]?.['windowAudio']).toBe('exclude');
   });
 });
+
+describe('chromeComSomDaJanela', () => {
+  it('Chrome 141+ (pela marca ou pelo user agent)', async () => {
+    const { chromeComSomDaJanela } = await import('./browser-screen-capture.js');
+    expect(chromeComSomDaJanela({ userAgentData: { brands: [{ brand: 'Google Chrome', version: '154' }] } })).toBe(true);
+    expect(chromeComSomDaJanela({ userAgentData: { brands: [{ brand: 'Chromium', version: '140' }] } })).toBe(false);
+    expect(chromeComSomDaJanela({ userAgent: 'Mozilla/5.0 Chrome/141.0.0.0 Safari/537.36' })).toBe(true);
+    expect(chromeComSomDaJanela({ userAgent: 'Mozilla/5.0 Firefox/140.0' })).toBe(false);
+  });
+});

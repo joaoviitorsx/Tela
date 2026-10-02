@@ -61,6 +61,8 @@ export type DepsDoRepasse = {
 
 /** De quanto em quanto tempo a árvore reavalia (prazos, folgas, um filho novo). */
 const TIQUE_DO_REPASSE_MS = 2_000;
+/** O filho que volta ao anfitrião segura o último quadro do pai no máximo isto. */
+const VOLTA_MAXIMA_MS = 4_000;
 /** De quanto em quanto tempo o espectador conta ao anfitrião o que pode. */
 const ESTADO_DO_REPASSE_MS = 5_000;
 
@@ -280,12 +282,35 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
        * vigias da trilha do anfitrião olham `media.getTracks()`: fora da tela,
        * a pausa dela (o anfitrião parou de mandar) não é queda.
        */
+      let trocaPendente: (() => void) | null = null;
       const trocarVideo = (trilha: MediaStreamTrack | null) => {
+        trocaPendente?.();
+        trocaPendente = null;
         const nova = trilha ?? videoDoAnfitriao;
         if (nova === null) return;
-        for (const velha of media.getVideoTracks()) if (velha !== nova) media.removeTrack(velha);
-        if (!media.getTracks().includes(nova)) media.addTrack(nova);
-        emitter.emit('track', { stream: media });
+        const aplicar = () => {
+          for (const velha of media.getVideoTracks()) if (velha !== nova) media.removeTrack(velha);
+          if (!media.getTracks().includes(nova)) media.addTrack(nova);
+          emitter.emit('track', { stream: media });
+        };
+        // De volta ao anfitrião: a trilha dele está parada até o primeiro
+        // quadro (pausa desfeita + IDR). Até lá a tela segura o último quadro
+        // do pai, em vez de ir ao preto.
+        if (trilha === null && nova.muted) {
+          const umaVez = () => {
+            trocaPendente?.();
+            trocaPendente = null;
+            aplicar();
+          };
+          const desistir = setTimeout(umaVez, VOLTA_MAXIMA_MS);
+          nova.addEventListener('unmute', umaVez, { once: true });
+          trocaPendente = () => {
+            clearTimeout(desistir);
+            nova.removeEventListener('unmute', umaVez);
+          };
+          return;
+        }
+        aplicar();
       };
       if (deps.repasse !== undefined) {
         filho = new FilhoDeRepasse({
@@ -306,6 +331,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
           enviarVia,
           enviarRelatorio: (relatorio) => deps.channel.send(relatorio),
           statsDaRecepcao: () => viewerLink?.stats() ?? Promise.resolve(null),
+          referenciaDoAnfitriao: () => viewerLink?.referenciaDeCaptura() ?? Promise.resolve(null),
         });
       }
       const recovery = new PeerRecovery({
@@ -527,6 +553,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
     setJitterAlvo(ms) {
       viewerLink?.setJitterAlvo(ms);
+      filho?.setJitterAlvo(ms);
     },
 
     removeViewers(peerId) {
@@ -577,8 +604,8 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
 
     async referenciaDeCaptura() {
       // O `abs-capture-time` não atravessa o repasse (E2, ADR 0031): o carimbo
-      // seria o da isca do pai, e o HUD mostraria uma latência que não existe.
-      if (filho?.ativo === true) return null;
+      // é o da isca do pai, e o filho o recua pelo atraso que o pai informa.
+      if (filho?.ativo === true) return filho.referenciaDeCaptura();
       return (await viewerLink?.referenciaDeCaptura()) ?? null;
     },
 

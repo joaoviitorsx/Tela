@@ -1,4 +1,5 @@
 import type { IceServerConfig } from '@tela/shared';
+import { type ReferenciaDeCaptura, paraUnixMs } from '../core/media/relogio-de-captura.js';
 import { JITTER_INICIAL_MS, PeerLink } from '../core/mesh/peer-link.js';
 import type { ComPai, SemPai } from '../core/mesh/protocolo-de-repasse.js';
 
@@ -35,6 +36,14 @@ export class FilhoDeRepasse {
   private link: PeerLink | null = null;
   private trilha: MediaStreamTrack | null = null;
   private vigia: ReturnType<typeof setTimeout> | null = null;
+  /** O atraso que o quadro já trazia ao chegar no pai (ver `AtrasoDoPai`). */
+  private atrasoDoPai: number | null = null;
+  /**
+   * O alvo de jitter que a sessão decidiu. Vale para a aresta do pai também:
+   * sem isto ela ficava no valor inicial (60 ms) enquanto a ligação com o
+   * anfitrião descia — 20 ms a mais de latência só por estar num filho.
+   */
+  private jitterAlvo = JITTER_INICIAL_MS;
 
   constructor(private readonly deps: DepsDoFilho) {}
 
@@ -60,7 +69,7 @@ export class FilhoDeRepasse {
       createConnection: this.deps.createConnection,
       onTrack: (track) => {
         if (track.kind !== 'video') return;
-        link.setJitterAlvo(JITTER_INICIAL_MS);
+        link.setJitterAlvo(this.jitterAlvo);
         const assumir = () => {
           if (this.link !== link) return;
           const primeira = this.trilha === null;
@@ -96,9 +105,32 @@ export class FilhoDeRepasse {
     this.link = link;
   }
 
+  setJitterAlvo(ms: number): void {
+    this.jitterAlvo = ms;
+    this.link?.setJitterAlvo(ms);
+  }
+
   sinal(de: string, dados: unknown): void {
     if (de !== this.pai) return;
+    const atraso = (dados as { atrasoDoPaiMs?: unknown } | null)?.atrasoDoPaiMs;
+    if (typeof atraso === 'number') {
+      if (Number.isFinite(atraso) && atraso >= 0 && atraso <= 10_000) this.atrasoDoPai = atraso;
+      return;
+    }
     void this.link?.handleSignal(dados).catch(() => this.falhar());
+  }
+
+  /**
+   * A referência de captura vista do filho: o carimbo da isca do pai, recuado
+   * pelo atraso que o quadro já tinha ao chegar lá. Sem esse número, `null` —
+   * melhor nenhum HUD que uma latência que esconde um salto.
+   */
+  async referenciaDeCaptura(): Promise<ReferenciaDeCaptura | null> {
+    const atraso = this.atrasoDoPai;
+    if (this.trilha === null || atraso === null) return null;
+    const ref = (await this.link?.referenciaDeCaptura()) ?? null;
+    if (ref === null) return null;
+    return { ...ref, captureTimestamp: paraUnixMs(ref.captureTimestamp) - atraso };
   }
 
   stats(): Promise<RTCStatsReport> | null {
@@ -124,6 +156,7 @@ export class FilhoDeRepasse {
     this.link?.close();
     this.link = null;
     this.pai = null;
+    this.atrasoDoPai = null;
     if (usava) this.deps.aoTrocarVideo(null);
   }
 }

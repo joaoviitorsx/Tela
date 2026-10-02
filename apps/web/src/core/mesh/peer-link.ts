@@ -256,9 +256,13 @@ export class PeerLink {
           sr = { remotoMs: row.remoteTimestamp, recebidoMs: row.timestamp };
         }
       });
+      // `timestamp` da fonte: Unix em ms no Chromium; relativo à origem da
+      // página em outros. Os dois viram Unix.
+      const entregueMs = fonte.timestamp > 1e12 ? fonte.timestamp : performance.timeOrigin + fonte.timestamp;
       return {
         rtpTimestamp: fonte.rtpTimestamp,
         captureTimestamp: fonte.captureTimestamp,
+        entregueMs,
         relogio: sr === null ? null : { ...(sr as { remotoMs: number; recebidoMs: number }), rttMs },
       };
     } catch {

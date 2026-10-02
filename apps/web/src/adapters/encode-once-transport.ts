@@ -113,8 +113,15 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     anfitriao: {
       aoPausarSender: (sender: RTCRtpSender, pausado: boolean) => {
         const id = idDoSender.get(sender);
-        // Ao voltar, a primeira vaga recoloca o sender na fila sozinha.
-        if (id !== undefined && pausado) worker.postMessage({ tipo: 'pausa', id } satisfies MensagemAoWorker);
+        if (id === undefined) return;
+        if (pausado) {
+          worker.postMessage({ tipo: 'pausa', id } satisfies MensagemAoWorker);
+          return;
+        }
+        // Voltou porque o repassador falhou: o filho está com a imagem parada.
+        // A primeira vaga recoloca o sender na fila, e o IDR sai já, com a
+        // janela de entrada — sem esperar a janela da plateia nem o periódico.
+        codificador.pedirChave('entrada', 1);
       },
       aoMudarAtividade: (ativa: boolean) => {
         if (idrPeriodico !== null) clearInterval(idrPeriodico);

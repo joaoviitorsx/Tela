@@ -52,6 +52,11 @@ export type ReferenciaDeCaptura = {
   /** `captureTimestamp` como o navegador entrega: NTP ou Unix, em ms. */
   readonly captureTimestamp: number;
   /**
+   * Quando o quadro de `rtpTimestamp` foi entregue à trilha aqui (Unix, ms).
+   * Opcional: só o repassador usa, para medir o próprio atraso (ADR 0031).
+   */
+  readonly entregueMs?: number;
+  /**
    * Um Sender Report: relógio do transmissor quando o emitiu, quando chegou
    * aqui (ambos Unix, ms) e o RTT do caminho. `null` sem SR ainda — sem ele o
    * offset é desconhecido e o atraso NÃO é anunciado como medida.

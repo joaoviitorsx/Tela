@@ -1,4 +1,5 @@
 import type { IceServerConfig } from '@tela/shared';
+import { RelogioDeCaptura, type ReferenciaDeCaptura } from '../core/media/relogio-de-captura.js';
 import { PeerLink } from '../core/mesh/peer-link.js';
 import type { RelatorioDoRepassador } from '../core/mesh/protocolo-de-repasse.js';
 import type { AvisoDoWorker, MensagemAoWorker } from './injecao-worker.js';
@@ -33,7 +34,17 @@ export type DepsDoRepassador = {
   readonly enviarRelatorio: (relatorio: RelatorioDoRepassador) => void;
   /** O `getStats` da ligação com o anfitrião, para saber se este nó aguenta. */
   readonly statsDaRecepcao: () => Promise<RTCStatsReport | null>;
+  /** A referência de captura da ligação com o anfitrião: o atraso até aqui. */
+  readonly referenciaDoAnfitriao: () => Promise<ReferenciaDeCaptura | null>;
 };
+
+/**
+ * O que o repassador conta a cada filho pelo `via`: quanto o quadro já tinha
+ * de atraso quando chegou aqui. O `abs-capture-time` não atravessa o salto
+ * (o carimbo que o filho lê é o da isca), então o filho soma este número ao
+ * que mede da aresta e o HUD mostra a latência de ponta a ponta.
+ */
+export type AtrasoDoPai = { readonly atrasoDoPaiMs: number };
 
 /** Teto do `maxBitrate` das arestas para os filhos: o teto útil do 1080p60. */
 const TETO_DA_ARESTA_BPS = 25_000_000;
@@ -93,6 +104,7 @@ export class Repassador {
   private stream: MediaStream | null = null;
   private relatorio: ReturnType<typeof setInterval> | null = null;
   private contadores: Contadores | null = null;
+  private readonly relogio = new RelogioDeCaptura();
 
   constructor(private readonly deps: DepsDoRepassador) {}
 
@@ -226,6 +238,21 @@ export class Repassador {
         descartados > DESCARTE_MAXIMO * Math.max(1, decodificados + descartados);
     }
     this.deps.enviarRelatorio({ repasse: 'relatorio', filhos: this.filhos.size, piorSaidaBps: pior, sobrecarregado });
+
+    const atraso = await this.atrasoAteAqui();
+    if (atraso !== null) {
+      for (const id of this.filhos.keys()) this.deps.enviarVia(id, { atrasoDoPaiMs: atraso } satisfies AtrasoDoPai);
+    }
+  }
+
+  /** Captura no anfitrião → quadro entregue aqui, em ms; `null` sem medida. */
+  private async atrasoAteAqui(): Promise<number | null> {
+    const ref = await this.deps.referenciaDoAnfitriao().catch(() => null);
+    if (ref?.entregueMs === undefined) return null;
+    const agora = Date.now();
+    this.relogio.observar(ref, agora);
+    const ms = this.relogio.latenciaMs(ref.rtpTimestamp, ref.entregueMs, agora);
+    return ms === null ? null : Math.round(ms);
   }
 }
 

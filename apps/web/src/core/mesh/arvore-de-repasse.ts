@@ -98,6 +98,13 @@ type Espectador = {
   /** Como filho: pais com quem a aresta falhou, e até quando evitá-los. */
   readonly evitar: Map<string, number>;
   bloqueadoAte: number;
+  /**
+   * A subida que este repassador MOSTROU (pior aresta × filhos), em bits/s.
+   * `null` = nunca repassou. Sem esta memória, quem não aguenta é promovido,
+   * devolve o filho, espera o bloqueio e é promovido de novo — cada volta
+   * congela ~1 s a imagem de alguém (`e2e/arvore.sim.mjs`).
+   */
+  capacidadeBps: number | null;
 };
 
 export class ArvoreDeRepasse {
@@ -182,6 +189,7 @@ export class ArvoreDeRepasse {
             falhas: new Map(),
             evitar: new Map(),
             bloqueadoAte: 0,
+            capacidadeBps: null,
           });
           return;
         }
@@ -197,6 +205,7 @@ export class ArvoreDeRepasse {
         if (e === undefined || e.k === 0) return;
         e.relatorio = msg;
         e.relatorioEm = agora;
+        if (msg.piorSaidaBps !== null && msg.filhos > 0) e.capacidadeBps = msg.piorSaidaBps * msg.filhos;
         this.avaliarRepassador(e, agora);
         return;
       }
@@ -311,8 +320,11 @@ export class ArvoreDeRepasse {
     // Ninguém com vaga para quem sobrou: promove o candidato de menor RTT que
     // tenha alguma folha que não o evite (promover alguém para ser pai de
     // ninguém não alivia nada).
+    // Quem já mostrou que não paga um filho a este bitrate só volta quando o
+    // bitrate couber na subida que mediu.
+    const cabe = (e: Espectador) => e.capacidadeBps === null || e.capacidadeBps >= FOLGA_PARA_SUBIR * this.bitrate();
     const candidatos = [...this.espectadores.values()]
-      .filter((e) => e.podeRepassar && e.pai === null && e.k === 0 && assentado(e) && livre(e))
+      .filter((e) => e.podeRepassar && e.pai === null && e.k === 0 && assentado(e) && livre(e) && cabe(e))
       .sort(porRtt);
     for (const candidato of candidatos) {
       const filho = folhaPara(candidato);

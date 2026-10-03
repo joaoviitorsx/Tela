@@ -10,7 +10,13 @@ describe('alvoDoCodificador — o encoder único segue a regra da topologia', ()
     expect(a).toEqual({
       width: 1920, height: 1080, fps: 60, bitrate: PRESETS.p1080p60.main.maxBitrate, limitadoPelaEstimativa: false,
       perfil: 'baseline',
+      conteudo: 'motion',
     });
+  });
+
+  it('nitidez leva detail ao encoder; fluidez, motion (R5, ADR 0015)', () => {
+    expect(alvoDoCodificador({ ...base, preset: PRESETS.p1080p60, orcamento: null, prioridade: 'nitidez' }).conteudo).toBe('detail');
+    expect(alvoDoCodificador({ ...base, preset: PRESETS.p1080p60, orcamento: null, prioridade: 'fluidez' }).conteudo).toBe('motion');
   });
 
   it('o perfil da sala passa para o encoder; sem ele, Baseline', () => {

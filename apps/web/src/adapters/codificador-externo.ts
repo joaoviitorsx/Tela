@@ -1,4 +1,5 @@
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
+import { nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import type { CodificadorUnico, DepsDoCodificador, EstatisticasDoCodificador } from './codificador-unico.js';
 
@@ -61,6 +62,8 @@ export class CodificadorExterno implements CodificadorUnico {
   private ultimo = { width: 0, height: 0 };
   private msPorQuadro: number | null = null;
   private falhou: string | null = null;
+  /** `profile_idc` do último SPS que o helper mandou: o perfil de FATO. */
+  private perfilEmitido: number | null = null;
 
   constructor(
     private readonly porta: PortaDoNativo,
@@ -81,7 +84,13 @@ export class CodificadorExterno implements CodificadorUnico {
     const e = this.enviado;
     const mudouTamanho = e === null || e.width !== alvo.width || e.height !== alvo.height || e.fps !== alvo.fps;
     const mudouBitrate = e === null || Math.abs(e.bitrate - alvo.bitrate) / Math.max(1, e.bitrate) > MUDANCA_DE_BITRATE;
-    if (!mudouTamanho && !mudouBitrate) return;
+    // O piso de perfil da sala (adendo à ADR 0016). O helper recicla a
+    // codificação e recomeça num IDR; um helper antigo ignora a ordem.
+    if (e === null || e.perfil !== alvo.perfil) this.ordem(`perfil ${alvo.perfil}`);
+    if (!mudouTamanho && !mudouBitrate) {
+      this.enviado = { ...(e ?? alvo), perfil: alvo.perfil };
+      return;
+    }
     this.enviado = alvo;
     this.ordem(`alvo ${alvo.width} ${alvo.height} ${alvo.fps} ${Math.round(alvo.bitrate)}`);
   }
@@ -125,7 +134,12 @@ export class CodificadorExterno implements CodificadorUnico {
       segurados: 0,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
-      implementacao: this.falhou === null ? 'nativo·NVENC' : `nativo·falhou(${this.falhou})`,
+      implementacao:
+        this.falhou !== null
+          ? `nativo·falhou(${this.falhou})`
+          : nomeDoPerfilIdc(this.perfilEmitido) === null
+            ? 'nativo·NVENC'
+            : `nativo·NVENC · H.264 ${nomeDoPerfilIdc(this.perfilEmitido)}`,
     };
   }
 
@@ -163,7 +177,11 @@ export class CodificadorExterno implements CodificadorUnico {
       return;
     }
     this.quadros += 1;
-    if (m.chave) this.idrs += 1;
+    if (m.chave) {
+      this.idrs += 1;
+      // Antes de transferir: depois o buffer é do worker.
+      this.perfilEmitido = perfilDoSps(new Uint8Array(m.dados)) ?? this.perfilEmitido;
+    }
     this.ultimo = { width: m.width, height: m.height };
     this.deps.aoCapturar();
     this.deps.entregar(

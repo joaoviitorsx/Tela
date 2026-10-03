@@ -3,7 +3,7 @@ import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import { CodificadorExterno, type MensagemDoNativo, type PortaDoNativo } from './codificador-externo.js';
 import type { ChunkInjetado } from './injecao-worker.js';
 
-const ALVO: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline' };
+const ALVO: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion' };
 const TRILHA = {} as MediaStreamTrack;
 
 function montar() {
@@ -37,7 +37,7 @@ describe('CodificadorExterno — o processo nativo como codificador único', () 
   it('iniciar manda o alvo e pede o IDR de quem entra', async () => {
     const { cod, ordens } = montar();
     await cod.iniciar(TRILHA, ALVO);
-    expect(ordens).toEqual(['alvo 1920 1080 60 12000000', 'chave']);
+    expect(ordens).toEqual(['perfil baseline', 'alvo 1920 1080 60 12000000', 'chave']);
   });
 
   it('cada quadro move a isca e vai para a injeção com seq próprio e contínuo', async () => {
@@ -165,5 +165,16 @@ describe('CodificadorExterno — o processo nativo como codificador único', () 
     quadro(true);
     expect(ordens.at(-1)).toBe('parar');
     expect(entregues).toHaveLength(0);
+  });
+
+  it('perfil da sala: manda a ordem só quando muda, sem reenviar o alvo', async () => {
+    const { cod, ordens } = montar();
+    await cod.iniciar({} as MediaStreamTrack, ALVO);
+    ordens.length = 0;
+    cod.configurar({ ...ALVO, perfil: 'main' });
+    cod.configurar({ ...ALVO, perfil: 'main' });
+    expect(ordens).toEqual(['perfil main']);
+    cod.configurar({ ...ALVO, perfil: 'baseline' });
+    expect(ordens).toEqual(['perfil main', 'perfil baseline']);
   });
 });

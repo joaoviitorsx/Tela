@@ -1,5 +1,6 @@
 import type { PerfilH264 } from './perfil-h264.js';
 import {
+  CONTENT_HINT_POR_PRIORIDADE,
   FRAMERATE_POR_PRIORIDADE,
   type EncodingPreset,
   type Prioridade,
@@ -31,6 +32,12 @@ export type AlvoDoCodificador = {
   readonly limitadoPelaEstimativa: boolean;
   /** O piso de perfil H.264 da sala (`perfil-h264.ts`). */
   readonly perfil: PerfilH264;
+  /**
+   * O `contentHint` do encoder: `motion` (fluidez) ou `detail` (nitidez,
+   * ADR 0015). No caminho "um encode" o encoder lê os quadros direto — o
+   * `contentHint` da TRILHA não chega a ele, só este.
+   */
+  readonly conteudo: 'motion' | 'detail';
 };
 
 export type EntradaDoAlvo = {
@@ -94,5 +101,6 @@ export function alvoDoCodificador(e: EntradaDoAlvo): AlvoDoCodificador {
     bitrate: Math.max(BITRATE_MINIMO, Math.round(bitrate)),
     limitadoPelaEstimativa,
     perfil: e.perfil ?? 'baseline',
+    conteudo: CONTENT_HINT_POR_PRIORIDADE[e.prioridade],
   };
 }

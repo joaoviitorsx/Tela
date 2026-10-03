@@ -8,7 +8,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * `VideoEncoder` é dublê: registra cada `configure` e deixa o teste emitir
  * chunks na saída.
  */
-const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline' };
+const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion' };
 const MAIN: AlvoDoCodificador = { ...BASE, perfil: 'main' };
 
 let suportaMain = true;
@@ -201,6 +201,16 @@ describe('CodificadorWebCodecs — perfil H.264 da sala', () => {
     const modos = EncoderFalso.configs.map((c) => c.hardwareAcceleration);
     expect(codecs().at(-1)).toBe('avc1.42e02a');
     expect(new Set(modos)).toEqual(new Set(['prefer-hardware']));
+    cod.parar();
+  });
+
+  it('o contentHint chega ao encoder, e trocar de prioridade reconfigura', async () => {
+    const cod = new CodificadorWebCodecs(() => undefined, () => 0);
+    await cod.iniciar(novaTrilha(), BASE);
+    await assentar();
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('motion');
+    cod.configurar({ ...BASE, conteudo: 'detail', fps: 30 });
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('detail');
     cod.parar();
   });
 });

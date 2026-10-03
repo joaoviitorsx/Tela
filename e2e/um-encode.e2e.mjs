@@ -3,7 +3,7 @@
  *
  * O transmissor é a `BroadcastSession` de verdade — malhas, governador — sobre
  * `makeEncodeOnceTransport`: um `VideoEncoder` codifica a fonte uma vez, cada
- * sender codifica só uma isca 160x90, e um Encoded Transform troca o conteúdo.
+ * sender codifica só uma isca 32x18, e um Encoded Transform troca o conteúdo.
  * Os espectadores são a rota `/<canal>`, sem saber de nada.
  *
  * Critérios: os espectadores DECODIFICAM vídeo (resolução e fps reais, do
@@ -160,7 +160,7 @@ depois.forEach((d, i) => {
   ok(chaves <= 3, `espectador ${i} sem rajada de quadros-chave (${chaves} em ${SEGUNDOS}s)`);
 });
 const chavesIsca = Math.max(...iscas.map((x) => x.chaves));
-ok(iscas.every((x) => x.w <= 160), `os senders codificam só a isca (${iscas.map((x) => x.w).join(', ')} px)`);
+ok(iscas.every((x) => x.w <= 32), `os senders codificam só a isca (${iscas.map((x) => x.w).join(', ')} px)`);
 ok(chavesIsca <= 3, `a isca não gera quadro-chave sozinha (${chavesIsca} no total)`);
 
 await browser.close();

@@ -167,7 +167,9 @@ describe('validação do IPC', () => {
     expect(ordemValida('teto 5')).toBe('teto 5');
     expect(ordemValida('teto 0')).toBe('teto 0');
     expect(ordemValida('teto 240')).toBe('teto 240');
-    for (const l of ['', 'alvo', 'alvo 1 2 3', 'chave\nparar', 'rm -rf /', 'atraso -1', 'teto', 'teto -1', 'teto 241', 'teto 999', 'teto 1000', 'teto 5 5', 'teto 5.5', 'alvo 1920 1080 60 12000000 x', 7, null]) {
+    expect(ordemValida('perfil main')).toBe('perfil main');
+    expect(ordemValida('perfil baseline')).toBe('perfil baseline');
+    for (const l of ['perfil', 'perfil high', 'perfil main ', 'perfil main\nparar', '', 'alvo', 'alvo 1 2 3', 'chave\nparar', 'rm -rf /', 'atraso -1', 'teto', 'teto -1', 'teto 241', 'teto 999', 'teto 1000', 'teto 5 5', 'teto 5.5', 'alvo 1920 1080 60 12000000 x', 7, null]) {
       expect(ordemValida(l), String(l)).toBeNull();
     }
   });

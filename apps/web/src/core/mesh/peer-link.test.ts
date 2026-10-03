@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PeerLink, ordenarH264, type SignalPayload } from './peer-link.js';
+import { PeerLink, ordenarH264, preferenciasDeVideo, type SignalPayload } from './peer-link.js';
 import { type FakePeerConnection, fakeConnectionFactory } from './testing.js';
 import { fakeStream, fakeTrack } from '../testing/fakes.js';
 
@@ -466,5 +466,30 @@ describe('PeerLink — abs-capture-time (latência ponta a ponta)', () => {
       { track: { kind: 'video' }, getSynchronizationSources: () => [{ rtpTimestamp: 1, source: 1, timestamp: 1 }] },
     ];
     expect(await ctx.link.referenciaDeCaptura()).toBeNull();
+  });
+});
+
+describe('preferenciasDeVideo — sem FEC no vídeo (estudo 2 · T5)', () => {
+  const k = (mimeType: string, sdpFmtpLine?: string): RTCRtpCodec => ({
+    mimeType,
+    clockRate: 90_000,
+    ...(sdpFmtpLine === undefined ? {} : { sdpFmtpLine }),
+  });
+
+  it('tira red, ulpfec e flexfec; mantém rtx e os outros codecs; H.264 na frente', () => {
+    const lista = preferenciasDeVideo([
+      k('video/VP8'),
+      k('video/rtx', 'apt=96'),
+      k('video/H264', 'packetization-mode=1;profile-level-id=42e01f'),
+      k('video/red'),
+      k('video/ulpfec'),
+      k('video/flexfec-03', 'repair-window=10000000'),
+      k('video/AV1'),
+    ]);
+    expect(lista?.map((c) => c.mimeType)).toEqual(['video/H264', 'video/VP8', 'video/rtx', 'video/AV1']);
+  });
+
+  it('sem H.264 não mexe (o navegador negocia sozinho)', () => {
+    expect(preferenciasDeVideo([k('video/VP8'), k('video/red')])).toBeNull();
   });
 });

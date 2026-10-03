@@ -283,6 +283,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       framerate: alvo.fps,
       latencyMode: 'realtime',
       bitrateMode: 'variable',
+      // A metade da R5 que não chegava aqui: `detail` no modo nitidez.
+      contentHint: alvo.conteudo,
       avc: { format: 'annexb' },
       hardwareAcceleration: aceleracao,
     };
@@ -366,7 +368,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const c = this.configurado;
     const perfil = this.perfilEfetivo(alvo);
     const mudouTamanho = c === null || c.width !== alvo.width || c.height !== alvo.height || c.fps !== alvo.fps;
-    const mudouBitrate = c === null || Math.abs(c.bitrate - alvo.bitrate) / Math.max(1, c.bitrate) > 0.05;
+    const mudouBitrate =
+      c === null || Math.abs(c.bitrate - alvo.bitrate) / Math.max(1, c.bitrate) > 0.05 || c.conteudo !== alvo.conteudo;
     // Trocar de perfil é como trocar de tamanho: SPS novo, e o próximo quadro tem de ser IDR.
     const mudouPerfil = perfil !== this.perfilConfigurado;
     if (!mudouTamanho && !mudouBitrate && !mudouPerfil) return;

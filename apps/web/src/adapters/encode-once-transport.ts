@@ -16,7 +16,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * é codificado três vezes (medido no D0). Este transporte embrulha o mesh de
  * sempre e muda só isso:
  *
- * - os senders recebem uma ISCA de 160x90 com parâmetros fixos — custo de
+ * - os senders recebem uma ISCA de 32x18 com parâmetros fixos — custo de
  *   codificação desprezível, e nenhuma reconfiguração que gere quadro-chave;
  * - um codificador único (WebCodecs) codifica a captura real;
  * - um Encoded Transform troca o conteúdo de cada quadro-isca pelo quadro real.

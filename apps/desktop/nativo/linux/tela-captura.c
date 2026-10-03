@@ -29,6 +29,7 @@
  *
  *   stdin: uma ordem por linha, texto
  *     alvo <largura> <altura> <fps> <bitrate bps>
+ *     perfil main|baseline   (piso de perfil H.264 da sala)
  *     chave
  *     atraso <quadros>
  *     teto <fps>   teto de fps da CAPTURA, independente do `alvo` (que é o do
@@ -272,6 +273,23 @@ static void aplicar_vbv(void) {
   g_object_set(codificador, "vbv-buffer-size", (guint)MAX(kbps / MAX(1, alvo.fps) * VBV_EM_QUADROS, 100), NULL);
 }
 
+/*
+ * O perfil H.264 que sai (adendo à ADR 0016): Constrained Baseline por
+ * padrão, Main quando a SALA inteira aceita — quem decide é a página
+ * (`perfil-h264.ts`), que manda `perfil main|baseline`. O NVENC desta
+ * máquina emite Main com esta mesma cadeia (SPS `profile_idc` 77, medido).
+ */
+static GstElement *saida_perfil = NULL;
+static gboolean perfil_main = FALSE;
+
+static void aplicar_caps_de_perfil(void) {
+  GstCaps *caps = gst_caps_new_simple("video/x-h264", "profile", G_TYPE_STRING,
+                                      perfil_main ? "main" : "constrained-baseline", "stream-format", G_TYPE_STRING,
+                                      "byte-stream", "alignment", G_TYPE_STRING, "au", NULL);
+  g_object_set(saida_perfil, "caps", caps, NULL);
+  gst_caps_unref(caps);
+}
+
 static void aplicar_caps_de_tamanho(void) {
   GstCaps *caps = gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, "NV12", "width", G_TYPE_INT, alvo.width,
                                       "height", G_TYPE_INT, alvo.height, NULL);
@@ -292,6 +310,7 @@ static void aplicar_tamanho(void) {
   gst_element_set_state(codificacao, GST_STATE_READY);
   gst_element_get_state(codificacao, NULL, NULL, GST_CLOCK_TIME_NONE);
   aplicar_caps_de_tamanho();
+  aplicar_caps_de_perfil();
   aplicar_vbv();
   /* O NVENC renasce com a configuração das propriedades: reaplicar o bitrate. */
   kbps_aplicado = 0;
@@ -492,6 +511,14 @@ static void ordem(const char *linha) {
     /* Tamanho novo renegocia o NVENC, que recomeça num IDR. Bitrate não. */
     if (mudou_bitrate) aplicar_bitrate();
     if (mudou_tamanho) aplicar_tamanho();
+  } else if (strcmp(linha, "perfil main") == 0 || strcmp(linha, "perfil baseline") == 0) {
+    gboolean quer_main = strcmp(linha, "perfil main") == 0;
+    if (quer_main == perfil_main) return;
+    perfil_main = quer_main;
+    /* Caps de saída novas renegociam o NVENC: o mesmo reciclo da troca de
+       tamanho, que recomeça num IDR. Troca de perfil é rara (gente entrando
+       ou saindo da sala muda o piso, não cada quadro). */
+    aplicar_tamanho();
   } else if (strcmp(linha, "chave") == 0) {
     pedir_chave();
   } else if (sscanf(linha, "atraso %d", &n) == 1) {
@@ -826,8 +853,8 @@ int main(int argc, char **argv) {
   if (!ok) return codigo_de_saida != 0 ? codigo_de_saida : 2;
 
   /*
-   * H.264 Constrained Baseline, sem B-frames, GOP infinito: o mesmo que o
-   * espectador já negocia no WebRTC, e IDR só quando alguém pede. A escala
+   * H.264 sem B-frames, GOP infinito, IDR só quando alguém pede. O perfil
+   * sai do capsfilter `perfil` (Baseline, ou Main com a sala inteira aceitando). A escala
    * vem ANTES da conversão: o `glcolorscale` só trabalha em RGBA.
    */
   g_autoptr(GError) e = NULL;
@@ -837,7 +864,7 @@ int main(int argc, char **argv) {
       " ! capsfilter name=tamanho"
       " ! nvh264enc name=codificador preset=p4 tune=ultra-low-latency rc-mode=cbr gop-size=-1 bframes=0"
       "   zerolatency=true repeat-sequence-header=true spatial-aq=true"
-      " ! video/x-h264,profile=constrained-baseline,stream-format=byte-stream,alignment=au"
+      " ! capsfilter name=perfil"
       " ! appsink name=saida sync=false max-buffers=4 drop=false",
       &e);
   if (codificacao == NULL) {
@@ -846,6 +873,8 @@ int main(int argc, char **argv) {
   }
   codificador = gst_bin_get_by_name(GST_BIN(codificacao), "codificador");
   tamanho = gst_bin_get_by_name(GST_BIN(codificacao), "tamanho");
+  saida_perfil = gst_bin_get_by_name(GST_BIN(codificacao), "perfil");
+  aplicar_caps_de_perfil();
   entra = gst_bin_get_by_name(GST_BIN(codificacao), "entra");
   aplicar_caps_de_tamanho();
   aplicar_bitrate();

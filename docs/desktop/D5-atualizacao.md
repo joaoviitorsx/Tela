@@ -47,6 +47,27 @@ bandeja (`EstadoAoVivo`, D4); a queda do renderer o zera.
 Detecção de plataforma (`modoDeAtualizacao`): Windows empacotado → automática;
 Linux com `APPIMAGE` no ambiente → automática; Linux sem → só avisa.
 
+## 1b. Abertura com atualização (estilo Discord, desde a beta.22)
+
+Ao abrir o app (não pelo autostart escondido), com atualização automática
+disponível (Windows, AppImage) e ligada, uma janelinha de 320×380 aparece
+ANTES da janela principal (`abertura-atualizacao.ts`, pura e testada):
+
+| Fase | O que a pessoa vê |
+|---|---|
+| Procurando (prazo de 5 s) | a TV da logo com as antenas caçando sinal; "Procurando atualização…" |
+| Em dia, sem rede, erro ou prazo estourado | some (no mínimo 0,9 s na tela) e o Tela abre como sempre |
+| Baixando | a barra de 20 blocos acende como fósforo de CRT; "Abrir sem atualizar" aparece |
+| Instalando | a piscadinha da logo e o tubo desligando; o app fecha e volta atualizado |
+
+- A janela principal carrega por trás e só aparece quando a abertura libera:
+  sem atualização, o tempo de abrir não muda.
+- "Abrir sem atualizar" (ou fechar a janelinha) cancela o download; o relógio
+  de sempre (30 s, 6 h) recomeça depois, com o blockmap baixando só o que falta.
+- A página é `data:` sem rede, CSP fechada e sem preload: o único sinal de
+  volta é o título (`TITULO_DE_PULAR`). Animação só com `transform`/`opacity`;
+  com `prefers-reduced-motion`, a TV fica parada.
+
 ## 2. Por que o provider `generic`, e não o `github`
 
 Verificado no código do `electron-updater` 6.8.9 (`out/providers/GitHubProvider.js`):

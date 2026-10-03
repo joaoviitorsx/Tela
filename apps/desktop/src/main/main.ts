@@ -42,7 +42,7 @@ import {
   webContents as todosOsConteudos,
 } from 'electron';
 import { ambienteEfetivo } from './ambiente.js';
-import { type Atualizador, criarAtualizador } from './atualizador.js';
+import { type Atualizador, criarAtualizador, type MotorDeAtualizacao } from './atualizador.js';
 import { type EstadoDaAtualizacao } from './atualizacao-politica.js';
 import {
   modoDeAtualizacao,
@@ -50,6 +50,15 @@ import {
   URL_DA_LISTA_DE_RELEASES,
 } from './atualizacao-release.js';
 import { criarMotorDoUpdater } from './motor-electron-updater.js';
+import {
+  chamadaDaFase,
+  type DesfechoDaAbertura,
+  deveMostrarAbertura,
+  executarAbertura,
+  type FaseDaAbertura,
+  HTML_DA_ABERTURA,
+  TITULO_DE_PULAR,
+} from './abertura-atualizacao.js';
 import {
   HTML_DO_PAINEL,
   TAMANHO_DO_PAINEL,
@@ -354,7 +363,8 @@ function criarJanela(): BrowserWindow {
   });
 
   j.once('ready-to-show', () => {
-    void bandejaPronta.then(() => {
+    // A abertura com atualização vem antes: a janela carrega por trás e só aparece quando ela libera.
+    void Promise.all([bandejaPronta, aberturaPronta]).then(() => {
       if (!j.isDestroyed() && !(INICIO_OCULTO && temBandeja)) j.show();
     });
   });
@@ -729,6 +739,12 @@ function iniciarBandeja(): Promise<void> {
 }
 
 /** A bandeja existe? Resolve depois da sonda; a janela espera por ela para decidir se nasce oculta. */
+/** A abertura com atualização liberou a janela principal (ou nem apareceu). */
+let resolverAbertura: () => void = () => undefined;
+const aberturaPronta: Promise<void> = new Promise((resolver) => {
+  resolverAbertura = resolver;
+});
+
 let resolverBandeja: () => void = () => undefined;
 const bandejaPronta: Promise<void> = new Promise((resolver) => {
   resolverBandeja = resolver;
@@ -1206,7 +1222,84 @@ function iniciarAtualizacao(): void {
     log,
   });
   atualizador.aoVivo(estado.noAr);
-  atualizador.iniciar();
+  const relogio = atualizador;
+  if (!deveMostrarAbertura({ modo: modoDeAtualizar, automatico: ajustes.atualizarAutomaticamente, oculto: INICIO_OCULTO })) {
+    resolverAbertura();
+    relogio.iniciar();
+    return;
+  }
+  void abrirComAtualizacao(motor, log).then((desfecho) => {
+    if (desfecho !== 'abrir') return; // instalando: o app fecha e volta atualizado
+    resolverAbertura();
+    // O relógio de sempre só depois: a abertura e ele usam o mesmo motor.
+    relogio.iniciar();
+  });
+}
+
+/** Tempo mínimo da abertura na tela: menos que isso vira um piscar sem sentido. */
+const MINIMO_DA_ABERTURA_MS = 900;
+
+/**
+ * A janelinha da abertura (estilo Discord): procura versão nova, baixa e
+ * instala — ou sai do caminho. A página é `data:` sem preload, e o único sinal
+ * de volta ("Abrir sem atualizar") chega pelo título (`TITULO_DE_PULAR`).
+ * Fechar a janelinha também conta como pular: abre o Tela como sempre.
+ */
+async function abrirComAtualizacao(motor: MotorDeAtualizacao, log: { info: (m: string) => void; erro: (m: string, e?: unknown) => void }): Promise<DesfechoDaAbertura> {
+  const j = new BrowserWindow({
+    title: 'Tela',
+    width: 320,
+    height: 380,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: true,
+    fullscreenable: false,
+    center: true,
+    show: false,
+    backgroundColor: '#100d09',
+    icon: ARQUIVO_DO_ICONE,
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, spellcheck: false },
+  });
+  let ultima: FaseDaAbertura = { tipo: 'procurando' };
+  let carregada = false;
+  const aplicar = (): void => {
+    if (!carregada || j.isDestroyed()) return;
+    void j.webContents.executeJavaScript(chamadaDaFase(ultima), false).catch(() => undefined);
+  };
+  let pular: () => void = () => undefined;
+  const pulou = new Promise<void>((r) => {
+    pular = r;
+  });
+  j.on('page-title-updated', (evento, titulo) => {
+    evento.preventDefault();
+    if (titulo === TITULO_DE_PULAR) pular();
+  });
+  j.on('closed', () => pular());
+  j.webContents.once('did-finish-load', () => {
+    carregada = true;
+    aplicar();
+  });
+  j.once('ready-to-show', () => j.show());
+  void j.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(HTML_DA_ABERTURA)}`);
+
+  const inicio = Date.now();
+  const desfecho = await executarAbertura({
+    motor,
+    aoMudar: (fase) => {
+      ultima = fase;
+      aplicar();
+    },
+    agendar,
+    pulou,
+    log,
+  });
+  if (desfecho === 'abrir') {
+    const falta = MINIMO_DA_ABERTURA_MS - (Date.now() - inicio);
+    if (falta > 0) await new Promise((r) => setTimeout(r, falta));
+    if (!j.isDestroyed()) j.destroy();
+  }
+  return desfecho;
 }
 
 /* ---------------------------------------------------------------- IPC */

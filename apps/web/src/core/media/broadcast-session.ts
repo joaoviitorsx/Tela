@@ -267,6 +267,15 @@ const CALMARIA_AMOSTRAS = 60;
 const CALMARIA_PENALIDADE = 5;
 
 /**
+ * Espera crescente para voltar a um degrau de onde a CPU já derrubou: a
+ * calmaria exigida dobra a cada queda dele (60, 120, 240, 480 amostras).
+ * Medido na bancada de fluidez sob carga: 480p com 10% de leituras de aperto
+ * devolvia 600p em ~2 min, e 600p (55% de aperto) caía de novo em ~35 s — um
+ * ciclo de 2,5 min, cada troca custando reconfiguração e um IDR para todos.
+ */
+const DOBRAS_MAXIMAS_DA_ESPERA = 3;
+
+/**
  * Amostras a zero frame antes de acusar captura morta. Cinco segundos é o que
  * uma captura leva para engatar em máquina lenta; abaixo disso é falso alarme.
  */
@@ -355,6 +364,8 @@ export class BroadcastSession {
   private presetPorBanda: PresetId | null = null;
   /** Amostras seguidas sem aperto nenhum. */
   private calmaria = 0;
+  /** Quantas vezes a CPU derrubou a escada A PARTIR de cada degrau (ver `DOBRAS_MAXIMAS_DA_ESPERA`). */
+  private quedasPorCpu = new Map<PresetId, number>();
   /** Amostras seguidas com o encoder entregando zero frame, havendo plateia. */
   private semImagem = 0;
   /** Grava a estimativa de banda de vez em quando, não a cada segundo. */
@@ -493,6 +504,7 @@ export class BroadcastSession {
     this.quem.clear();
     // Estado que sobrevivia entre transmissões e não devia.
     this.calmaria = 0;
+    this.quedasPorCpu.clear();
     this.semImagem = 0;
     this.desdeGravacao = 0;
 
@@ -975,6 +987,9 @@ export class BroadcastSession {
      */
     const next = nextPresetOnCpuPressure(this.presetId);
     this.pressure = 0;
+    if (next !== null && this.pressureKind === 'cpu') {
+      this.quedasPorCpu.set(this.presetId, (this.quedasPorCpu.get(this.presetId) ?? 0) + 1);
+    }
 
     if (next === null) {
       /**
@@ -1135,12 +1150,16 @@ export class BroadcastSession {
      * que o link paga. Nunca se pede mais do que o teto dá, e nunca se fica
      * preso embaixo quando a CPU já se resolveu.
      */
-    this.calmaria += 1;
-    if (this.calmaria < CALMARIA_AMOSTRAS) return;
-    this.calmaria = 0;
-
     const acima = previousPresetOnRecovery(this.presetPorPressao, this.presetEscolhido);
-    if (acima === null) return;
+    if (acima === null) {
+      this.calmaria = 0;
+      return;
+    }
+    this.calmaria += 1;
+    const quedas = this.quedasPorCpu.get(acima) ?? 0;
+    const exigida = CALMARIA_AMOSTRAS * 2 ** Math.min(Math.max(0, quedas - 1), DOBRAS_MAXIMAS_DA_ESPERA);
+    if (this.calmaria < exigida) return;
+    this.calmaria = 0;
 
     this.presetPorPressao = acima;
     if (acima === this.presetEscolhido) this.causaPressao = null;
@@ -1527,6 +1546,8 @@ export class BroadcastSession {
     this.pressure = 0;
     this.pressureKind = 'none';
     this.calmaria = 0;
+    // Escolha na mão é tentativa nova: o histórico de quedas recomeça.
+    this.quedasPorCpu.clear();
 
     /**
      * O orçamento de banda NÃO é zerado junto.

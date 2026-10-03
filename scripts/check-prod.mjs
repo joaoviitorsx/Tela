@@ -150,6 +150,10 @@ if (sinal !== 'ok') {
   console.warn('\n  SINALIZAÇÃO FORA — ninguém consegue transmitir nem assistir.');
   process.exit(1);
 }
+// A versão vem antes do relay: uma publicação que não pegou não pode sumir
+// atrás de outro alarme. Códigos: 1 = desatualizado ou sinal, 3 = relay.
+console.warn(igual ? 'versão: em dia' : 'versão: DESATUALIZADO — rode `pnpm release`.');
+
 /**
  * Sinal no ar não prova que todo mundo CONECTA.
  *
@@ -157,26 +161,75 @@ if (sinal !== 'ok') {
  * do TURN existiam e estavam VAZIOS, e o Worker degradava calado — e esta
  * checagem dizia "em dia". Quem estava atrás de CGNAT, NAT simétrico ou
  * firewall via "sem conexão" (`ice: NO_ROUTE`, `turn: RELAY_NOT_CONFIGURED`).
- * Agora o relay ausente reprova a publicação.
+ *
+ * Duas camadas: o `/health` diz o que está CONFIGURADO; um handshake de
+ * transmissor num canal descartável diz se o servidor CONSEGUE emitir a
+ * credencial (`hosting.relayStatus`) — chave trocada, revogada ou com lixo no
+ * fim aparece aqui, e não no `/health`. O canal aleatório se libera sozinho
+ * na carência de posse (5 min); nenhum token fica guardado.
  */
-const relay = await fetch(`${url}/health`, { cache: 'no-store' })
+const relayFalhou = (msg) => {
+  console.warn(`relay : ${msg}`);
+  console.warn('        docs/DEPLOY.md, seção TURN.');
+  process.exit(3);
+};
+const saude = await fetch(`${url}/health`, { cache: 'no-store', signal: AbortSignal.timeout(8_000) })
   .then((r) => (r.ok ? r.json() : null))
   .catch(() => null);
-const ice = relay?.iceConfig;
-if (ice === undefined || ice === null) {
-  console.warn('relay : /health não respondeu');
-  process.exit(1);
+const ice = saude?.iceConfig;
+if (ice === undefined || ice === null) relayFalhou('/health não respondeu');
+if (ice.valid !== true) relayFalhou(`CONFIGURAÇÃO INVÁLIDA (${(ice.problems ?? []).join(', ')}) — produção só com STUN`);
+const horas = (s) => (s >= 3600 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 60)} min`);
+const modo = ice.cloudflareConfigured === true
+  ? `Cloudflare · credencial de ${horas(ice.ttlSeconds)}`
+  : ice.coturnModo === 'segredo'
+    ? `coturn · credencial de ${horas(ice.ttlSeconds)}`
+    : ice.coturnModo === 'estatico' && ice.estaticoAceito === true
+      ? 'senha fixa (plano grátis) · aceito com TURN_ESTATICO'
+      : null;
+if (modo === null) {
+  relayFalhou(ice.coturnModo === 'estatico'
+    ? 'senha fixa gravada SEM `TURN_ESTATICO = "aceito"` — o Worker não a entrega'
+    : 'NÃO CONFIGURADO — quem está atrás de CGNAT ou NAT simétrico não conecta');
 }
-if (ice.valid !== true) {
-  console.warn(`relay : CONFIGURAÇÃO INVÁLIDA (${(ice.problems ?? []).join(', ')}) — produção só com STUN`);
-  console.warn('        docs/DEPLOY.md: `wrangler secret put TURN_KEY_ID` e `TURN_KEY_API_TOKEN`.');
-  process.exit(1);
+
+const emitirRelay = () => new Promise((resolve) => {
+  const slug = `saude-relay-${Math.random().toString(36).slice(2, 10)}`;
+  const dono = Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, '0')).join('');
+  let ws;
+  try {
+    ws = new WebSocket(`${url.replace(/^http/, 'ws')}/signal/${slug}`, { headers: { Origin: url } });
+  } catch {
+    resolve('não abriu');
+    return;
+  }
+  const prazo = setTimeout(() => {
+    ws.close();
+    resolve('sem resposta em 10 s');
+  }, 10_000);
+  ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'host', protocol: PROTOCOL_VERSION, slug, ownerToken: dono })));
+  ws.addEventListener('message', (evento) => {
+    let msg = null;
+    try {
+      msg = JSON.parse(String(evento.data));
+    } catch {
+      return;
+    }
+    if (msg?.type !== 'hosting' && msg?.type !== 'error') return;
+    clearTimeout(prazo);
+    ws.close();
+    resolve(msg.type === 'hosting' ? (msg.relayStatus ?? 'sem relayStatus') : `erro ${msg.code ?? '?'}`);
+  });
+  ws.addEventListener('error', () => {
+    clearTimeout(prazo);
+    resolve('WebSocket falhou');
+  });
+});
+const emissao = await emitirRelay();
+if (emissao !== 'available') {
+  relayFalhou(`${modo}, mas o servidor NÃO emitiu relay (${emissao}) — chave errada, revogada ou provedor fora`);
 }
-if (ice.cloudflareConfigured !== true && ice.coturnConfigured !== true) {
-  console.warn('relay : NÃO CONFIGURADO — quem está atrás de CGNAT ou NAT simétrico não conecta');
-  process.exit(1);
-}
-console.warn(`relay : ${ice.cloudflareConfigured ? 'Cloudflare' : 'coturn'} · credencial de ${Math.round(ice.ttlSeconds / 3600)} h`);
+console.warn(`relay : ${modo} · emissão ok`);
 
 console.warn(igual ? '\n  em dia.' : '\n  DESATUALIZADO — rode `pnpm release`.');
 process.exit(igual ? 0 : 1);

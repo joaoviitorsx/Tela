@@ -155,7 +155,7 @@ export default {
     if (url.pathname === '/health') {
       const parsedIce = parseIceSettings(env);
       const iceConfig = 'settings' in parsedIce
-        ? { valid: true, ...describeIceSettings(parsedIce.settings) }
+        ? { valid: true, ...describeIceSettings(parsedIce.settings), estaticoAceito: env.TURN_ESTATICO === 'aceito' }
         : { valid: false, problems: parsedIce.problems };
       /**
        * `channels: null` de propósito, e não omitido.

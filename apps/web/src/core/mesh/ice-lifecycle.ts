@@ -1,7 +1,15 @@
 import type { IceCredentials, SignalingChannel } from '../ports/signaling-channel.js';
 import type { Cancel, Scheduler } from '../ports/scheduler.js';
 
-/** Renovação de credenciais sem reiniciar uma conexão que segue saudável. */
+/**
+ * Renovação de credenciais sem reiniciar uma conexão que segue saudável.
+ *
+ * Vale para conexões NOVAS e para o próximo ICE restart: `setConfiguration`
+ * não troca a credencial de uma alocação TURN já em uso, e a Cloudflare
+ * derruba a alocação quando a credencial dela vence. Por isso a credencial
+ * de produção cobre a sessão inteira (`TURN_TTL_SECONDS`, 12 h) — esta
+ * renovação não a substitui.
+ */
 export class IceLifecycle {
   private lease: IceCredentials | null = null;
   private renewDue = Infinity;

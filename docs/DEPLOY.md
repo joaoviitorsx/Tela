@@ -157,6 +157,36 @@ Secret gravado VAZIO conta como "não configurado": de 2026-09-28 a 2026-10-03
 a produção ficou só com STUN por isso, e quem estava atrás de CGNAT via "sem
 conexão" (`ice: NO_ROUTE`, `turn: RELAY_NOT_CONFIGURED`).
 
+### Sem cartão: TURN grátis com senha fixa (ExpressTURN)
+
+A Cloudflare pede cartão para ativar o TURN. O plano grátis do
+[ExpressTURN](https://www.expressturn.com/) não pede: 1.000 GB por mês, portas
+3478 (UDP/TCP), 80 e 443. A credencial é **usuário e senha fixos** (o segredo
+compartilhado é do plano pago), e a mesma senha vai a todo peer: quem a copiar
+usa o relay na sua cota. Num plano grátis o pior caso é a cota acabar e o relay
+parar até o mês virar, sem custo; troque a senha no painel deles se notar
+abuso. Por isso o Worker só a entrega com o aceite explícito:
+
+1. Crie a conta em expressturn.com e copie, do painel, o **servidor**, o
+   **usuário** e a **senha**.
+2. Apague os secrets da Cloudflare gravados vazios (vazio invalida a
+   configuração inteira):
+   ```bash
+   pnpm --filter @tela/signaling exec wrangler secret delete TURN_KEY_ID
+   pnpm --filter @tela/signaling exec wrangler secret delete TURN_KEY_API_TOKEN
+   ```
+3. Grave usuário e senha como secrets:
+   ```bash
+   pnpm --filter @tela/signaling exec wrangler secret put TURN_USERNAME
+   pnpm --filter @tela/signaling exec wrangler secret put TURN_PASSWORD
+   ```
+4. No `wrangler.toml` (`[vars]`), com o servidor do painel:
+   ```toml
+   TURN_URLS = "turn:SERVIDOR:3478?transport=udp,turn:SERVIDOR:3478?transport=tcp,turn:SERVIDOR:443?transport=tcp"
+   TURN_ESTATICO = "aceito"
+   ```
+   e `pnpm release`.
+
 Alternativa com coturn próprio: `wrangler secret put TURN_SECRET` e
 configure `TURN_URLS` no `wrangler.toml` com URLs UDP, TCP e TLS realmente
 oferecidas pelo seu servidor. `TURN_URL` singular continua aceito durante a

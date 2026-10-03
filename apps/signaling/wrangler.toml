@@ -92,11 +92,11 @@ STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
 # Desktop (PLANO-desktop §3.5): a interface vem do protocolo próprio do app, e
 # sem esta linha o upgrade dele leva 403.
 ALLOWED_ORIGINS = "app://tela"
-# Validade da credencial TURN, em segundos: 12 h. Uma partida transmitida dura
-# horas, e a Cloudflare recomenda que a credencial cubra a sessão inteira; a
-# renovação do `IceLifecycle` (TELA-005) continua por cima, mas trocar a
-# credencial de um relay JÁ alocado no meio da partida não tem medição. O
-# padrão do código (600) existia para coturn de teste.
+# Validade da credencial TURN, em segundos: 12 h. A alocação TURN morre quando
+# a credencial dela vence (FAQ da Cloudflare), e a renovação do `IceLifecycle`
+# só vale para conexões novas ou para o próximo ICE restart — com 600 s, todo
+# espectador em relay cairia a cada 10 min. A Cloudflare manda dimensionar
+# pela sessão mais longa (máximo 48 h).
 TURN_TTL_SECONDS = "43200"
 
 # TURN — necessário para a cauda de conexões que não fecham direto.

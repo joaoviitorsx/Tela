@@ -5,36 +5,25 @@
  * abre a sinalização de produção como transmissor de um canal fixo de teste,
  * recebe a credencial TURN que o servidor emite, e força um
  * `RTCPeerConnection` a usar SÓ relay (`iceTransportPolicy: 'relay'`). Passa
- * se aparecer candidato `relay` — a Cloudflare aceitou a credencial e
- * reservou um endereço. Mostra também quais transportes alocaram (UDP, TCP,
- * TLS 443), que é o que importa para quem está atrás de firewall.
+ * se aparecer candidato `relay` — o provedor aceitou a credencial e
+ * reservou um endereço (prova o Allocate autenticado; o caminho de dados,
+ * CreatePermission e ChannelBind, só uma conexão de verdade exercita).
+ * Mostra por qual transporte cada relay foi alcançado (`relayProtocol`: UDP,
+ * TCP, TLS), que é o que importa para quem está atrás de firewall.
  *
- * Canal fixo (`tela-relay-check`) com o token de dono guardado FORA do repo,
- * em ~/.config/tela/relay-check-token: rodar de novo não reserva canal novo.
+ * Canal aleatório e dono aleatório: nada fica guardado, e o canal se libera
+ * sozinho na carência de posse (5 min).
  *
  *   node e2e/relay-prod.mjs
  *   PROD_URL=https://... node e2e/relay-prod.mjs
  */
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { chromium } from 'playwright';
 import { PROTOCOL_VERSION } from '../packages/shared/dist/index.js';
 
 const URL_PROD = process.env.PROD_URL ?? 'https://tela.transmissao.workers.dev';
-const SLUG = 'tela-relay-check';
-
-const pasta = join(homedir(), '.config', 'tela');
-const arquivoDoToken = join(pasta, 'relay-check-token');
-let token;
-try {
-  token = readFileSync(arquivoDoToken, 'utf8').trim();
-} catch {
-  token = randomBytes(32).toString('base64url');
-  mkdirSync(pasta, { recursive: true });
-  writeFileSync(arquivoDoToken, token, { mode: 0o600 });
-}
+const SLUG = `relay-${randomBytes(5).toString('hex')}`;
+const token = randomBytes(32).toString('base64url');
 
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage();
@@ -68,7 +57,11 @@ const r = await page.evaluate(
     pc.createDataChannel('x');
     const candidatos = [];
     pc.onicecandidate = (e) => {
-      if (e.candidate?.candidate) candidatos.push(e.candidate.candidate);
+      const c = e.candidate;
+      if (c?.candidate && / typ relay /.test(c.candidate)) {
+        // `relayProtocol`: como se chegou AO relay (udp/tcp/tls); o protocolo do candidato é o do endereço relayed.
+        candidatos.push(`${c.relayProtocol ?? '?'} via ${c.url ?? '?'}`);
+      }
     };
     await pc.setLocalDescription(await pc.createOffer());
     await new Promise((resolve) => {
@@ -82,12 +75,12 @@ const r = await page.evaluate(
     });
     pc.close();
     ws.close();
-    const relays = candidatos.filter((c) => / typ relay /.test(c));
+    const relays = candidatos;
     return {
       relayStatus: hosting.relayStatus ?? null,
       validadeH: hosting.expiresAt && hosting.issuedAt ? Math.round((hosting.expiresAt - hosting.issuedAt) / 3_600_000) : null,
       turnUrls,
-      relays: relays.map((c) => c.split(' ').slice(2, 3).concat(c.match(/ (udp|tcp) /i)?.[1] ?? '?').join('/')),
+      relays,
     };
   },
   { slug: SLUG, token, protocol: PROTOCOL_VERSION },
@@ -101,7 +94,8 @@ if (r.erro) {
 console.log(`relayStatus     : ${r.relayStatus}`);
 console.log(`validade        : ${r.validadeH ?? '?'} h`);
 console.log(`URLs TURN       : ${r.turnUrls.length === 0 ? 'NENHUMA' : r.turnUrls.join('  ')}`);
-console.log(`candidatos relay: ${r.relays.length}${r.relays.length > 0 ? ` (${r.relays.join(', ')})` : ''}`);
+console.log(`candidatos relay: ${r.relays.length}`);
+for (const c of r.relays) console.log(`  ${c}`);
 const ok = r.relayStatus === 'available' && r.relays.length > 0;
 console.log(ok ? '\n=== RELAY FUNCIONANDO ===' : '\n=== SEM RELAY — quem está atrás de CGNAT/NAT simétrico não conecta ===');
 process.exit(ok ? 0 : 1);

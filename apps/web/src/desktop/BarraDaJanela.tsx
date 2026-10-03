@@ -62,7 +62,7 @@ export function BarraDaJanela({ plataforma, link, ativa, maximizada, compacto, a
         ativa ? '' : '[&>*]:opacity-60',
       ].join(' ')}
     >
-      <img src="/tela-app-icon.svg" alt="" width={18} height={18} className="h-[18px] w-[18px] shrink-0" />
+      <img src="/tela-app-icon.png" alt="" width={18} height={18} className="h-[18px] w-[18px] shrink-0" />
       <Marca tamanho="pequeno" />
       {link !== null && <span className="rotulo min-w-0 truncate">{link}</span>}
       <span className="flex-1" />

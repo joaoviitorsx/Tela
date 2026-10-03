@@ -12,7 +12,7 @@ beforeEach(() => {
   document.title = 'Tela';
   link = document.createElement('link');
   link.rel = 'icon';
-  link.href = '/favicon.svg';
+  link.href = '/favicon.png';
   document.head.appendChild(link);
 });
 
@@ -81,6 +81,6 @@ describe('useAvisoDeCanal', () => {
   it('ao sair, devolve o favicon original', () => {
     const { unmount } = montar();
     unmount();
-    expect(link.getAttribute('href')).toBe('/favicon.svg');
+    expect(link.getAttribute('href')).toBe('/favicon.png');
   });
 });

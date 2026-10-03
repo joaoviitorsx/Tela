@@ -70,8 +70,9 @@ e a página entra no modo escondido de sempre (§3.2).
 
 ## 4. Bandeja (`bandeja.ts`, `estado-ao-vivo.ts`)
 
-- Ícone: `build/icon.png` redimensionado (24 px Linux, 32 px Windows) e pintado
-  de âmbar monocromático (`monocromaAmbar`). Empacotado vai em `resources/icon.png`.
+- Ícone: `build/icon.png` redimensionado (24 px Linux, 32 px Windows), colorido.
+  Era pintado de âmbar monocromático até a logo nova (2026-10-02): com o fundo
+  âmbar cheio da arte, a TV sumia. Empacotado vai em `resources/icon.png`.
 - Menu (modelo puro `modeloDoMenu`): estado em uma linha (`NO AR 00:42 · 3/50` /
   `Fora do ar`), **Copiar link**, **Mostrar/Esconder**, **Encerrar transmissão**
   (pede à página o fluxo dela, trazendo a janela para a pergunta ser vista),

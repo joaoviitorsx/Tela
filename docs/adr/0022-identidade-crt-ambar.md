@@ -158,6 +158,11 @@ havia painel.
   link `og-convite.png` (nome novo para furar o cache de prévia do Discord). A
   `theme-color` passou a ser o âmbar da arte, porque é ela que pinta a faixa
   lateral da prévia no Discord.
+- **2026-10-02:** a logo passou a ser a arte nova do dono, a TV inclinada
+  piscando sobre âmbar (`assets/marca/tela-logo.origem.png`). Dela saem
+  `favicon.png` (64 px), `tela-app-icon.png` (256 px, também na `Marca`) e o
+  ícone do desktop (`apps/desktop/build/icon.png`, 1024 px). `favicon.svg`,
+  `tela-tv.svg` e `tela-app-icon.svg` saíram. A `og-convite.png` não mudou.
 - A pintura do tubo depende de as fontes já estarem carregadas quando o canvas é
   desenhado. `document.fonts.ready` repinta, como já fazia; num primeiro acesso
   lento o tubo pode aparecer por um instante na fonte de fallback.

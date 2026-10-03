@@ -19,7 +19,7 @@ productName: Tela
 # downloads de quem testa sem ninguém confundir qual é qual.
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 
-# PNG de 1024 px rasterizado de apps/web/public/tela-app-icon.svg. O .ico do
+# PNG de 1024 px tirado de assets/marca/tela-logo.origem.png. O .ico do
 # Windows e os tamanhos do Linux saem dele na hora do empacotamento.
 icon: build/icon.png
 

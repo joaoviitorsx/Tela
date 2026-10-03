@@ -1,4 +1,4 @@
-import type { IceServerConfig } from '@tela/shared';
+import { type IceServerConfig, TETO_DA_ESCADA_BPS } from '@tela/shared';
 import type { ReferenciaDeCaptura } from '../media/relogio-de-captura.js';
 import { rtcConfiguration } from './ice-config.js';
 import { afinarSdp, pedirEstereo } from './sdp-tuning.js';
@@ -638,6 +638,8 @@ export class PeerLink {
     try {
       const sdp = afinarSdp(description.sdp, {
         startBitrateBps: this.startBitrateBps?.() ?? null,
+        // Só em quem envia (quem tem início): o teto da escada, não o do degrau.
+        maxBitrateBps: this.startBitrateBps === null ? null : TETO_DA_ESCADA_BPS,
       });
       return sdp === description.sdp ? description : { type: description.type, sdp };
     } catch {
@@ -731,6 +733,27 @@ export const JITTER_MINIMO_MS = 40;
 export const JITTER_MAXIMO_MS = 240;
 
 /**
+ * Fora das preferências de VÍDEO (estudo 2 · T5): no libwebrtc a RED de vídeo
+ * é só o invólucro do ULPFEC, que já vem desligado para H.264 com NACK, e o
+ * FlexFEC exige *field trial* nas duas pontas — o espectador é um navegador
+ * qualquer. Tirar os três não muda um bit no fio e tira a ambiguidade do
+ * SDP. O `rtx` fica: é ele que faz o NACK reenviar. A RED do ÁUDIO (Opus,
+ * redundância de verdade) não passa por aqui.
+ */
+export const SEM_FEC_NO_VIDEO: ReadonlySet<string> = new Set(['video/red', 'video/ulpfec', 'video/flexfec-03']);
+
+/** A lista do `setCodecPreferences` do vídeo: H.264 ordenado na frente, o resto sem FEC. `null` sem H.264. */
+export function preferenciasDeVideo(codecs: readonly RTCRtpCodec[]): RTCRtpCodec[] | null {
+  const h264 = codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
+  if (h264.length === 0) return null;
+  const resto = codecs.filter((c) => {
+    const tipo = c.mimeType.toLowerCase();
+    return tipo !== 'video/h264' && !SEM_FEC_NO_VIDEO.has(tipo);
+  });
+  return [...ordenarH264(h264), ...resto];
+}
+
+/**
  * Ordena as variantes de H.264 da melhor para a pior. Grátis em banda.
  *
  * `setCodecPreferences` respeita a ordem que recebe, e a versão anterior
@@ -753,27 +776,6 @@ export const JITTER_MAXIMO_MS = 240;
  * variantes, então não há o que preferir. E ele não é mais reescrito na
  * entrada por padrão — ver ADR 0020.
  */
-/**
- * Fora das preferências de VÍDEO (estudo 2 · T5): no libwebrtc a RED de vídeo
- * é só o invólucro do ULPFEC, que já vem desligado para H.264 com NACK, e o
- * FlexFEC exige *field trial* nas duas pontas — o espectador é um navegador
- * qualquer. Tirar os três não muda um bit no fio e tira a ambiguidade do
- * SDP. O `rtx` fica: é ele que faz o NACK reenviar. A RED do ÁUDIO (Opus,
- * redundância de verdade) não passa por aqui.
- */
-export const SEM_FEC_NO_VIDEO: ReadonlySet<string> = new Set(['video/red', 'video/ulpfec', 'video/flexfec-03']);
-
-/** A lista do `setCodecPreferences` do vídeo: H.264 ordenado na frente, o resto sem FEC. `null` sem H.264. */
-export function preferenciasDeVideo(codecs: readonly RTCRtpCodec[]): RTCRtpCodec[] | null {
-  const h264 = codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
-  if (h264.length === 0) return null;
-  const resto = codecs.filter((c) => {
-    const tipo = c.mimeType.toLowerCase();
-    return tipo !== 'video/h264' && !SEM_FEC_NO_VIDEO.has(tipo);
-  });
-  return [...ordenarH264(h264), ...resto];
-}
-
 export function ordenarH264(
   codecs: readonly RTCRtpCodec[],
 ): RTCRtpCodec[] {

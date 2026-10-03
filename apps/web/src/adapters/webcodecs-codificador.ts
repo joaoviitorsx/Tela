@@ -30,6 +30,11 @@ export type OpcoesDoWebCodecs = {
    * há. O app liga; a web não, para não mudar o que hoje funciona.
    */
   readonly preferirHardware?: boolean;
+  /**
+   * O `bitrateMode`, lido a cada configuração. Ausente = `variable`, como
+   * sempre. O app passa o ajuste experimental "Taxa constante".
+   */
+  readonly modoDeTaxa?: () => 'variable' | 'constant';
 };
 
 /** Não-padrão (Chromium): o TypeScript não traz. */
@@ -60,6 +65,9 @@ const ATRASO_TOLERADO = 2;
  */
 export const SEM_CAPTURA_MS = 500;
 const MODOS: readonly Aceleracao[] = ['prefer-hardware', 'no-preference', 'prefer-software'];
+/** Vigia do `detail`: quadros-chave espontâneos tolerados por janela. */
+const JANELA_DE_CHAVES_MS = 10_000;
+const CHAVES_ESPONTANEAS_MAX = 3;
 export const REENVIO_MS = 500;
 
 export class CodificadorWebCodecs implements CodificadorUnico {
@@ -69,6 +77,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private configurado: AlvoDoCodificador | null = null;
   /** O perfil com que o encoder atual foi configurado. */
   private perfilConfigurado: PerfilH264 | null = null;
+  private readonly modoDeTaxa: () => 'variable' | 'constant';
+  /** O `bitrateMode` do `configure` atual. */
+  private taxaConfigurada: 'variable' | 'constant' | null = null;
   /**
    * Main é perguntado POR MODO de aceleração antes de ser usado: um
    * `configure` recusado viraria "a GPU morreu" para a política de
@@ -76,6 +87,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
    */
   private readonly suportaMain = new Map<string, boolean>();
   private readonly perguntandoMain = new Set<string>();
+  /** O `contentHint` do `configure` atual. */
+  private conteudoConfigurado: 'motion' | 'detail' | null = null;
+  /**
+   * `detail` soltou quadros-chave que ninguém pediu: proibido nesta sessão.
+   * Medido no encoder de software (OpenH264, revisão de 2026-10-03): o modo
+   * de conteúdo de tela solta UM IDR POR QUADRO em cena com grão ou textura —
+   * 120 chaves em 120 quadros, 13× o alvo. Em "um encode" isso vai a todos.
+   * Por isso `detail` só vai a encoder de HARDWARE, e com este vigia.
+   */
+  private detailProibido = false;
+  /** Quadros-chave pedidos (`keyFrame: true`) ainda sem saída. */
+  private chavesPedidas = 0;
+  /** Instantes de quadros-chave que o encoder soltou sozinho. */
+  private chavesEspontaneas: number[] = [];
   /** Saiu quadro fora de ordem (B-frames): Main fica proibido nesta sessão. */
   private mainProibido = false;
   private ultimoTimestamp = -Infinity;
@@ -129,6 +154,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     opcoes: OpcoesDoWebCodecs = {},
   ) {
     this.aceleracao = new AceleracaoDoCodificador(opcoes.preferirHardware === true);
+    this.modoDeTaxa = opcoes.modoDeTaxa ?? (() => 'variable');
   }
 
   async iniciar(track: MediaStreamTrack, alvo: AlvoDoCodificador): Promise<void> {
@@ -274,6 +300,13 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       });
   }
 
+  /** `detail` só com a sala pedindo, encoder de hardware certo e o vigia sem queixa. */
+  private conteudoEfetivo(alvo: AlvoDoCodificador): 'motion' | 'detail' {
+    return alvo.conteudo === 'detail' && !this.detailProibido && this.aceleracao.classe() === 'hardware'
+      ? 'detail'
+      : 'motion';
+  }
+
   private config(alvo: AlvoDoCodificador, aceleracao: Aceleracao, perfil: PerfilH264 = 'baseline'): VideoEncoderConfig {
     return {
       codec: codecDoPerfil(perfil),
@@ -282,9 +315,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       bitrate: alvo.bitrate,
       framerate: alvo.fps,
       latencyMode: 'realtime',
-      bitrateMode: 'variable',
+      bitrateMode: this.modoDeTaxa(),
       // A metade da R5 que não chegava aqui: `detail` no modo nitidez.
-      contentHint: alvo.conteudo,
+      contentHint: this.conteudoEfetivo(alvo),
       avc: { format: 'annexb' },
       hardwareAcceleration: aceleracao,
     };
@@ -303,6 +336,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.encoder = null;
     this.configurado = null;
     this.perfilConfigurado = null;
+    this.taxaConfigurada = null;
+    this.conteudoConfigurado = null;
+    this.chavesPedidas = 0;
     this.ultimoTimestamp = -Infinity;
     try {
       enc?.close();
@@ -369,10 +405,13 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const perfil = this.perfilEfetivo(alvo);
     const mudouTamanho = c === null || c.width !== alvo.width || c.height !== alvo.height || c.fps !== alvo.fps;
     const mudouBitrate =
-      c === null || Math.abs(c.bitrate - alvo.bitrate) / Math.max(1, c.bitrate) > 0.05 || c.conteudo !== alvo.conteudo;
+      c === null ||
+      Math.abs(c.bitrate - alvo.bitrate) / Math.max(1, c.bitrate) > 0.05 ||
+      this.conteudoEfetivo(alvo) !== this.conteudoConfigurado;
     // Trocar de perfil é como trocar de tamanho: SPS novo, e o próximo quadro tem de ser IDR.
     const mudouPerfil = perfil !== this.perfilConfigurado;
-    if (!mudouTamanho && !mudouBitrate && !mudouPerfil) return;
+    const mudouTaxa = this.modoDeTaxa() !== this.taxaConfigurada;
+    if (!mudouTamanho && !mudouBitrate && !mudouPerfil && !mudouTaxa) return;
     if (mudouPerfil || c === null) {
       this.perfilPedido = perfil;
       this.saidasDoPerfil = 0;
@@ -383,7 +422,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     if (this.encoder !== enc) return;
     this.configurado = alvo;
     this.perfilConfigurado = perfil;
-    if (mudouTamanho || mudouPerfil) this.pedirChaveAgora = true;
+    this.taxaConfigurada = this.modoDeTaxa();
+    this.conteudoConfigurado = this.conteudoEfetivo(alvo);
+    if (mudouTamanho || mudouPerfil || mudouTaxa) this.pedirChaveAgora = true;
   }
 
   private guardarUltimo(quadro: VideoFrame): void {
@@ -457,9 +498,24 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
     const entrada = this.monotonico(quadro);
     this.vigia.entrou(entrada.timestamp, this.agora());
+    if (chave) this.chavesPedidas += 1;
     enc.encode(entrada, { keyFrame: chave });
     entrada.close();
     if (entrada !== quadro) quadro.close();
+  }
+
+  /**
+   * Quadro-chave que ninguém pediu. Três em 10 s com `detail` ligado: é a
+   * detecção de cena do modo de conteúdo de tela — volta a `motion`.
+   */
+  private chaveEspontanea(): void {
+    const agora = this.agora();
+    this.chavesEspontaneas = this.chavesEspontaneas.filter((t) => agora - t < JANELA_DE_CHAVES_MS);
+    this.chavesEspontaneas.push(agora);
+    if (this.conteudoConfigurado === 'detail' && this.chavesEspontaneas.length >= CHAVES_ESPONTANEAS_MAX) {
+      this.detailProibido = true;
+      queueMicrotask(() => this.aplicar());
+    }
   }
 
   /**
@@ -492,7 +548,11 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.vigia.saiu(chunk.timestamp, this.agora());
     this.quadros += 1;
     const chave = chunk.type === 'key';
-    if (chave) this.idrs += 1;
+    if (chave) {
+      this.idrs += 1;
+      if (this.chavesPedidas > 0) this.chavesPedidas -= 1;
+      else this.chaveEspontanea();
+    }
     const dados = new ArrayBuffer(chunk.byteLength);
     chunk.copyTo(dados);
     // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.

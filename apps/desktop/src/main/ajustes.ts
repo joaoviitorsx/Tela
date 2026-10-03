@@ -24,6 +24,12 @@ export type Ajustes = {
   /** A faixa "AO VIVO · 3 assistindo" por cima do jogo, ao vivo. */
   readonly painelSobreOJogo: boolean;
   readonly cantoDoPainel: CantoDoPainel;
+  /**
+   * Experimental: `bitrateMode: 'constant'` no encoder do app. No Windows o
+   * Media Foundation transforma `variable` em VBR com pico de até 10× o alvo
+   * — rajadas que podem virar perda. Desligado até medir (estudo 1-codec).
+   */
+  readonly taxaConstante: boolean;
 };
 
 export const AJUSTES_PADRAO: Ajustes = {
@@ -34,6 +40,7 @@ export const AJUSTES_PADRAO: Ajustes = {
   atualizarAutomaticamente: true,
   painelSobreOJogo: false,
   cantoDoPainel: 'sup-dir',
+  taxaConstante: false,
 };
 
 const ESCOLHAS: ReadonlySet<string> = new Set<AoFecharAoVivo>(['perguntar', 'segundo-plano', 'encerrar']);
@@ -44,6 +51,7 @@ const CAMPOS_BOOLEANOS = [
   'sempreNoTopoNoCompacto',
   'atualizarAutomaticamente',
   'painelSobreOJogo',
+  'taxaConstante',
 ] as const;
 
 const CANTOS: ReadonlySet<string> = new Set(CANTOS_DO_PAINEL);
@@ -90,6 +98,7 @@ export function mesmosAjustes(a: Ajustes, b: Ajustes): boolean {
     a.aoFecharAoVivo === b.aoFecharAoVivo &&
     a.atualizarAutomaticamente === b.atualizarAutomaticamente &&
     a.painelSobreOJogo === b.painelSobreOJogo &&
-    a.cantoDoPainel === b.cantoDoPainel
+    a.cantoDoPainel === b.cantoDoPainel &&
+    a.taxaConstante === b.taxaConstante
   );
 }

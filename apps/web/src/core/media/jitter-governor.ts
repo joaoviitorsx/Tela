@@ -56,9 +56,30 @@ const PERDA_POR_AMOSTRA = 3;
 
 export type DecisaoJitter = { readonly ms: number } | null;
 
+/**
+ * O piso que o RTT exige (estudo 2 · T3, estudo 3 · 2). Uma perda só é
+ * consertada se o NACK tiver tempo de ir e voltar antes do quadro precisar
+ * sair: `J ≥ RTT + 25 ms`; com perda, `2·RTT + 35 ms` (a retransmissão pode
+ * se perder também). No modelo, RTT 80 ms com 1% de perda vai de 710 para 17
+ * soluços por minuto; em rede local (RTT de poucos ms) o piso desce a 20 ms
+ * e devolve 10–30 ms de latência que o piso fixo cobrava de todo mundo.
+ *
+ * Sem RTT medido (`0`), o piso fixo de sempre. O governador continua subindo
+ * na primeira travada: um piso otimista se corrige sozinho.
+ */
+export const PISO_ABSOLUTO_MS = 20;
+
+export function pisoPeloRtt(rttMs: number, comPerda: boolean): number {
+  if (!(rttMs > 0)) return JITTER_MINIMO_MS;
+  const piso = comPerda ? 2 * rttMs + 35 : rttMs + 25;
+  return Math.round(Math.max(PISO_ABSOLUTO_MS, Math.min(JITTER_MAXIMO_MS, piso)));
+}
+
 export class JitterGovernor {
   private alvo = JITTER_INICIAL_MS;
   private calmaria = 0;
+  /** O piso em vigor, do RTT medido (`pisoPeloRtt`). */
+  private piso = JITTER_MINIMO_MS;
   private anterior: { congelamentos: number; perdidos: number } | null = null;
 
   /** O alvo em vigor, em ms. */
@@ -85,10 +106,16 @@ export class JitterGovernor {
     return this.alvo >= JITTER_MAXIMO_MS;
   }
 
+  /** Ainda há buffer para devolver: acima do piso do RTT e fora do teto. */
+  get podeDescer(): boolean {
+    return this.alvo > this.piso && !this.noTeto;
+  }
+
   reset(): void {
     this.alvo = JITTER_INICIAL_MS;
     this.calmaria = 0;
     this.anterior = null;
+    this.piso = JITTER_MINIMO_MS;
   }
 
   /**
@@ -98,7 +125,7 @@ export class JitterGovernor {
    * de leve a cada segundo produziria justamente a irregularidade de cadência
    * que ele existe para remover.
    */
-  observe(recepcao: RecepcaoStats | null): DecisaoJitter {
+  observe(recepcao: RecepcaoStats | null, rttMs = 0): DecisaoJitter {
     if (recepcao === null) return null;
 
     const agora = {
@@ -113,6 +140,15 @@ export class JitterGovernor {
 
     const travou = agora.congelamentos > antes.congelamentos;
     const perdeu = agora.perdidos - antes.perdidos >= PERDA_POR_AMOSTRA;
+    this.piso = pisoPeloRtt(rttMs, perdeu);
+
+    // O RTT subiu (ou começou a perder): o buffer sobe ao piso JÁ — esperar a
+    // travada para descobrir isso é exatamente o soluço que o piso evita.
+    if (this.alvo < this.piso) {
+      this.alvo = this.piso;
+      this.calmaria = 0;
+      return { ms: this.alvo };
+    }
 
     if (travou || perdeu) {
       this.calmaria = 0;
@@ -125,8 +161,8 @@ export class JitterGovernor {
     if (this.calmaria < CALMARIA_AMOSTRAS) return null;
     this.calmaria = 0;
 
-    if (this.alvo <= JITTER_MINIMO_MS) return null;
-    this.alvo = Math.max(JITTER_MINIMO_MS, this.alvo - PASSO_DESCIDA_MS);
+    if (this.alvo <= this.piso) return null;
+    this.alvo = Math.max(this.piso, this.alvo - PASSO_DESCIDA_MS);
     return { ms: this.alvo };
   }
 }

@@ -68,6 +68,12 @@ export type AfinacaoSdp = {
    */
   readonly startBitrateBps?: number | null | undefined;
   /**
+   * `x-google-max-bitrate`: o teto da sonda e do estimador nesse caminho
+   * (`TETO_DA_ESCADA_BPS`). Só faz sentido junto do início; `null` deixa o
+   * padrão do navegador (sonda limitada a 5 Mbps).
+   */
+  readonly maxBitrateBps?: number | null | undefined;
+  /**
    * Nível H.264 a assumir para o receptor, SÓ quando há evidência de que ele
    * decodifica isso (ADR 0020). `null`/ausente preserva o SDP recebido.
    *
@@ -223,20 +229,27 @@ function afinarVideo(secao: string, opcoes: AfinacaoSdp): string {
       ? Math.round(opcoes.startBitrateBps / 1000)
       : null;
 
+  const maxKbps =
+    kbps !== null && typeof opcoes.maxBitrateBps === 'number' && Number.isFinite(opcoes.maxBitrateBps)
+      ? Math.max(kbps, Math.round(opcoes.maxBitrateBps / 1000))
+      : null;
+
   return secao
     .split(/(?<=\n)/)
     .map((linha) => {
       if (!linha.startsWith('a=fmtp:')) return linha;
       const { corpo, quebra } = partir(linha);
-      return afinarFmtp(corpo, kbps, nivel) + quebra;
+      return afinarFmtp(corpo, kbps, maxKbps, nivel) + quebra;
     })
     .join('');
 }
 
-function afinarFmtp(linha: string, kbps: number | null, nivel: number | null): string {
+function afinarFmtp(linha: string, kbps: number | null, maxKbps: number | null, nivel: number | null): string {
   let saida = nivel === null ? linha : elevarNivel(linha, nivel);
   if (kbps !== null && saida.includes('profile-level-id=')) {
     saida = definirParametro(saida, 'x-google-start-bitrate', String(kbps));
+    // Nunca abaixo do início: um teto menor que o começo faria o libwebrtc recusar os dois.
+    if (maxKbps !== null) saida = definirParametro(saida, 'x-google-max-bitrate', String(maxKbps));
   }
   return saida;
 }

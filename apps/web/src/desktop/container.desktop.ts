@@ -7,6 +7,7 @@ import type { CodificadorUnico, DepsDoCodificador } from '../adapters/codificado
 import { makeEncodeOnceTransport } from '../adapters/encode-once-transport.js';
 import { makeMeshTransport } from '../adapters/mesh-transport.js';
 import { CodificadorWebCodecs } from '../adapters/webcodecs-codificador.js';
+import { taxaDoEncoder } from './taxa-do-encoder.js';
 import { makeWsSignaling } from '../adapters/ws-signaling.js';
 import { appVersion, diagnosticId, repasseForcado, scheduler, storage, type OpcoesDoEspectador } from '../container.js';
 import { aprovados, audio as audioDoNavegador, uplinkMemory } from '../container-transmissao.js';
@@ -193,7 +194,10 @@ function criarCodificador(d: DepsDoCodificador): CodificadorUnico {
     // No app, a GPU explicitamente quando a sonda diz que há (D9): no Windows
     // é o Media Foundation (NVENC/AMF/Quick Sync), e o rótulo deixa de chutar.
     webcodecs: () =>
-      new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar, { preferirHardware: true }),
+      new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar, {
+        preferirHardware: true,
+        modoDeTaxa: taxaDoEncoder.modo,
+      }),
     ehNativa: (track) => capturaDesktop.ehNativa(track),
   });
 }

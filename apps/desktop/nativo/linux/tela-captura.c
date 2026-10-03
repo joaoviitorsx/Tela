@@ -281,6 +281,11 @@ static void aplicar_vbv(void) {
  */
 static GstElement *saida_perfil = NULL;
 static gboolean perfil_main = FALSE;
+/* Um nvh264enc que recusar Main (driver antigo) derruba o fluxo: volta a
+   Baseline e não tenta de novo nesta sessão — em vez de matar a captura. */
+static gboolean perfil_main_recusado = FALSE;
+static gint64 reciclo_com_main_em = 0;
+static guint reciclo_agendado = 0;
 
 static void aplicar_caps_de_perfil(void) {
   GstCaps *caps = gst_caps_new_simple("video/x-h264", "profile", G_TYPE_STRING,
@@ -324,6 +329,22 @@ static void aplicar_tamanho(void) {
   g_mutex_unlock(&medida_mutex);
   gst_element_set_state(codificacao, GST_STATE_PLAYING);
   g_mutex_unlock(&troca_mutex);
+}
+
+/*
+ * O reciclo vai para o laço ocioso, e não acontece na hora: `perfil` e
+ * `alvo` que chegam juntos (o piso da sala muda quando alguém entra, e a
+ * malha reage no mesmo segundo) viram UM reciclo e UM IDR, não dois.
+ */
+static gboolean reciclar_agendado(gpointer _) {
+  reciclo_agendado = 0;
+  if (perfil_main) reciclo_com_main_em = g_get_monotonic_time();
+  aplicar_tamanho();
+  return G_SOURCE_REMOVE;
+}
+
+static void agendar_reciclo(void) {
+  if (reciclo_agendado == 0) reciclo_agendado = g_idle_add(reciclar_agendado, NULL);
 }
 
 static void pedir_chave(void) {
@@ -510,15 +531,15 @@ static void ordem(const char *linha) {
     g_atomic_int_set(&alvo_fps, a.fps);
     /* Tamanho novo renegocia o NVENC, que recomeça num IDR. Bitrate não. */
     if (mudou_bitrate) aplicar_bitrate();
-    if (mudou_tamanho) aplicar_tamanho();
+    if (mudou_tamanho) agendar_reciclo();
   } else if (strcmp(linha, "perfil main") == 0 || strcmp(linha, "perfil baseline") == 0) {
-    gboolean quer_main = strcmp(linha, "perfil main") == 0;
+    gboolean quer_main = strcmp(linha, "perfil main") == 0 && !perfil_main_recusado;
     if (quer_main == perfil_main) return;
     perfil_main = quer_main;
     /* Caps de saída novas renegociam o NVENC: o mesmo reciclo da troca de
        tamanho, que recomeça num IDR. Troca de perfil é rara (gente entrando
        ou saindo da sala muda o piso, não cada quadro). */
-    aplicar_tamanho();
+    agendar_reciclo();
   } else if (strcmp(linha, "chave") == 0) {
     pedir_chave();
   } else if (sscanf(linha, "atraso %d", &n) == 1) {
@@ -559,6 +580,14 @@ static gboolean no_barramento(GstBus *bus, GstMessage *msg, gpointer _) {
     g_autoptr(GError) e = NULL;
     g_autofree char *dbg = NULL;
     gst_message_parse_error(msg, &e, &dbg);
+    /* Erro logo depois de ligar Main: é o perfil, não a captura. */
+    if (perfil_main && g_get_monotonic_time() - reciclo_com_main_em < 3 * G_USEC_PER_SEC) {
+      g_printerr("tela-captura: Main recusado (%s); voltando a Baseline\n", e != NULL ? e->message : "?");
+      perfil_main = FALSE;
+      perfil_main_recusado = TRUE;
+      agendar_reciclo();
+      return G_SOURCE_CONTINUE;
+    }
     erro("PIPELINE", e != NULL ? e->message : "?");
     codigo_de_saida = 2;
     g_main_loop_quit(laco);
@@ -939,6 +968,7 @@ int main(int argc, char **argv) {
   gst_object_unref(bus_cap);
   gst_object_unref(entra);
   gst_object_unref(tamanho);
+  gst_object_unref(saida_perfil);
   gst_object_unref(codificador);
   gst_object_unref(captura);
   gst_object_unref(codificacao);

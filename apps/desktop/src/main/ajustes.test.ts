@@ -56,4 +56,10 @@ describe('ajustes', () => {
     expect(mesclarAjustes(AJUSTES_PADRAO, { cantoDoPainel: 'meio' }).cantoDoPainel).toBe('sup-dir');
     expect(mesmosAjustes(AJUSTES_PADRAO, { ...AJUSTES_PADRAO, cantoDoPainel: 'inf-dir' })).toBe(false);
   });
+
+  it('taxa constante: experimental, desligada por padrão', () => {
+    expect(AJUSTES_PADRAO.taxaConstante).toBe(false);
+    expect(mesclarAjustes(AJUSTES_PADRAO, { taxaConstante: true }).taxaConstante).toBe(true);
+    expect(mesclarAjustes(AJUSTES_PADRAO, { taxaConstante: 'sim' }).taxaConstante).toBe(false);
+  });
 });

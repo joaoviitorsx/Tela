@@ -204,13 +204,46 @@ describe('CodificadorWebCodecs — perfil H.264 da sala', () => {
     cod.parar();
   });
 
-  it('o contentHint chega ao encoder, e trocar de prioridade reconfigura', async () => {
+  it('detail NUNCA vai a encoder que não é hardware certo (OpenH264: IDR por quadro)', async () => {
     const cod = new CodificadorWebCodecs(() => undefined, () => 0);
     await cod.iniciar(novaTrilha(), BASE);
     await assentar();
+    cod.configurar({ ...BASE, conteudo: 'detail', fps: 30 });
     expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('motion');
+    cod.parar();
+  });
+
+  it('hardware: detail chega; três chaves espontâneas em 10 s o derrubam para motion', async () => {
+    let t = 0;
+    const cod = new CodificadorWebCodecs(() => undefined, () => t, () => undefined, { preferirHardware: true });
+    await cod.iniciar(novaTrilha(), BASE);
+    await assentar();
     cod.configurar({ ...BASE, conteudo: 'detail', fps: 30 });
     expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('detail');
+    const saida = EncoderFalso.ultimo!.init.output;
+    for (let i = 0; i < 3; i += 1) {
+      t += 1_000;
+      saida(chunk(i * 33_333, 66));
+    }
+    await assentar();
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('motion');
+    cod.configurar({ ...BASE, conteudo: 'detail', fps: 30 });
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('motion');
+    cod.parar();
+  });
+
+  it('modo de taxa: variable por padrão; trocar para constant reconfigura', async () => {
+    let modo: 'variable' | 'constant' = 'variable';
+    const cod = new CodificadorWebCodecs(() => undefined, () => 0, () => undefined, { modoDeTaxa: () => modo });
+    await cod.iniciar(novaTrilha(), BASE);
+    await assentar();
+    expect(EncoderFalso.configs.at(-1)?.bitrateMode).toBe('variable');
+    modo = 'constant';
+    cod.configurar(BASE);
+    expect(EncoderFalso.configs.at(-1)?.bitrateMode).toBe('constant');
+    const n = EncoderFalso.configs.length;
+    cod.configurar(BASE);
+    expect(EncoderFalso.configs.length).toBe(n);
     cod.parar();
   });
 });

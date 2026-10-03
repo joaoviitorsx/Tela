@@ -2,7 +2,7 @@ import { Emitter } from '../emitter.js';
 import { type CausaDaLentidao, VigiaDeFluidez } from './vigia-de-fluidez.js';
 import { ClassificadorDeAudio, type EstadoAudio } from './audio-state.js';
 import { CODIGO_AUDIO, type Diagnostico, Diario, idLocal } from './diagnostico.js';
-import { JITTER_INICIAL_MS, JITTER_MINIMO_MS } from '../mesh/peer-link.js';
+import { JITTER_INICIAL_MS } from '../mesh/peer-link.js';
 import { JitterGovernor } from './jitter-governor.js';
 import { type EstadoLatencia, LatencyWatch } from './latency-watch.js';
 import { RelogioDeCaptura } from './relogio-de-captura.js';
@@ -721,7 +721,7 @@ export class ViewerSession {
 
     // Devolve latência quando a conexão prova que aguenta, e a retoma no
     // primeiro sinal de que não aguentava.
-    this.jitter.observe(stats.recepcao);
+    this.jitter.observe(stats.recepcao, stats.rttMs);
     this.aplicarJitter();
     this.diario.registrar(stats, agora);
 
@@ -740,7 +740,7 @@ export class ViewerSession {
       Perguntar só pelo piso desarmava o vigia exatamente no caso que ele
       existe para cobrir.
     */
-    const podeDescer = this.jitter.atual > JITTER_MINIMO_MS && !this.jitter.noTeto;
+    const podeDescer = this.jitter.podeDescer;
     if (this.latencia.deveReconectar(podeDescer)) void this.reabrirPorLatencia(this.epoch);
   }
 

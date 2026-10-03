@@ -213,6 +213,13 @@ export function DialogoAjustes({
             </div>
           )}
           <Linha
+            rotulo="Taxa constante no encoder (experimental)"
+            descricao="No Windows, o encoder da GPU pode mandar rajadas de até 10 vezes a taxa pedida, que viram perda e travadinha em rede apertada. Com isto ligado ele segura a taxa constante. Vale na próxima configuração do encoder. Se a imagem piorar, desligue — e conte o que viu."
+            marcado={ajustes?.taxaConstante ?? false}
+            desabilitado={!pronto}
+            aoMudar={(taxaConstante) => aoMudar({ taxaConstante })}
+          />
+          <Linha
             rotulo="Atualizar automaticamente"
             descricao="Verifica a cada 6 horas e baixa em segundo plano, só com a transmissão fora do ar. A versão nova instala quando você sair do Tela. Nunca mexe numa transmissão no ar."
             marcado={ajustes?.atualizarAutomaticamente ?? true}

@@ -15,6 +15,7 @@ const AJUSTES: AjustesDesktop = {
   atualizarAutomaticamente: true,
   painelSobreOJogo: false,
   cantoDoPainel: 'sup-dir',
+  taxaConstante: false,
 };
 
 const ATUALIZACAO: EstadoDaAtualizacao = {

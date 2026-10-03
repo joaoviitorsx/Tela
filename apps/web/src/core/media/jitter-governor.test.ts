@@ -174,6 +174,14 @@ describe('piso pelo RTT (estudo 2 · T3)', () => {
     expect(g.atual).toBe(115);
   });
 
+  it('um pico isolado de RTT não ergue o piso (mediana de 5)', () => {
+    const g = new JitterGovernor();
+    for (let i = 0; i < 4; i += 1) g.observe(leitura(), 20);
+    const antes = g.atual;
+    g.observe(leitura(), 180);
+    expect(g.atual).toBe(antes);
+  });
+
   it('perda com RTT alto pede o piso maior', () => {
     const g = new JitterGovernor();
     g.observe(leitura({ pacotesPerdidos: 0 }), 60);

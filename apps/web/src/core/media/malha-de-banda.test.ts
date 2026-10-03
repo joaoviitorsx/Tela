@@ -61,47 +61,60 @@ describe('MalhaDeBanda', () => {
   });
 });
 
-describe('tela parada não é colapso (consumo do encoder, simulador --parado)', () => {
-  const pausa = (consumoDoEncoder: number) => ({
+describe('o que prova colapso (ADR 0033)', () => {
+  const freada = (extra: { consumoDoEncoder?: number; avail?: number; rttMs?: number } = {}) => ({
     limitation: 'bandwidth' as const,
     bitrateBps: 2_000_000,
     paresMedidos: 1,
-    availablePorPeer: { v_1: 2_900_000 },
-    consumoDoEncoder,
+    availablePorPeer: { v_1: extra.avail ?? 2_900_000 },
+    rttMs: extra.rttMs ?? 20,
+    ...(extra.consumoDoEncoder === undefined ? {} : { consumoDoEncoder: extra.consumoDoEncoder }),
   });
-  const colapso = { limitation: 'bandwidth' as const, bitrateBps: 2_600_000, paresMedidos: 1, availablePorPeer: { v_1: 2_700_000 }, consumoDoEncoder: 1 };
 
   /** Link bom por 10 s: o orçamento se estabelece acima de 3 Mbps. */
   function aquecida(): MalhaDeBanda {
     const m = new MalhaDeBanda();
     m.semear(20_000_000);
-    for (let i = 1; i <= 10; i += 1) m.observar(leitura(i));
+    for (let i = 1; i <= 10; i += 1) m.observar(leitura(i, { stats: { ...leitura(i).stats, rttMs: 20 } }));
     return m;
   }
 
-  it('encoder a 12% do alvo: bandwidth não derruba o orçamento, nem durante nem na carência', () => {
+  it('tela parada: encoder sem encher o alvo (0,78) e sem congestão — o orçamento fica', () => {
     const m = aquecida();
     const antes = m.orcamento;
     expect(antes).toBeGreaterThan(3_000_000);
-    for (let i = 11; i <= 70; i += 1) m.observar(leitura(i, { stats: pausa(0.12) }));
-    // O jogo volta: consumo cheio, a estimativa ainda baixa, durante a carência.
-    for (let i = 71; i <= 90; i += 1) m.observar(leitura(i, { stats: pausa(1) }));
+    for (let i = 11; i <= 70; i += 1) m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.78 }) }));
     expect(m.orcamento).toBe(antes);
   });
 
-  it('colapso de verdade (encoder produzindo o alvo) continua derrubando', () => {
+  it('rampa depois da pausa: estimativa subindo não é colapso', () => {
     const m = aquecida();
-    for (let i = 11; i <= 50; i += 1) m.observar(leitura(i, { stats: colapso }));
+    const antes = m.orcamento;
+    // A pausa vem antes (a estimativa decai a 2,9 Mbps), depois o jogo volta e ela reabre.
+    for (let i = 11; i <= 20; i += 1) m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.78 }) }));
+    let avail = 2_900_000;
+    for (let i = 21; i <= 50; i += 1) {
+      avail *= 1.08;
+      m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 1, avail }) }));
+    }
+    expect(m.orcamento).toBe(antes);
+  });
+
+  it('colapso clássico: encoder enchendo o alvo e a estimativa parada — derruba', () => {
+    const m = aquecida();
+    for (let i = 11; i <= 50; i += 1) m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 1, avail: 2_700_000 }) }));
     expect(m.orcamento).toBeLessThan(3_000_000);
   });
 
-  it('passada a carência, o colapso volta a valer', () => {
+  it('conteúdo leve com congestão (RTT subiu): também derruba', () => {
     const m = aquecida();
-    for (let i = 11; i <= 20; i += 1) m.observar(leitura(i, { stats: pausa(0.12) }));
-    const naPausa = m.orcamento;
-    for (let i = 21; i <= 40; i += 1) m.observar(leitura(i, { stats: colapso }));
-    expect(m.orcamento).toBe(naPausa);
-    for (let i = 41; i <= 90; i += 1) m.observar(leitura(i, { stats: colapso }));
+    for (let i = 11; i <= 50; i += 1) m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.6, avail: 2_700_000, rttMs: 140 }) }));
+    expect(m.orcamento).toBeLessThan(3_000_000);
+  });
+
+  it('fora do "um encode" (sem consumo): o comportamento antigo', () => {
+    const m = aquecida();
+    for (let i = 11; i <= 50; i += 1) m.observar(leitura(i, { stats: freada({ avail: 2_700_000 }) }));
     expect(m.orcamento).toBeLessThan(3_000_000);
   });
 });

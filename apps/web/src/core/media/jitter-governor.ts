@@ -69,6 +69,15 @@ export type DecisaoJitter = { readonly ms: number } | null;
  */
 export const PISO_ABSOLUTO_MS = 20;
 
+/** Leituras de RTT na mediana do piso (O(1): cinco números). */
+const AMOSTRAS_DE_RTT = 5;
+
+function medianaDe(valores: readonly number[]): number {
+  if (valores.length === 0) return 0;
+  const ordem = [...valores].sort((a, b) => a - b);
+  return ordem[Math.floor(ordem.length / 2)] ?? 0;
+}
+
 export function pisoPeloRtt(rttMs: number, comPerda: boolean): number {
   if (!(rttMs > 0)) return JITTER_MINIMO_MS;
   const piso = comPerda ? 2 * rttMs + 35 : rttMs + 25;
@@ -80,6 +89,12 @@ export class JitterGovernor {
   private calmaria = 0;
   /** O piso em vigor, do RTT medido (`pisoPeloRtt`). */
   private piso = JITTER_MINIMO_MS;
+  /**
+   * As últimas leituras de RTT: o piso usa a MEDIANA. Um pico isolado (180 ms
+   * num link de 20) erguia o buffer de 45 para 205 ms e ele levava ~3 min para
+   * descer (revisão de 2026-10-03). Com perda, o RTT da amostra vale na hora.
+   */
+  private readonly rtts: number[] = [];
   private anterior: { congelamentos: number; perdidos: number } | null = null;
 
   /** O alvo em vigor, em ms. */
@@ -116,6 +131,7 @@ export class JitterGovernor {
     this.calmaria = 0;
     this.anterior = null;
     this.piso = JITTER_MINIMO_MS;
+    this.rtts.length = 0;
   }
 
   /**
@@ -140,7 +156,11 @@ export class JitterGovernor {
 
     const travou = agora.congelamentos > antes.congelamentos;
     const perdeu = agora.perdidos - antes.perdidos >= PERDA_POR_AMOSTRA;
-    this.piso = pisoPeloRtt(rttMs, perdeu);
+    if (rttMs > 0) {
+      this.rtts.push(rttMs);
+      if (this.rtts.length > AMOSTRAS_DE_RTT) this.rtts.shift();
+    }
+    this.piso = pisoPeloRtt(perdeu ? rttMs : medianaDe(this.rtts), perdeu);
 
     // O RTT subiu (ou começou a perder): o buffer sobe ao piso JÁ — esperar a
     // travada para descobrir isso é exatamente o soluço que o piso evita.

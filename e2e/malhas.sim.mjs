@@ -97,6 +97,8 @@ const { BroadcastSession } = await import(W('core/media/broadcast-session.ts'));
 const { MeshTopology } = await import(W('core/mesh/mesh-topology.ts'));
 const { StatsSampler } = await import(W('core/media/stats-sampler.ts'));
 const { UplinkGovernor, UPLINK_SHARE } = await import(W('core/media/uplink-governor.ts'));
+const { FOLGA_DA_ESTIMATIVA } = await import(W('core/media/alvo-do-codificador.ts'));
+const { TETO_DA_SONDA_BPS } = await import(join(RAIZ, 'packages/shared/dist/index.js'));
 const { POLL_MIN_MS, POLL_MAX_MS, POLL_FACTOR } = await import(W('core/media/viewer-session.ts'));
 const { pisoPorEspectador } = await import(W('core/media/capacidade-pela-banda.ts'));
 const presetsMod = await import(W('core/media/presets.ts'));
@@ -361,7 +363,8 @@ class Rede {
 
       // O TETO. É esta linha que faz a medição depender da atuação.
       const teto = AIMD_TETO_FATOR * enviado + AIMD_TETO_OFFSET;
-      p.bwe = Math.max(BWE_PISO, Math.min(p.bwe, teto));
+      // E o `x-google-max-bitrate` (TETO_DA_SONDA_BPS): o estimador nunca passa dele.
+      p.bwe = Math.max(BWE_PISO, Math.min(p.bwe, teto, TETO_DA_SONDA_BPS));
     });
   }
 
@@ -697,7 +700,21 @@ async function rodarCenario(cfg) {
     const cpu = cpuAtiva(t);
 
     rede.tique(t, 1, maxBitrate, cpu);
-    transport.consumo = rede.consumoEm(t);
+    /*
+      O consumo como o "um encode" o calcula: produzido ÷ alvo do encoder, e o
+      alvo JÁ FREADO por FOLGA × pior estimativa (`alvo-do-codificador.ts`).
+      Numa tela parada a estimativa decai e o alvo encolhe junto — o consumo
+      sobe sozinho. Um consumo fixo aqui esconderia isso (revisão de
+      2026-10-03: a primeira versão injetava 0,12 e "passava").
+    */
+    {
+      const vivos = rede.peers.filter((p) => p.conectado);
+      const pior = vivos.length === 0 ? maxBitrate : Math.min(...vivos.map((p) => p.bwe));
+      const alvoFreado = Math.min(maxBitrate, FOLGA_DA_ESTIMATIVA * pior);
+      const fator = rede.consumoEm(t);
+      const precisa = fator < 1 ? fator * maxBitrate : Number.POSITIVE_INFINITY;
+      transport.consumo = alvoFreado > 0 ? Math.min(alvoFreado, precisa) / alvoFreado : 1;
+    }
 
     transport.prepararStats(t, (peer) => {
       if (cpu) return 'cpu';

@@ -542,12 +542,16 @@ export function presetForBitrate(
 }
 
 /**
- * O teto útil do degrau MAIS ALTO da escada (1080p60): o `x-google-max-bitrate`
- * de todo caminho de envio (estudo 2 · T6). Sem ele o libwebrtc limita a
- * sonda a 5 Mbps e quem entra leva ~4 s para chegar a 75% do alvo; com ele,
- * 0,1 s (medido, `e2e/bench/estudo-rampa-sondas.mjs`). É o teto da ESCADA e
- * não o do degrau atual de propósito: o teto tampa o `available` medido, e
- * tampar no degrau atual impediria a malha de ver banda para subir — a
- * armadilha da ADR 0018. Acima deste valor, nenhum bit é útil.
+ * O `x-google-max-bitrate` de todo caminho de envio (estudo 2 · T6): o teto da
+ * SONDA e do estimador. Sem ele o libwebrtc limita a sonda a 5 Mbps e quem
+ * entra leva ~4 s para chegar a 75% do alvo.
+ *
+ * 1,5 × o teto útil do 1080p60 (≈ 24,3 Mbps), e não o teto em si. O teto TAMPA
+ * o `available`, e o governador gasta `0,75 ×` a estimativa: tampar em 16,17
+ * deixava o orçamento em 12,1 Mbps, abaixo do piso do próprio 1080p60 (12,4)
+ * — a escada nunca chegava ao topo (revisão independente de 2026-10-03,
+ * reproduzida no simulador). Com 1,5×: 0,75 × 24,3 = 18,2 Mbps cobre o
+ * 1080p60 inteiro mais o áudio, e sobra a folga da sonda de 1,3× e do
+ * `ClampBitrate` (1,5 × acked).
  */
-export const TETO_DA_ESCADA_BPS = Math.round(tetoDeBitrate(1920, 1080, 60));
+export const TETO_DA_SONDA_BPS = Math.round(1.5 * tetoDeBitrate(1920, 1080, 60));

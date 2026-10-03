@@ -1,4 +1,4 @@
-import { type IceServerConfig, TETO_DA_ESCADA_BPS } from '@tela/shared';
+import { type IceServerConfig, TETO_DA_SONDA_BPS } from '@tela/shared';
 import type { ReferenciaDeCaptura } from '../media/relogio-de-captura.js';
 import { rtcConfiguration } from './ice-config.js';
 import { afinarSdp, pedirEstereo } from './sdp-tuning.js';
@@ -638,8 +638,8 @@ export class PeerLink {
     try {
       const sdp = afinarSdp(description.sdp, {
         startBitrateBps: this.startBitrateBps?.() ?? null,
-        // Só em quem envia (quem tem início): o teto da escada, não o do degrau.
-        maxBitrateBps: this.startBitrateBps === null ? null : TETO_DA_ESCADA_BPS,
+        // Só em quem envia (quem tem início): 1,5 × o teto da escada (ver a constante).
+        maxBitrateBps: this.startBitrateBps === null ? null : TETO_DA_SONDA_BPS,
       });
       return sdp === description.sdp ? description : { type: description.type, sdp };
     } catch {

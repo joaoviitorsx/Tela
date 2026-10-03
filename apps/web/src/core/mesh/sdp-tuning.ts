@@ -69,7 +69,7 @@ export type AfinacaoSdp = {
   readonly startBitrateBps?: number | null | undefined;
   /**
    * `x-google-max-bitrate`: o teto da sonda e do estimador nesse caminho
-   * (`TETO_DA_ESCADA_BPS`). Só faz sentido junto do início; `null` deixa o
+   * (`TETO_DA_SONDA_BPS`). Só faz sentido junto do início; `null` deixa o
    * padrão do navegador (sonda limitada a 5 Mbps).
    */
   readonly maxBitrateBps?: number | null | undefined;

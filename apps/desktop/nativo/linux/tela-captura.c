@@ -557,7 +557,8 @@ static void ordem(const char *linha) {
     if (quer_vbr == taxa_vbr) return;
     taxa_vbr = quer_vbr;
     /* O modo de controle de taxa só vale no reinício do NVENC: reciclo (IDR). */
-    g_object_set(codificador, "rc-mode", quer_vbr ? 3 : 2, NULL);
+    /* Pelo NOME do valor: o número do enum pode mudar entre versões do plugin. */
+    gst_util_set_object_arg(G_OBJECT(codificador), "rc-mode", quer_vbr ? "vbr" : "cbr");
     agendar_reciclo();
   } else if (strcmp(linha, "chave") == 0) {
     pedir_chave();

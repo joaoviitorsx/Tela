@@ -46,6 +46,8 @@ type Props = {
   readonly antesDeSair?: () => Promise<void>;
   /** Os canais já assistidos neste aparelho, para as teclas RECENTES do ASSISTIR. */
   readonly recentes?: () => readonly string[];
+  /** O código-fonte, aberto no navegador do sistema pela barra da janela. */
+  readonly repositorio?: string;
 };
 
 /**
@@ -73,6 +75,7 @@ export function MolduraDesktop({
   somDeOculto,
   antesDeSair,
   recentes,
+  repositorio,
 }: Props) {
   const { caminho, travado, irPara } = useNavegacaoDesktop();
   // O canal que já está na tela não vira tecla: levaria para onde a pessoa já está.
@@ -138,6 +141,9 @@ export function MolduraDesktop({
           aoMinimizar={barra.minimizar}
           aoAlternarMaximizar={barra.alternarMaximizar}
           aoFechar={barra.fechar}
+          aoAbrirRepositorio={
+            ponte === undefined || repositorio === undefined ? undefined : () => ponte.abrirNoNavegador(repositorio)
+          }
         />
       )}
       {compactoNoAr && (

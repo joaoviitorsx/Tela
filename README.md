@@ -1,291 +1,276 @@
-# tela
+<div align="center">
 
-Transmissão de gameplay em 1080p60 com latência sub-segundo, direto do seu
-browser para o dos seus amigos. Sem cadastro, sem servidor de mídia, sem custo.
+<img src="apps/web/public/tela-app-icon.png" alt="" width="112" height="112">
 
-Você aperta um botão, ganha um link, manda pros amigos. Eles abrem e veem seu
-jogo. Nada mais.
+# Tela
 
-O link é só o nome: `tela.gg/<seu-canal>` (ADR 0026). Quem tem o link entra
-direto, até 5 pessoas (ADR 0028). Mande só para quem você quer: "desconectar
-todos" tira todo mundo, mas não impede quem tem o link de voltar.
+**Mostre seu jogo para os amigos, ao vivo, sem atraso e sem cadastro.**
 
----
+Gameplay em 1080p60 do seu PC direto para o navegador de quem tem o link.
+Sem servidor de mídia no meio, sem conta e sem custo.
 
-## O problema
+[**Transmitir agora**](https://tela.transmissao.workers.dev) ·
+[**Baixar o app**](https://github.com/joaoviitorsx/Tela/releases) ·
+[Como funciona](#como-funciona) ·
+[Rodar localmente](#rodar-localmente)
 
-Em 17 de agosto de 2026 a ANPD determinou a suspensão do compartilhamento de
-tela do Discord no Brasil. A medida foi cirúrgica: atingiu a transmissão de
-vídeo ao vivo, e não texto nem voz.
+[![ci](https://github.com/joaoviitorsx/Tela/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/joaoviitorsx/Tela/actions/workflows/ci.yml)
+[![desktop](https://github.com/joaoviitorsx/Tela/actions/workflows/desktop.yml/badge.svg)](https://github.com/joaoviitorsx/Tela/actions/workflows/desktop.yml)
+[![release](https://img.shields.io/github/v/release/joaoviitorsx/Tela?include_prereleases&label=app&color=e89c3a)](https://github.com/joaoviitorsx/Tela/releases)
+[![licença](https://img.shields.io/badge/licen%C3%A7a-AGPL--3.0-e89c3a)](LICENSE)
 
-O caso de uso "mostrar meu gameplay pros amigos enquanto a gente conversa"
-ficou órfão. As alternativas não servem: Twitch e YouTube têm 3 a 15 segundos
-de atraso, o que mata a interação; Meet e Jitsi têm UX de reunião corporativa;
-Parsec é controle remoto, não audiência.
+<img src="docs/imagens/inicio.png" alt="Tela inicial do Tela: campo para o nome do canal, botão TRANSMITIR e a TV de tubo ao lado" width="900">
 
-**Este produto é um cano de vídeo, e recusa ser qualquer outra coisa.** Seus
-amigos já estão numa call conversando — o Discord continua funcionando para
-isso. Não há chat, voz, contas, gravação, diretório ou seguidores aqui, e não
-vai haver.
+</div>
 
 ---
 
-## Arquitetura
+## Por que existe
 
-```
-┌──────────────────────────────────────────────────┐
-│  Front estático  ·  Cloudflare Pages (grátis)    │
-│  React + core/ (portável) + adapters/mesh        │
-└──────────────────┬───────────────────────────────┘
-                   │ WebSocket — só SDP e ICE, nunca mídia
-                   ▼
-┌──────────────────────────────────────────────────┐
-│  Signaling  ·  Durable Objects (grátis)          │
-│  um objeto por slug, relay de payload OPACO      │
-│  hiberna com os sockets abertos → custo zero     │
-└──────────────────────────────────────────────────┘
+Em 17 de agosto de 2026 a ANPD suspendeu o compartilhamento de tela do Discord
+no Brasil. Texto e voz continuaram funcionando. Só a transmissão de vídeo parou.
 
-     STUN público   ·   TURN só para a cauda (CGNAT)
+Quem mostrava o jogo para os amigos durante a call ficou sem ferramenta. Twitch
+e YouTube atrasam de 3 a 15 segundos, e a conversa perde o sentido. Meet e
+Jitsi têm cara de reunião de trabalho. Parsec é controle remoto, não plateia.
 
-  Transmissor ──┬──► Espectador 1     RTCPeerConnection direta
-                ├──► Espectador 2     a mídia NUNCA toca servidor
-                └──► Espectador 3
-```
+O Tela resolve só esse caso. Vocês continuam conversando no Discord, e o Tela
+leva o vídeo.
 
-**A invariante que define o sistema:** o servidor de sinalização não vê um byte
-de mídia. Ele repassa `payload` opaco e nunca olha dentro — é regra de lint, não
-de honra: ler `.sdp` em `apps/signaling/` quebra o build.
+## Como usar
 
-Consequência observável: **se o signaling cair no meio de uma transmissão, as
-conexões já estabelecidas continuam funcionando.** Só espectadores novos não
-entram. O servidor não está no caminho da mídia, então não está no caminho da
-falha.
+**Para transmitir**
 
-### O seam, e a prova de que ele funciona
+1. Abra [tela.transmissao.workers.dev](https://tela.transmissao.workers.dev) no
+   Chrome ou no Edge, ou abra o [app](#app-desktop).
+2. Dê um nome ao canal. O link fica `…/seunome` e não muda entre uma
+   transmissão e outra.
+3. Escolha a tela ou a janela do jogo e aperte **TRANSMITIR**.
+4. Mande o link na call. Pronto.
 
-`core/media/` fala com uma interface, `MediaTransport`. Nada nele sabe se por
-baixo existe um SFU, uma malha P2P ou um app nativo.
+**Para assistir:** abra o link. Não precisa de conta nem de instalar nada, e a
+aba pode ficar aberta antes de a transmissão começar, porque o vídeo entra
+sozinho.
 
-Isso não é aspiração de design — foi testado no pior jeito possível. O projeto
-nasceu com um SFU (LiveKit) e depois trocou o transporte inteiro por mesh P2P.
-`BroadcastSession` e `ViewerSession` mantiveram a máquina de estados, as regras
-de mídia, a degradação por CPU e a lógica de reconexão. Mudou quem implementa a
-porta, não quem a usa. A implementação antiga está preservada em
-`adapters/_reference/` para quem quiser comparar as duas topologias lado a lado.
+<div align="center">
+<img src="docs/imagens/sala-de-espera.jpg" alt="Página do espectador aguardando sinal: o endereço do canal e a instrução para deixar a aba aberta" width="720">
+</div>
 
----
+## O que ele faz
 
-## As decisões contraintuitivas
+| | |
+|---|---|
+| **1080p60 com atraso de chamada de voz** | A imagem vai direto do seu PC para cada amigo por WebRTC. O projeto mira ~150 ms entre a tela e a tela deles |
+| **Até 50 espectadores** | O vídeo é codificado uma vez só e enviado para todos ([ADR 0029](docs/adr/0029-um-encode-e-teto-de-50.md)). O mesmo teto do Go Live do Discord. Navegadores sem esse recurso ficam em 5 |
+| **Sem cadastro** | Sem e-mail e sem senha. O canal é seu enquanto você transmite, e um código de recuperação leva ele para outro aparelho |
+| **Som do jogo, sem a call** | No app, **SISTEMA** leva tudo que toca no PC menos a voz do Discord, e **SÓ O JOGO** leva um programa só. Ninguém ouve a própria voz de volta |
+| **Não pesa no jogo** | Encoder em hardware, um encode para todos, captura a 5 fps quando ninguém está assistindo e um teto de banda que deixa folga para o ping do jogo |
+| **Qualidade que se ajusta sozinha** | A banda escolhe a resolução, e não só o bitrate: 480p nítido em vez de 1080p borrado. Todos descem e sobem juntos, e o console mostra o motivo |
+| **Pausa de privacidade** | Esconde a tela na hora (senha, mensagem, notificação) sem derrubar ninguém. No app, `Ctrl+Shift+O` |
+| **Multivisão** | Quem assiste pode abrir dois canais na mesma tela, o segundo em PiP, com as partidas sincronizadas ([ADR 0032](docs/adr/0032-multivisao.md)) |
+| **Integração com o Discord** | O link colado no Discord já mostra `AO VIVO · 3 assistindo`, e o comando `/tela canal:seunome` posta o convite com um botão ASSISTIR ([docs/DISCORD.md](docs/DISCORD.md)) |
+| **Diagnóstico honesto** | Bits por pixel, banda, CPU, estado do som e motivo de cada degradação, prontos para copiar e mandar |
 
-Três escolhas que parecem erradas até você saber por quê. Todas com o motivo
-escrito no código, porque daqui a seis meses ninguém lembra.
+## App desktop
 
-**1. Todos os peers recebem parâmetros de encoding IDÊNTICOS.**
+O site funciona sozinho. O app é para quem quer mais:
 
-O instinto é adaptar por espectador: quem tem rede ruim recebe menos. Mas o
-Chrome reaproveita o mesmo encoder entre `RTCRtpSender`s cujos parâmetros
-batem — um encode, três envios. Variar por peer viram três encoders 1080p60
-disputando a GPU com o jogo.
+- som do sistema sem a call, ou só o som do jogo, no Windows e no Linux;
+- encoder nativo NVENC em placas NVIDIA;
+- segundo plano, bandeja do sistema e modo compacto enquanto você joga;
+- atalho global para ocultar a transmissão;
+- links `tela://` que abrem o canal direto no app;
+- atualização automática, que nunca roda durante uma transmissão.
 
-Então a adaptação é **coletiva**: ou o espectador aguenta o que está sendo
-enviado, ou todos descem juntos um degrau. Está em `core/mesh/mesh-topology.ts`,
-com teste que falha se alguém "otimizar".
+| Sistema | Arquivo |
+|---|---|
+| Windows 10/11 x64 | `Tela-<versão>-win-x64.exe` |
+| Linux (qualquer distro) | `Tela-<versão>-linux-x86_64.AppImage` |
+| Fedora | `Tela-<versão>-linux-x86_64.rpm` |
+| Ubuntu / Debian | `Tela-<versão>-linux-amd64.deb` |
 
-**2. `track.contentHint = 'motion'`.**
+Tudo em [Releases](https://github.com/joaoviitorsx/Tela/releases). O app está
+em **beta**, e o instalador do Windows não é assinado: o SmartScreen vai
+reclamar, e os hashes SHA-256 de cada arquivo estão no release para conferir.
+Detalhes em [docs/desktop/BETA.md](docs/desktop/BETA.md).
 
-Uma linha. Sem ela, o Chrome trata captura de tela como `detail`, preserva
-nitidez e derruba o framerate — porque assume que você está mostrando um
-documento. Gameplay a 15fps nítido é inútil. Essa linha decide se o produto
-presta.
+## Som do jogo
 
-O botão de **nitidez** troca essa linha por `detail` de propósito, junto com
-30fps e `maintain-resolution` — os três, ou nenhum. Serve para quando o
-detalhe É a informação: um mapa, um inventário, texto. A 30fps o mesmo
-orçamento paga o dobro de bits por pixel, então cabe uma resolução maior sem
-um bit a mais de upload.
+| Onde | Como funciona |
+|---|---|
+| **App (Windows e Linux)** | Escolha **SISTEMA** (tudo menos a call) ou **SÓ O JOGO**. Não precisa configurar nada |
+| **Chrome no Windows** | No seletor, escolha a **janela do jogo** (Chrome 141+) ou **Tela inteira**, e marque *Compartilhar áudio*. A tela inteira leva a call junto, e o Tela avisa |
+| **Chrome no Linux** | O navegador não entrega o som do sistema. Use o app, ou o script `scripts/audio-linux.sh` com um sink virtual. A tela inicial explica o passo a passo |
+| **macOS** | Fora do escopo por enquanto: o sistema exige um driver de terceiros |
 
-**3. H.264, não VP9 nem AV1.**
+O som sai em estéreo de verdade (um tom só na esquerda chega só na esquerda), a
+128 kbps, sem nenhum processamento de voz.
 
-Comprimem melhor. Também consomem, em software, exatamente a CPU que o jogo
-precisa. H.264 tem encode em hardware em qualquer GPU dos últimos doze anos.
-
-Bônus: a degradação automática por CPU anda só entre presets de 60fps.
-`720p30` existe, mas tem a mesma resolução do `720p60 econômico` — descer até
-ele sob pressão de CPU cortaria framerate sem aliviar o encoder. Ele é degrau
-de **upload**, não de CPU.
-
----
-
-## Limitações declaradas
-
-Estas são consequências da arquitetura, não bugs a corrigir depois:
-
-- **Teto de 5 espectadores (configurável até 8).** Cada um é uma cópia do seu
-  upload saindo de casa e uma conexão a mais para negociar. Cinco é o limite
-  técnico configurado, **não** uma promessa de cinco em 1080p60: quanto cabe
-  depende da sua subida, e o impacto no FPS do jogo com 3 e 5 espectadores
-  ainda não foi medido em hardware (TELA-016).
-- **Seu upload é o gargalo.** Cada espectador recebe uma cópia inteira, e a
-  qualidade desce junto para todos quando a subida não comporta. A tela diz
-  quando isso acontece e por quê.
-- **~15–20% das conexões precisam de TURN.** CGNAT simétrico não fura, e o
-  remédio é um relay de terceiro com cota. É o preço honesto de "sem
-  servidor" — não existe topologia que sirva 100% dos usuários com zero
-  infraestrutura.
-- **O slug não é reservado para sempre.** O signaling não persiste nada. O nome
-  fica seu enquanto você transmite, mais 5 minutos de carência para
-  reconexão. O convite do link mora no seu navegador; recuperar a conta em
-  outro navegador leva o dono, não o convite — o link muda.
-- **Colapso de rede numa conexão já aberta** é tratado (ADR 0023) e medido no
-  simulador e em Chrome com link estreito, mas não numa rede real que despenca
-  no meio da partida. O roteiro está em `docs/qa/TELA-015-colapso.md`.
-- **Cota diária no free tier.** 100.000 requisições/dia no Worker. Uma
-  transmissão gasta dezenas de mensagens de sinalização, não milhares — mas o
-  teto existe, e estourar dá erro claro, não degradação silenciosa.
-- **Nada foi medido em hardware real.** Latência glass-to-glass, encode em
-  hardware e impacto no FPS do jogo exigem uma pessoa com máquina, rede e
-  amigos. O roteiro está na §18 da documentação técnica.
-
----
-
-## Não atrapalhar o jogo
-
-É o requisito central, e o produto trabalha em quatro frentes para cumpri-lo:
-
-**Teto de banda com folga.** O WebRTC estima quanto cabe no link e sobe até
-lá — e "até lá" é exatamente onde a fila do roteador enche e o ping do jogo
-dispara. O encoder é limitado a 75% do estimado, antes disso acontecer.
-
-E o orçamento escolhe a RESOLUÇÃO, não só o bitrate. É a diferença entre
-480p60 nítido e 1080p60 borrado com os mesmos 3 Mbps — apertar bits sem tirar
-pixel só sobe o QP, e o navegador acaba derrubando a resolução sozinho, sem
-avisar ninguém.
-
-Na outra ponta, banda de sobra vira imagem em vez de sobrar: quem tem link
-para 25 Mbps por espectador recebe 25, e não os 12 do rótulo. O console mostra
-os bits por pixel — abaixo de 0,10 a imagem borra, e 0,20 é onde o bit deixa
-de virar nitidez.
-
-**Prioridade de rede.** O vídeo é marcado como tráfego sacrificável (DSCP
-baixo) e o áudio como prioritário. Roteador com fila consciente (fq_codel,
-CAKE) deixa o jogo passar na frente; onde ninguém honra, é inerte.
-
-**Tela inteira é o caminho principal.** O seletor já abre nela, e a captura
-pede `crop-and-scale` para o navegador reduzir a resolução dentro do pipeline,
-normalmente na GPU — sem isso, um monitor 1440p ou 4K entrega quadros em
-resolução nativa e o redimensionamento vira trabalho extra 60 vezes por
-segundo, na mesma máquina que roda o jogo.
-
-**Captura ociosa a 5fps.** Sem espectador não há encoder rodando, mas a
-captura de tela continua — e a 1080p60 ela custa GPU e compositor por nada.
-Volta ao framerate cheio quando alguém entra.
-
-**Aba escondida não faz rede.** Quem deixa a página do espectador aberta e vai
-jogar não recebe nem uma conexão. Medido: 4 conexões em 45s com a aba visível,
-**zero** com ela escondida.
-
-E a degradação automática reage tanto a CPU quanto a **banda** — quando o
-WebRTC diz que a rede é o limitador, o preset desce sozinho.
-
-## Áudio do jogo — o que muda entre sistemas
-
-Seus amigos precisam **ouvir** o gameplay, e é aqui que Windows e Linux
-divergem de verdade.
-
-| Sistema | Como funciona | O que você faz |
-|---|---|---|
-| **Windows** | O Chrome entrega o áudio junto com a tela | No picker: escolha **"Tela inteira"** e marque **"Compartilhar áudio do sistema"** |
-| **Linux** | O Chrome **não** entrega áudio do sistema, só de aba | `bash scripts/audio-linux.sh setup` (repetir não duplica; `status` confere; `cleanup` remove só o que ele criou), mande **só** o jogo para "TelaCapture" no pavucontrol, e escolha o monitor na tela inicial |
-| **macOS** | Exige driver de terceiro (BlackHole, Loopback) | Fora do escopo — a tela inicial avisa em vez de prometer |
-
-A tela inicial detecta o sistema e mostra a instrução certa; no Linux ela
-oferece o mesmo script para baixar. Áudio de jogo sai em **estéreo de verdade**
-(medido: um tom só na esquerda chega só na esquerda), com teto de 128 kbps e
-sem processamento de voz. DTX e RED seguem desligados até uma comparação
-perceptiva dizer o contrário (ADR 0024); a comparação ainda não foi feita.
-
-**Ocultar a transmissão** (botão no console ao vivo) troca a tela por um quadro
-"transmissão pausada" sem derrubar ninguém, e silencia o som, a menos que você
-peça para manter. Não é encerrar: voltar é instantâneo. O que já tinha saído
-antes do clique não volta.
-
-## Rodar
-
-```bash
-pnpm install
-pnpm dev     # signaling :3333 + web :5173
-```
-
-Não há Docker, banco nem servidor de mídia.
-
-```bash
-pnpm turbo lint typecheck test build   # tem que passar antes de qualquer entrega
-pnpm depcruise                         # ciclos de dependência
-```
-
-Mais de 650 testes sem browser e sem rede: a lógica de mídia vive em classes
-puras com `RTCPeerConnection` injetada, então a negociação inteira é
-exercitável em milissegundos. Por cima deles, o que só navegador prova:
-
-```bash
-pnpm dev                    # num terminal
-pnpm e2e                    # malha, estéreo L/R, convite, pausa em dois Chromium
-node e2e/banda.e2e.mjs      # link estreito: a sessão desce, diz o motivo e volta
-node e2e/malhas.sim.mjs     # 1200 cenários das malhas de controle
-pnpm test:audio-linux       # script de áudio contra um pactl falso
-```
-
-A CI roda tudo isso em `develop` e `main`; o deploy só sai com tudo verde.
-
-O servidor tem duas implementações — Node portátil e Durable Object — porque
-sob hibernação o modelo de estado é genuinamente diferente. Uma bateria de
-conformidade roda as mesmas expectativas contra as duas — incluindo o ciclo de
-hibernação, que é o motivo de a segunda existir e o caminho onde um estranho
-já conseguiu assumir um canal ao vivo.
-
----
-
-## Dados pessoais
+## Privacidade
 
 | Dado | Coletado? |
 |---|---|
 | Nome, e-mail, telefone, senha | Não |
 | Cookie de rastreamento, analytics | Não |
 | Gravação de vídeo ou áudio | Não |
-| Vídeo passando por servidor nosso | Não — é P2P |
-| Slug, hash do ownerToken e hash do convite | Em memória, enquanto o canal existe |
-| Diagnóstico da transmissão | Só no seu navegador; sai quando você copia e manda |
+| Vídeo passando por um servidor nosso | Não, é P2P. Só quem está atrás de CGNAT usa um relay TURN, que repassa pacotes cifrados |
+| Seu IP | Quem transmite vê o IP de quem assiste, como em qualquer conexão P2P. No repasse em cascata, quem repassa e quem recebe dele também se veem |
+| Nome do canal e hashes do token | Em memória, enquanto o canal existe |
+| Diagnóstico da transmissão | Só no seu navegador. Sai daí quando você copia e manda |
 
-Não há login. Um token de 32 bytes no `localStorage` **é** a credencial —
-trade-off consciente, com página de exportação em `/recuperar`.
+Não existe login. Um token de 32 bytes guardado no navegador é a credencial do
+canal, e `/recuperar` exporta esse token para outro aparelho.
 
 ---
 
-## Documentação
+## Como funciona
 
-| Arquivo | Quando ler |
-|---|---|
-| [`AGENTS.md`](AGENTS.md) | As oito regras inegociáveis |
-| [`docs/adr/`](docs/adr/) | Por que as decisões são o que são |
-| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Subir o front e o signaling |
-| [`docs/adr/0007`](docs/adr/0007-onde-hospedar.md) | Por que Cloudflare, e o que foi descartado |
-| [`docs/TELA-changeset-mesh.md`](docs/TELA-changeset-mesh.md) | A mudança de SFU para mesh |
-| [`docs/adr/0015`](docs/adr/0015-o-teto-de-upload-escolhe-o-degrau.md) | Por que a imagem borrava, e o que decide a qualidade agora |
-| [`docs/adr/0016`](docs/adr/0016-perfil-h264-nivel-e-jitter-buffer.md) | Perfil H.264, nível anunciado e jitter buffer |
-| [`docs/adr/0017`](docs/adr/0017-o-governador-mede-orcamento-nao-teto.md) | Por que 800 Mbps de subida entregavam 12, e o que mudou |
-| [`docs/adr/0018`](docs/adr/0018-as-malhas-mediam-a-propria-atuacao.md) | Os 30 achados da revisão adversarial do pipeline |
-| [`docs/adr/0019`](docs/adr/0019-medido-em-vez-de-deduzido.md) | 1200 cenários simulados e dois Chrome reais: o que se provou e o que se desmentiu |
-| [`docs/adr/0020`](docs/adr/0020-nivel-h264-nao-se-inventa.md) | Por que o nível H.264 do receptor não é mais reescrito |
-| [`docs/adr/0021`](docs/adr/0021-sala-privada-por-convite.md) | Sala privada por convite e protocolo v2 (convite substituído pela 0026) |
-| [`docs/adr/0022`](docs/adr/0022-identidade-crt-ambar.md) | A identidade CRT âmbar da interface |
-| [`docs/adr/0023`](docs/adr/0023-colapso-de-link-e-sonda.md) | Colapso de link e a sonda de subida |
-| [`docs/adr/0024`](docs/adr/0024-politica-opus.md) | Estéreo que chega em estéreo, e o que falta decidir no áudio |
-| [`docs/adr/0025`](docs/adr/0025-aprovacao-manual-de-espectador.md) | Aprovação manual de cada espectador e protocolo v3 |
-| [`docs/adr/0026`](docs/adr/0026-link-so-com-o-nome.md) | O link é só o nome do canal; protocolo v4 |
-| [`docs/adr/0027`](docs/adr/0027-tela-desktop-electron.md) | Tela Desktop: Electron, janela única com modo escondido (proposta) |
-| [`docs/adr/0028`](docs/adr/0028-sala-aberta-por-padrao.md) | Sala aberta por padrão; aprovação como opção; protocolo v5 |
-| [`docs/qa/`](docs/qa/) | O que foi executado e o que depende de gente, por tarefa |
+```
+┌───────────────────────────────────────────────┐
+│  Front estático · Cloudflare                  │
+│  React + core/ (portável) + adapters/         │
+└─────────────────────┬─────────────────────────┘
+                      │ WebSocket: só SDP e ICE, nunca mídia
+                      ▼
+┌───────────────────────────────────────────────┐
+│  Sinalização · Durable Objects                │
+│  um objeto por canal, repassa payload opaco   │
+│  hiberna com os sockets abertos               │
+└───────────────────────────────────────────────┘
 
-Comece pela [ADR 0005](docs/adr/0005-mesh-p2p.md) se quiser entender a
-arquitetura atual, e pela [0002](docs/adr/0002-transporte-p2p-self-host.md) se
-quiser a análise de por que P2P não é mágica.
+           STUN público · TURN só para CGNAT
+
+                  ┌──────────────┐
+  captura ──► 1 encoder ──► isca + Encoded Transform ──┬──► espectador 1
+                  └──────────────┘                     ├──► espectador 2
+                                                       ├──► …
+                                                       └──► repassador ──► espectadores
+```
+
+**O servidor não vê um byte de mídia.** Ele repassa `payload` opaco e nunca
+olha dentro. Isso é regra de lint: ler `.sdp` em `apps/signaling/` quebra o
+build. Se a sinalização cair no meio de uma transmissão, quem já está assistindo
+continua assistindo. Só quem chega depois não consegue entrar.
+
+**Um encode, N envios.** O Chromium codifica uma vez por conexão, o que daria
+50 encoders 1080p60 disputando a GPU com o jogo. O Tela usa um `VideoEncoder`
+só, e cada conexão leva uma isca de 32×18 que um Encoded Transform troca pelo
+quadro real. O encode é um só, e por espectador sobra só o custo pequeno da
+isca ([ADR 0029](docs/adr/0029-um-encode-e-teto-de-50.md)).
+
+**Repasse em cascata.** Quando a sua subida não dá conta de todos, espectadores
+com banda de sobra repassam o vídeo para outros
+([ADR 0031](docs/adr/0031-cascata-de-repasse.md)).
+
+**Núcleo portável.** A lógica de captura, publicação, reconexão e qualidade
+mora em classes puras (`BroadcastSession`, `ViewerSession`) atrás de portas
+(`MediaTransport`, `SignalingChannel`). O projeto já trocou o transporte inteiro
+de SFU para mesh P2P sem mexer nelas, e o mesmo núcleo roda no site e no app.
+
+### Decisões que parecem erradas à primeira vista
+
+**Parâmetros de encoding idênticos para todos.** Adaptar por espectador parece
+justo, mas acaba com o "um encode". A adaptação é coletiva: ou cada um aguenta o
+que está sendo enviado, ou todos descem juntos um degrau. Há teste que quebra se
+alguém tentar "otimizar" isso.
+
+**`contentHint = 'motion'`.** Por padrão o Chrome trata captura de tela como
+documento: mantém a nitidez e derruba o framerate. Gameplay nítido a 15 fps não
+serve para nada. O modo **nitidez** existe para quando o detalhe importa (mapa,
+inventário, texto) e troca três coisas juntas: `detail`,
+`maintain-resolution` e 30 fps.
+
+**H.264 como piso.** VP9 e AV1 comprimem melhor, mas em software gastam a CPU
+que o jogo precisa, e H.264 tem encode em hardware em qualquer GPU dos últimos
+doze anos. A sala sobe para AV1 sozinha quando quem transmite tem encoder AV1 em
+hardware e todos os espectadores decodificam bem
+([ADR 0035](docs/adr/0035-av1-no-codificador-unico.md)).
+
+**Todo orçamento vira resolução antes de virar bitrate.** Apertar bits sem tirar
+pixel só sobe o QP, e a imagem borra. O console mostra os bits por pixel:
+abaixo de 0,10 a imagem borra, e acima de 0,13 o bit extra quase não aparece
+na imagem ([ADR 0015](docs/adr/0015-o-teto-de-upload-escolhe-o-degrau.md),
+[0017](docs/adr/0017-o-governador-mede-orcamento-nao-teto.md); o teto atual é
+`BPP_TETO` em [`packages/shared/src/encoding.ts`](packages/shared/src/encoding.ts)).
+
+### Limitações conhecidas
+
+São consequências da arquitetura, e não bugs esperando conserto:
+
+- **Sua subida é o teto.** Sem servidor de mídia, cada espectador recebe uma
+  cópia. O repasse alivia, mas não faz milagre, e o Tela mostra quando a banda
+  limitou a qualidade.
+- **Cerca de 15–20% das conexões precisam de TURN.** CGNAT simétrico não deixa a
+  conexão direta passar. Nenhuma topologia sem servidor atende 100% das redes.
+- **O nome do canal não é reservado para sempre.** A sinalização não guarda nada
+  em disco. O nome é seu enquanto você transmite, mais 5 minutos para reconectar.
+- **Medições que dependem de gente.** Atraso glass-to-glass, impacto no FPS com
+  10 espectadores e o sucesso de ICE em operadoras brasileiras exigem máquina,
+  rede e amigos reais. Os roteiros estão em [`docs/qa/`](docs/qa/).
+
+---
+
+## Rodar localmente
+
+Requer Node 22+ e pnpm.
+
+```bash
+pnpm install
+pnpm dev            # sinalização em :3333 + web em :5173
+```
+
+Não há Docker, banco nem servidor de mídia.
+
+```bash
+pnpm turbo lint typecheck test build   # o portão de toda entrega
+pnpm depcruise                         # ciclos de dependência
+pnpm e2e                               # malha, estéreo L/R, pausa e teto de espectadores em dois Chromium
+node e2e/malhas.sim.mjs                # 1200 cenários das malhas de controle
+```
+
+São mais de 1.900 testes que rodam sem navegador e sem rede: a mídia vive em
+classes puras com `RTCPeerConnection` injetada, então a negociação inteira roda
+em milissegundos. Os e2e cobrem o que só um navegador consegue provar.
+
+A abertura 3D tem atalhos na URL: `/?abertura=0` pula a animação e
+`/?abertura=t1.35` congela o quadro naquele instante.
+
+### Estrutura
+
+```
+apps/
+  web/         site e renderer do app (React + core/ portável)
+  desktop/     app Electron: captura nativa, som, NVENC, bandeja, atualização
+  signaling/   sinalização: Node portátil e Durable Object
+packages/
+  shared/      protocolo, schemas e presets de encoding
+docs/
+  adr/         decisões e seus motivos
+```
+
+O app desktop tem o próprio passo a passo em
+[docs/desktop/PLANO-desktop.md](docs/desktop/PLANO-desktop.md), e o deploy está
+em [docs/DEPLOY.md](docs/DEPLOY.md).
+
+## Contribuindo
+
+Leia o [`AGENTS.md`](AGENTS.md) antes: ele tem as oito regras do projeto. As
+mais importantes são o núcleo sem React, nenhum SDK de SFU, erro esperado como
+`Result` e escopo fechado. Este produto **não** vai ter chat, voz, contas,
+gravação, diretório público nem seguidores, porque isso o Discord já faz.
+
+Decisões ficam registradas em [`docs/adr/`](docs/adr/). Comece pela
+[0005](docs/adr/0005-mesh-p2p.md), que explica a arquitetura atual. Mudanças nos
+parâmetros de mídia precisam de uma ADR nova.
+
+Bugs e ideias vão em [Issues](https://github.com/joaoviitorsx/Tela/issues).
+Para problemas de transmissão, anexe o texto do **DIAGNÓSTICO**: ele já traz o
+que importa e nada pessoal.
+
+## Licença
+
+[AGPL-3.0](LICENSE). Use, estude, modifique e hospede o seu próprio Tela à
+vontade. Se você oferecer uma versão modificada para outras pessoas usarem pela
+rede, o código dela também precisa ser aberto. É isso que garante que qualquer
+Tela por aí possa ser conferido: sem rastreamento, e sem mídia passando por
+servidor.

@@ -163,3 +163,34 @@ Tudo isto precisa de humano com máquina e rede reais:
 4. confirmar que o nível elevado não quebra a negociação em nenhum navegador de
    espectador (Firefox e Safari incluídos) — o risco é baixo pelo
    `level-asymmetry-allowed`, mas não é zero e não foi testado.
+
+## Adendo (2026-10-03) — o codificador único segue o perfil da sala
+
+O caminho "um encode, N envios" (ADR 0029) codificava fixo em Constrained
+Baseline (`avc1.42e02a`), enquanto o SDP de cada espectador já negociava Main
+(`4d…`) pela Decisão 1 acima: o receptor aceitava CABAC e recebia CAVLC.
+
+Agora o perfil é o **piso da sala** (`core/media/perfil-h264.ts`): Main só
+quando TODOS os senders conectados negociaram Main ou High; um só-Baseline
+(Firefox: `42e01f`) ou a cascata ligada (o anfitrião não vê o que os filhos
+dos repassadores negociaram) seguram a sala em Baseline. O quadro continua
+um só para todos — R5 intacta.
+
+No codificador WebCodecs (`adapters/webcodecs-codificador.ts`):
+- Main é perguntado POR MODO de aceleração (`isConfigSupported`) antes de
+  ser usado: um `configure` recusado viraria "a GPU morreu" para a política
+  de aceleração.
+- Trocar de perfil reconfigura com IDR, como trocar de tamanho.
+- Timestamp de saída voltando (B-frames) proíbe Main até o fim da sessão.
+- O perfil EMITIDO sai do SPS do quadro-chave e aparece no console
+  (`WebCodecs·hardware · H.264 Main`) — o pedido não é prova.
+
+**Medido** (`ESPECTADORES=3 node e2e/um-encode.e2e.mjs`, Chromium headless):
+o encoder de software emitiu Main (SPS `profile_idc` 77) e os três
+espectadores decodificaram a 29,8 fps, sem reconectar, 3 quadros-chave em
+30 s. `qualidade.e2e.mjs` e `malhas.sim.mjs --portao` sem regressão.
+
+**Não medido aqui:** o ganho de bits em gameplay real (os ~10% vêm de PSNR em
+fonte sintética no NVENC), o Media Foundation do Windows honrando Main sem
+B-frames (conferir o console), e o NVENC nativo do Linux, que continua em
+Baseline (`tela-captura.c`; mudar exige o protocolo do binário).

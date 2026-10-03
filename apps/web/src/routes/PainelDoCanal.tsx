@@ -44,6 +44,8 @@ type Props = {
   readonly session: ViewerSession;
   readonly canal: string;
   readonly principal: boolean;
+  /** Mede latência por quadro: a principal sempre; a outra só com a sincronia ligada. */
+  readonly medirLatencia: boolean;
   readonly abrir: boolean;
   readonly quem: { readonly nome: string; readonly chave: string };
   readonly som: SomDoPainel;
@@ -74,6 +76,7 @@ export function PainelDoCanal({
   session,
   canal,
   principal,
+  medirLatencia,
   abrir,
   quem,
   som,
@@ -86,7 +89,7 @@ export function PainelDoCanal({
   sobreposicao,
   quadro,
 }: Props) {
-  const painel = usePainelDeCanal(session, canal, { abrir, quem, som, medirLatencia: principal });
+  const painel = usePainelDeCanal(session, canal, { abrir, quem, som, medirLatencia });
   const { montarVideo, state } = painel;
 
   const montar = useCallback(

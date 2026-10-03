@@ -34,7 +34,19 @@ export type SaidasDoProtocolo = {
   readonly quadro: (q: QuadroDoNativo) => void;
   readonly evento: (e: EventoDoNativo) => void;
   readonly captura?: () => void;
+  /**
+   * O fluxo deixou de fazer sentido (comprimento absurdo: lixo no stdout,
+   * sincronia perdida). O leitor para de aceitar dados; quem usa encerra o
+   * processo — acumular memória à espera de 4 GB congelaria tudo calado.
+   */
+  readonly corrompido?: () => void;
 };
+
+/**
+ * Teto de uma mensagem. Um quadro-chave 4K de alta qualidade fica na casa de
+ * poucos MB; 32 MiB é folga de sobra e ainda barra um comprimento-lixo.
+ */
+export const TAMANHO_MAXIMO_DA_MENSAGEM = 32 * 1024 * 1024;
 
 function ehObjeto(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null && !Array.isArray(x);
@@ -53,6 +65,8 @@ export class LeitorDoProtocolo {
    * cabeçalho andando a lista — O(pedaços) por pedaço, quadrático de novo.
    */
   private tamanho = -1;
+  /** Fluxo corrompido: nada mais é lido (ver `corrompido`). */
+  private parado = false;
 
   constructor(private readonly saidas: SaidasDoProtocolo) {}
 
@@ -62,12 +76,20 @@ export class LeitorDoProtocolo {
   }
 
   receber(pedaco: Buffer): void {
-    if (pedaco.length === 0) return;
+    if (pedaco.length === 0 || this.parado) return;
     this.pedacos.push(pedaco);
     this.total += pedaco.length;
     while (this.total >= 4) {
       if (this.tamanho < 0) this.tamanho = this.lerU32(0);
       const tamanho = this.tamanho;
+      if (tamanho > TAMANHO_MAXIMO_DA_MENSAGEM) {
+        this.parado = true;
+        this.pedacos = [];
+        this.total = 0;
+        this.inicio = 0;
+        this.saidas.corrompido?.();
+        return;
+      }
       if (this.total - 4 < tamanho) break;
       if (tamanho === 0) {
         // Mensagem sem tipo: o protocolo não produz isto; só não trava.

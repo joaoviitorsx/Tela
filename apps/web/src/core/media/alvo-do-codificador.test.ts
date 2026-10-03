@@ -9,7 +9,13 @@ describe('alvoDoCodificador — o encoder único segue a regra da topologia', ()
     const a = alvoDoCodificador({ ...base, preset: PRESETS.p1080p60, orcamento: null });
     expect(a).toEqual({
       width: 1920, height: 1080, fps: 60, bitrate: PRESETS.p1080p60.main.maxBitrate, limitadoPelaEstimativa: false,
+      perfil: 'baseline',
     });
+  });
+
+  it('o perfil da sala passa para o encoder; sem ele, Baseline', () => {
+    expect(alvoDoCodificador({ ...base, preset: PRESETS.p1080p60, orcamento: null, perfil: 'main' }).perfil).toBe('main');
+    expect(alvoDoCodificador({ ...base, preset: PRESETS.p1080p60, orcamento: null }).perfil).toBe('baseline');
   });
 
   it('com orçamento, gasta até o teto útil de bits por pixel', () => {

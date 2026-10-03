@@ -62,6 +62,11 @@ export function useSegundoPlano(deps: {
    * pessoa não vê a janela do Tela, então ouve (ver `AudioCue.privacidade`).
    */
   readonly somDeOculto?: (oculto: boolean) => void;
+  /**
+   * O que ainda tem de sair antes de o app fechar (a edição "encerrada" do
+   * aviso no Discord). Com teto: quem chama decide quanto espera.
+   */
+  readonly antesDeSair?: () => Promise<void>;
 }) {
   const { sessao, ponte } = deps;
   const modoStore = deps.modo ?? MODO_NORMAL;
@@ -138,7 +143,11 @@ export function useSegundoPlano(deps: {
       ponte.aoPedirParar((motivo) => {
         if (motivo === 'suspensao') setAviso(AVISO_DE_SUSPENSAO);
         // `stop()` libera trilhas, peers e avisa a sala; só então o main segue.
-        void sessao.parar().finally(() => ponte.paradaConcluida());
+        void sessao
+          .parar()
+          .then(() => deps.antesDeSair?.())
+          .catch(() => undefined)
+          .finally(() => ponte.paradaConcluida());
       }),
       ponte.aoPerguntarFechar(() => {
         setLembrar(false);

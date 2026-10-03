@@ -1,3 +1,4 @@
+import type { PerfilH264 } from './perfil-h264.js';
 import {
   FRAMERATE_POR_PRIORIDADE,
   type EncodingPreset,
@@ -28,6 +29,8 @@ export type AlvoDoCodificador = {
    * borrada da ADR 0015.
    */
   readonly limitadoPelaEstimativa: boolean;
+  /** O piso de perfil H.264 da sala (`perfil-h264.ts`). */
+  readonly perfil: PerfilH264;
 };
 
 export type EntradaDoAlvo = {
@@ -35,6 +38,8 @@ export type EntradaDoAlvo = {
   /** Orçamento de vídeo POR caminho, da malha de banda. `null` = sem medição. */
   readonly orcamento: number | null;
   readonly prioridade: Prioridade;
+  /** O piso de perfil da sala; ausente = Baseline, o que todo receptor decodifica. */
+  readonly perfil?: PerfilH264;
   /** Tamanho que a captura entrega. O codificador só tira pixel, não cria. */
   readonly fonte: { readonly width: number; readonly height: number } | null;
   /**
@@ -82,5 +87,12 @@ export function alvoDoCodificador(e: EntradaDoAlvo): AlvoDoCodificador {
     bitrate = e.piorEstimativa * FOLGA_DA_ESTIMATIVA;
     limitadoPelaEstimativa = true;
   }
-  return { width, height, fps, bitrate: Math.max(BITRATE_MINIMO, Math.round(bitrate)), limitadoPelaEstimativa };
+  return {
+    width,
+    height,
+    fps,
+    bitrate: Math.max(BITRATE_MINIMO, Math.round(bitrate)),
+    limitadoPelaEstimativa,
+    perfil: e.perfil ?? 'baseline',
+  };
 }

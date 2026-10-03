@@ -34,6 +34,7 @@ import {
   net,
   powerMonitor,
   protocol,
+  screen,
   session,
   shell,
   Tray,
@@ -49,6 +50,13 @@ import {
   URL_DA_LISTA_DE_RELEASES,
 } from './atualizacao-release.js';
 import { criarMotorDoUpdater } from './motor-electron-updater.js';
+import {
+  HTML_DO_PAINEL,
+  TAMANHO_DO_PAINEL,
+  chamadaDeAtualizacao,
+  posicaoDoPainel,
+  textoDoPainel,
+} from './painel-sobre-o-jogo.js';
 import { gravarArquivoPrivado } from './arquivo-privado.js';
 import { criarPortaoDeGesto, ehGesto } from './gestos.js';
 import {
@@ -382,6 +390,8 @@ function criarJanela(): BrowserWindow {
     if (estado.noAr) {
       estado = FORA_DO_AR;
       atualizarBandeja();
+      // O painel sobre o jogo também: senão fica um "AO VIVO" congelado por cima de tudo.
+      sincronizarPainel();
       if (modo === 'compacto') definirModo('normal');
     }
     paginaPronta = true;
@@ -397,6 +407,9 @@ function criarJanela(): BrowserWindow {
 
   j.on('closed', () => {
     janela = null;
+    // Sem a janela principal não há transmissão a descrever — e uma janela
+    // de painel viva seguraria o `window-all-closed`, deixando o app aberto.
+    fecharPainel();
   });
 
   void j.loadURL(URL_INICIAL);
@@ -512,6 +525,89 @@ function iconeDaBandeja(): NativeImage {
   // Colorido: a arte tem fundo âmbar cheio, e pintada de uma cor só a TV
   // some no fundo a 24 px.
   return original.resize({ width: lado, height: lado, quality: 'best' });
+}
+
+/* ------------------------------------------------- painel sobre o jogo */
+
+let painel: BrowserWindow | null = null;
+let tiqueDoPainel: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Abre, posiciona ou fecha o painel conforme o ajuste e o ar. Fora do ar (ou
+ * desligado) a janela é DESTRUÍDA, não escondida: o processo de render dela
+ * não fica ocupando memória à toa.
+ */
+function sincronizarPainel(): void {
+  if (!ajustes.painelSobreOJogo || !estado.noAr) {
+    fecharPainel();
+    return;
+  }
+  if (painel === null || painel.isDestroyed()) abrirPainel();
+  else posicionarPainel();
+  atualizarPainel();
+}
+
+function abrirPainel(): void {
+  const p = new BrowserWindow({
+    width: TAMANHO_DO_PAINEL.largura,
+    height: TAMANHO_DO_PAINEL.altura,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    // Nunca recebe foco: o teclado continua no jogo.
+    focusable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    show: false,
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, spellcheck: false },
+  });
+  // Atravessável: o clique passa direto para o jogo.
+  p.setIgnoreMouseEvents(true);
+  p.setAlwaysOnTop(true, 'screen-saver');
+  // `skipTransformProcessType`: no macOS, sem ele o processo troca de tipo e
+  // o dock e a janela piscam a cada abertura do painel.
+  p.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  // Fora da própria transmissão quando a captura é da tela inteira (Windows 10
+  // 2004+ e macOS; no Linux o sistema não oferece isso).
+  p.setContentProtection(true);
+  p.once('ready-to-show', () => {
+    atualizarPainel();
+    p.showInactive();
+  });
+  p.on('closed', () => {
+    if (painel === p) painel = null;
+  });
+  painel = p;
+  posicionarPainel();
+  void p.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(HTML_DO_PAINEL)}`);
+  tiqueDoPainel ??= setInterval(atualizarPainel, 1_000);
+}
+
+function posicionarPainel(): void {
+  if (painel === null || painel.isDestroyed()) return;
+  const { x, y } = posicaoDoPainel(screen.getPrimaryDisplay().workArea, ajustes.cantoDoPainel);
+  painel.setBounds({ x, y, width: TAMANHO_DO_PAINEL.largura, height: TAMANHO_DO_PAINEL.altura });
+}
+
+function atualizarPainel(): void {
+  if (painel === null || painel.isDestroyed()) return;
+  const texto = textoDoPainel(estado, Date.now());
+  if (texto === null) return;
+  void painel.webContents.executeJavaScript(chamadaDeAtualizacao(texto), false).catch(() => undefined);
+}
+
+function fecharPainel(): void {
+  if (tiqueDoPainel !== null) {
+    clearInterval(tiqueDoPainel);
+    tiqueDoPainel = null;
+  }
+  if (painel !== null && !painel.isDestroyed()) painel.destroy();
+  painel = null;
 }
 
 function janelaVisivelAgora(): boolean {
@@ -746,6 +842,7 @@ function aoCairORenderer(j: BrowserWindow, razao: string, codigo: number): void 
   void somDoApp.parar();
   const estavaNoAr = estado.noAr;
   estado = FORA_DO_AR;
+  sincronizarPainel();
   atualizador?.aoVivo(false);
   perguntando = false;
   portaoDeParada?.confirmar();
@@ -1137,7 +1234,12 @@ function registrarIpc(): void {
     // A política de atualização para (ou retoma) o que fazia conforme o ar.
     atualizador?.aoVivo(novo.noAr);
     if (eraNoAr && !novo.noAr) {
-      portaoDeParada?.confirmar();
+      /*
+        Saindo do app, o "fora do ar" NÃO libera a saída: quem libera é o
+        `paradaConcluida`, que a página manda depois de terminar o que ainda
+        tinha de sair (a edição "encerrada" do aviso no Discord). O prazo do
+        portão (4 s) continua cobrindo um renderer travado.
+      */
       // Acabou a transmissão: o compacto não tem mais o que mostrar.
       if (modo === 'compacto') definirModo('normal');
     }
@@ -1150,6 +1252,7 @@ function registrarIpc(): void {
       tiqueDaBandeja = null;
     }
     atualizarBandeja();
+    sincronizarPainel();
   });
 
   const respostaDeAjustes = (autostartFalhou: boolean) => ({ ajustes, bandeja: temBandeja, autostartFalhou });
@@ -1171,6 +1274,7 @@ function registrarIpc(): void {
       if (modo === 'compacto' && janela !== null && !janela.isDestroyed()) {
         janela.setAlwaysOnTop(ajustes.sempreNoTopoNoCompacto, 'floating');
       }
+      sincronizarPainel();
     }
     return respostaDeAjustes(falhou);
   });
@@ -1374,6 +1478,9 @@ if (!app.requestSingleInstanceLock()) {
     // O caminho do executável pode ter mudado (AppImage movido, atualização).
     if (ajustes.iniciarComSistema) aplicarAutostart(true);
     registrarEnergia();
+    // Resolução ou monitor mudou: o painel sobre o jogo volta para o canto.
+    screen.on('display-metrics-changed', posicionarPainel);
+    screen.on('display-removed', posicionarPainel);
     iniciarAtualizacao();
     void iniciarBandeja().finally(resolverBandeja);
     // Lançado pelo link (primeira instância): o canal espera a página carregar.

@@ -41,6 +41,8 @@ type Props = {
   readonly visibilidade?: FonteDeVisibilidade;
   /** O som que confirma ocultar/mostrar pelo atalho (`audioCue.privacidade`). */
   readonly somDeOculto?: (oculto: boolean) => void;
+  /** Ver `useSegundoPlano`: o que tem de terminar antes de o app sair. */
+  readonly antesDeSair?: () => Promise<void>;
 };
 
 /**
@@ -66,6 +68,7 @@ export function MolduraDesktop({
   modo,
   visibilidade,
   somDeOculto,
+  antesDeSair,
 }: Props) {
   const { caminho, travado, irPara } = useNavegacaoDesktop();
   const assistir = useAssistir(irPara);
@@ -76,6 +79,7 @@ export function MolduraDesktop({
     ...(modo === undefined ? {} : { modo }),
     ...(visibilidade === undefined ? {} : { visibilidade }),
     ...(somDeOculto === undefined ? {} : { somDeOculto }),
+    ...(antesDeSair === undefined ? {} : { antesDeSair }),
   });
   const ajustes = useAjustes(ponte);
   const atualizacao = useAtualizacao(ponte);

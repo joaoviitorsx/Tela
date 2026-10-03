@@ -9,6 +9,8 @@ import { SLUG_RE } from '@tela/shared';
  */
 export const MAX_CANAIS = 2;
 const SEPARADOR = '+';
+/** Rotas do site: não são canais (o mesmo que o link profundo e a prévia recusam). */
+const ROTAS: ReadonlySet<string> = new Set(['transmitir', 'recuperar']);
 
 /**
  * Os canais de um segmento de caminho, ou `null` se algum pedaço não é canal.
@@ -19,7 +21,7 @@ const SEPARADOR = '+';
  */
 export function canaisDoSegmento(segmento: string): readonly string[] | null {
   const partes = segmento.split(SEPARADOR);
-  if (partes.some((p) => !SLUG_RE.test(p))) return null;
+  if (partes.some((p) => !SLUG_RE.test(p) || (partes.length > 1 && ROTAS.has(p)))) return null;
   return [...new Set(partes)].slice(0, MAX_CANAIS);
 }
 

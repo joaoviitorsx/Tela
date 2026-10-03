@@ -4,6 +4,7 @@ import {
   type MotivoDaQueda,
 } from '../core/media/aceleracao-do-codificador.js';
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
+import { type PerfilH264, codecDoPerfil, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import { VigiaDoEncoder } from '../core/media/vigia-do-encoder.js';
 import type { CodificadorUnico, EstatisticasDoCodificador } from './codificador-unico.js';
@@ -38,10 +39,11 @@ declare class MediaStreamTrackProcessor<T> {
 }
 
 /**
- * H.264 Constrained Baseline nível 4.2: cobre 1080p60, e é o perfil que o
- * WebRTC do Chromium negocia por padrão — o decoder do espectador já espera.
+ * H.264 Constrained Baseline nível 4.2: cobre 1080p60, e é o piso que todo
+ * receptor decodifica. Main entra quando a SALA inteira aceita
+ * (`perfil-h264.ts`) e o encoder deste modo de aceleração diz que faz.
  */
-export const CODEC = 'avc1.42e02a';
+export const CODEC = codecDoPerfil('baseline');
 /** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */
 const ATRASO_TOLERADO = 2;
 /**
@@ -57,6 +59,7 @@ const ATRASO_TOLERADO = 2;
  * viva). Reenviar o último quadro custa um P quase vazio a 2 fps.
  */
 export const SEM_CAPTURA_MS = 500;
+const MODOS: readonly Aceleracao[] = ['prefer-hardware', 'no-preference', 'prefer-software'];
 export const REENVIO_MS = 500;
 
 export class CodificadorWebCodecs implements CodificadorUnico {
@@ -64,6 +67,40 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private leitor: ReadableStreamDefaultReader<VideoFrame> | null = null;
   private alvo: AlvoDoCodificador | null = null;
   private configurado: AlvoDoCodificador | null = null;
+  /** O perfil com que o encoder atual foi configurado. */
+  private perfilConfigurado: PerfilH264 | null = null;
+  /**
+   * Main é perguntado POR MODO de aceleração antes de ser usado: um
+   * `configure` recusado viraria "a GPU morreu" para a política de
+   * aceleração, e ela cairia para software à toa.
+   */
+  private readonly suportaMain = new Map<string, boolean>();
+  private readonly perguntandoMain = new Set<string>();
+  /** Saiu quadro fora de ordem (B-frames): Main fica proibido nesta sessão. */
+  private mainProibido = false;
+  private ultimoTimestamp = -Infinity;
+  /** O perfil do ÚLTIMO `configure` — gravado antes dele, porque o erro pode vir de dentro. */
+  private perfilPedido: PerfilH264 | null = null;
+  /** Quadros que saíram desde aquele `configure`: zero = o perfil nunca funcionou. */
+  private saidasDoPerfil = 0;
+  /**
+   * O último carimbo de entrada antes daquele `configure`. Só conta como
+   * saída DO perfil novo o quadro que entrou depois — saídas atrasadas do
+   * perfil anterior não provam que o novo funciona.
+   */
+  private entradaNoConfigure = -Infinity;
+  /**
+   * Carimbos de ENTRADA monotônicos. Cada trilha nova (pausa, retomada, troca
+   * de tela) recomeça o `timestamp` do `VideoFrame` em ~0, e o reenvio do
+   * último quadro carimba à frente do que ainda está na fila. `desvio`
+   * desloca a entrada para nunca voltar — mantendo o espaçamento real, que é
+   * o que o controle de taxa do encoder lê. Assim, timestamp voltando na
+   * SAÍDA só pode ser reordenação de verdade (B-frames).
+   */
+  private ultimaEntrada = -Infinity;
+  private desvio = 0;
+  /** `profile_idc` do último SPS emitido: o perfil de FATO, não o pedido. */
+  private perfilEmitido: number | null = null;
   private seq = 0;
   private pedirChaveAgora = true;
   private ultimaChave = -Infinity;
@@ -105,6 +142,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       suportaHardware = null;
     }
     this.aceleracao.comecar(suportaHardware);
+    // Main perguntado para os três modos já: uma queda de GPU não vira IDR duplo (Baseline, depois Main).
+    for (const modo of MODOS) this.perguntarMain(alvo, modo);
     // `iniciar` de novo (o comutável voltou a este caminho): nada do anterior fica aberto.
     void this.leitor?.cancel();
     this.descartar();
@@ -193,7 +232,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       fpsDaCaptura,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
-      implementacao: this.aceleracao.rotulo(),
+      implementacao: this.rotulo(),
     };
   }
 
@@ -210,9 +249,34 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.descartar();
   }
 
-  private config(alvo: AlvoDoCodificador, aceleracao: Aceleracao): VideoEncoderConfig {
+  /** Main só com a sala pedindo, o modo atual confirmando e nenhum B-frame visto. */
+  private perfilEfetivo(alvo: AlvoDoCodificador): PerfilH264 {
+    if (alvo.perfil !== 'main' || this.mainProibido) return 'baseline';
+    const modo = this.aceleracao.modo;
+    const sabido = this.suportaMain.get(modo);
+    if (sabido === undefined) this.perguntarMain(alvo, modo);
+    return sabido === true ? 'main' : 'baseline';
+  }
+
+  private perguntarMain(alvo: AlvoDoCodificador, modo: Aceleracao): void {
+    // Já sabido (inclusive o `false` de um configure que estourou): não pergunta de novo.
+    if (this.suportaMain.has(modo) || this.perguntandoMain.has(modo) || typeof VideoEncoder.isConfigSupported !== 'function') return;
+    this.perguntandoMain.add(modo);
+    void VideoEncoder.isConfigSupported(this.config(alvo, modo, 'main'))
+      .then((r) => r.supported === true)
+      .catch(() => false)
+      .then((sim) => {
+        this.suportaMain.set(modo, sim);
+        this.perguntandoMain.delete(modo);
+        // Sim: reconfigura já (com IDR); não: fica em Baseline, nada muda. Sem
+        // encoder vivo (caiu e a política mandou esperar) quem recria é ela.
+        if (sim && this.encoder !== null) this.aplicar();
+      });
+  }
+
+  private config(alvo: AlvoDoCodificador, aceleracao: Aceleracao, perfil: PerfilH264 = 'baseline'): VideoEncoderConfig {
     return {
-      codec: CODEC,
+      codec: codecDoPerfil(perfil),
       width: alvo.width,
       height: alvo.height,
       bitrate: alvo.bitrate,
@@ -224,11 +288,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     };
   }
 
+  /** O rótulo do console: aceleração e o perfil EMITIDO, quando já se sabe. */
+  private rotulo(): string {
+    const perfil = nomeDoPerfilIdc(this.perfilEmitido);
+    const base = this.aceleracao.rotulo();
+    return perfil === null ? base : `${base} · H.264 ${perfil}`;
+  }
+
   /** Fecha o encoder atual, se houver; o próximo `aplicar` cria outro, com IDR. */
   private descartar(): void {
     const enc = this.encoder;
     this.encoder = null;
     this.configurado = null;
+    this.perfilConfigurado = null;
+    this.ultimoTimestamp = -Infinity;
     try {
       enc?.close();
     } catch {
@@ -255,6 +328,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
    */
   private morreu(enc: VideoEncoder, motivo: MotivoDaQueda): void {
     if (enc !== this.encoder) return; // um antigo, já substituído
+    /*
+      Main recusado (o `isConfigSupported` disse sim e o `configure` ou o
+      primeiro `encode` falhou): é o PERFIL, não a GPU. Marca o modo como sem
+      Main e recria no mesmo modo — contar como queda de GPU levaria a sessão
+      para software depois de três tentativas.
+    */
+    if (motivo === 'erro' && this.perfilPedido === 'main' && this.saidasDoPerfil === 0) {
+      this.suportaMain.set(this.aceleracao.modo, false);
+      this.descartar();
+      queueMicrotask(() => {
+        if (!this.parado && this.encoder === null) this.aplicar();
+      });
+      return;
+    }
     this.descartar();
     const { recriarJa } = this.aceleracao.falhou(motivo, this.agora());
     if (!recriarJa) return;
@@ -277,14 +364,23 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
     const enc = this.encoder;
     const c = this.configurado;
+    const perfil = this.perfilEfetivo(alvo);
     const mudouTamanho = c === null || c.width !== alvo.width || c.height !== alvo.height || c.fps !== alvo.fps;
     const mudouBitrate = c === null || Math.abs(c.bitrate - alvo.bitrate) / Math.max(1, c.bitrate) > 0.05;
-    if (!mudouTamanho && !mudouBitrate) return;
-    enc.configure(this.config(alvo, this.aceleracao.modo));
+    // Trocar de perfil é como trocar de tamanho: SPS novo, e o próximo quadro tem de ser IDR.
+    const mudouPerfil = perfil !== this.perfilConfigurado;
+    if (!mudouTamanho && !mudouBitrate && !mudouPerfil) return;
+    if (mudouPerfil || c === null) {
+      this.perfilPedido = perfil;
+      this.saidasDoPerfil = 0;
+      this.entradaNoConfigure = this.ultimaEntrada;
+    }
+    enc.configure(this.config(alvo, this.aceleracao.modo, perfil));
     // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
     if (this.encoder !== enc) return;
     this.configurado = alvo;
-    if (mudouTamanho) this.pedirChaveAgora = true;
+    this.perfilConfigurado = perfil;
+    if (mudouTamanho || mudouPerfil) this.pedirChaveAgora = true;
   }
 
   private guardarUltimo(quadro: VideoFrame): void {
@@ -311,6 +407,12 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       for (;;) {
         const { value: quadro, done } = await leitor.read();
         if (done || quadro === undefined) return;
+        // Um `read` já resolvido quando a fonte trocou: o quadro é da captura
+        // ANTIGA (na pausa de privacidade, a tela real). Não sai.
+        if (this.leitor !== leitor) {
+          quadro.close();
+          return;
+        }
         this.capturados += 1;
         this.ultimaCaptura = this.agora();
         this.guardarUltimo(quadro);
@@ -350,18 +452,58 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       this.pedirChaveAgora = false;
       this.ultimaChave = this.agora();
     }
-    this.vigia.entrou(quadro.timestamp, this.agora());
-    enc.encode(quadro, { keyFrame: chave });
-    quadro.close();
+    const entrada = this.monotonico(quadro);
+    this.vigia.entrou(entrada.timestamp, this.agora());
+    enc.encode(entrada, { keyFrame: chave });
+    entrada.close();
+    if (entrada !== quadro) quadro.close();
+  }
+
+  /**
+   * O quadro com carimbo que nunca volta (ver `desvio`). Só embrulha quando
+   * houve descontinuidade — o embrulho não copia pixel (mesmo recurso).
+   */
+  private monotonico(quadro: VideoFrame): VideoFrame {
+    let ts = quadro.timestamp + this.desvio;
+    if (ts > this.ultimaEntrada) {
+      this.ultimaEntrada = ts;
+      return ts === quadro.timestamp || typeof VideoFrame !== 'function' ? quadro : this.recarimbar(quadro, ts);
+    }
+    const passo = Math.round(1_000_000 / Math.max(1, this.configurado?.fps ?? 60));
+    this.desvio += this.ultimaEntrada + passo - ts;
+    ts = this.ultimaEntrada + passo;
+    this.ultimaEntrada = ts;
+    return typeof VideoFrame === 'function' ? this.recarimbar(quadro, ts) : quadro;
+  }
+
+  private recarimbar(quadro: VideoFrame, timestamp: number): VideoFrame {
+    try {
+      return new VideoFrame(quadro, { timestamp });
+    } catch {
+      return quadro;
+    }
   }
 
   private saiu(chunk: EncodedVideoChunk): void {
+    if (chunk.timestamp > this.entradaNoConfigure) this.saidasDoPerfil += 1;
     this.vigia.saiu(chunk.timestamp, this.agora());
     this.quadros += 1;
     const chave = chunk.type === 'key';
     if (chave) this.idrs += 1;
     const dados = new ArrayBuffer(chunk.byteLength);
     chunk.copyTo(dados);
+    // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.
+    if (chave) this.perfilEmitido = perfilDoSps(new Uint8Array(dados)) ?? this.perfilEmitido;
+    /*
+      Timestamp voltando = o encoder reordenou quadros (B-frames). O
+      receptor em tempo real não espera por isso; Main fica proibido e o
+      encoder volta a Baseline — que não tem B-frames — com IDR.
+    */
+    if (chunk.timestamp < this.ultimoTimestamp && this.perfilConfigurado === 'main') {
+      this.mainProibido = true;
+      queueMicrotask(() => this.aplicar());
+    }
+    this.ultimoTimestamp = Math.max(this.ultimoTimestamp, chunk.timestamp);
     const c = this.configurado;
     this.entregar(
       { seq: this.seq++, chave, dados, width: c?.width ?? 0, height: c?.height ?? 0 },

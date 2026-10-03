@@ -96,7 +96,12 @@ export type AjustesDesktop = {
   readonly aoFecharAoVivo: AoFecharAoVivo;
   /** Verifica e baixa atualizações sozinho (nunca ao vivo). Desligado, só "verificar agora". */
   readonly atualizarAutomaticamente: boolean;
+  /** A faixa "AO VIVO · 3 assistindo" por cima do jogo, ao vivo. */
+  readonly painelSobreOJogo: boolean;
+  readonly cantoDoPainel: CantoDoPainel;
 };
+
+export type CantoDoPainel = 'sup-dir' | 'sup-esq' | 'inf-dir' | 'inf-esq';
 
 export type RespostaDeAjustes = {
   readonly ajustes: AjustesDesktop;

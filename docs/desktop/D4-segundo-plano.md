@@ -200,3 +200,29 @@ compositor de verdade):
 O botão Fechar da barra da janela (Linux) e o fechar nativo (X do Windows, Alt+F4,
 `win.close()`) terminam no mesmo `close` da `BrowserWindow`, logo na mesma
 `decidirFechar` da §3. Detalhes da moldura em `PLANO-desktop.md` §11.1.
+
+## Painel sobre o jogo (2026-10-03)
+
+Ajuste **AJUSTES → Painel sobre o jogo**, desligado por padrão. Ao vivo, uma
+faixa de 300×40 no canto escolhido diz `● AO VIVO 12:34 · 3 assistindo` (ou
+`OCULTO`, na pausa de privacidade). Código: `src/main/painel-sobre-o-jogo.ts`
+(puro: posição, texto, HTML) e o bloco "painel sobre o jogo" do `main.ts`.
+
+- **Não atrapalha o jogo:** janela transparente, `focusable: false` e
+  `setIgnoreMouseEvents(true)` — clique e teclado passam direto.
+- **Leve:** página `data:` estática, sem framework, sem rede (CSP
+  `default-src 'none'`), atualizada 1×/s pelo main com `executeJavaScript` de
+  três campos validados. Fora do ar, ou desligado, a janela é destruída: o
+  processo de render dela não existe.
+- **Fora da própria transmissão:** `setContentProtection(true)` tira a faixa
+  da captura de tela inteira no Windows 10 2004+ e no macOS. **No Linux isso
+  não existe**: capturando a tela inteira, a faixa aparece para quem assiste
+  (capturando só a janela do jogo, não).
+- **Limite do sistema:** jogo em tela cheia EXCLUSIVA não deixa janela
+  nenhuma por cima; em tela cheia sem bordas (o padrão da maioria dos jogos
+  hoje), aparece.
+- **Não verificado sem tela:** a janela de verdade sobre um jogo, o
+  click-through e a exclusão da captura no Windows. Validar: ligar o ajuste,
+  ir ao ar capturando a TELA INTEIRA, abrir um jogo em sem bordas e conferir
+  (1) a faixa por cima, (2) o clique passando para o jogo, (3) a faixa
+  ausente na imagem de quem assiste.

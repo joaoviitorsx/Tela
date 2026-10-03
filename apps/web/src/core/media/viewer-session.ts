@@ -2,7 +2,7 @@ import { Emitter } from '../emitter.js';
 import { type CausaDaLentidao, VigiaDeFluidez } from './vigia-de-fluidez.js';
 import { ClassificadorDeAudio, type EstadoAudio } from './audio-state.js';
 import { CODIGO_AUDIO, type Diagnostico, Diario, idLocal } from './diagnostico.js';
-import { JITTER_MINIMO_MS } from '../mesh/peer-link.js';
+import { JITTER_INICIAL_MS, JITTER_MINIMO_MS } from '../mesh/peer-link.js';
 import { JitterGovernor } from './jitter-governor.js';
 import { type EstadoLatencia, LatencyWatch } from './latency-watch.js';
 import { RelogioDeCaptura } from './relogio-de-captura.js';
@@ -133,6 +133,8 @@ export const POLL_MIN_MS = 5_000;
 export const POLL_MAX_MS = 30_000;
 export const POLL_FACTOR = 1.5;
 const STATS_INTERVAL_MS = 1_000;
+/** Teto do atraso de sincronia: acima disso, alinhar custaria mais do que vale. */
+export const ATRASO_EXTRA_MAXIMO_MS = 400;
 /**
  * Teto para a negociação. O `watch` só entrega mídia quando o primeiro frame
  * chega — e se a oferta nunca vier, a promessa não resolve NEM rejeita. Sem
@@ -162,6 +164,15 @@ export class ViewerSession {
    * recepção reporta — sobe rápido no congelamento, desce devagar na calmaria.
    */
   private readonly jitter = new JitterGovernor();
+  /**
+   * Atraso pedido de fora para alinhar dois canais da mesma partida (ADR 0032,
+   * sincronia). Soma ao alvo do governador — que continua decidindo o buffer
+   * pela rede — e é DESCONTADO da latência medida: o vigia e o HUD veem o
+   * que a rede entrega, não o atraso que a página escolheu.
+   */
+  private atrasoExtra = 0;
+  /** O último alvo mandado ao transporte; `null` = mande de novo. */
+  private alvoAplicado: number | null = null;
 
   /**
    * A série temporal, para o usuário MANDAR em vez de descrever.
@@ -222,7 +233,9 @@ export class ViewerSession {
    * Uma medida vinda do quadro apresentado. Chamada a 60 Hz pelo adapter, então
    * é barata de propósito: só alimenta uma média móvel.
    */
-  registrarLatencia(amostra: AmostraLatencia): void {
+  registrarLatencia(bruta: AmostraLatencia): void {
+    // Sem o atraso de sincronia: é escolha da página, não da rede.
+    const amostra = this.atrasoExtra === 0 ? bruta : { ...bruta, ms: Math.max(0, bruta.ms - this.atrasoExtra) };
     // O vigia segue com a amostra do adapter, como sempre: o limiar de 500 ms
     // foi calibrado nela e erro de relógio entre máquinas não pode reiniciar
     // uma transmissão boa.
@@ -237,16 +250,39 @@ export class ViewerSession {
         this.deps.scheduler.now(),
       );
       if (ms !== null && ms >= 0) {
-        this.latencia.registrarJanela({ ms, origem: 'captura' });
+        this.latencia.registrarJanela({ ms: Math.max(0, ms - this.atrasoExtra), origem: 'captura' });
         return;
       }
     }
     this.latencia.registrarJanela(amostra);
   }
 
-  /** A latência ponta a ponta que o espectador está sentindo. */
+  /** A latência ponta a ponta que a REDE entrega (sem o atraso de sincronia). */
   get latenciaAtual(): EstadoLatencia {
     return this.latencia.estado;
+  }
+
+  /** O atraso de sincronia em vigor, em ms. */
+  get atrasoDeSincronia(): number {
+    return this.atrasoExtra;
+  }
+
+  /**
+   * Atrasa a imagem deste canal (multivisão, sincronia): `0` desliga. Entra
+   * no jitter buffer — um piso a mais, aplicado na hora, sem renegociar.
+   */
+  definirAtrasoExtra(ms: number): void {
+    const v = Math.max(0, Math.min(ATRASO_EXTRA_MAXIMO_MS, Math.round(ms)));
+    if (v === this.atrasoExtra) return;
+    this.atrasoExtra = v;
+    this.aplicarJitter();
+  }
+
+  private aplicarJitter(): void {
+    const alvo = this.jitter.atual + this.atrasoExtra;
+    if (alvo === this.alvoAplicado || this.transport === null) return;
+    this.alvoAplicado = alvo;
+    this.transport.setJitterAlvo(alvo);
   }
 
   /**
@@ -616,6 +652,9 @@ export class ViewerSession {
     );
     this.transport = transport;
     this.transportCancels = cancels;
+    // O link novo nasce com o alvo inicial; o atraso de sincronia, se houver,
+    // entra no primeiro tique.
+    this.alvoAplicado = JITTER_INICIAL_MS;
   }
 
   /**
@@ -682,8 +721,8 @@ export class ViewerSession {
 
     // Devolve latência quando a conexão prova que aguenta, e a retoma no
     // primeiro sinal de que não aguentava.
-    const decisao = this.jitter.observe(stats.recepcao);
-    if (decisao !== null) this.transport?.setJitterAlvo(decisao.ms);
+    this.jitter.observe(stats.recepcao);
+    this.aplicarJitter();
     this.diario.registrar(stats, agora);
 
     /**

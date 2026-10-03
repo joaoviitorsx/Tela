@@ -3,6 +3,7 @@ import { makeAbrirNoApp } from './adapters/abrir-no-app.js';
 import { makeBrowserFrameTiming } from './adapters/browser-frame-timing.js';
 import { makeBrowserScheduler } from './adapters/browser-scheduler.js';
 import { makeCryptoRandom } from './adapters/crypto-random.js';
+import { makeDiscordWebhook } from './adapters/discord-webhook.js';
 import { makeLocalStorage } from './adapters/local-storage.js';
 import { makeMeshTransport } from './adapters/mesh-transport.js';
 import { makeWebAudioCue } from './adapters/web-audio-cue.js';
@@ -14,6 +15,7 @@ import { linkDoCanal } from './core/domain/link.js';
 import { makeIdentity } from './core/identity/owner-token.js';
 import { makeEspectador } from './core/identity/espectador.js';
 import { makeCanaisRecentes } from './core/identity/canais-recentes.js';
+import { AvisoAoVivo } from './core/aviso/aviso-ao-vivo.js';
 import { makePreferenciaDaPip } from './core/multivisao/preferencia-da-pip.js';
 import { ViewerSession } from './core/media/viewer-session.js';
 import type { AbreVitrine } from './core/ports/crt-vitrine.js';
@@ -99,6 +101,13 @@ export const instalarNoDiscord: string | null =
   DISCORD_APPLICATION_ID === null ? null : `https://discord.com/oauth2/authorize?client_id=${DISCORD_APPLICATION_ID}`;
 
 export const shareUrlFor = (slug: string): string => linkDoCanal(window.location.origin, slug);
+
+/**
+ * O aviso automático no Discord (webhook de canal): AO VIVO ao subir,
+ * "encerrada" ao acabar. Mora aqui, e não na rota, porque sobrevive à troca
+ * de tela e ao fechamento da aba (a edição final vai com `keepalive`).
+ */
+export const avisoNoDiscord = new AvisoAoVivo({ porta: makeDiscordWebhook(), storage, agora: () => Date.now() });
 
 /**
  * O worker do repassador (ADR 0031): o mesmo de injeção, em outro papel. Só

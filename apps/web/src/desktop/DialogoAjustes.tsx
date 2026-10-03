@@ -1,6 +1,13 @@
 import { type RefObject, useId } from 'react';
 import { linhaDeAtualizacao, ultimaVerificacao } from './atualizacao.js';
-import type { AjustesDesktop, EstadoDaAtualizacao } from './ponte.js';
+import type { AjustesDesktop, CantoDoPainel, EstadoDaAtualizacao } from './ponte.js';
+
+const CANTOS: readonly { readonly valor: CantoDoPainel; readonly rotulo: string }[] = [
+  { valor: 'sup-esq', rotulo: '↖ CIMA' },
+  { valor: 'sup-dir', rotulo: 'CIMA ↗' },
+  { valor: 'inf-esq', rotulo: '↙ BAIXO' },
+  { valor: 'inf-dir', rotulo: 'BAIXO ↘' },
+];
 
 /** A parte "atualização" do painel (D5). Sem ela (dev no navegador) a seção some. */
 export type PropsDeAtualizacao = {
@@ -182,6 +189,29 @@ export function DialogoAjustes({
             desabilitado={!pronto}
             aoMudar={(sempreNoTopoNoCompacto) => aoMudar({ sempreNoTopoNoCompacto })}
           />
+          <Linha
+            rotulo="Painel sobre o jogo"
+            descricao="Ao vivo, uma faixa pequena por cima do jogo diz o tempo no ar e quantos assistem — sem Alt+Tab. Não recebe clique nem teclado. No Windows e no macOS ela não aparece na própria transmissão; no Linux, aparece se você capturar a tela inteira. Jogo em tela cheia exclusiva não deixa nada por cima: use tela cheia sem bordas."
+            marcado={ajustes?.painelSobreOJogo ?? false}
+            desabilitado={!pronto}
+            aoMudar={(painelSobreOJogo) => aoMudar({ painelSobreOJogo })}
+          />
+          {ajustes?.painelSobreOJogo === true && (
+            <div className="ml-7 flex flex-wrap items-center gap-2" role="group" aria-label="Canto do painel">
+              {CANTOS.map(({ valor, rotulo }) => (
+                <button
+                  key={valor}
+                  type="button"
+                  aria-pressed={ajustes.cantoDoPainel === valor}
+                  disabled={!pronto}
+                  onClick={() => aoMudar({ cantoDoPainel: valor })}
+                  className={ajustes.cantoDoPainel === valor ? 'tecla tecla-primaria' : 'tecla'}
+                >
+                  {rotulo}
+                </button>
+              ))}
+            </div>
+          )}
           <Linha
             rotulo="Atualizar automaticamente"
             descricao="Verifica a cada 6 horas e baixa em segundo plano, só com a transmissão fora do ar. A versão nova instala quando você sair do Tela. Nunca mexe numa transmissão no ar."

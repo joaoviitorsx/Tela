@@ -6,6 +6,12 @@ o site e para o app desktop: a rota é a mesma.
 
 Este plano é o "como". O "por quê" e o que o dono decide estão na ADR 0032.
 
+**Estado (2026-10-03): M0–M3 feitos; do M4, a prévia do link composto e o
+`tela://assistir/a+b`.** Ficam para depois: `/tela canal:a+b` no Discord,
+sincronia para a mesma partida e a grade de 4. Diferença do plano: o arranjo
+em lado a lado e empilhado é pela ORDEM dos canais (nada se move na troca;
+só a borda âmbar e o som mudam de lado).
+
 ---
 
 ## 1. A experiência

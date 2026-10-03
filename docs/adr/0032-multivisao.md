@@ -1,8 +1,8 @@
 # ADR 0032 — Multivisão: dois canais na mesma tela, o segundo em PiP
 
 **Data:** 2026-10-03
-**Estado:** **proposta** (aguarda o dono: perguntas em "O que o dono decide")
-**Altera, se aceita:** R6 (o espectador pode assistir mais de um canal ao mesmo tempo) · **Mantém:** R1, R2, R3, R5, R8, ADR 0005, 0026, 0028, 0029, 0031
+**Estado:** **aceita e implementada** (2026-10-03 — o dono autorizou a implementação completa; as quatro perguntas abaixo foram resolvidas pelas recomendações, ver "Respostas")
+**Altera:** R6 (o espectador pode assistir mais de um canal ao mesmo tempo) · **Mantém:** R1, R2, R3, R5, R8, ADR 0005, 0026, 0028, 0029, 0031
 **Plano:** `docs/multivisao/PLANO-multivisao.md`
 
 ## Contexto
@@ -48,8 +48,9 @@ este podem entrar. Esta ADR escreve até onde a cerca muda.
      fecha, o último quadro fica congelado com "PAUSADA · sua rede não segura
      duas" e um toque tenta de novo. A principal nunca é pausada por isso.
      Causa `decodificacao` também pausa, com o texto do computador.
-   - **Espectador em multivisão não repassa** na cascata (ADR 0031): a subida
-     dele já não é dele.
+   - **Espectador em multivisão não repassa** na cascata (ADR 0031): a
+     recepção dividida entre dois canais é frágil demais para segurar filhos
+     — um soluço dele vira o soluço de quem está pendurado nele.
 8. **Tamanho do passo:** um marco por vez (plano), começando por uma
    refatoração SEM mudança de comportamento do `Viewer.tsx`.
 
@@ -75,11 +76,44 @@ este podem entrar. Esta ADR escreve até onde a cerca muda.
 - **Mixar os dois áudios.** Dois jogos ao mesmo tempo é barulho; a call do
   Discord já está tocando por cima.
 
-## O que o dono decide
+## Respostas
 
-1. Aceita a emenda da R6 como escrita (decisões 1–2)?
-2. Limite de 2 agora e 4 depois de medir?
-3. Guarda de banda: pausar a secundária automaticamente (recomendado) ou só
-   avisar e deixar a pessoa decidir?
-4. O nome do botão: `+ TELA` (recomendado: é o nome do produto e diz o que
-   faz) ou `ASSISTIR JUNTO`?
+O dono escreveu que a R6 era a cerca do MVP e pediu a implementação
+completa. As perguntas foram fechadas pelas recomendações; qualquer uma
+volta a ser decisão dele se quiser mudar:
+
+1. Emenda da R6: como nas decisões 1–2 (`AGENTS.md` atualizado).
+2. Limite de 2 (`MAX_CANAIS`); a grade de 4 espera medição.
+3. Guarda de banda: pausa automática da secundária, com RETOMAR.
+4. Botão: `+ TELA` (atalho `A`); o diálogo se chama "ASSISTIR JUNTO".
+
+## Como ficou
+
+| Peça | Onde |
+|---|---|
+| Rota `/a+b` | `core/domain/canais-da-rota.ts`, `router.ts` |
+| Estado (troca sem reordenar) | `core/multivisao/estado.ts` |
+| Guarda de banda | `core/multivisao/guarda-de-banda.ts` |
+| Recentes e canto/tamanho lembrados | `core/identity/canais-recentes.ts`, `core/multivisao/preferencia-da-pip.ts` |
+| Uma sessão por canal | `react/use-sessoes.ts`, `react/use-painel-de-canal.ts` |
+| Painel (mesma árvore nos dois papéis) | `routes/PainelDoCanal.tsx` |
+| Arranjo (PiP, lado a lado, empilhado) | `react/layout-da-multivisao.ts` |
+| Troca animada sem layout | `react/use-flip.ts` (WAAPI em `transform`) |
+| Sem repasse na multivisão | `createViewerSession({ repassar })` nos dois containers |
+| Prévia do link composto | `apps/signaling/src/previa.ts` |
+| `tela://assistir/a+b` | `apps/desktop/src/main/link-profundo.ts`, `desktop/use-canal-por-link.ts` |
+
+**Custo, de propósito pequeno:** no máximo dois canais, toda operação O(1).
+Nada re-renderiza por quadro: a guarda roda na cadência das estatísticas
+(1 Hz), o arrasto do quadro mexe no `transform` direto no elemento, a folga
+da barra é medida por `ResizeObserver` (só quando o tamanho muda), e a
+latência por quadro (`requestVideoFrameCallback`) roda só na principal. A
+secundária pausada não baixa nem decodifica nada: a sessão dela fecha.
+
+**Limite conhecido:** "não repassar" vale a partir da próxima conexão. Um
+espectador que já repassava quando abriu a segunda tela continua com os
+filhos que tinha até a sessão da principal reconectar.
+
+**Provado:** `e2e/multivisao.e2e.mjs` (dois anfitriões reais): a troca mantém
+os mesmos `<video>`, o mesmo `srcObject` e abre zero WebSockets; fechar
+desconecta do anfitrião que saiu; `+ TELA` oferece os recentes.

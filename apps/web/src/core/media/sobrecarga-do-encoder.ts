@@ -3,32 +3,39 @@
  * fluidez (R5: perder resolução, nunca framerate).
  *
  * A versão anterior só acusava quando a fila interna do encoder transbordava
- * (`encodeQueueSize > 2`). Medido com a CPU disputada (a bancada
- * `e2e/fluidez.e2e.mjs` com um "jogo" ocupando todos os núcleos): o encoder
- * levava 40 a 165 ms por quadro — o orçamento a 60 fps é 16,7 —, saíam 21 a
- * 41 fps, e o sinal acendia em 3 de 40 amostras. A escada exige 5 seguidas e
- * nunca desceu: o espectador via 27 fps aos trancos em 720p, quando 540p60
- * fluido estava ali.
+ * (`encodeQueueSize > 2`). Medido com a CPU disputada (bancada
+ * `e2e/fluidez.e2e.mjs`, um "jogo" ocupando todos os núcleos): 40 a 165 ms
+ * por quadro, e o sinal acendia em 3 de 40 amostras — a escada pede 5
+ * seguidas e nunca descia.
  *
- * Duas condições JUNTAS, para não confundir com o que não é sobrecarga:
- *  - quadro demorando mais que `FATOR_DE_LATENCIA` × o orçamento — encoder de
- *    hardware saudável fica bem abaixo, mesmo com 1–2 quadros de pipeline;
- *  - FPS de saída abaixo de `FRACAO_DO_ALVO` do alvo — tela parada também
- *    tem FPS baixo, mas com latência baixa (o capturador só não manda).
+ * A primeira correção comparava a latência com o orçamento do ALVO (60 fps)
+ * e exigia FPS de saída abaixo do alvo. A revisão independente mediu o falso
+ * positivo: com a fonte a 30 fps (jogo travado em 30, captura 0 Hz) a
+ * condição de FPS fica sempre verdadeira, 34–58 ms bastavam, e a escada
+ * descia sem ganhar um quadro — e, pela calmaria, não voltava.
+ *
+ * Agora a latência é comparada com o intervalo REAL de entrada: um encoder
+ * que segura 1–2 quadros (pipeline de hardware) tem latência de 1–2
+ * intervalos de entrada, qualquer que seja a fonte; só acima de
+ * `FATOR_DE_LATENCIA` intervalos é fôlego faltando. E média de poucas
+ * amostras (tela parada, 2 por segundo; um IDR no meio) não decide nada.
  */
-export const FATOR_DE_LATENCIA = 2;
-export const FRACAO_DO_ALVO = 0.85;
+export const FATOR_DE_LATENCIA = 2.5;
+export const AMOSTRAS_MINIMAS = 10;
 
 export function encoderSobrecarregado(m: {
   /** Quadros recusados na entrada (fila do encoder cheia) desde a última leitura. */
   readonly descartes: number;
   /** Latência média entrada→saída desde a última leitura; `null` sem amostra. */
   readonly msPorQuadro: number | null;
-  readonly fps: number;
+  /** Quantas saídas compõem a média. */
+  readonly amostras: number;
+  /** Intervalo médio entre quadros ENTREGUES ao encoder; `null` se nenhum. */
+  readonly intervaloDeEntradaMs: number | null;
   readonly fpsAlvo: number;
 }): boolean {
   if (m.descartes > 0) return true;
-  if (m.msPorQuadro === null || !(m.fpsAlvo > 0)) return false;
-  const orcamentoMs = 1000 / m.fpsAlvo;
-  return m.msPorQuadro > orcamentoMs * FATOR_DE_LATENCIA && m.fps < m.fpsAlvo * FRACAO_DO_ALVO;
+  if (m.msPorQuadro === null || m.amostras < AMOSTRAS_MINIMAS || !(m.fpsAlvo > 0)) return false;
+  const intervalo = Math.max(1000 / m.fpsAlvo, m.intervaloDeEntradaMs ?? 0);
+  return m.msPorQuadro > intervalo * FATOR_DE_LATENCIA;
 }

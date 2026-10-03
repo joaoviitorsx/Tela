@@ -59,14 +59,12 @@ declare class MediaStreamTrackProcessor<T> {
 export const CODEC = codecDoPerfil('baseline');
 /**
  * Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular
- * latência. Era 2. Com a CPU disputada (um jogo), as iscas atrasam o tempo
- * todo e o 2 segurava 4 a 15 quadros por segundo para TODOS — medido na
- * bancada `e2e/fluidez.e2e.mjs`, rodadas alternadas: com 4, +4 a 5 fps (+15%)
- * e desvio do intervalo entre quadros de 21 para 15 ms; sem carga, igual
- * (60 fps, 4 ms). O espectador que fica para trás de verdade continua com a
- * válvula de camada (ADR 0034) e o "soltar" (`LIMITE_DE_ARRASTO`).
+ * latência. Cada quadro pulado desconta uma vaga (ver `codificar`): sem isso o
+ * atraso ficava velho por até 100 ms e o pulo virava rajada. Subir para 4
+ * foi tentado e revertido — o ganho medido era menor que a variação entre
+ * rodadas, e cada quadro a mais é latência para a sala inteira.
  */
-const ATRASO_TOLERADO = 4;
+const ATRASO_TOLERADO = 2;
 /**
  * Sem quadro novo da captura por este tempo, o último é codificado de novo —
  * no máximo a cada `REENVIO_MS`, ou já, se alguém pediu quadro-chave.
@@ -170,6 +168,10 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private idrs = 0;
   private readonly pedidos: Record<string, number> = {};
   private descartesPorSobrecarga = 0;
+  /** Quadros de fato entregues ao `encode()` desde a última leitura (o intervalo de entrada). */
+  private ofertados = 0;
+  /** Leituras de sobrecarga a desconsiderar (a primeira depois de trocar de tamanho). */
+  private leiturasAIgnorar = 0;
   private segurados = 0;
   private readonly vigia = new VigiaDoEncoder();
   private readonly aceleracao: AceleracaoDoCodificador;
@@ -279,13 +281,21 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.marca = { t: agora, quadros: this.quadros };
     const bitrateProduzido = (this.bytesProduzidos * 8) / dt;
     this.bytesProduzidos = 0;
-    const msPorQuadro = this.vigia.lerMsPorQuadro();
-    const sobrecarregado = encoderSobrecarregado({
-      descartes: this.descartesPorSobrecarga,
-      msPorQuadro,
-      fps,
-      fpsAlvo: this.configurado?.fps ?? 0,
-    });
+    const { media: msPorQuadro, amostras } = this.vigia.lerLatencia();
+    const ofertados = this.ofertados;
+    this.ofertados = 0;
+    // A leitura logo depois de trocar de tamanho mede a reinicialização e o IDR, não o fôlego.
+    const ignorar = this.leiturasAIgnorar > 0;
+    if (ignorar) this.leiturasAIgnorar -= 1;
+    const sobrecarregado =
+      !ignorar &&
+      encoderSobrecarregado({
+        descartes: this.descartesPorSobrecarga,
+        msPorQuadro,
+        amostras,
+        intervaloDeEntradaMs: ofertados > 0 ? (dt * 1000) / ofertados : null,
+        fpsAlvo: this.configurado?.fps ?? 0,
+      });
     this.descartesPorSobrecarga = 0;
     const segurados = this.segurados;
     this.segurados = 0;
@@ -583,6 +593,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.camadasConfiguradas = camadas;
     this.codecConfigurado = codec;
     if (mudouTamanho || mudouPerfil || mudouTaxa || mudouCamadas || mudouCodec) this.pedirChaveAgora = true;
+    if (mudouTamanho) this.leiturasAIgnorar = 1;
   }
 
   private guardarUltimo(quadro: VideoFrame): void {
@@ -646,6 +657,14 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     // Contrapressão dos senders — exceto quando um IDR foi pedido.
     if (this.atraso >= ATRASO_TOLERADO && !this.pedirChaveAgora) {
       this.segurados += 1;
+      /*
+        Cada quadro segurado drena UMA vaga de cada sender (a isca é gerada
+        mesmo assim, em `aoCapturar`). Sem descontar, o atraso ficava velho
+        até o próximo aviso do worker (até 100 ms) e TODOS os quadros desse
+        intervalo eram pulados — buracos de até 6 quadros para a sala inteira
+        (revisão independente).
+      */
+      this.atraso = Math.max(0, this.atraso - 1);
       quadro.close();
       return;
     }
@@ -656,6 +675,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
     const entrada = this.monotonico(quadro);
     this.vigia.entrou(entrada.timestamp, this.agora());
+    this.ofertados += 1;
     if (chave) this.chavesPedidas += 1;
     enc.encode(entrada, { keyFrame: chave });
     entrada.close();

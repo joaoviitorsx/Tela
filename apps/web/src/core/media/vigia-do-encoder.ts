@@ -105,9 +105,15 @@ export class VigiaDoEncoder {
 
   /** Média de entrada→saída desde a última leitura, em ms; `null` sem amostra. Zera a média. */
   lerMsPorQuadro(): number | null {
-    const media = this.amostras === 0 ? null : this.somaMs / this.amostras;
+    return this.lerLatencia().media;
+  }
+
+  /** A média e quantas amostras a compõem (poucas não sustentam conclusão). Zera. */
+  lerLatencia(): { readonly media: number | null; readonly amostras: number } {
+    const amostras = this.amostras;
+    const media = amostras === 0 ? null : this.somaMs / amostras;
     this.somaMs = 0;
     this.amostras = 0;
-    return media;
+    return { media, amostras };
   }
 }

@@ -92,6 +92,18 @@ STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
 # Desktop (PLANO-desktop §3.5): a interface vem do protocolo próprio do app, e
 # sem esta linha o upgrade dele leva 403.
 ALLOWED_ORIGINS = "app://tela"
+# Validade da credencial TURN, em segundos: 12 h. A alocação TURN morre quando
+# a credencial dela vence (FAQ da Cloudflare), e a renovação do `IceLifecycle`
+# só vale para conexões novas ou para o próximo ICE restart — com 600 s, todo
+# espectador em relay cairia a cada 10 min. A Cloudflare manda dimensionar
+# pela sessão mais longa (máximo 48 h).
+TURN_TTL_SECONDS = "43200"
+# Relay em uso: ExpressTURN grátis (ADR 0036, aceita pelo dono). Usuário e
+# senha FIXOS em secrets (`TURN_USERNAME`, `TURN_PASSWORD`); o plano grátis só
+# tem a 3478. Quando houver Cloudflare ou coturn com segredo, eles vencem
+# sozinhos — aí apague estas duas linhas e os dois secrets.
+TURN_URLS = "turn:free.expressturn.com:3478?transport=udp,turn:free.expressturn.com:3478?transport=tcp"
+TURN_ESTATICO = "aceito"
 
 # TURN — necessário para a cauda de conexões que não fecham direto.
 #
@@ -113,7 +125,6 @@ ALLOWED_ORIGINS = "app://tela"
 # ICE_PROVIDER = "auto" # Cloudflare primeiro; coturn configurado vira fallback
 # TURN_URLS = "turn:turn.seudominio.com:3478?transport=udp,turn:turn.seudominio.com:3478?transport=tcp,turns:turn.seudominio.com:443?transport=tcp"
 # TURN_URL singular continua aceito apenas durante a migração; não combine os dois.
-# TURN_TTL_SECONDS = "600"
 # TURN_FETCH_TIMEOUT_MS = "2500"
 
 # App do Discord (docs/DISCORD.md): o `/tela canal:<slug>` no "+" → "Usar apps".

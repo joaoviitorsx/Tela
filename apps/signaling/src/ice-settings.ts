@@ -81,11 +81,14 @@ export function parseIceSettings(input: IceSettingsInput):
       provider: provider as IceSettings['provider'],
       stunUrls,
       turnUrls,
-      ...(hasCoturnSecret && input.TURN_SECRET !== undefined ? { turnSecret: input.TURN_SECRET } : {}),
+      // `.trim()`: a validação acima já usa o valor aparado, e um `\n` colado no
+      // fim do secret passava como válido e virava `keys/abc%0A` na URL (404,
+      // relay fora do ar em silêncio).
+      ...(hasCoturnSecret && input.TURN_SECRET !== undefined ? { turnSecret: input.TURN_SECRET.trim() } : {}),
       ...(hasStatic && input.TURN_USERNAME !== undefined && input.TURN_PASSWORD !== undefined
-        ? { staticUsername: input.TURN_USERNAME, staticPassword: input.TURN_PASSWORD } : {}),
+        ? { staticUsername: input.TURN_USERNAME.trim(), staticPassword: input.TURN_PASSWORD.trim() } : {}),
       ...(hasCloudflareId && input.TURN_KEY_ID !== undefined && input.TURN_KEY_API_TOKEN !== undefined
-        ? { cloudflareKeyId: input.TURN_KEY_ID, cloudflareToken: input.TURN_KEY_API_TOKEN } : {}),
+        ? { cloudflareKeyId: input.TURN_KEY_ID.trim(), cloudflareToken: input.TURN_KEY_API_TOKEN.trim() } : {}),
       ttlSeconds,
       fetchTimeoutMs,
     },
@@ -96,6 +99,8 @@ export function describeIceSettings(settings: IceSettings): {
   provider: IceSettings['provider'];
   cloudflareConfigured: boolean;
   coturnConfigured: boolean;
+  /** `segredo`: credencial derivada que expira; `estatico`: usuário e senha fixos. */
+  coturnModo: 'segredo' | 'estatico' | null;
   stunUrls: number;
   turnUrls: number;
   fetchTimeoutMs: number;
@@ -105,6 +110,7 @@ export function describeIceSettings(settings: IceSettings): {
     provider: settings.provider,
     cloudflareConfigured: settings.cloudflareKeyId !== undefined,
     coturnConfigured: settings.turnSecret !== undefined || settings.staticUsername !== undefined,
+    coturnModo: settings.turnSecret !== undefined ? 'segredo' : settings.staticUsername !== undefined ? 'estatico' : null,
     stunUrls: settings.stunUrls.length,
     turnUrls: settings.turnUrls.length,
     fetchTimeoutMs: settings.fetchTimeoutMs,

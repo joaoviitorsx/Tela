@@ -153,6 +153,18 @@ export type Env = {
   TURN_KEY_ID?: string;
   TURN_KEY_API_TOKEN?: string;
   /**
+   * TURN com usuário e senha FIXOS (`TURN_USERNAME`/`TURN_PASSWORD` +
+   * `TURN_URLS`) — o que os planos grátis sem cartão oferecem (ExpressTURN).
+   * Só vale com `TURN_ESTATICO = "aceito"`: a mesma senha vai a todo peer, e
+   * quem a copiar usa o relay na cota da conta. Num plano grátis o pior caso é
+   * a cota acabar e o relay parar até o mês virar — sem custo; troque a senha
+   * no painel do provedor se notar abuso. Sem o aceite, credencial fixa
+   * continua recusada, como sempre foi.
+   */
+  TURN_USERNAME?: string;
+  TURN_PASSWORD?: string;
+  TURN_ESTATICO?: string;
+  /**
    * Origens extras que podem abrir o WebSocket, separadas por vírgula. A
    * origem do próprio Worker, que serve o front, já passa (TELA-019).
    */
@@ -1390,6 +1402,23 @@ export function makeChannelDeps(
         : await cloudflare();
       if (primary.failureCode !== undefined) console.warn(primary.failureCode);
       if (primary.relayStatus === 'available') return primary;
+      if (
+        settings.turnSecret === undefined &&
+        env.TURN_ESTATICO === 'aceito' &&
+        settings.staticUsername !== undefined &&
+        settings.staticPassword !== undefined &&
+        settings.turnUrls.length > 0
+      ) {
+        // Sem `expiresAt`: a senha não vence, e o `IceLifecycle` não renova à toa.
+        return {
+          servers: [...primary.servers, {
+            urls: [...settings.turnUrls],
+            username: settings.staticUsername,
+            credential: settings.staticPassword,
+          }],
+          relayStatus: 'available',
+        };
+      }
       if (settings.turnSecret === undefined || settings.turnUrls.length === 0) return primary;
 
       // `use-auth-secret` do coturn: usuário e senha derivados, com validade

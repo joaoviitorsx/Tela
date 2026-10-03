@@ -256,9 +256,10 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
     type: z.literal('hosting'),
     peerId: PeerIdSchema,
     /**
-     * Credencial de TURN efêmera. Nunca vai no bundle do front: quem a
-     * entrega é o servidor, no momento em que ela é necessária, com validade
-     * curta. Credencial de TURN em bundle estático é credencial pública.
+     * Credencial de TURN. Nunca vai no bundle do front: quem a entrega é o
+     * servidor, no momento em que ela é necessária, com validade curta —
+     * exceto a senha FIXA de plano grátis, aceita só com `TURN_ESTATICO`
+     * (ADR 0036), que não vence e por isso vem sem `expiresAt`.
      */
     iceServers: z.array(IceServerSchema),
     /** Estado público; a causa detalhada permanece apenas no servidor. */

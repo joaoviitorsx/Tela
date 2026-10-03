@@ -75,4 +75,22 @@ describe('IceLifecycle', () => {
     expect(calls).toBe(2);
     lifecycle.close();
   });
+
+  it('senha fixa (ADR 0036): sem validade, nem timer nem pedido antes do restart', async () => {
+    const scheduler = new FakeScheduler();
+    let refreshes = 0;
+    const lifecycle = new IceLifecycle({
+      refreshIce: async () => {
+        refreshes += 1;
+        return { iceServers: [{ urls: 'stun:test' }], relayStatus: 'available' as const };
+      },
+    }, scheduler, () => undefined, () => 0);
+    lifecycle.use({ iceServers: [{ urls: 'turn:relay.test', username: 'fixo', credential: 'senha' }], relayStatus: 'available' });
+    scheduler.advance(24 * 3_600_000);
+    await settle();
+    await lifecycle.beforeRestart();
+    expect(refreshes).toBe(0);
+    lifecycle.close();
+  });
 });
+

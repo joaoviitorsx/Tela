@@ -147,8 +147,9 @@ export const DEFAULT_LIMITS: Limits = {
   watchIpLimit: 120,
   watchIpWindowMs: 60_000,
   /*
-    A credencial vale 10 min e o cliente renova uma vez por ciclo; 6 em 10 min
-    é 3× o necessário por conexão. Por IP, 120 em 10 min cobre os 50 amigos
+    A credencial vale `TURN_TTL_SECONDS` (12 h em produção; 10 min é o padrão
+    do código) e o cliente renova uma vez por ciclo; 6 em 10 min cobre o
+    padrão curto com folga. Por IP, 120 em 10 min cobre os 50 amigos
     do mesmo CGNAT com folga. Medido antes: UM socket emitia 230.
   */
   refreshIceSocketLimit: 6,

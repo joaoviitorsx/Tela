@@ -142,9 +142,59 @@ comum de falha entre máquinas em redes diferentes.
    pnpm release
    ```
 
-O servidor passa a emitir credencial efêmera por espectador. O HUD mostra
-quantos estão passando por relay — relay funciona, mas custa latência e cota,
-então é bom saber.
+O servidor passa a emitir credencial efêmera por espectador (12 h,
+`TURN_TTL_SECONDS` no `wrangler.toml`). O HUD mostra quantos estão passando por
+relay — relay funciona, mas custa latência e cota, então é bom saber.
+
+Conferir depois de gravar os secrets (e a cada publicação):
+
+```bash
+node scripts/check-prod.mjs     # reprova se o relay não estiver configurado
+node e2e/relay-prod.mjs         # prova que a Cloudflare ALOCA: candidatos relay UDP/TCP/TLS
+```
+
+Secret gravado VAZIO conta como "não configurado": de 2026-09-28 a 2026-10-03
+a produção ficou só com STUN por isso, e quem estava atrás de CGNAT via "sem
+conexão" (`ice: NO_ROUTE`, `turn: RELAY_NOT_CONFIGURED`).
+
+### Sem cartão: TURN grátis com senha fixa (ExpressTURN)
+
+A Cloudflare pede cartão para ativar o TURN. O plano grátis do
+[ExpressTURN](https://www.expressturn.com/) não pede: 1.000 GB por mês na porta
+3478 (UDP/TCP; 80 e 443 parecem ser do plano pago — use as URLs que o painel
+mostrar). A credencial é **usuário e senha fixos** (o segredo compartilhado é
+do plano pago). **Leia a ADR 0036 antes de ligar:** qualquer um consegue a
+senha abrindo a sinalização (não precisa de link), ela não vence, e o relay
+pode ser usado como proxy em nome da sua conta. Sem custo em dinheiro, mas com
+risco de a cota acabar e de a conta ser suspensa por abuso de terceiros. Por
+isso o Worker só a entrega com o aceite explícito:
+
+1. Crie a conta em expressturn.com e copie, do painel, o **servidor**, o
+   **usuário** e a **senha do TURN**. Confira que a senha do TURN NÃO é a
+   senha de login da conta: ela vai para todo peer.
+2. Apague os secrets da Cloudflare gravados vazios (vazio invalida a
+   configuração inteira):
+   ```bash
+   pnpm --filter @tela/signaling exec wrangler secret delete TURN_KEY_ID
+   pnpm --filter @tela/signaling exec wrangler secret delete TURN_KEY_API_TOKEN
+   ```
+3. Grave usuário e senha como secrets:
+   ```bash
+   pnpm --filter @tela/signaling exec wrangler secret put TURN_USERNAME
+   pnpm --filter @tela/signaling exec wrangler secret put TURN_PASSWORD
+   ```
+4. No `wrangler.toml` (`[vars]`), com o servidor do painel:
+   ```toml
+   TURN_URLS = "turn:SERVIDOR:3478?transport=udp,turn:SERVIDOR:3478?transport=tcp"
+   TURN_ESTATICO = "aceito"
+   ```
+   (acrescente outras portas só se o painel as mostrar) e `pnpm release`.
+5. `node e2e/relay-prod.mjs`: o `check-prod` não consegue verificar senha
+   fixa (o servidor a entrega sem consultar ninguém); só o Allocate real do
+   verificador prova que ela funciona.
+
+Trocar a senha (por abuso) derruba quem estiver passando pelo relay naquele
+momento e exige `secret put` + `pnpm release`.
 
 Alternativa com coturn próprio: `wrangler secret put TURN_SECRET` e
 configure `TURN_URLS` no `wrangler.toml` com URLs UDP, TCP e TLS realmente

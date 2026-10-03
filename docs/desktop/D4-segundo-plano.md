@@ -101,7 +101,9 @@ e a página entra no modo escondido de sempre (§3.2).
   reporta), COMPACTAR e ENCERRAR (mesmo `DialogoConfirmar` e `useEncerrar` da
   rota). Mesma fonte da bandeja. O tempo só tica com a janela visível.
 - **AJUSTES** (engrenagem no pé do trilho, nunca travado ao vivo): iniciar com o
-  sistema, fechar = segundo plano, compacto sempre no topo; cada caixa grava na
+  sistema, fechar = segundo plano, compacto sempre no topo, painel sobre o
+  jogo (com o canto) e os experimentais de encoder — taxa constante e
+  economia com a tela parada (roteiro em `BETA.md`); cada caixa grava na
   hora e mostra o que o main DEVOLVEU (autostart que falha volta desmarcado, com
   aviso). Sem bandeja, "fechar = segundo plano" fica desabilitado e explica.
 

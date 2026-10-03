@@ -137,6 +137,23 @@ o Tela é só o vídeo):
 7. **Encerrar** — pare a transmissão e feche o app. O amigo tem que ver que
    acabou, não um quadro congelado.
 
+### Ajustes experimentais (beta.19)
+
+Desligados por padrão, em AJUSTES. Teste um de cada vez, com o mesmo jogo
+e os mesmos amigos, e compare com ele desligado:
+
+| Ajuste | O que faz | O que observar |
+|---|---|---|
+| **Taxa constante no encoder** (Windows) | O encoder da GPU passa a segurar a taxa (CBR) em vez de mandar rajadas de até 10× o pedido | Com rede apertada, o amigo vê menos travadinhas? A imagem piorou em cena parada? |
+| **Economizar banda com a tela parada** (Linux, NVENC) | VBR: em menu, loading ou mapa parado, o encoder gasta só o que a imagem pede (~1,4 em vez de ~12 Mbps por espectador) | Depois de um menu longo, a imagem volta nítida em até ~3 s? Se demorar, conte quanto (ADR 0033, "Não medido") |
+| **Painel sobre o jogo** | Faixa com tempo no ar e espectadores por cima do jogo | Aparece em tela cheia sem bordas? Some da transmissão no Windows? |
+
+Sem ajuste, e só para quem tem RTX 40, Arc ou RX 7000 **transmitindo pelo
+navegador**: a sala sobe para AV1 quando todos os espectadores decodificam
+AV1 por hardware (ADR 0035). O console da transmissão mostra "AV1" no
+encoder. Mande o fps do jogo com e sem espectadores, e se algum amigo
+no celular segurou a sala em H.264.
+
 ### O que mandar de volta
 
 - Capturas de tela: do app, do console da transmissão e, se der, do que o

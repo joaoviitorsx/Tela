@@ -9,9 +9,9 @@ describe('avisoDeCursor', () => {
     expect(avisoDeCursor([tela, { nome: 'League of Legends', tipo: 'janela' }], 'win32')).toBe(AVISO_DE_CURSOR);
   });
 
-  it('o que orienta é o "Sem bordas", não trocar de fonte', () => {
+  it('as duas saídas: a aba TELAS (o que funcionou no navegador) e o "Sem bordas"', () => {
+    expect(AVISO_DE_CURSOR).toMatch(/aba TELAS/);
     expect(AVISO_DE_CURSOR).toMatch(/Sem bordas/);
-    expect(AVISO_DE_CURSOR).not.toMatch(/transmita a TELA/i);
   });
 
   it('aba de navegador, outros jogos e outros sistemas não avisam', () => {

@@ -60,14 +60,23 @@ describe('useSeletorDeFontes — aviso do cursor do LoL', () => {
     expect(result.current.avisoDoJogo).toBeNull();
   });
 
-  it('fechar zera; fora do Windows nunca avisa', async () => {
+  it('fechar zera', async () => {
+    const { seletor, listar } = montar();
+    const { result } = renderHook(() => useSeletorDeFontes(seletor, 'win32'));
+    listar([LOL]);
+    act(() => void seletor.abrir());
+    await tique();
+    expect(result.current.avisoDoJogo).not.toBeNull();
+    act(() => seletor.cancelar());
+    expect(result.current.avisoDoJogo).toBeNull();
+  });
+
+  it('fora do Windows nunca avisa', async () => {
     const { seletor, listar } = montar();
     const { result } = renderHook(() => useSeletorDeFontes(seletor, 'linux'));
     listar([LOL]);
     act(() => void seletor.abrir());
     await tique();
-    expect(result.current.avisoDoJogo).toBeNull();
-    act(() => seletor.cancelar());
     expect(result.current.avisoDoJogo).toBeNull();
   });
 });

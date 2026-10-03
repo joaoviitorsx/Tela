@@ -1,4 +1,4 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { type Dialogo, useDialogo } from '../react/use-dialogo.js';
 import { avisoDeCursor } from './aviso-de-cursor.js';
 import type { PlataformaDesktop } from './ponte.js';
@@ -21,7 +21,16 @@ export function useSeletorDeFontes(
   const estado = useSyncExternalStore(seletor.assinar, seletor.snapshot, seletor.snapshot);
   const dialogo = useDialogo(estado.aberto, seletor.cancelar);
   // Só quando a listagem muda (a cada 2 s, com o seletor aberto).
-  const avisoDoJogo = useMemo(() => avisoDeCursor(estado.fontes, plataforma), [estado.fontes, plataforma]);
+  const calculado = useMemo(() => avisoDeCursor(estado.fontes, plataforma), [estado.fontes, plataforma]);
+  /*
+    Visto uma vez, fica até fechar: passados 10 s sem clique o main recusa a
+    listagem (portão de gesto) e ela volta vazia — o aviso sumiria no meio da
+    leitura.
+  */
+  const ultimo = useRef<string | null>(null);
+  if (!estado.aberto) ultimo.current = null;
+  else if (calculado !== null) ultimo.current = calculado;
+  const avisoDoJogo = estado.aberto ? ultimo.current : null;
   return { estado, dialogo, avisoDeJanela: avisoDeJanela(plataforma), avisoDoJogo };
 }
 

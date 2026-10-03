@@ -12,6 +12,8 @@ const AJUSTES: AjustesDesktop = {
   sempreNoTopoNoCompacto: false,
   aoFecharAoVivo: 'perguntar',
   atualizarAutomaticamente: true,
+  painelSobreOJogo: false,
+  cantoDoPainel: 'sup-dir',
 };
 const resposta = (sobre: Partial<RespostaDeAjustes> = {}): RespostaDeAjustes => ({
   ajustes: AJUSTES,

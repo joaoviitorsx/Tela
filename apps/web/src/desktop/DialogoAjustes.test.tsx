@@ -13,6 +13,8 @@ const AJUSTES: AjustesDesktop = {
   sempreNoTopoNoCompacto: false,
   aoFecharAoVivo: 'perguntar',
   atualizarAutomaticamente: true,
+  painelSobreOJogo: false,
+  cantoDoPainel: 'sup-dir',
 };
 
 const ATUALIZACAO: EstadoDaAtualizacao = {
@@ -164,5 +166,16 @@ describe('DialogoAjustes', () => {
       expect(document.body.textContent).toMatch(/Versão 0\.1\.0-beta\.6/);
       expect(screen.queryByRole('status', { hidden: true })).toBeNull();
     });
+  });
+
+  it('painel sobre o jogo: liga e escolhe o canto', () => {
+    const desligado = montar();
+    fireEvent.click(screen.getByLabelText('Painel sobre o jogo'));
+    expect(desligado).toHaveBeenCalledWith({ painelSobreOJogo: true });
+    expect(screen.queryByRole('button', { name: '↙ BAIXO', hidden: true })).toBeNull();
+    cleanup();
+    const ligado = montar({ ajustes: { ...AJUSTES, painelSobreOJogo: true } });
+    fireEvent.click(screen.getByRole('button', { name: '↙ BAIXO', hidden: true }));
+    expect(ligado).toHaveBeenCalledWith({ cantoDoPainel: 'inf-esq' });
   });
 });

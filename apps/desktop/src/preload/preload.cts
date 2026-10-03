@@ -65,6 +65,8 @@ type AjustesDesktop = {
   readonly sempreNoTopoNoCompacto: boolean;
   readonly aoFecharAoVivo: AoFecharAoVivo;
   readonly atualizarAutomaticamente: boolean;
+  readonly painelSobreOJogo: boolean;
+  readonly cantoDoPainel: 'sup-dir' | 'sup-esq' | 'inf-dir' | 'inf-esq';
 };
 type EstadoDaAtualizacao = {
   readonly modo: 'automatica' | 'avisar' | 'desligada';

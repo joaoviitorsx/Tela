@@ -48,4 +48,12 @@ describe('ajustes', () => {
     expect(mesmosAjustes(AJUSTES_PADRAO, { ...AJUSTES_PADRAO })).toBe(true);
     expect(mesmosAjustes(AJUSTES_PADRAO, { ...AJUSTES_PADRAO, iniciarComSistema: true })).toBe(false);
   });
+
+  it('painel sobre o jogo: desligado por padrão; canto só entre os quatro', () => {
+    expect(AJUSTES_PADRAO.painelSobreOJogo).toBe(false);
+    expect(mesclarAjustes(AJUSTES_PADRAO, { painelSobreOJogo: true }).painelSobreOJogo).toBe(true);
+    expect(mesclarAjustes(AJUSTES_PADRAO, { cantoDoPainel: 'inf-esq' }).cantoDoPainel).toBe('inf-esq');
+    expect(mesclarAjustes(AJUSTES_PADRAO, { cantoDoPainel: 'meio' }).cantoDoPainel).toBe('sup-dir');
+    expect(mesmosAjustes(AJUSTES_PADRAO, { ...AJUSTES_PADRAO, cantoDoPainel: 'inf-dir' })).toBe(false);
+  });
 });

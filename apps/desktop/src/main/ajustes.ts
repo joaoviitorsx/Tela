@@ -5,6 +5,8 @@
  * abertura — o que não reconhece volta ao padrão, campo a campo.
  */
 
+import { CANTOS_DO_PAINEL, type CantoDoPainel } from './painel-sobre-o-jogo.js';
+
 /** O que fechar a janela faz AO VIVO. `perguntar` só até a pessoa marcar "lembrar". */
 export type AoFecharAoVivo = 'perguntar' | 'segundo-plano' | 'encerrar';
 
@@ -19,6 +21,9 @@ export type Ajustes = {
   readonly aoFecharAoVivo: AoFecharAoVivo;
   /** Verifica e baixa atualizações sozinho (nunca ao vivo, D5). Desligado, só "verificar agora". */
   readonly atualizarAutomaticamente: boolean;
+  /** A faixa "AO VIVO · 3 assistindo" por cima do jogo, ao vivo. */
+  readonly painelSobreOJogo: boolean;
+  readonly cantoDoPainel: CantoDoPainel;
 };
 
 export const AJUSTES_PADRAO: Ajustes = {
@@ -27,11 +32,21 @@ export const AJUSTES_PADRAO: Ajustes = {
   sempreNoTopoNoCompacto: false,
   aoFecharAoVivo: 'perguntar',
   atualizarAutomaticamente: true,
+  painelSobreOJogo: false,
+  cantoDoPainel: 'sup-dir',
 };
 
 const ESCOLHAS: ReadonlySet<string> = new Set<AoFecharAoVivo>(['perguntar', 'segundo-plano', 'encerrar']);
 
-const CAMPOS_BOOLEANOS = ['iniciarComSistema', 'fecharEmSegundoPlano', 'sempreNoTopoNoCompacto', 'atualizarAutomaticamente'] as const;
+const CAMPOS_BOOLEANOS = [
+  'iniciarComSistema',
+  'fecharEmSegundoPlano',
+  'sempreNoTopoNoCompacto',
+  'atualizarAutomaticamente',
+  'painelSobreOJogo',
+] as const;
+
+const CANTOS: ReadonlySet<string> = new Set(CANTOS_DO_PAINEL);
 
 /**
  * Aplica um objeto desconhecido por cima de `base`, campo a campo: só entra o
@@ -48,6 +63,8 @@ export function mesclarAjustes(base: Ajustes, bruto: unknown): Ajustes {
   }
   const escolha = dados['aoFecharAoVivo'];
   if (typeof escolha === 'string' && ESCOLHAS.has(escolha)) proximo.aoFecharAoVivo = escolha as AoFecharAoVivo;
+  const canto = dados['cantoDoPainel'];
+  if (typeof canto === 'string' && CANTOS.has(canto)) proximo.cantoDoPainel = canto as CantoDoPainel;
   return proximo;
 }
 
@@ -71,6 +88,8 @@ export function mesmosAjustes(a: Ajustes, b: Ajustes): boolean {
     a.fecharEmSegundoPlano === b.fecharEmSegundoPlano &&
     a.sempreNoTopoNoCompacto === b.sempreNoTopoNoCompacto &&
     a.aoFecharAoVivo === b.aoFecharAoVivo &&
-    a.atualizarAutomaticamente === b.atualizarAutomaticamente
+    a.atualizarAutomaticamente === b.atualizarAutomaticamente &&
+    a.painelSobreOJogo === b.painelSobreOJogo &&
+    a.cantoDoPainel === b.cantoDoPainel
   );
 }

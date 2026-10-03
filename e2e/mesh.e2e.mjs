@@ -128,6 +128,15 @@ const resultado = await host.evaluate(
     osc.start();
     const audioTrack = dest.stream.getAudioTracks()[0];
 
+    // Guarda as conexões para ler o codec de vídeo de fato enviado (R5).
+    const Original = window.RTCPeerConnection;
+    window.__pcs = [];
+    window.RTCPeerConnection = class extends Original {
+      constructor(...args) {
+        super(...args);
+        window.__pcs.push(this);
+      }
+    };
     const transport = makeMeshTransport({
       channel: makeWsSignaling(
         `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/signal`,
@@ -199,6 +208,18 @@ if (conectou) {
   ok(agregado !== null, `estatísticas agregadas: ${JSON.stringify(agregado)}`);
   ok(agregado?.bitrateBps > 0, `bitrate real medido: ${agregado?.bitrateBps} bps`);
   ok(agregado?.fps > 0, `framerate real medido: ${agregado?.fps} fps`);
+  // R5: o espectador de produção recusa AV1 sem decoder eficiente (ADR 0035) e
+  // não pode, com isso, reordenar a resposta para VP8.
+  const codecDeVideo = await host.evaluate(async () => {
+    for (const pc of window.__pcs ?? []) {
+      const r = await pc.getStats();
+      let id = null;
+      r.forEach((x) => { if (x.type === 'outbound-rtp' && x.kind === 'video') id = x.codecId; });
+      if (id !== null) return r.get(id)?.mimeType ?? null;
+    }
+    return null;
+  });
+  ok(codecDeVideo === 'video/H264', `vídeo enviado em H.264 (${codecDeVideo})`);
 
   console.log('\n   Áudio: quem assiste precisa OUVIR o gameplay');
   let comAudio = null;

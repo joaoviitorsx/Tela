@@ -213,6 +213,20 @@ export function DialogoAjustes({
             </div>
           )}
           <Linha
+            rotulo="Taxa constante no encoder (experimental)"
+            descricao="No Windows, o encoder da GPU pode mandar rajadas de até 10 vezes a taxa pedida, que viram perda e travadinha em rede apertada. Com isto ligado ele segura a taxa constante. Vale na próxima configuração do encoder. Se a imagem piorar, desligue — e conte o que viu."
+            marcado={ajustes?.taxaConstante ?? false}
+            desabilitado={!pronto}
+            aoMudar={(taxaConstante) => aoMudar({ taxaConstante })}
+          />
+          <Linha
+            rotulo="Economizar banda com a tela parada (experimental, Linux)"
+            descricao="O encoder da GPU (NVENC) deixa de encher a banda quando a imagem quase não muda — menu, loading, mapa parado: de ~12 para ~1,4 Mbps por espectador, com a mesma imagem. Quando o jogo volta a mexer, a qualidade volta. Se notar a imagem demorando a voltar depois de um menu, desligue e conte."
+            marcado={ajustes?.economiaParada ?? false}
+            desabilitado={!pronto}
+            aoMudar={(economiaParada) => aoMudar({ economiaParada })}
+          />
+          <Linha
             rotulo="Atualizar automaticamente"
             descricao="Verifica a cada 6 horas e baixa em segundo plano, só com a transmissão fora do ar. A versão nova instala quando você sair do Tela. Nunca mexe numa transmissão no ar."
             marcado={ajustes?.atualizarAutomaticamente ?? true}

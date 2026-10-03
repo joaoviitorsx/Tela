@@ -51,3 +51,13 @@ A regra que vale para tudo abaixo é a do AGENTS.md: medido em vez de deduzido. 
 ## O custo que mais escala hoje
 
 Medido no navegador (`e2e/bench/chromium-por-espectador.mjs`): **~0,03–0,06 núcleo por espectador** no Chromium de quem transmite, e quase não muda com o bitrate — é custo **fixo por sender** (isca 160×90 codificada a 60 fps + Encoded Transform + pacotização), não proporcional aos bytes. Extrapolado, 50 espectadores somam 1,5–3 núcleos. Duas frentes: medir com a máquina ociosa e `chrome://tracing` para decompor, e testar isca menor (32×32 deu indício de ~30% a menos, dentro do ruído de uma máquina carregada) — e, no limite, a cascata, que tira esses senders do host.
+
+**Medido (2026-10-03, máquina ociosa, `SALAS=1,3,5`, duas rodadas
+intercaladas):** isca 160×90 deu 0,0605 e 0,0210 núcleo por espectador (total
+em N=5: 0,626 e 0,524); 32×18 deu 0,0413 e 0,0410 (total 0,604 e 0,602). A
+variação entre rodadas da MESMA isca é maior que a diferença entre as duas —
+quem domina é o degrau que a malha escolheu em cada sala (576p vs 720p).
+Sem o degrau fixo, sem evidência. **Com o degrau fixo** (`PRESET=p360p60`,
+três pares intercalados): 160×90 = 0,0308 · 0,0318 · 0,0308; 32×18 = 0,0266 ·
+0,0257 · 0,0260 núcleo por espectador — **−16%, consistente. A isca passou a
+32×18** (`adapters/isca.ts`).

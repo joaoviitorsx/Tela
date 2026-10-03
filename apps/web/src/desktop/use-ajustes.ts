@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { taxaDoEncoder } from './taxa-do-encoder.js';
 import type { AjustesDesktop, PonteDesktop, RespostaDeAjustes } from './ponte.js';
 
 export type AjustesDoApp = {
@@ -22,7 +23,10 @@ export function useAjustes(ponte: Pick<PonteDesktop, 'ajustes' | 'salvarAjustes'
 
   const aplicar = useCallback((r: RespostaDeAjustes | null) => {
     // O main devolve `null` a quem não é a interface; nada a mostrar.
-    if (r !== null) setResposta(r);
+    if (r === null) return;
+    setResposta(r);
+    taxaDoEncoder.definir(r.ajustes.taxaConstante);
+    taxaDoEncoder.definirEconomia(r.ajustes.economiaParada);
   }, []);
 
   const recarregar = useCallback(() => {

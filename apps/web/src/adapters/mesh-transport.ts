@@ -41,6 +41,8 @@ export type MeshTransportDeps = {
    * não coordena e o espectador não repassa nem anuncia nada.
    */
   readonly repasse?: DepsDoRepasse;
+  /** Espectador: o que este aparelho recusa receber (ADR 0035). */
+  readonly aceitaCodec?: (mimeType: string) => boolean;
 };
 
 export type DepsDoRepasse = {
@@ -362,6 +364,7 @@ export function makeMeshTransport(deps: MeshTransportDeps): MediaTransport {
         iceServers: opened.iceServers,
         send: (payload) => deps.channel.send(payload),
         createConnection,
+        ...(deps.aceitaCodec === undefined ? {} : { aceitaCodec: deps.aceitaCodec }),
         onTrack: (track) => {
           link.setJitterAlvo(JITTER_INICIAL_MS);
 

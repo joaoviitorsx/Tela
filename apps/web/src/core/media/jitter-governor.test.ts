@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { JitterGovernor } from './jitter-governor.js';
+import { JitterGovernor, PISO_ABSOLUTO_MS, pisoPeloRtt } from './jitter-governor.js';
 import {
   JITTER_INICIAL_MS,
   JITTER_MAXIMO_MS,
@@ -139,5 +139,53 @@ describe('JitterGovernor', () => {
     g.reset();
     expect(g.atual).toBe(JITTER_INICIAL_MS);
     expect(g.observe(leitura())).toBeNull();
+  });
+});
+
+describe('piso pelo RTT (estudo 2 · T3)', () => {
+  it('RTT + 25 sem perda; 2·RTT + 35 com perda; sem RTT, o piso fixo', () => {
+    expect(pisoPeloRtt(40, false)).toBe(65);
+    expect(pisoPeloRtt(40, true)).toBe(115);
+    expect(pisoPeloRtt(0, false)).toBe(JITTER_MINIMO_MS);
+    expect(pisoPeloRtt(Number.NaN, true)).toBe(JITTER_MINIMO_MS);
+  });
+
+  it('limites: nunca abaixo de 20 ms nem acima do teto', () => {
+    // RTT de 1 ms já dá 26 (o NACK ainda precisa de margem); o limite de 20 é guarda.
+    expect(pisoPeloRtt(1, false)).toBe(26);
+    expect(pisoPeloRtt(1, false)).toBeGreaterThanOrEqual(PISO_ABSOLUTO_MS);
+    expect(pisoPeloRtt(500, true)).toBe(JITTER_MAXIMO_MS);
+  });
+
+  it('rede local calma: desce abaixo dos 40 fixos, até o piso do RTT', () => {
+    const g = new JitterGovernor();
+    let ultimo = g.atual;
+    for (let i = 0; i < 400; i += 1) ultimo = g.observe(leitura(), 3)?.ms ?? ultimo;
+    expect(g.atual).toBe(pisoPeloRtt(3, false));
+    expect(g.atual).toBeLessThan(JITTER_MINIMO_MS);
+    expect(g.podeDescer).toBe(false);
+  });
+
+  it('RTT alto: sobe ao piso JÁ, sem esperar a travada', () => {
+    const g = new JitterGovernor();
+    g.observe(leitura(), 90);
+    const d = g.observe(leitura(), 90);
+    expect(d).toEqual({ ms: 115 });
+    expect(g.atual).toBe(115);
+  });
+
+  it('um pico isolado de RTT não ergue o piso (mediana de 5)', () => {
+    const g = new JitterGovernor();
+    for (let i = 0; i < 4; i += 1) g.observe(leitura(), 20);
+    const antes = g.atual;
+    g.observe(leitura(), 180);
+    expect(g.atual).toBe(antes);
+  });
+
+  it('perda com RTT alto pede o piso maior', () => {
+    const g = new JitterGovernor();
+    g.observe(leitura({ pacotesPerdidos: 0 }), 60);
+    const d = g.observe(leitura({ pacotesPerdidos: 10 }), 60);
+    expect(d).toEqual({ ms: 155 });
   });
 });

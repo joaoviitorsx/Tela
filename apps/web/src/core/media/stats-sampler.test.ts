@@ -235,6 +235,8 @@ describe('StatsSampler — leitura retida do rodízio', () => {
     const retido = sampler.readMany([{ peerId: 'a', report: a2 }, { peerId: 'b', report: b1, fresco: false }]);
     expect(retido?.bitrateBps).toBe(16_000_000);
     expect(retido?.frescosPorPeer).toEqual(['a']);
+    // RTT e perda são sequência de leituras (ADR 0033): a retida não entra.
+    expect(retido?.rttPorPeer).toEqual({ a: 20 });
   });
 
   it('o aquecimento por caminho conta LEITURAS, não tiques', () => {

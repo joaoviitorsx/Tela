@@ -3,7 +3,7 @@
  *
  * O transmissor é a `BroadcastSession` de verdade — malhas, governador — sobre
  * `makeEncodeOnceTransport`: um `VideoEncoder` codifica a fonte uma vez, cada
- * sender codifica só uma isca 160x90, e um Encoded Transform troca o conteúdo.
+ * sender codifica só uma isca 32x18, e um Encoded Transform troca o conteúdo.
  * Os espectadores são a rota `/<canal>`, sem saber de nada.
  *
  * Critérios: os espectadores DECODIFICAM vídeo (resolução e fps reais, do
@@ -18,6 +18,13 @@ import { chromium } from 'playwright';
 const CHROME = process.env.CHROME ?? chromium.executablePath();
 const WEB = process.env.WEB_URL ?? 'http://localhost:5173';
 const ESPECTADORES = Number(process.env.ESPECTADORES ?? 2);
+/** `AV1=1`: o codificador único em AV1 por SOFTWARE (só teste; ADR 0035). */
+const AV1 = process.env.AV1 === '1';
+/**
+ * `AV1_ESPECTADOR=0`: espectadores sem a chave de teste, como um aparelho sem
+ * decoder AV1 eficiente — recusam AV1 na resposta e a sala fica em H.264.
+ */
+const AV1_ESPECTADOR = AV1 && process.env.AV1_ESPECTADOR !== '0';
 const SEGUNDOS = Number(process.env.SEGUNDOS ?? 30);
 
 const ok = (cond, msg) => {
@@ -44,6 +51,8 @@ const guardarPcs = () => {
 async function pagina(rotulo) {
   const ctx = await browser.newContext();
   await ctx.addInitScript(guardarPcs);
+  // Espectador headless decodifica AV1 por software: sem isto ele o recusaria (ADR 0035).
+  if (AV1_ESPECTADOR && rotulo !== 'host') await ctx.addInitScript(() => localStorage.setItem('tela.av1', 'forcar'));
   const p = await ctx.newPage();
   p.on('pageerror', (e) => console.log(`  [${rotulo}] pageerror: ${e.message}`));
   return p;
@@ -54,7 +63,7 @@ const host = await pagina('host');
 await host.goto(`${WEB}/@@e2e`, { waitUntil: 'networkidle' });
 
 console.log('\n1. Transmissor: BroadcastSession sobre o transporte "um encode"');
-const subiu = await host.evaluate(async (canal) => {
+const subiu = await host.evaluate(async ([canal, av1]) => {
   // Fonte com cara de jogo: mundo deslocado e girado, partículas por cima.
   const W = 1280;
   const H = 720;
@@ -87,12 +96,16 @@ const subiu = await host.evaluate(async (canal) => {
   const { makeWsSignaling } = await import('/src/adapters/ws-signaling.ts');
   const { makeBrowserScheduler } = await import('/src/adapters/browser-scheduler.ts');
   const { makeBrowserAudioGain } = await import('/src/adapters/browser-audio-gain.ts');
+  const { CodificadorWebCodecs } = await import('/src/adapters/webcodecs-codificador.ts');
   const scheduler = makeBrowserScheduler();
   const session = new BroadcastSession({
     transport: makeEncodeOnceTransport({
       channel: makeWsSignaling(`ws://${location.host}/signal`),
       scheduler,
       criarWorker: () => new Worker(new URL('/src/adapters/injecao-worker.ts', location.origin), { type: 'module' }),
+      ...(av1
+        ? { criarCodificador: (d) => new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar, { av1: 'forcado' }) }
+        : {}),
     }),
     screen: { isSupported: () => true, request: async () => ({ ok: true, value: { video, audio: null, surface: 'monitor' } }) },
     audio: { requestPermission: async () => false, listMonitors: async () => [], capture: async () => { throw new Error('sem áudio'); } },
@@ -104,7 +117,7 @@ const subiu = await host.evaluate(async (canal) => {
   window.__sessao = session;
   await session.start(canal, `e2e${'u'.repeat(40)}`, { presetId: 'p720p60' });
   return session.getState().status;
-}, slug);
+}, [slug, AV1]);
 ok(subiu === 'live', `sessão no ar (${subiu})`);
 
 const espectadores = [];
@@ -119,8 +132,9 @@ const lerEspectador = (p) => p.evaluate(async () => {
   for (const pc of window.__pcs ?? []) {
     if (pc.connectionState !== 'connected') continue;
     (await pc.getStats()).forEach((s) => {
+      if (s.type === 'codec') r.codecs = { ...(r.codecs ?? {}), [s.id]: s.mimeType };
       if (s.type === 'inbound-rtp' && s.kind === 'video') {
-        Object.assign(r, { w: s.frameWidth, h: s.frameHeight, dec: s.framesDecoded, chaves: s.keyFramesDecoded, plis: s.pliCount, cong: s.freezeCount });
+        Object.assign(r, { w: s.frameWidth, h: s.frameHeight, dec: s.framesDecoded, chaves: s.keyFramesDecoded, plis: s.pliCount, cong: s.freezeCount, codecId: s.codecId });
       }
     });
   }
@@ -159,8 +173,25 @@ depois.forEach((d, i) => {
   ok(d.pcs === 1, `espectador ${i} não reconectou (${d.pcs} conexão(ões))`);
   ok(chaves <= 3, `espectador ${i} sem rajada de quadros-chave (${chaves} em ${SEGUNDOS}s)`);
 });
+if (AV1_ESPECTADOR) {
+  ok(String(estado.enc).includes('AV1'), `o codificador único está em AV1 (${estado.enc})`);
+  depois.forEach((d, i) => {
+    const codec = d.codecs?.[d.codecId];
+    ok(codec === 'video/AV1', `espectador ${i} recebe e decodifica AV1 (${codec})`);
+  });
+} else if (AV1) {
+  ok(!String(estado.enc).includes('AV1'), `espectador sem decoder eficiente segura a sala em H.264 (${estado.enc})`);
+  depois.forEach((d, i) => {
+    const codec = d.codecs?.[d.codecId];
+    ok(codec === 'video/H264', `espectador ${i} recusou AV1 e recebe H.264 (${codec})`);
+  });
+}
+if (!AV1_ESPECTADOR) {
+  // O piso da sala (ADR 0016): o espectador que recusa AV1 não pode reordenar a resposta para Baseline/VP8.
+  ok(/H\.264 (Main|High)/.test(String(estado.enc)), `sala em H.264 Main/High, não Baseline (${estado.enc})`);
+}
 const chavesIsca = Math.max(...iscas.map((x) => x.chaves));
-ok(iscas.every((x) => x.w <= 160), `os senders codificam só a isca (${iscas.map((x) => x.w).join(', ')} px)`);
+ok(iscas.every((x) => x.w <= 32), `os senders codificam só a isca (${iscas.map((x) => x.w).join(', ')} px)`);
 ok(chavesIsca <= 3, `a isca não gera quadro-chave sozinha (${chavesIsca} no total)`);
 
 await browser.close();

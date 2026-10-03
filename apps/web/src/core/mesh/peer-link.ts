@@ -1,4 +1,4 @@
-import type { IceServerConfig } from '@tela/shared';
+import { type IceServerConfig, TETO_DA_SONDA_BPS } from '@tela/shared';
 import type { ReferenciaDeCaptura } from '../media/relogio-de-captura.js';
 import { rtcConfiguration } from './ice-config.js';
 import { afinarSdp, pedirEstereo } from './sdp-tuning.js';
@@ -41,6 +41,12 @@ export type PeerLinkDeps = {
    * Ausente no espectador, que não manda vídeo.
    */
   readonly startBitrateBps?: () => number | null;
+  /**
+   * O espectador recusa um codec na resposta (ADR 0035): `false` para o
+   * `mimeType` que este aparelho não decodifica com eficiência. Ausente =
+   * aceita o que o navegador anuncia.
+   */
+  readonly aceitaCodec?: (mimeType: string) => boolean;
 };
 
 /** O que trafega no `payload` opaco. O servidor nunca olha para isto (R8). */
@@ -107,6 +113,7 @@ export class PeerLink {
   private readonly polite: boolean;
   private readonly send: (payload: unknown) => void;
   private readonly startBitrateBps: (() => number | null) | null;
+  private readonly aceitaCodec: ((mimeType: string) => boolean) | null;
   private readonly onIssue: (code: PeerLinkIssueCode) => void;
   private readonly onFatal: (code: PeerLinkFatalCode) => void;
   private readonly now: () => number;
@@ -132,6 +139,7 @@ export class PeerLink {
     this.polite = deps.polite;
     this.send = deps.send;
     this.startBitrateBps = deps.startBitrateBps ?? null;
+    this.aceitaCodec = deps.aceitaCodec ?? null;
     this.onIssue = deps.onIssue ?? (() => undefined);
     this.onFatal = deps.onFatal ?? (() => undefined);
     this.now = deps.now ?? Date.now;
@@ -290,12 +298,10 @@ export class PeerLink {
     const transceiver = this.pc.getTransceivers().find((t) => t.sender === sender);
     if (transceiver === undefined || typeof transceiver.setCodecPreferences !== 'function') return;
 
-    const wanted = 'video/h264';
-    const preferred = capabilities.codecs.filter((c) => c.mimeType.toLowerCase() === wanted);
-    if (preferred.length === 0) return;
-    const rest = capabilities.codecs.filter((c) => c.mimeType.toLowerCase() !== wanted);
+    const preferencias = preferenciasDeVideo(capabilities.codecs);
+    if (preferencias === null) return;
     try {
-      transceiver.setCodecPreferences([...ordenarH264(preferred), ...rest]);
+      transceiver.setCodecPreferences(preferencias);
     } catch {
       // Navegador sem suporte a preferência de codec: o SDP negocia sozinho.
     }
@@ -508,6 +514,7 @@ export class PeerLink {
    * que mono.
    */
   private async responder(): Promise<void> {
+    this.recusarCodecs();
     const resposta = await this.pc.createAnswer();
     if (typeof resposta.sdp !== 'string') {
       await this.pc.setLocalDescription(resposta);
@@ -519,6 +526,29 @@ export class PeerLink {
     } catch {
       if (comEstereo === resposta.sdp) throw new Error('LOCAL_DESCRIPTION_FAILED');
       await this.pc.setLocalDescription(resposta);
+    }
+  }
+
+  /**
+   * Tira da resposta o que `aceitaCodec` recusa (ADR 0035). A sala só vira
+   * AV1 quando TODOS os senders negociaram AV1; o aparelho que o decodificaria
+   * por software a 1080p60 sai daqui, e a sala inteira fica em H.264.
+   */
+  private recusarCodecs(): void {
+    const aceita = this.aceitaCodec;
+    if (aceita === null) return;
+    if (typeof RTCRtpReceiver === 'undefined' || typeof RTCRtpReceiver.getCapabilities !== 'function') return;
+    const capacidades = RTCRtpReceiver.getCapabilities('video');
+    if (capacidades === null) return;
+    const aceitos = codecsAceitos(capacidades.codecs, aceita);
+    if (aceitos === null) return;
+    for (const t of this.pc.getTransceivers()) {
+      if (t.receiver.track.kind !== 'video' || typeof t.setCodecPreferences !== 'function') continue;
+      try {
+        t.setCodecPreferences(aceitos);
+      } catch {
+        // Sem preferência: o navegador responde com tudo, como antes.
+      }
     }
   }
 
@@ -640,6 +670,8 @@ export class PeerLink {
     try {
       const sdp = afinarSdp(description.sdp, {
         startBitrateBps: this.startBitrateBps?.() ?? null,
+        // Só em quem envia (quem tem início): 1,5 × o teto da escada (ver a constante).
+        maxBitrateBps: this.startBitrateBps === null ? null : TETO_DA_SONDA_BPS,
       });
       return sdp === description.sdp ? description : { type: description.type, sdp };
     } catch {
@@ -731,6 +763,46 @@ export const JITTER_MINIMO_MS = 40;
  * a restrição que morde. A velocidade de descida é.
  */
 export const JITTER_MAXIMO_MS = 240;
+
+/**
+ * Fora das preferências de VÍDEO (estudo 2 · T5): no libwebrtc a RED de vídeo
+ * é só o invólucro do ULPFEC, que já vem desligado para H.264 com NACK, e o
+ * FlexFEC exige *field trial* nas duas pontas — o espectador é um navegador
+ * qualquer. Tirar os três não muda um bit no fio e tira a ambiguidade do
+ * SDP. O `rtx` fica: é ele que faz o NACK reenviar. A RED do ÁUDIO (Opus,
+ * redundância de verdade) não passa por aqui.
+ */
+export const SEM_FEC_NO_VIDEO: ReadonlySet<string> = new Set(['video/red', 'video/ulpfec', 'video/flexfec-03']);
+
+/**
+ * Os codecs de recepção sem os recusados, NA ORDEM DO ANFITRIÃO
+ * (`preferenciasDeVideo`: H.264 High/Main na frente). `null` quando nada sai
+ * (não mexer na negociação) ou quando sobraria sem H.264 (o piso, R5).
+ *
+ * A ordem não é detalhe: o Chromium ordena a resposta pelas preferências de
+ * quem responde, e o sender usa o primeiro codec dela. Na ordem crua de
+ * `getCapabilities` (VP8, VP9, H.264 Baseline…) o mesh simples transmitia
+ * VP8 e o "um encode" lia Baseline como piso da sala.
+ */
+export function codecsAceitos(
+  codecs: readonly RTCRtpCodec[],
+  aceita: (mimeType: string) => boolean,
+): RTCRtpCodec[] | null {
+  const aceitos = codecs.filter((c) => aceita(c.mimeType));
+  if (aceitos.length === codecs.length) return null;
+  return preferenciasDeVideo(aceitos);
+}
+
+/** A lista do `setCodecPreferences` do vídeo: H.264 ordenado na frente, o resto sem FEC. `null` sem H.264. */
+export function preferenciasDeVideo(codecs: readonly RTCRtpCodec[]): RTCRtpCodec[] | null {
+  const h264 = codecs.filter((c) => c.mimeType.toLowerCase() === 'video/h264');
+  if (h264.length === 0) return null;
+  const resto = codecs.filter((c) => {
+    const tipo = c.mimeType.toLowerCase();
+    return tipo !== 'video/h264' && !SEM_FEC_NO_VIDEO.has(tipo);
+  });
+  return [...ordenarH264(h264), ...resto];
+}
 
 /**
  * Ordena as variantes de H.264 da melhor para a pior. Grátis em banda.

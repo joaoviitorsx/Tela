@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PeerLink, ordenarH264, type SignalPayload } from './peer-link.js';
+import { PeerLink, codecsAceitos, ordenarH264, preferenciasDeVideo, type SignalPayload } from './peer-link.js';
 import { type FakePeerConnection, fakeConnectionFactory } from './testing.js';
 import { fakeStream, fakeTrack } from '../testing/fakes.js';
 
@@ -466,5 +466,59 @@ describe('PeerLink — abs-capture-time (latência ponta a ponta)', () => {
       { track: { kind: 'video' }, getSynchronizationSources: () => [{ rtpTimestamp: 1, source: 1, timestamp: 1 }] },
     ];
     expect(await ctx.link.referenciaDeCaptura()).toBeNull();
+  });
+});
+
+describe('preferenciasDeVideo — sem FEC no vídeo (estudo 2 · T5)', () => {
+  const k = (mimeType: string, sdpFmtpLine?: string): RTCRtpCodec => ({
+    mimeType,
+    clockRate: 90_000,
+    ...(sdpFmtpLine === undefined ? {} : { sdpFmtpLine }),
+  });
+
+  it('tira red, ulpfec e flexfec; mantém rtx e os outros codecs; H.264 na frente', () => {
+    const lista = preferenciasDeVideo([
+      k('video/VP8'),
+      k('video/rtx', 'apt=96'),
+      k('video/H264', 'packetization-mode=1;profile-level-id=42e01f'),
+      k('video/red'),
+      k('video/ulpfec'),
+      k('video/flexfec-03', 'repair-window=10000000'),
+      k('video/AV1'),
+    ]);
+    expect(lista?.map((c) => c.mimeType)).toEqual(['video/H264', 'video/VP8', 'video/rtx', 'video/AV1']);
+  });
+
+  it('sem H.264 não mexe (o navegador negocia sozinho)', () => {
+    expect(preferenciasDeVideo([k('video/VP8'), k('video/red')])).toBeNull();
+  });
+});
+
+describe('codecsAceitos — o espectador recusa AV1 sem decoder eficiente (ADR 0035)', () => {
+  const c = (mimeType: string): RTCRtpCodec => ({ mimeType, clockRate: 90_000 });
+  const semAv1 = (m: string) => m.toLowerCase() !== 'video/av1';
+
+  const h264 = (perfil: string): RTCRtpCodec => ({
+    mimeType: 'video/H264',
+    clockRate: 90_000,
+    sdpFmtpLine: `level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=${perfil}`,
+  });
+
+  it('tira o AV1 e põe H.264 na frente, High/Main antes de Baseline (ordem crua do receptor: VP8 primeiro)', () => {
+    const lista = codecsAceitos(
+      [c('video/VP8'), c('video/VP9'), h264('42001f'), h264('4d001f'), h264('64001f'), c('video/AV1'), c('video/rtx')],
+      semAv1,
+    );
+    expect(lista?.[0]?.sdpFmtpLine).toContain('profile-level-id=64');
+    expect(lista?.[1]?.sdpFmtpLine).toContain('profile-level-id=4d');
+    expect(lista?.slice(3).map((x) => x.mimeType)).toEqual(['video/VP8', 'video/VP9', 'video/rtx']);
+  });
+
+  it('nada recusado: null, a negociação fica intacta', () => {
+    expect(codecsAceitos([h264('64001f'), c('video/VP8')], semAv1)).toBeNull();
+  });
+
+  it('sobraria sem H.264: null, nunca ficar sem o piso', () => {
+    expect(codecsAceitos([c('video/AV1'), c('video/VP8')], semAv1)).toBeNull();
   });
 });

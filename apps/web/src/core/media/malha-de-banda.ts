@@ -31,6 +31,35 @@ import { UplinkGovernor } from './uplink-governor.js';
 
 /** Quantas leituras seguidas de `bandwidth` provam colapso, e não soluço. */
 const AMOSTRAS_DE_COLAPSO = 3;
+/**
+ * Tela parada (ADR 0033). O encoder produz menos que isto do próprio alvo:
+ * não está enchendo o cano — `bandwidth` aí pode ser só a estimativa
+ * decaída atrás de um envio pequeno, e só vira evidência com congestão.
+ */
+const CONSUMO_CHEIO = 0.95;
+/**
+ * Tendência, e não amostra a amostra: a estimativa de agora contra a de
+ * `JANELA_DA_TENDENCIA` amostras atrás. Uma rampa (8%/s no AIMD) sobe ~47% em
+ * 5 s, muito acima do ruído de ±20% por amostra; num colapso, ela cai.
+ * Comparar com a anterior lia metade das amostras de uma rampa como "não
+ * subindo" e somava colapso falso (simulador `--parado`).
+ */
+const JANELA_DA_TENDENCIA = 5;
+const SUBINDO = 1.1;
+/**
+ * Congestão de UM caminho: RTT acima de `patamar dele × 1,5 + 15 ms`, ou
+ * perda ≥ 2% (o policer que derruba sem fila). Por caminho e não pelo pior RTT
+ * da sala: um espectador distante entrando, ou o Wi-Fi de um oscilando, não
+ * é o link de quem transmite enchendo (revisão de 2026-10-03: o pior RTT
+ * derrubava o orçamento numa tela parada em 7 s). Vale com duas amostras
+ * seguidas.
+ */
+const RTT_CONGESTAO_FATOR = 1.5;
+const RTT_CONGESTAO_FOLGA_MS = 15;
+const PERDA_DE_CONGESTAO = 0.02;
+const AMOSTRAS_DE_CONGESTAO = 2;
+/** Amostras seguidas sem prova que zeram a contagem do colapso. */
+const AMOSTRAS_SEM_PROVA = 3;
 /** Mesmo piso do governador: abaixo disso não há vídeo que preste. */
 const ORCAMENTO_VIDEO_MINIMO = 300_000;
 /** Espera entre sondas de subida, em amostras (1 s). Dobra a cada falha. */
@@ -46,7 +75,10 @@ const SONDA_FOLGA = 1.3;
 
 /** O que a malha precisa saber a cada segundo. Tudo vem da sessão. */
 export type LeituraDaMalha = {
-  readonly stats: Pick<MediaStats, 'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer' | 'frescosPorPeer'>;
+  readonly stats: Pick<
+    MediaStats,
+    'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer' | 'frescosPorPeer' | 'consumoDoEncoder' | 'rttPorPeer' | 'perdaPorPeer'
+  >;
   /** O degrau que está no ar agora — dele sai o teto de pixel. */
   readonly presetEfetivo: PresetId;
   /** O que o usuário pediu: teto da sonda. */
@@ -84,6 +116,13 @@ export class MalhaDeBanda {
   private readonly governor = new UplinkGovernor();
   /** Amostras seguidas com a banda amarrando o encoder. Ver `observar`. */
   private amostrasDeBanda = 0;
+  /** As últimas piores estimativas (anel de `JANELA_DA_TENDENCIA`): rampa ou queda. */
+  private readonly estimativas: (number | null)[] = new Array<number | null>(JANELA_DA_TENDENCIA).fill(null);
+  private posicaoDaEstimativa = 0;
+  /** Por caminho: o patamar do RTT (mínimo que sobe devagar) e amostras seguidas congestionado. */
+  private readonly caminhos = new Map<string, { base: number; congestionado: number }>();
+  /** Amostras seguidas com `bandwidth` mas sem prova. */
+  private semProva = 0;
   /** Amostra da última mudança de orçamento, pela malha ou pela sonda. */
   private ultimaDecisaoEm = 0;
   /** Sonda de subida. Ver `talvezSondar`. */
@@ -111,6 +150,10 @@ export class MalhaDeBanda {
   reiniciar(): void {
     this.governor.reset();
     this.amostrasDeBanda = 0;
+    this.estimativas.fill(null);
+    this.posicaoDaEstimativa = 0;
+    this.caminhos.clear();
+    this.semProva = 0;
     this.ultimaDecisaoEm = 0;
     this.sondaEspera = SONDA_ESPERA_INICIAL;
     this.sondaDesde = null;
@@ -210,7 +253,42 @@ export class MalhaDeBanda {
      * desempate pela leitura crua ou suavizada) mexiam nas guardas; esta não
      * mexe — acrescenta a evidência que elas não tinham.
      */
-    this.amostrasDeBanda = stats.limitation === 'bandwidth' ? this.amostrasDeBanda + 1 : 0;
+    /*
+      O que prova colapso (ADR 0033). Sem isto, numa tela parada a estimativa
+      decai atrás do envio pequeno, o motivo vira `bandwidth`, três amostras
+      viram "colapso" e a catraca da ADR 0018 nunca devolve o degrau —
+      medido no simulador: 12/12 cenários derrubados, nenhum voltando.
+
+      - encoder ENCHENDO o alvo e a estimativa não subindo: é o link que
+        limita (o colapso clássico, igual a antes com conteúdo em movimento);
+      - ou congestão (RTT acima do patamar): o link está cheio, qualquer que
+        seja o conteúdo.
+      Encoder sem encher o alvo e sem congestão (tela parada, conteúdo leve)
+      não prova nada; estimativa subindo é rampa. Amostra que não prova só não
+      soma — não zera: ruído não reinicia a contagem de um colapso real.
+      Sem `consumoDoEncoder` (fora do "um encode"), o comportamento antigo.
+    */
+    const freado = stats.limitation === 'bandwidth';
+    const enchendo = stats.consumoDoEncoder === undefined || stats.consumoDoEncoder >= CONSUMO_CHEIO;
+    const disponiveis = Object.values(stats.availablePorPeer);
+    const piorEstimativa = disponiveis.length === 0 ? null : Math.min(...disponiveis);
+    // O anel guarda a de JANELA amostras atrás exatamente na posição que vai ser sobrescrita.
+    const antiga = this.estimativas[this.posicaoDaEstimativa] ?? null;
+    this.estimativas[this.posicaoDaEstimativa] = piorEstimativa;
+    this.posicaoDaEstimativa = (this.posicaoDaEstimativa + 1) % JANELA_DA_TENDENCIA;
+    const subindo = piorEstimativa !== null && antiga !== null && piorEstimativa > antiga * SUBINDO;
+    const congestao = this.congestao(stats.availablePorPeer, stats.rttPorPeer ?? {}, stats.perdaPorPeer ?? {});
+    const prova = congestao || (enchendo && !subindo);
+    if (!freado) {
+      this.amostrasDeBanda = 0;
+      this.semProva = 0;
+    } else if (prova) {
+      this.amostrasDeBanda += 1;
+      this.semProva = 0;
+    } else if (++this.semProva >= AMOSTRAS_SEM_PROVA) {
+      // Ruído segura a contagem por um instante; tela parada a zera.
+      this.amostrasDeBanda = 0;
+    }
     const colapso = this.amostrasDeBanda >= AMOSTRAS_DE_COLAPSO;
 
     const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;
@@ -302,6 +380,37 @@ export class MalhaDeBanda {
    * folga da estimativa sobre o envio, que já é a condição da sonda. Num link
    * pequeno de verdade ela não dispara; onde dispara e falha, a espera dobra.
    */
+  /**
+   * Algum caminho congestionado de verdade (duas amostras seguidas)? O(N)
+   * caminhos. Patamar POR caminho, nascendo na primeira leitura dele — quem
+   * entra de longe traz o próprio patamar, e não vira "congestão" de ninguém.
+   *
+   * `presentes` poda; `rtts` traz só leituras FRESCAS (o sampler omite as
+   * retidas do rodízio B2). Um par lido a cada 6 tiques guarda patamar e
+   * sequência entre uma leitura e outra, e só a leitura nova conta — a
+   * retida contada como amostra fazia de UM pico seis provas seguidas.
+   */
+  private congestao(
+    presentes: Readonly<Record<string, number>>,
+    rtts: Readonly<Record<string, number>>,
+    perdas: Readonly<Record<string, number>>,
+  ): boolean {
+    let algum = false;
+    for (const id of this.caminhos.keys()) if (!(id in presentes) && !(id in rtts)) this.caminhos.delete(id);
+    for (const [id, rtt] of Object.entries(rtts)) {
+      const c = this.caminhos.get(id);
+      if (c === undefined) {
+        this.caminhos.set(id, { base: rtt, congestionado: 0 });
+        continue;
+      }
+      const agora = rtt > c.base * RTT_CONGESTAO_FATOR + RTT_CONGESTAO_FOLGA_MS || (perdas[id] ?? 0) >= PERDA_DE_CONGESTAO;
+      c.congestionado = agora ? c.congestionado + 1 : 0;
+      c.base = Math.min(rtt, c.base + 0.5);
+      if (c.congestionado >= AMOSTRAS_DE_CONGESTAO) algum = true;
+    }
+    return algum;
+  }
+
   private talvezSondar(l: LeituraDaMalha, enviadoPorPeer: number): DecisaoDaMalha | null {
     const estimativa = this.governor.estimativa;
     const porBanda = l.presetPorBanda;

@@ -1,6 +1,6 @@
 /**
  * A isca do "um encode, N envios" (D0b) e do repassador (ADR 0031): uma trilha
- * 160×90 que emite UM quadro por `tique()`. Cada quadro dela é uma vaga onde o
+ * 32×18 que emite UM quadro por `tique()`. Cada quadro dela é uma vaga onde o
  * worker de injeção troca o conteúdo pelo quadro real.
  *
  * # Por que não é mais um canvas
@@ -26,8 +26,15 @@
  */
 export type Isca = { readonly trilha: MediaStreamTrack; readonly tique: () => void };
 
-const L = 160;
-const A = 90;
+/**
+ * 32×18 (16:9), e não mais 160×90: cada sender codifica a isca a 60 fps, e
+ * esse é o custo que cresce com a plateia. Medido com o degrau fixo
+ * (`PRESET=p360p60`, três pares intercalados, `chromium-por-espectador.mjs`):
+ * 0,0311 → 0,0261 núcleo por espectador (−16%), ~0,25 núcleo a menos numa
+ * sala de 50. A malha nunca reduz a isca: a escala é `max(1, fonte/degrau)`.
+ */
+const L = 32;
+const A = 18;
 
 type Gerador = MediaStreamTrack & { readonly writable: WritableStream<VideoFrame> };
 type ConstrutorDeGerador = new (init: { kind: 'video' }) => Gerador;

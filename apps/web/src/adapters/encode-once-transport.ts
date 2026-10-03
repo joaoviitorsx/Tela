@@ -1,3 +1,4 @@
+import { type CodecDaSala, codecDaSala, mimeDoCodec } from '../core/media/codec-da-sala.js';
 import { type PerfilH264, perfilDaSala } from '../core/media/perfil-h264.js';
 import { type EncodingPreset, type Prioridade, bitsPorPixel } from '@tela/shared';
 import { alvoDoCodificador } from '../core/media/alvo-do-codificador.js';
@@ -16,7 +17,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * é codificado três vezes (medido no D0). Este transporte embrulha o mesh de
  * sempre e muda só isso:
  *
- * - os senders recebem uma ISCA de 160x90 com parâmetros fixos — custo de
+ * - os senders recebem uma ISCA de 32x18 com parâmetros fixos — custo de
  *   codificação desprezível, e nenhuma reconfiguração que gere quadro-chave;
  * - um codificador único (WebCodecs) codifica a captura real;
  * - um Encoded Transform troca o conteúdo de cada quadro-isca pelo quadro real.
@@ -44,6 +45,12 @@ export type EncodeOnceDeps = MeshTransportDeps & {
  * no máximo isto, e o custo (~4–8 % de bits) só existe enquanto há repasse.
  */
 export const IDR_DO_REPASSE_MS = 2_000;
+
+/** A sala inteira aceitando AV1 por este tempo antes de subir (ADR 0035): cada troca é IDR para todos. */
+export const HISTERESE_DO_AV1_MS = 10_000;
+
+/** Teto de frequência da releitura do perfil da sala (ver `atualizarPerfilJa`). */
+const INTERVALO_DO_PERFIL_MS = 100;
 
 export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   /*
@@ -79,7 +86,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       if (m.data.tipo === 'chave') {
         // Alguém entrou: o piso da sala é relido ANTES do IDR de entrada, que
         // já sai no perfil que o recém-chegado decodifica.
-        if (m.data.motivo === 'entrada' && atualizarPerfil()) recalcular();
+        if (m.data.motivo === 'entrada' && atualizarPerfilJa()) recalcular();
         codificador.pedirChave(m.data.motivo, m.data.senders);
       }
       else if (m.data.tipo === 'atraso') {
@@ -102,9 +109,95 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   const sendersDeVideo = new Set<RTCRtpSender>();
   let cascataAtiva = false;
   let perfil: PerfilH264 = 'baseline';
-  /** Relê o perfil que a sala aceita. `true` = mudou (o codificador vai reconfigurar, com IDR). */
+  let camadas: 1 | 2 = 1;
+  /** O codec do ENCODER. Só muda depois que os senders trocaram (ver `alinhar`). */
+  let codec: CodecDaSala = 'h264';
+  /** O codec que os senders devem ter. Vai na frente do `codec`. */
+  let codecDosSenders: CodecDaSala = 'h264';
+  /** Desde quando a sala inteira aceita AV1 (histerese da subida); `null` = não aceita. */
+  let av1Desde: number | null = null;
+  let reavaliarAv1: ReturnType<typeof setTimeout> | null = null;
+  /** `setParameters` em voo: não repetir enquanto o anterior não resolveu. */
+  const alinhando = new WeakSet<RTCRtpSender>();
+  /** Subidas a AV1 seguidas que os senders não acompanharam; na segunda, AV1 sai da sessão. */
+  let subidasFalhas = 0;
+  let av1Desligado = false;
+  /** O codec que o sender REALMENTE tem (o que `encodings[0].codec` diz, ou o primeiro negociado). */
+  const codecDoSender = (p: RTCRtpSendParameters): string | undefined => {
+    const primeiro = (p.encodings as (RTCRtpEncodingParameters & { codec?: RTCRtpCodec })[])[0];
+    return primeiro?.codec?.mimeType.toLowerCase() ?? p.codecs?.[0]?.mimeType.toLowerCase();
+  };
+  /**
+   * Põe cada sender no codec da sala (ADR 0035): `encodings[0].codec`, sem
+   * renegociar (medido no Chromium 151). Idempotente — quem entra no meio de
+   * uma sala em AV1 é acertado aqui. Usa os parâmetros que `atualizarPerfil`
+   * já leu: um `getParameters` por sender por leitura, não dois.
+   */
+  const alinhar = (lidos: readonly (readonly [RTCRtpSender, RTCRtpSendParameters])[]): Promise<unknown> => {
+    const mime = mimeDoCodec(codecDosSenders).toLowerCase();
+    const pendentes: Promise<unknown>[] = [];
+    for (const [sender, p] of lidos) {
+      if (alinhando.has(sender)) continue;
+      // `encodings[].codec` (webrtc-pc, Chromium 126+) ainda não está no lib.dom.
+      const encodings = p.encodings as (RTCRtpEncodingParameters & { codec?: RTCRtpCodec })[];
+      const primeiro = encodings[0];
+      const alvo = p.codecs?.find((c) => c.mimeType.toLowerCase() === mime);
+      if (alvo === undefined || codecDoSender(p) === mime || primeiro === undefined) continue;
+      encodings[0] = { ...primeiro, codec: alvo };
+      alinhando.add(sender);
+      pendentes.push(
+        sender
+          .setParameters(p)
+          .catch(() => undefined)
+          .finally(() => {
+            alinhando.delete(sender);
+            // A sala mudou de ideia enquanto este estava em voo: ele foi pulado no realinhamento.
+            if (mimeDoCodec(codecDosSenders).toLowerCase() !== mime && atualizarPerfilJa()) recalcular();
+          }),
+      );
+    }
+    return Promise.all(pendentes);
+  };
+
+  /**
+   * Decide o codec dos senders. Descer a H.264 é na hora (alguém não
+   * decodifica AV1); subir a AV1 só com a sala inteira aceitando por
+   * `HISTERESE_DO_AV1_MS` — cada troca é IDR para todos, e um celular
+   * entrando e saindo não pode fazer a sala oscilar.
+   */
+  const decidirCodec = (daSala: CodecDaSala | null): void => {
+    if (daSala === null || daSala === 'h264' || av1Desligado) {
+      av1Desde = null;
+      if (reavaliarAv1 !== null) clearTimeout(reavaliarAv1);
+      reavaliarAv1 = null;
+      // Sala vazia: sem decisão de codec, mas a contagem da histerese recomeça.
+      if (daSala !== null) codecDosSenders = 'h264';
+      return;
+    }
+    if (codecDosSenders === 'av1') return;
+    const agora = performance.now();
+    av1Desde ??= agora;
+    if (agora - av1Desde >= HISTERESE_DO_AV1_MS) {
+      codecDosSenders = 'av1';
+      return;
+    }
+    if (reavaliarAv1 === null) {
+      reavaliarAv1 = setTimeout(() => {
+        reavaliarAv1 = null;
+        if (atualizarPerfil()) recalcular();
+      }, HISTERESE_DO_AV1_MS - (agora - av1Desde) + 1);
+    }
+  };
+
+  /**
+   * Relê o perfil que a sala aceita. `true` = mudou (o codificador vai
+   * reconfigurar, com IDR). O(N) senders, com teto de frequência em
+   * `atualizarPerfilJa`.
+   */
   const atualizarPerfil = (): boolean => {
     const fmtps: (string | undefined)[] = [];
+    const tiposPorSender: string[][] = [];
+    const lidos: [RTCRtpSender, RTCRtpSendParameters][] = [];
     for (const sender of sendersDeVideo) {
       const estado = sender.transport?.state;
       if (estado === 'closed' || estado === 'failed') {
@@ -113,13 +206,79 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       }
       // Todo sender JÁ NEGOCIADO conta, conectado ou não: quem acabou de
       // entrar tem de puxar o piso antes do primeiro quadro, não depois.
-      const negociado = sender.getParameters().codecs?.[0];
-      if (negociado !== undefined) fmtps.push(negociado.sdpFmtpLine);
+      const p = sender.getParameters();
+      const codecs = p.codecs ?? [];
+      // O fmtp do H.264 (o piso de perfil) — mesmo com a sala em AV1, ele é o plano B.
+      const h264 = codecs.find((c) => c.mimeType.toLowerCase() === 'video/h264');
+      if (codecs.length > 0) {
+        fmtps.push(h264?.sdpFmtpLine);
+        tiposPorSender.push(codecs.map((c) => c.mimeType));
+        lidos.push([sender, p]);
+      }
     }
+    // Válvula de camada (ADR 0034): só com dois ou mais — com um, não há a quem proteger.
+    const camadasDaSala: 1 | 2 = fmtps.length >= 2 ? 2 : 1;
+    const mudouCamadas = camadasDaSala !== camadas;
+    camadas = camadasDaSala;
+    decidirCodec(codecDaSala(tiposPorSender, recursos?.codificador.suportaAv1?.() ?? false, cascataAtiva));
+    const desejado = codecDosSenders;
+    /*
+      O encoder troca DEPOIS dos senders: o IDR do codec novo, saindo antes
+      de a isca trocar, se perderia no descompasso — e o sender esperaria o
+      próximo. Descer a H.264 também espera: quem ainda tem isca AV1 não
+      decodificaria o H.264 de qualquer jeito.
+    */
+    void alinhar(lidos).then(() => {
+      if (codecDosSenders !== desejado || codec === desejado || recursos === null) return;
+      /*
+        `setParameters` que resolve sem efeito (motor que ignora
+        `encodings[].codec`) ou que falhou: trocar o encoder assim deixaria a
+        sala inteira em descompasso, tela preta. Confere antes; na segunda
+        troca que não pega, o AV1 sai da sessão. O(N), só na troca.
+      */
+      const mime = mimeDoCodec(desejado).toLowerCase();
+      // Só quem estava na leitura: quem negociou depois ainda não foi alinhado (não é falha).
+      for (const [sender] of lidos) {
+        const estado = sender.transport?.state;
+        if (estado === 'closed' || estado === 'failed') continue;
+        const p = sender.getParameters();
+        // Sem negociação, ou sem o codec na lista: não é troca que falhou (a próxima leitura da sala decide).
+        if (!(p.codecs ?? []).some((c) => c.mimeType.toLowerCase() === mime)) continue;
+        if (codecDoSender(p) === mime) continue;
+        if (desejado === 'av1' && ++subidasFalhas >= 2) av1Desligado = true;
+        if (atualizarPerfilJa()) recalcular();
+        return;
+      }
+      if (desejado === 'av1') subidasFalhas = 0;
+      codec = desejado;
+      recalcular();
+    });
     const daSala = perfilDaSala(fmtps, cascataAtiva);
-    if (daSala === null || daSala === perfil) return false;
+    if (daSala === null || daSala === perfil) return mudouCamadas;
     perfil = daSala;
     return true;
+  };
+  /**
+   * `atualizarPerfil` com teto: na troca de codec cada sender em descompasso
+   * manda um aviso de entrada por vaga — N avisos × N `getParameters` (síncronos
+   * com o thread de sinalização) por tique. A primeira leitura é imediata (o
+   * piso de quem entra vale para o IDR de entrada); as seguintes, dentro de
+   * `INTERVALO_DO_PERFIL_MS`, viram uma só no fim da janela.
+   */
+  let ultimoPerfil = -Infinity;
+  let perfilAgendado: ReturnType<typeof setTimeout> | null = null;
+  const atualizarPerfilJa = (): boolean => {
+    const agora = performance.now();
+    if (agora - ultimoPerfil >= INTERVALO_DO_PERFIL_MS) {
+      ultimoPerfil = agora;
+      return atualizarPerfil();
+    }
+    perfilAgendado ??= setTimeout(() => {
+      perfilAgendado = null;
+      ultimoPerfil = performance.now();
+      if (atualizarPerfil()) recalcular();
+    }, INTERVALO_DO_PERFIL_MS - (agora - ultimoPerfil));
+    return false;
   };
   /** Todo sender de vídeo que nascer ganha o transform — o mesh não sabe. */
   const anexar = (sender: RTCRtpSender | undefined): void => {
@@ -194,6 +353,8 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       fonte: recursos?.codificador.fonte() ?? fonte,
       piorEstimativa,
       perfil,
+      camadas,
+      codec,
     });
     limitadoPelaEstimativa = a.limitadoPelaEstimativa;
     return a;
@@ -276,6 +437,9 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         msPorQuadro: c.msPorQuadro,
         encoderImplementation: c.implementacao,
         fila,
+        ...(c.bitrateProduzido !== undefined && c.bitrateAlvo > 0
+          ? { consumoDoEncoder: c.bitrateProduzido / c.bitrateAlvo }
+          : {}),
         ...(c.fpsDaCaptura === undefined ? {} : { fpsDaCaptura: c.fpsDaCaptura }),
         /*
           Os motivos que as malhas leem, com a mesma semântica do Chromium:
@@ -290,6 +454,10 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     async disconnect() {
       if (idrPeriodico !== null) clearInterval(idrPeriodico);
       idrPeriodico = null;
+      if (reavaliarAv1 !== null) clearTimeout(reavaliarAv1);
+      reavaliarAv1 = null;
+      if (perfilAgendado !== null) clearTimeout(perfilAgendado);
+      perfilAgendado = null;
       sendersDeVideo.clear();
       recursos?.codificador.parar();
       recursos?.isca.trilha.stop();

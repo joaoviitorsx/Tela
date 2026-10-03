@@ -1,5 +1,7 @@
+import type { CodecDaSala } from './codec-da-sala.js';
 import type { PerfilH264 } from './perfil-h264.js';
 import {
+  CONTENT_HINT_POR_PRIORIDADE,
   FRAMERATE_POR_PRIORIDADE,
   type EncodingPreset,
   type Prioridade,
@@ -31,6 +33,19 @@ export type AlvoDoCodificador = {
   readonly limitadoPelaEstimativa: boolean;
   /** O piso de perfil H.264 da sala (`perfil-h264.ts`). */
   readonly perfil: PerfilH264;
+  /**
+   * O `contentHint` do encoder: `motion` (fluidez) ou `detail` (nitidez,
+   * ADR 0015). No caminho "um encode" o encoder lê os quadros direto — o
+   * `contentHint` da TRILHA não chega a ele, só este.
+   */
+  readonly conteudo: 'motion' | 'detail';
+  /**
+   * Camadas temporais: `2` (L1T2) dá a válvula por espectador (ADR 0034) —
+   * quem fica para trás pula a camada 1 e assiste a meia taxa, sem congelar.
+   */
+  readonly camadas: 1 | 2;
+  /** O codec da sala (ADR 0035): H.264, ou AV1 com a sala inteira decodificando. */
+  readonly codec: CodecDaSala;
 };
 
 export type EntradaDoAlvo = {
@@ -40,6 +55,10 @@ export type EntradaDoAlvo = {
   readonly prioridade: Prioridade;
   /** O piso de perfil da sala; ausente = Baseline, o que todo receptor decodifica. */
   readonly perfil?: PerfilH264;
+  /** Camadas temporais pedidas (ADR 0034); ausente = 1. */
+  readonly camadas?: 1 | 2;
+  /** Codec da sala (ADR 0035); ausente = H.264. */
+  readonly codec?: CodecDaSala;
   /** Tamanho que a captura entrega. O codificador só tira pixel, não cria. */
   readonly fonte: { readonly width: number; readonly height: number } | null;
   /**
@@ -94,5 +113,8 @@ export function alvoDoCodificador(e: EntradaDoAlvo): AlvoDoCodificador {
     bitrate: Math.max(BITRATE_MINIMO, Math.round(bitrate)),
     limitadoPelaEstimativa,
     perfil: e.perfil ?? 'baseline',
+    conteudo: CONTENT_HINT_POR_PRIORIDADE[e.prioridade],
+    camadas: e.camadas ?? 1,
+    codec: e.codec ?? 'h264',
   };
 }

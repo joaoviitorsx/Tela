@@ -10,7 +10,9 @@ import { makeMeshTransport } from './adapters/mesh-transport.js';
 import { codificaH264, requisitosAusentes, suportaUmEncode } from './adapters/suporte-um-encode.js';
 import { CODEC } from './adapters/webcodecs-codificador.js';
 import { makeWsSignaling } from './adapters/ws-signaling.js';
-import { appVersion, diagnosticId, repasseForcado, scheduler, shareUrlFor, signalUrl, storage } from './container.js';
+import { appVersion, av1Forcado, diagnosticId, repasseForcado, scheduler, shareUrlFor, signalUrl, storage } from './container.js';
+import { CodificadorWebCodecs } from './adapters/webcodecs-codificador.js';
+import type { DepsDoCodificador } from './adapters/codificador-unico.js';
 import { makeAprovados } from './core/identity/aprovados.js';
 import { BroadcastSession } from './core/media/broadcast-session.js';
 import type { MediaTransport } from './core/ports/media-transport.js';
@@ -131,7 +133,18 @@ const criarWorker = (): Worker =>
 function createTransportDoTransmissor(): MediaTransport {
   const channel = makeWsSignaling(signalUrl);
   return umEncode()
-    ? makeEncodeOnceTransport({ channel, scheduler, criarWorker, forcarRepasse: repasseForcado() })
+    ? makeEncodeOnceTransport({
+        channel,
+        scheduler,
+        criarWorker,
+        forcarRepasse: repasseForcado(),
+        ...(av1Forcado()
+          ? {
+              criarCodificador: (d: DepsDoCodificador) =>
+                new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar, { av1: 'forcado' }),
+            }
+          : {}),
+      })
     : makeMeshTransport({ channel, scheduler });
 }
 

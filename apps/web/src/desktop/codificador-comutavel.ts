@@ -23,6 +23,7 @@ export interface CodificadorMinimo {
   definirAtraso(quadros: number): void;
   estatisticas(): unknown;
   fonte(): { readonly width: number; readonly height: number } | null;
+  suportaAv1?(): boolean;
   parar(): void;
 }
 
@@ -108,6 +109,11 @@ export class CodificadorComutavel<C extends CodificadorMinimo> implements Codifi
 
   fonte(): { readonly width: number; readonly height: number } | null {
     return this.atual.fonte();
+  }
+
+  /** AV1 só se o caminho ATUAL codifica AV1 (o nativo, não). */
+  suportaAv1(): boolean {
+    return this.atual.suportaAv1?.() ?? false;
   }
 
   parar(): void {

@@ -1,0 +1,94 @@
+# ADR 0033 — Tela parada não é colapso de link
+
+**Data:** 2026-10-03
+**Estado:** aceita
+**Complementa:** ADR 0018 (a malha mede a própria atuação), TELA-015 (colapso de link) · **Mantém:** R5, ADR 0015, 0017, 0030
+
+## Contexto
+
+O estudo 1-codec (§5) mediu que, em CBR, o NVENC enche a banda até com a
+tela parada: 12 Mbps contra 1,4 Mbps em VBR, mesmo PSNR. O ganho de passar a
+VBR é grande, mas o estudo condicionou a um cenário "parado → jogo" no
+simulador, por causa da ADR 0018.
+
+O cenário foi escrito (`node e2e/malhas.sim.mjs --parado`: encoder a 12% do
+alvo por 60 s, depois o jogo volta). Resultado com o código de antes:
+**12 de 12 cenários perdiam o orçamento na pausa e 11 nunca voltavam do 360p
+— nem num link de 800 Mbps.**
+
+A cadeia: na pausa o envio cai, a estimativa decai a `1,5 × enviado`, o motivo
+vira `bandwidth`, três amostras disparam a guarda de colapso (TELA-015) — que
+passa por cima da guarda de cena parada (`encoderOcioso`) — e o orçamento
+cai; depois disso a catraca da ADR 0018 não o devolve.
+
+E o encoder WebCodecs do app já é VBR (`bitrateMode: 'variable'`): a mesma
+cadeia podia acontecer HOJE, num menu.
+
+## Decisão (revisada no mesmo dia, depois da revisão independente)
+
+A primeira versão usava só um limiar de consumo (produzido ÷ alvo < 0,5) e
+"passava" no simulador — porque o simulador injetava um consumo fixo de
+0,12. A revisão independente mostrou que no "um encode" real o alvo do
+encoder é FREADO pela estimativa (`0,85 × estimativa`): numa tela parada a
+estimativa decai a `1,5 × envio`, o alvo encolhe junto e o consumo converge
+a ~0,78. A guarda desarmava sozinha. O simulador agora calcula o consumo como
+o produto (produzido ÷ alvo freado), e a decisão passou a ser:
+
+1. O codificador único informa `consumoDoEncoder` (produzido ÷ alvo freado).
+2. `bandwidth` só PROVA colapso quando:
+   - o encoder está **enchendo** o alvo (consumo ≥ 0,95) e a estimativa
+     **não está subindo** (tendência de 5 amostras; subir > 10% é rampa) —
+     o colapso clássico, igual a antes com conteúdo em movimento; **ou**
+   - há **congestão em algum caminho**, medida POR ESPECTADOR: RTT daquele
+     par acima de `patamar × 1,5 + 15 ms` (o patamar é o menor RTT visto
+     NAQUELE par, nascendo na primeira amostra dele e subindo 0,5 ms por
+     amostra), ou perda reportada por ele (`remote-inbound-rtp`
+     `fractionLost`) ≥ 2% — e por **2 amostras seguidas** no mesmo par.
+3. Encoder sem encher o alvo e sem congestão (tela parada, conteúdo leve)
+   não prova nada; uma amostra que não prova não SOMA, e **3 seguidas sem
+   prova zeram** a contagem.
+4. Sem `consumoDoEncoder` (fora do "um encode") o comportamento é o antigo.
+5. `reiniciar()` zera tudo (a primeira versão deixava o estado da sessão
+   anterior desarmando o colapso da seguinte).
+6. O NVENC em VBR entra como ajuste EXPERIMENTAL do app, desligado
+   ("Economizar banda com a tela parada"): `taxa vbr|cbr` no helper (por
+   nome, `gst_util_set_object_arg`), teto do VBR = orçamento.
+
+### Segunda revisão (NO-SHIP), e o que mudou
+
+A versão anterior media congestão pelo PIOR RTT entre todos os pares, contra
+um patamar único, e a contagem nunca zerava. A revisão mostrou três falsos
+colapsos com a tela parada: um espectador distante entrando (o pior RTT
+salta para o dele, o patamar é de outro), Wi-Fi oscilando 20↔55 ms e picos
+isolados que, sem zerar, somavam até 3 ao longo de minutos. E um colapso não
+visto: o policer, que derruba pacote sem fazer fila — RTT plano, consumo
+abaixo de 0,95 em VBR. Daí patamar e sequência por par, a perda como segunda
+prova e o zerar depois de 3 amostras sem prova. A terceira revisão achou
+que a leitura RETIDA do rodízio de `getStats` (B2, salas com mais de 5)
+repetia o mesmo RTT por até 6 tiques — um pico virava seis provas: só leitura
+fresca entra em `rttPorPeer`/`perdaPorPeer`, e a poda dos caminhos segue os
+pares presentes, não os lidos. Os quatro casos viraram teste
+de unidade em `malha-de-banda.test.ts`.
+
+## Medido (simulador com consumo honesto e teto de sonda modelado)
+
+- `--parado`, antes: orçamento derrubado em **12/12**, nenhum voltando.
+- `--parado`, primeira versão: orçamento derrubado em **2/12**.
+- `--parado`, com congestão por par: orçamento derrubado em **0/12**, volta
+  ao degrau de antes da pausa em 0 s em todos.
+- Portões: 73/0/0/128/84 (antes 72/0/0/128/83, dentro da margem);
+  `--escala` 0/0/0/0; colapsos reais (`--quedas`) seguem reagindo em 2 s.
+
+## Não medido
+
+Colapso "limpo": o GCC segura a fila (RTT 20 → 40 ms, abaixo do limiar),
+perda < 2% e o encoder em VBR enchendo menos de 95% do alvo freado. Nesse
+canto a guarda não acha prova e o orçamento não desce (a revisão reproduziu
+110 s parado em 16,5 Mbps). Com o encoder em CBR (o padrão) o consumo fica em
+~1 e o colapso reage em 3 s. Depende de quanto o VBR do NVENC realmente
+enche o alvo — só o app real mede.
+
+Rede real: se o RTT do Chromium sobe como o modelo supõe num colapso, e a
+velocidade com que a estimativa reabre depois de uma pausa (com as sondas
+que o `x-google-max-bitrate` liberou). Por isso o NVENC em VBR é opt-in até
+medir.

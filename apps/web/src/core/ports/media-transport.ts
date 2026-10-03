@@ -144,6 +144,13 @@ export type MediaStats = {
    */
   readonly fila?: { readonly seguradosPorSegundo: number; readonly soltos: number };
   /**
+   * O que o codificador único PRODUZIU dividido pelo alvo que recebeu. É o
+   * sinal que separa "o link caiu" de "a tela parou" sem depender da rede:
+   * num colapso o encoder continua produzindo o alvo (quem segura é o pacer);
+   * numa cena parada em VBR ele produz uma fração. Ausente fora do "um encode".
+   */
+  readonly consumoDoEncoder?: number;
+  /**
    * Quadros por segundo que a CAPTURA solta, quando difere do que sai do
    * encoder ("um encode" reenvia o último quadro com a captura parada).
    */
@@ -164,6 +171,10 @@ export type MediaStats = {
    * caminho. Ausente = todos frescos.
    */
   readonly frescosPorPeer?: readonly string[];
+  /** RTT (ms) de cada caminho de envio. A congestão é de um caminho (ADR 0033). */
+  readonly rttPorPeer?: Readonly<Record<string, number>>;
+  /** Perda (0–1, `fractionLost`) que cada espectador reporta de volta. */
+  readonly perdaPorPeer?: Readonly<Record<string, number>>;
   /**
    * Bits por pixel do fluxo que está saindo POR ESPECTADOR. `0` sem leitura.
    *

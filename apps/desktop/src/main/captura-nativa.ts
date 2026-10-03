@@ -130,7 +130,7 @@ export function argumentosDoHelper(p: PedidoDeCapturaNativa, restaurar: string |
  * As ordens que o renderer pode mandar ao processo, e nada mais: a porta vem
  * de uma página web, e o stdin do processo não é lugar de texto livre.
  */
-const ORDEM = /^(alvo \d{1,5} \d{1,5} \d{1,3} \d{1,9}|chave|atraso \d{1,3}|teto \d{1,3}|parar)$/;
+const ORDEM = /^(alvo \d{1,5} \d{1,5} \d{1,3} \d{1,9}|chave|atraso \d{1,3}|teto \d{1,3}|perfil (?:main|baseline)|taxa (?:vbr|cbr)|parar)$/;
 
 /**
  * `teto <fps>`: o teto de fps da CAPTURA, independente do `alvo` (que é o do

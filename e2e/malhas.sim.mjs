@@ -14,6 +14,7 @@
  *   node e2e/malhas.sim.mjs --rapido       # subconjunto, para iterar
  *   node e2e/malhas.sim.mjs --escala       # sala grande (10, 20, 50), portão próprio
  *   node e2e/malhas.sim.mjs --quedas       # só a sub-matriz de queda sustentada
+ *   node e2e/malhas.sim.mjs --parado       # tela parada em VBR → jogo (estudo 1-codec §5.5)
  *   node e2e/malhas.sim.mjs --trace=<id>   # série temporal de um cenário
  *   node e2e/malhas.sim.mjs --premissas    # só o texto das premissas do modelo
  *   node e2e/malhas.sim.mjs --clamp-duro   # leitura estrita do ClampBitrate
@@ -96,6 +97,8 @@ const { BroadcastSession } = await import(W('core/media/broadcast-session.ts'));
 const { MeshTopology } = await import(W('core/mesh/mesh-topology.ts'));
 const { StatsSampler } = await import(W('core/media/stats-sampler.ts'));
 const { UplinkGovernor, UPLINK_SHARE } = await import(W('core/media/uplink-governor.ts'));
+const { FOLGA_DA_ESTIMATIVA } = await import(W('core/media/alvo-do-codificador.ts'));
+const { TETO_DA_SONDA_BPS } = await import(join(RAIZ, 'packages/shared/dist/index.js'));
 const { POLL_MIN_MS, POLL_MAX_MS, POLL_FACTOR } = await import(W('core/media/viewer-session.ts'));
 const { pisoPorEspectador } = await import(W('core/media/capacidade-pela-banda.ts'));
 const presetsMod = await import(W('core/media/presets.ts'));
@@ -171,6 +174,13 @@ const ESCALA = flag('escala');
 /** Teto que o transmissor declara: o do "um encode" (ADR 0029). */
 const CAPACIDADE = 50;
 const SO_QUEDAS = flag('quedas');
+/**
+ * `--parado`: tela parada (menu, loading) com o encoder em VBR — ele consome
+ * 12% do alvo por 60 s e depois o jogo volta a mexer. Mede se a malha
+ * derruba o orçamento durante a pausa e em quanto tempo o degrau volta
+ * (estudo 1-codec §5.5: a condição para o NVENC em VBR).
+ */
+const SO_PARADO = flag('parado');
 const TRACE = opcao('trace');
 
 const Mbps = (n) => n * 1_000_000;
@@ -276,6 +286,17 @@ class Rede {
     }));
   }
 
+  /**
+   * Quanto do alvo o encoder consome no instante `t`. 1 = movimento (P5);
+   * menos que 1 = tela parada num encoder em VBR, que não enche a banda.
+   */
+  consumoEm(t) {
+    for (const p of this.cfg.parados ?? []) {
+      if (t >= p.de && t < p.ate) return p.fator;
+    }
+    return 1;
+  }
+
   /** Capacidade de subida no instante `t`, com as quedas sustentadas aplicadas. */
   upEm(t) {
     let cap = this.upBase;
@@ -310,7 +331,13 @@ class Rede {
     ativos.forEach((p, i) => {
       const demanda = demandas[i];
       const carregado = Math.min(fatias[i], p.downBps);
-      let enviado = Math.min(demanda, carregado);
+      /*
+        Tela parada: o encoder produz um valor ABSOLUTO pequeno (o estudo
+        mediu ~1,4 Mbps num alvo de 12), que não encolhe com a estimativa —
+        a fração é do ALVO do encoder, não do que a rede deixa sair.
+      */
+      const consumo = this.consumoEm(t);
+      let enviado = consumo < 1 ? Math.min(demanda, carregado, maxBitrateAplicado * consumo) : Math.min(demanda, carregado);
 
       /**
        * Premissa OTIMISTA (ver `PREMISSAS` P4): sob pressão de CPU o encoder
@@ -336,7 +363,8 @@ class Rede {
 
       // O TETO. É esta linha que faz a medição depender da atuação.
       const teto = AIMD_TETO_FATOR * enviado + AIMD_TETO_OFFSET;
-      p.bwe = Math.max(BWE_PISO, Math.min(p.bwe, teto));
+      // E o `x-google-max-bitrate` (TETO_DA_SONDA_BPS): o estimador nunca passa dele.
+      p.bwe = Math.max(BWE_PISO, Math.min(p.bwe, teto, TETO_DA_SONDA_BPS));
     });
   }
 
@@ -416,7 +444,9 @@ class SimTransport {
   async getAggregateStats() {
     const reports = await this.topology.collectStats();
     if (reports.length === 0) return null;
-    return this.amostrador.readMany(reports);
+    const s = this.amostrador.readMany(reports);
+    // O sinal do codificador único: produzido ÷ alvo (`--parado`; 1 com movimento).
+    return s === null ? null : { ...s, consumoDoEncoder: this.consumo ?? 1 };
   }
 
   peers() {
@@ -670,6 +700,21 @@ async function rodarCenario(cfg) {
     const cpu = cpuAtiva(t);
 
     rede.tique(t, 1, maxBitrate, cpu);
+    /*
+      O consumo como o "um encode" o calcula: produzido ÷ alvo do encoder, e o
+      alvo JÁ FREADO por FOLGA × pior estimativa (`alvo-do-codificador.ts`).
+      Numa tela parada a estimativa decai e o alvo encolhe junto — o consumo
+      sobe sozinho. Um consumo fixo aqui esconderia isso (revisão de
+      2026-10-03: a primeira versão injetava 0,12 e "passava").
+    */
+    {
+      const vivos = rede.peers.filter((p) => p.conectado);
+      const pior = vivos.length === 0 ? maxBitrate : Math.min(...vivos.map((p) => p.bwe));
+      const alvoFreado = Math.min(maxBitrate, FOLGA_DA_ESTIMATIVA * pior);
+      const fator = rede.consumoEm(t);
+      const precisa = fator < 1 ? fator * maxBitrate : Number.POSITIVE_INFINITY;
+      transport.consumo = alvoFreado > 0 ? Math.min(alvoFreado, precisa) / alvoFreado : 1;
+    }
 
     transport.prepararStats(t, (peer) => {
       if (cpu) return 'cpu';
@@ -924,6 +969,31 @@ function montarQuedas() {
   return casos;
 }
 
+/** Sub-matriz `--parado`: 60 s de tela parada em VBR (12% do alvo), de t=100 a t=160. */
+function montarParados() {
+  const casos = [];
+  for (const up of [10, 50, 300, 800]) {
+    for (const n of [1, 3, 5]) {
+      const peers = montarPeers(n, false, 'juntos');
+      casos.push({
+        id: `PARADO-up${up}-n${n}`,
+        upBps: Mbps(up),
+        upMbps: up,
+        n,
+        fraco: false,
+        cpu: 'nenhuma',
+        entrada: 'juntos',
+        semente: 'ausente',
+        peers,
+        sementeUplink: valorSemente('ausente', Mbps(up), peers),
+        quedas: [],
+        parados: [{ de: 100, ate: 160, fator: 0.12 }],
+      });
+    }
+  }
+  return casos;
+}
+
 /**
  * O defeito da TELA-015 exatamente: o link CAI e FICA. A queda de 30 s acima
  * mede reação e volta; esta mede se a transmissão desce e para no degrau que
@@ -1033,9 +1103,11 @@ async function main() {
 
   // Os colapsos só entram em `--quedas`: a matriz de 1200 fica comparável com
   // as rodadas anteriores.
-  const casos = SO_QUEDAS
-    ? [...montarQuedas(), ...montarColapsos()]
-    : [...montarMatriz(), ...montarQuedas()];
+  const casos = SO_PARADO
+    ? montarParados()
+    : SO_QUEDAS
+      ? [...montarQuedas(), ...montarColapsos()]
+      : [...montarMatriz(), ...montarQuedas()];
   console.log(
     `\nSIMULADOR DAS MALHAS — ${casos.length} cenários × ${DURACAO_S}s` +
       `${CLAMP_DURO || CPU_COBRA ? `  [${CLAMP_DURO ? 'clamp-duro ' : ''}${CPU_COBRA ? 'cpu-cobra' : ''}]` : ''}\n`,
@@ -1198,7 +1270,7 @@ async function main() {
     });
     console.log(`  reconfigurações medianas por nº de espectadores: ${porN.join('  ')}`);
     // Rodízio de getStats (B2): leituras reais / leituras que havia antes (1 por peer por tique).
-    const lidos = ESPECTADORES.map((n) => {
+    const lidos = ESPECTADORES.filter((n) => resultados.some((r) => r.cfg.n === n && r.peerTiques > 0)).map((n) => {
       const g = resultados.filter((r) => r.cfg.n === n && r.peerTiques > 0);
       const razoes = g.map((r) => r.leiturasStats / r.peerTiques);
       return `N=${n}:${mediana(razoes).toFixed(2)} (p10 ${percentil(razoes, 0.1).toFixed(2)}, p90 ${percentil(razoes, 0.9).toFixed(2)})`;
@@ -1368,6 +1440,43 @@ async function main() {
     console.log(`  ${eixo.padEnd(9)} ${partes.join('   ')}`);
   }
   console.log();
+
+  /* ── 4b. tela parada em VBR ── */
+  const parados = resultados.filter((r) => (r.cfg.parados ?? []).length > 0);
+  if (parados.length > 0) {
+    console.log('═'.repeat(78));
+    console.log('TELA PARADA EM VBR — encoder a 12% do alvo de t=100s a t=160s, depois volta o jogo');
+    console.log('═'.repeat(78));
+    const linhas = parados.map((r) => {
+      const antes = r.serie.find((s) => s.t === 99);
+      const base = antes.maxBitrate ?? 0;
+      const idxAntes = PRESET_IDS.indexOf(antes.preset ?? 'p360p60');
+      const durante = r.serie.filter((s) => s.t >= 100 && s.t < 160);
+      const orcMin = Math.min(...durante.map((s) => s.orcamento ?? Infinity));
+      const caiuNaPausa = orcMin < (antes.orcamento ?? 0) * 0.9;
+      const volta = r.serie.find(
+        (s) => s.t >= 160 && PRESET_IDS.indexOf(s.preset ?? 'p360p60') <= idxAntes && (s.maxBitrate ?? 0) >= base * 0.9,
+      );
+      const pior = r.serie
+        .filter((s) => s.t >= 160 && s.t < 200)
+        .reduce((a, s) => (PRESET_IDS.indexOf(s.preset ?? 'p360p60') > PRESET_IDS.indexOf(a) ? (s.preset ?? a) : a), antes.preset ?? 'p360p60');
+      return { id: r.id, antes, caiuNaPausa, volta: volta === undefined ? null : volta.t - 160, pior };
+    });
+    console.log(
+      tabela(linhas, [
+        { titulo: 'cenário', valor: (l) => l.id },
+        { titulo: 'degrau t=99', valor: (l) => l.antes.preset },
+        { titulo: 'orçamento caiu na pausa', valor: (l) => (l.caiuNaPausa ? 'SIM' : 'não') },
+        { titulo: 'pior degrau depois', valor: (l) => l.pior },
+        { titulo: 'volta em', valor: (l) => (l.volta === null ? 'NUNCA' : `${l.volta}s`) },
+      ]),
+    );
+    const voltas = linhas.map((l) => l.volta ?? DURACAO_S);
+    const ok3 = linhas.filter((l) => l.volta !== null && l.volta <= 3).length;
+    console.log(
+      `\n  volta ≤ 3 s (critério do estudo): ${ok3}/${linhas.length}  ·  pior volta: ${Math.max(...voltas)}s  ·  orçamento caiu na pausa: ${linhas.filter((l) => l.caiuNaPausa).length}/${linhas.length}\n`,
+    );
+  }
 
   /* ── 5. quedas ── */
   const colapsos = resultados.filter((r) => r.cfg.quedas.some((q) => q.ate > DURACAO_S));

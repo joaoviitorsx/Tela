@@ -1,4 +1,5 @@
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
+import { nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import type { CodificadorUnico, DepsDoCodificador, EstatisticasDoCodificador } from './codificador-unico.js';
 
@@ -61,11 +62,20 @@ export class CodificadorExterno implements CodificadorUnico {
   private ultimo = { width: 0, height: 0 };
   private msPorQuadro: number | null = null;
   private falhou: string | null = null;
+  /** `profile_idc` do último SPS que o helper mandou: o perfil de FATO. */
+  private perfilEmitido: number | null = null;
+  /** Bytes que o helper mandou desde a última leitura de estatísticas. */
+  private bytesProduzidos = 0;
+
+  /** O `rc-mode` enviado ao helper por último. */
+  private taxaEnviada: 'vbr' | 'cbr' | null = null;
 
   constructor(
     private readonly porta: PortaDoNativo,
     private readonly deps: DepsDoCodificador,
     private readonly agora: () => number = () => performance.now(),
+    /** Experimental: VBR economiza com a tela parada. Ausente = CBR, como sempre. */
+    private readonly modoDeTaxa: () => 'vbr' | 'cbr' = () => 'cbr',
   ) {
     porta.onmessage = (e) => this.chegou(e.data);
   }
@@ -81,7 +91,17 @@ export class CodificadorExterno implements CodificadorUnico {
     const e = this.enviado;
     const mudouTamanho = e === null || e.width !== alvo.width || e.height !== alvo.height || e.fps !== alvo.fps;
     const mudouBitrate = e === null || Math.abs(e.bitrate - alvo.bitrate) / Math.max(1, e.bitrate) > MUDANCA_DE_BITRATE;
-    if (!mudouTamanho && !mudouBitrate) return;
+    // O piso de perfil da sala (adendo à ADR 0016). O helper recicla a
+    // codificação e recomeça num IDR; um helper antigo ignora a ordem.
+    if (e === null || e.perfil !== alvo.perfil) this.ordem(`perfil ${alvo.perfil}`);
+    // O padrão do helper é CBR: só manda quando o ajuste pede outra coisa (ou volta).
+    const taxa = this.modoDeTaxa();
+    if (taxa !== (this.taxaEnviada ?? 'cbr')) this.ordem(`taxa ${taxa}`);
+    this.taxaEnviada = taxa;
+    if (!mudouTamanho && !mudouBitrate) {
+      this.enviado = { ...(e ?? alvo), perfil: alvo.perfil };
+      return;
+    }
     this.enviado = alvo;
     this.ordem(`alvo ${alvo.width} ${alvo.height} ${alvo.fps} ${Math.round(alvo.bitrate)}`);
   }
@@ -111,6 +131,8 @@ export class CodificadorExterno implements CodificadorUnico {
     const dt = Math.max(0.001, (agora - this.marca.t) / 1000);
     const fps = (this.quadros - this.marca.quadros) / dt;
     this.marca = { t: agora, quadros: this.quadros };
+    const bitrateProduzido = (this.bytesProduzidos * 8) / dt;
+    this.bytesProduzidos = 0;
     const alvo = this.enviado;
     return {
       width: this.ultimo.width,
@@ -124,8 +146,14 @@ export class CodificadorExterno implements CodificadorUnico {
       // O helper aplica o `atraso` lá dentro e não conta o que pulou.
       segurados: 0,
       idrs: this.idrs,
+      bitrateProduzido,
       pedidosDeChave: { ...this.pedidos },
-      implementacao: this.falhou === null ? 'nativo·NVENC' : `nativo·falhou(${this.falhou})`,
+      implementacao:
+        this.falhou !== null
+          ? `nativo·falhou(${this.falhou})`
+          : nomeDoPerfilIdc(this.perfilEmitido) === null
+            ? 'nativo·NVENC'
+            : `nativo·NVENC · H.264 ${nomeDoPerfilIdc(this.perfilEmitido)}`,
     };
   }
 
@@ -163,7 +191,12 @@ export class CodificadorExterno implements CodificadorUnico {
       return;
     }
     this.quadros += 1;
-    if (m.chave) this.idrs += 1;
+    this.bytesProduzidos += m.dados.byteLength;
+    if (m.chave) {
+      this.idrs += 1;
+      // Antes de transferir: depois o buffer é do worker.
+      this.perfilEmitido = perfilDoSps(new Uint8Array(m.dados)) ?? this.perfilEmitido;
+    }
     this.ultimo = { width: m.width, height: m.height };
     this.deps.aoCapturar();
     this.deps.entregar(

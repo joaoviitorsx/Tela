@@ -29,6 +29,8 @@
  *
  *   stdin: uma ordem por linha, texto
  *     alvo <largura> <altura> <fps> <bitrate bps>
+ *     perfil main|baseline   (piso de perfil H.264 da sala)
+ *     taxa vbr|cbr           (experimental: VBR economiza com a tela parada)
  *     chave
  *     atraso <quadros>
  *     teto <fps>   teto de fps da CAPTURA, independente do `alvo` (que é o do
@@ -248,6 +250,15 @@ static gboolean com_teto(void) {
   return teto > 0 && teto < g_atomic_int_get(&alvo_fps);
 }
 
+/*
+ * Experimental (AJUSTES → "Economizar banda com a tela parada"): VBR com o
+ * teto no orçamento. Em CBR o NVENC enche a banda até com a tela parada
+ * (12 Mbps contra 1,4 em VBR, mesmo PSNR — estudo 1-codec §5). A malha só
+ * aguenta isso desde a guarda de consumo do encoder (`malha-de-banda.ts`,
+ * simulador `--parado`). Desligado por padrão até medir em rede real.
+ */
+static gboolean taxa_vbr = FALSE;
+
 static void aplicar_bitrate(void) {
   /*
    * Com teto de captura o fps que entra no NVENC é o do teto, de propósito, e
@@ -260,6 +271,8 @@ static void aplicar_bitrate(void) {
   if (kbps == kbps_aplicado) return;
   kbps_aplicado = kbps;
   g_object_set(codificador, "bitrate", kbps, NULL);
+  /* Em VBR o teto É o orçamento: nunca passa dele; com a tela parada, gasta menos. */
+  if (taxa_vbr) g_object_set(codificador, "max-bitrate", kbps, NULL);
 }
 
 /*
@@ -270,6 +283,28 @@ static void aplicar_bitrate(void) {
 static void aplicar_vbv(void) {
   guint kbps = (guint)MAX(300, alvo.bitrate / 1000);
   g_object_set(codificador, "vbv-buffer-size", (guint)MAX(kbps / MAX(1, alvo.fps) * VBV_EM_QUADROS, 100), NULL);
+}
+
+/*
+ * O perfil H.264 que sai (adendo à ADR 0016): Constrained Baseline por
+ * padrão, Main quando a SALA inteira aceita — quem decide é a página
+ * (`perfil-h264.ts`), que manda `perfil main|baseline`. O NVENC desta
+ * máquina emite Main com esta mesma cadeia (SPS `profile_idc` 77, medido).
+ */
+static GstElement *saida_perfil = NULL;
+static gboolean perfil_main = FALSE;
+/* Um nvh264enc que recusar Main (driver antigo) derruba o fluxo: volta a
+   Baseline e não tenta de novo nesta sessão — em vez de matar a captura. */
+static gboolean perfil_main_recusado = FALSE;
+static gint64 reciclo_com_main_em = 0;
+static guint reciclo_agendado = 0;
+
+static void aplicar_caps_de_perfil(void) {
+  GstCaps *caps = gst_caps_new_simple("video/x-h264", "profile", G_TYPE_STRING,
+                                      perfil_main ? "main" : "constrained-baseline", "stream-format", G_TYPE_STRING,
+                                      "byte-stream", "alignment", G_TYPE_STRING, "au", NULL);
+  g_object_set(saida_perfil, "caps", caps, NULL);
+  gst_caps_unref(caps);
 }
 
 static void aplicar_caps_de_tamanho(void) {
@@ -292,6 +327,7 @@ static void aplicar_tamanho(void) {
   gst_element_set_state(codificacao, GST_STATE_READY);
   gst_element_get_state(codificacao, NULL, NULL, GST_CLOCK_TIME_NONE);
   aplicar_caps_de_tamanho();
+  aplicar_caps_de_perfil();
   aplicar_vbv();
   /* O NVENC renasce com a configuração das propriedades: reaplicar o bitrate. */
   kbps_aplicado = 0;
@@ -305,6 +341,22 @@ static void aplicar_tamanho(void) {
   g_mutex_unlock(&medida_mutex);
   gst_element_set_state(codificacao, GST_STATE_PLAYING);
   g_mutex_unlock(&troca_mutex);
+}
+
+/*
+ * O reciclo vai para o laço ocioso, e não acontece na hora: `perfil` e
+ * `alvo` que chegam juntos (o piso da sala muda quando alguém entra, e a
+ * malha reage no mesmo segundo) viram UM reciclo e UM IDR, não dois.
+ */
+static gboolean reciclar_agendado(gpointer _) {
+  reciclo_agendado = 0;
+  if (perfil_main) reciclo_com_main_em = g_get_monotonic_time();
+  aplicar_tamanho();
+  return G_SOURCE_REMOVE;
+}
+
+static void agendar_reciclo(void) {
+  if (reciclo_agendado == 0) reciclo_agendado = g_idle_add(reciclar_agendado, NULL);
 }
 
 static void pedir_chave(void) {
@@ -491,7 +543,23 @@ static void ordem(const char *linha) {
     g_atomic_int_set(&alvo_fps, a.fps);
     /* Tamanho novo renegocia o NVENC, que recomeça num IDR. Bitrate não. */
     if (mudou_bitrate) aplicar_bitrate();
-    if (mudou_tamanho) aplicar_tamanho();
+    if (mudou_tamanho) agendar_reciclo();
+  } else if (strcmp(linha, "perfil main") == 0 || strcmp(linha, "perfil baseline") == 0) {
+    gboolean quer_main = strcmp(linha, "perfil main") == 0 && !perfil_main_recusado;
+    if (quer_main == perfil_main) return;
+    perfil_main = quer_main;
+    /* Caps de saída novas renegociam o NVENC: o mesmo reciclo da troca de
+       tamanho, que recomeça num IDR. Troca de perfil é rara (gente entrando
+       ou saindo da sala muda o piso, não cada quadro). */
+    agendar_reciclo();
+  } else if (strcmp(linha, "taxa vbr") == 0 || strcmp(linha, "taxa cbr") == 0) {
+    gboolean quer_vbr = strcmp(linha, "taxa vbr") == 0;
+    if (quer_vbr == taxa_vbr) return;
+    taxa_vbr = quer_vbr;
+    /* O modo de controle de taxa só vale no reinício do NVENC: reciclo (IDR). */
+    /* Pelo NOME do valor: o número do enum pode mudar entre versões do plugin. */
+    gst_util_set_object_arg(G_OBJECT(codificador), "rc-mode", quer_vbr ? "vbr" : "cbr");
+    agendar_reciclo();
   } else if (strcmp(linha, "chave") == 0) {
     pedir_chave();
   } else if (sscanf(linha, "atraso %d", &n) == 1) {
@@ -532,6 +600,14 @@ static gboolean no_barramento(GstBus *bus, GstMessage *msg, gpointer _) {
     g_autoptr(GError) e = NULL;
     g_autofree char *dbg = NULL;
     gst_message_parse_error(msg, &e, &dbg);
+    /* Erro logo depois de ligar Main: é o perfil, não a captura. */
+    if (perfil_main && g_get_monotonic_time() - reciclo_com_main_em < 3 * G_USEC_PER_SEC) {
+      g_printerr("tela-captura: Main recusado (%s); voltando a Baseline\n", e != NULL ? e->message : "?");
+      perfil_main = FALSE;
+      perfil_main_recusado = TRUE;
+      agendar_reciclo();
+      return G_SOURCE_CONTINUE;
+    }
     erro("PIPELINE", e != NULL ? e->message : "?");
     codigo_de_saida = 2;
     g_main_loop_quit(laco);
@@ -826,8 +902,8 @@ int main(int argc, char **argv) {
   if (!ok) return codigo_de_saida != 0 ? codigo_de_saida : 2;
 
   /*
-   * H.264 Constrained Baseline, sem B-frames, GOP infinito: o mesmo que o
-   * espectador já negocia no WebRTC, e IDR só quando alguém pede. A escala
+   * H.264 sem B-frames, GOP infinito, IDR só quando alguém pede. O perfil
+   * sai do capsfilter `perfil` (Baseline, ou Main com a sala inteira aceitando). A escala
    * vem ANTES da conversão: o `glcolorscale` só trabalha em RGBA.
    */
   g_autoptr(GError) e = NULL;
@@ -837,7 +913,7 @@ int main(int argc, char **argv) {
       " ! capsfilter name=tamanho"
       " ! nvh264enc name=codificador preset=p4 tune=ultra-low-latency rc-mode=cbr gop-size=-1 bframes=0"
       "   zerolatency=true repeat-sequence-header=true spatial-aq=true"
-      " ! video/x-h264,profile=constrained-baseline,stream-format=byte-stream,alignment=au"
+      " ! capsfilter name=perfil"
       " ! appsink name=saida sync=false max-buffers=4 drop=false",
       &e);
   if (codificacao == NULL) {
@@ -846,6 +922,8 @@ int main(int argc, char **argv) {
   }
   codificador = gst_bin_get_by_name(GST_BIN(codificacao), "codificador");
   tamanho = gst_bin_get_by_name(GST_BIN(codificacao), "tamanho");
+  saida_perfil = gst_bin_get_by_name(GST_BIN(codificacao), "perfil");
+  aplicar_caps_de_perfil();
   entra = gst_bin_get_by_name(GST_BIN(codificacao), "entra");
   aplicar_caps_de_tamanho();
   aplicar_bitrate();
@@ -910,6 +988,7 @@ int main(int argc, char **argv) {
   gst_object_unref(bus_cap);
   gst_object_unref(entra);
   gst_object_unref(tamanho);
+  gst_object_unref(saida_perfil);
   gst_object_unref(codificador);
   gst_object_unref(captura);
   gst_object_unref(codificacao);

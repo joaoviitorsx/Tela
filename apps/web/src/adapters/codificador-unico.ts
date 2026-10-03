@@ -21,6 +21,8 @@ export type EstatisticasDoCodificador = {
   /** O encoder não está dando conta: é CPU/GPU, não rede. */
   readonly sobrecarregado: boolean;
   readonly idrs: number;
+  /** Bits por segundo que o encoder produziu desde a última leitura. */
+  readonly bitrateProduzido?: number;
   /** Quadros de captura deixados de lado por fila dos senders, desde a última leitura. */
   readonly segurados: number;
   /**
@@ -52,6 +54,11 @@ export interface CodificadorUnico {
    * não é a imagem. `null` = use a trilha.
    */
   fonte(): { readonly width: number; readonly height: number } | null;
+  /**
+   * Codifica AV1 por hardware (ADR 0035)? `false` ou ausente = só H.264. É
+   * uma das condições do codec da sala; a outra é todo espectador decodificar.
+   */
+  suportaAv1?(): boolean;
   parar(): void;
 }
 

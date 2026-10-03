@@ -189,3 +189,22 @@ describe('pedirEstereo — preferência do receptor (TELA-011)', () => {
     expect(pedirEstereo(uma)).toBe(uma);
   });
 });
+
+describe('afinarSdp — teto da sonda (estudo 2 · T6)', () => {
+  it('x-google-max-bitrate junto do início, nas linhas de H.264', () => {
+    const saida = afinarSdp(SDP, { startBitrateBps: 4_000_000, maxBitrateBps: 16_174_080 });
+    expect(saida.match(/x-google-max-bitrate=16174/g)).toHaveLength(2);
+  });
+
+  it('nunca abaixo do início; sem início, nada de teto', () => {
+    expect(afinarSdp(SDP, { startBitrateBps: 20_000_000, maxBitrateBps: 16_000_000 })).toContain('x-google-max-bitrate=20000');
+    expect(afinarSdp(SDP, { maxBitrateBps: 16_000_000 })).not.toContain('x-google-max-bitrate');
+  });
+
+  it('idempotente: reaplicar substitui', () => {
+    const uma = afinarSdp(SDP, { startBitrateBps: 4_000_000, maxBitrateBps: 16_000_000 });
+    const duas = afinarSdp(uma, { startBitrateBps: 4_000_000, maxBitrateBps: 12_000_000 });
+    expect(duas.match(/x-google-max-bitrate=/g)).toHaveLength(2);
+    expect(duas).toContain('x-google-max-bitrate=12000');
+  });
+});

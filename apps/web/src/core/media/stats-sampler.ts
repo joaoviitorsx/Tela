@@ -153,6 +153,9 @@ export class StatsSampler {
     let found = false;
 
     const availablePorPeer: Record<string, number> = {};
+    /** RTT e perda de CADA caminho: a congestão é de um caminho, não da sala (ADR 0033). */
+    const rttPorPeer: Record<string, number> = {};
+    const perdaPorPeer: Record<string, number> = {};
     /** Peers lidos de verdade neste tique; o resto é leitura retida (B2). */
     const frescos = new Set<string>();
     /** O motivo de cada caminho, para descartar `bandwidth` de quem ainda sobe. */
@@ -261,13 +264,26 @@ export class StatsSampler {
          * `true` deixaria a estimativa em zero onde ele falta, e sem
          * estimativa o teto de upload nunca age.
          */
+        // A perda que o espectador reporta de volta (RTCP): o policer que
+        // derruba pacote sem fila não sobe o RTT, mas aparece aqui.
+        if (stat['type'] === 'remote-inbound-rtp' && stat['kind'] === 'video') {
+          const perda = Number(stat['fractionLost'] ?? Number.NaN);
+          // Só leitura FRESCA: a retida do rodízio (B2) repetiria o mesmo RR
+          // por até 6 tiques, e a malha a contaria como 6 amostras seguidas.
+          if (fresco !== false && Number.isFinite(perda) && perda >= 0) {
+            perdaPorPeer[peerId] = Math.max(perdaPorPeer[peerId] ?? 0, perda);
+          }
+        }
         if (
           stat['type'] === 'candidate-pair' &&
           stat['state'] === 'succeeded' &&
           stat['nominated'] !== false
         ) {
           // O PIOR RTT, não o melhor: o melhor esconderia o amigo com problema.
-          rttMs = Math.max(rttMs, Math.round(Number(stat['currentRoundTripTime'] ?? 0) * 1000));
+          const rttDoPar = Math.round(Number(stat['currentRoundTripTime'] ?? 0) * 1000);
+          rttMs = Math.max(rttMs, rttDoPar);
+          // Idem: congestão é sequência de leituras, e retida não é leitura.
+          if (fresco !== false && rttDoPar > 0) rttPorPeer[peerId] = Math.max(rttPorPeer[peerId] ?? 0, rttDoPar);
 
           // Somado entre peers: em mesh cada conexão estima a própria fatia, e
           // o que interessa é o total que sai do link de casa.
@@ -423,6 +439,8 @@ export class StatsSampler {
       piorAvailableBps: pior,
       paresMedidos,
       availablePorPeer,
+      rttPorPeer,
+      perdaPorPeer,
       frescosPorPeer: Object.keys(availablePorPeer).filter((id) => frescos.has(id)),
       bpp,
       encoderImplementation,

@@ -8,7 +8,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * `VideoEncoder` é dublê: registra cada `configure` e deixa o teste emitir
  * chunks na saída.
  */
-const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline' };
+const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion', camadas: 1, codec: 'h264' };
 const MAIN: AlvoDoCodificador = { ...BASE, perfil: 'main' };
 
 let suportaMain = true;
@@ -201,6 +201,64 @@ describe('CodificadorWebCodecs — perfil H.264 da sala', () => {
     const modos = EncoderFalso.configs.map((c) => c.hardwareAcceleration);
     expect(codecs().at(-1)).toBe('avc1.42e02a');
     expect(new Set(modos)).toEqual(new Set(['prefer-hardware']));
+    cod.parar();
+  });
+
+  it('detail NUNCA vai a encoder que não é hardware certo (OpenH264: IDR por quadro)', async () => {
+    const cod = new CodificadorWebCodecs(() => undefined, () => 0);
+    await cod.iniciar(novaTrilha(), BASE);
+    await assentar();
+    cod.configurar({ ...BASE, conteudo: 'detail', fps: 30 });
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('motion');
+    cod.parar();
+  });
+
+  it('hardware: detail chega; três chaves espontâneas em 10 s o derrubam para motion', async () => {
+    let t = 0;
+    const cod = new CodificadorWebCodecs(() => undefined, () => t, () => undefined, { preferirHardware: true });
+    await cod.iniciar(novaTrilha(), BASE);
+    await assentar();
+    cod.configurar({ ...BASE, conteudo: 'detail', fps: 30 });
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('detail');
+    const saida = EncoderFalso.ultimo!.init.output;
+    for (let i = 0; i < 3; i += 1) {
+      t += 1_000;
+      saida(chunk(i * 33_333, 66));
+    }
+    await assentar();
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('motion');
+    cod.configurar({ ...BASE, conteudo: 'detail', fps: 30 });
+    expect(EncoderFalso.configs.at(-1)?.contentHint).toBe('motion');
+    cod.parar();
+  });
+
+  it('modo de taxa: variable por padrão; trocar para constant reconfigura', async () => {
+    let modo: 'variable' | 'constant' = 'variable';
+    const cod = new CodificadorWebCodecs(() => undefined, () => 0, () => undefined, { modoDeTaxa: () => modo });
+    await cod.iniciar(novaTrilha(), BASE);
+    await assentar();
+    expect(EncoderFalso.configs.at(-1)?.bitrateMode).toBe('variable');
+    modo = 'constant';
+    cod.configurar(BASE);
+    expect(EncoderFalso.configs.at(-1)?.bitrateMode).toBe('constant');
+    const n = EncoderFalso.configs.length;
+    cod.configurar(BASE);
+    expect(EncoderFalso.configs.length).toBe(n);
+    cod.parar();
+  });
+
+  it('L1T2 com a sala pedindo: scalabilityMode vai ao encoder e a camada vai com o quadro', async () => {
+    const entregues: { camada?: number }[] = [];
+    const cod = new CodificadorWebCodecs((c) => entregues.push(c), () => 0);
+    await cod.iniciar(novaTrilha(), { ...BASE, camadas: 2 });
+    await assentar();
+    expect(EncoderFalso.configs.at(-1)?.scalabilityMode).toBe('L1T2');
+    const saida = EncoderFalso.ultimo!.init.output as unknown as (c: EncodedVideoChunk, m?: unknown) => void;
+    saida(chunk(1, 66), { svc: { temporalLayerId: 0 } });
+    saida(chunk(2, null), { svc: { temporalLayerId: 1 } });
+    expect(entregues.map((e) => e.camada)).toEqual([0, 1]);
+    cod.configurar({ ...BASE, camadas: 1 });
+    expect(EncoderFalso.configs.at(-1)?.scalabilityMode).toBeUndefined();
     cod.parar();
   });
 });

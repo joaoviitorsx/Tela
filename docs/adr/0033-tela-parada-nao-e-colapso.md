@@ -63,7 +63,11 @@ salta para o dele, o patamar é de outro), Wi-Fi oscilando 20↔55 ms e picos
 isolados que, sem zerar, somavam até 3 ao longo de minutos. E um colapso não
 visto: o policer, que derruba pacote sem fazer fila — RTT plano, consumo
 abaixo de 0,95 em VBR. Daí patamar e sequência por par, a perda como segunda
-prova e o zerar depois de 3 amostras sem prova. Os quatro casos viraram teste
+prova e o zerar depois de 3 amostras sem prova. A terceira revisão achou
+que a leitura RETIDA do rodízio de `getStats` (B2, salas com mais de 5)
+repetia o mesmo RTT por até 6 tiques — um pico virava seis provas: só leitura
+fresca entra em `rttPorPeer`/`perdaPorPeer`, e a poda dos caminhos segue os
+pares presentes, não os lidos. Os quatro casos viraram teste
 de unidade em `malha-de-banda.test.ts`.
 
 ## Medido (simulador com consumo honesto e teto de sonda modelado)
@@ -76,6 +80,13 @@ de unidade em `malha-de-banda.test.ts`.
   `--escala` 0/0/0/0; colapsos reais (`--quedas`) seguem reagindo em 2 s.
 
 ## Não medido
+
+Colapso "limpo": o GCC segura a fila (RTT 20 → 40 ms, abaixo do limiar),
+perda < 2% e o encoder em VBR enchendo menos de 95% do alvo freado. Nesse
+canto a guarda não acha prova e o orçamento não desce (a revisão reproduziu
+110 s parado em 16,5 Mbps). Com o encoder em CBR (o padrão) o consumo fica em
+~1 e o colapso reage em 3 s. Depende de quanto o VBR do NVENC realmente
+enche o alvo — só o app real mede.
 
 Rede real: se o RTT do Chromium sobe como o modelo supõe num colapso, e a
 velocidade com que a estimativa reabre depois de uma pausa (com as sondas

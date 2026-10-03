@@ -277,7 +277,7 @@ export class MalhaDeBanda {
     this.estimativas[this.posicaoDaEstimativa] = piorEstimativa;
     this.posicaoDaEstimativa = (this.posicaoDaEstimativa + 1) % JANELA_DA_TENDENCIA;
     const subindo = piorEstimativa !== null && antiga !== null && piorEstimativa > antiga * SUBINDO;
-    const congestao = this.congestao(stats.rttPorPeer ?? {}, stats.perdaPorPeer ?? {});
+    const congestao = this.congestao(stats.availablePorPeer, stats.rttPorPeer ?? {}, stats.perdaPorPeer ?? {});
     const prova = congestao || (enchendo && !subindo);
     if (!freado) {
       this.amostrasDeBanda = 0;
@@ -384,10 +384,19 @@ export class MalhaDeBanda {
    * Algum caminho congestionado de verdade (duas amostras seguidas)? O(N)
    * caminhos. Patamar POR caminho, nascendo na primeira leitura dele — quem
    * entra de longe traz o próprio patamar, e não vira "congestão" de ninguém.
+   *
+   * `presentes` poda; `rtts` traz só leituras FRESCAS (o sampler omite as
+   * retidas do rodízio B2). Um par lido a cada 6 tiques guarda patamar e
+   * sequência entre uma leitura e outra, e só a leitura nova conta — a
+   * retida contada como amostra fazia de UM pico seis provas seguidas.
    */
-  private congestao(rtts: Readonly<Record<string, number>>, perdas: Readonly<Record<string, number>>): boolean {
+  private congestao(
+    presentes: Readonly<Record<string, number>>,
+    rtts: Readonly<Record<string, number>>,
+    perdas: Readonly<Record<string, number>>,
+  ): boolean {
     let algum = false;
-    for (const id of this.caminhos.keys()) if (!(id in rtts)) this.caminhos.delete(id);
+    for (const id of this.caminhos.keys()) if (!(id in presentes) && !(id in rtts)) this.caminhos.delete(id);
     for (const [id, rtt] of Object.entries(rtts)) {
       const c = this.caminhos.get(id);
       if (c === undefined) {

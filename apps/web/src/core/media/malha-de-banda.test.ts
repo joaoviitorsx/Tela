@@ -135,6 +135,20 @@ describe('o que prova colapso (ADR 0033)', () => {
     expect(m.orcamento).toBe(antes);
   });
 
+  it('rodízio (B2): um pico lido uma vez não vira várias provas enquanto a leitura fica retida', () => {
+    const m = aquecida();
+    const antes = m.orcamento;
+    const ids = ['v_1', 'v_2', 'v_3', 'v_4', 'v_5', 'v_6', 'v_7', 'v_8'];
+    const avail = Object.fromEntries(ids.map((id) => [id, 2_900_000]));
+    for (let i = 11; i <= 70; i += 1) {
+      // Um par fresco por tique, em rodízio; v_3 tem um pico de 80 ms na sua leitura do tique 20.
+      const lido = ids[i % ids.length] ?? 'v_1';
+      const rtt = lido === 'v_3' && i === 19 ? 80 : 20;
+      m.observar(leitura(i, { stats: { ...freada({ consumoDoEncoder: 0.78, rtts: { [lido]: rtt } }), availablePorPeer: avail } }));
+    }
+    expect(m.orcamento).toBe(antes);
+  });
+
   it('tela parada: Wi-Fi oscilando (RTT 20↔55) e picos isolados não somam colapso', () => {
     const m = aquecida();
     const antes = m.orcamento;

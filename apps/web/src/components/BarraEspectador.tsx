@@ -62,6 +62,8 @@ export type PropsDaBarra = {
    */
   readonly multivisao?: {
     readonly aoAdicionar: () => void;
+    /** Mesma partida: atrasa a tela mais rápida até a mais lenta. Só com dois canais. */
+    readonly sincronia?: { readonly ativa: boolean; readonly aoAlternar: () => void; readonly atrasoMs: number } | null;
     readonly layout: { readonly ladoALado: boolean; readonly aoAlternar: () => void } | null;
   } | null;
 };
@@ -216,6 +218,25 @@ export function BarraEspectador(p: PropsDaBarra) {
                 <IconMaisTela className="h-4 w-4" />
                 TELA
               </button>
+              {p.multivisao.sincronia != null && (
+                <button
+                  type="button"
+                  onClick={p.multivisao.sincronia.aoAlternar}
+                  aria-pressed={p.multivisao.sincronia.ativa}
+                  title={
+                    p.multivisao.sincronia.ativa
+                      ? `Sincronizando as duas telas (+${p.multivisao.sincronia.atrasoMs} ms na principal). Desligar (S)`
+                      : 'Sincronizar as duas telas — mesma partida: atrasa a mais rápida até a mais lenta (S)'
+                  }
+                  aria-label="Sincronizar as duas telas (S)"
+                  className={[
+                    'h-11 border-0 border-r-2 border-line bg-transparent px-3 font-[family-name:var(--font-pixel)] text-[11px] hover:bg-key',
+                    p.multivisao.sincronia.ativa ? 'text-accent-hi' : 'text-muted hover:text-accent-hi',
+                  ].join(' ')}
+                >
+                  SINC
+                </button>
+              )}
               {p.multivisao.layout !== null && (
                 <BotaoBarra
                   rotulo={p.multivisao.layout.ladoALado ? 'Quadro no canto (L)' : 'Lado a lado (L)'}

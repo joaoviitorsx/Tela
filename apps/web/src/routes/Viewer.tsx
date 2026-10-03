@@ -37,6 +37,8 @@ import {
   secundaria,
 } from '../core/multivisao/estado.js';
 import { GuardaDeBanda } from '../core/multivisao/guarda-de-banda.js';
+import { proximosAtrasos } from '../core/multivisao/sincronia.js';
+import { ATRASO_EXTRA_MAXIMO_MS, type ViewerSession } from '../core/media/viewer-session.js';
 import { type Arranjo, posicaoDoPainel } from '../react/layout-da-multivisao.js';
 import { congelarQuadro } from '../react/quadro-congelado.js';
 import { useDialogo } from '../react/use-dialogo.js';
@@ -445,6 +447,38 @@ export function Viewer({ canais: canaisDaRota }: Props) {
     setMv((e) => pausar(e, motivo));
   }, [state, estadoDaOutra, lentidaoPrincipal, lentidaoDaOutra, outra, mv.pausada, videos]);
 
+  /*
+    Sincronia (mesma partida): atrasa o canal mais rápido até o mais lento.
+    Desligada por padrão — dois jogos diferentes não têm o que alinhar. Roda
+    na cadência das estatísticas (1 Hz), em O(1).
+  */
+  const [sincronizar, setSincronizar] = useState(false);
+  useEffect(() => {
+    const zerar = (s: ViewerSession | null) => s?.definirAtrasoExtra(0);
+    if (!sincronizar || sessaoDaOutra === null) {
+      zerar(session);
+      zerar(sessaoDaOutra);
+      return;
+    }
+    const natural = (s: ViewerSession): number | null => {
+      const l = s.latenciaAtual;
+      return l.janela?.mediana ?? l.ms;
+    };
+    const mesmaOrigem = session.latenciaAtual.janela?.origem === sessaoDaOutra.latenciaAtual.janela?.origem;
+    if (!mesmaOrigem) return;
+    const [p, o] = proximosAtrasos(
+      [natural(session), natural(sessaoDaOutra)],
+      [session.atrasoDeSincronia, sessaoDaOutra.atrasoDeSincronia],
+      ATRASO_EXTRA_MAXIMO_MS,
+    );
+    session.definirAtrasoExtra(p);
+    sessaoDaOutra.definirAtrasoExtra(o);
+  }, [sincronizar, session, sessaoDaOutra, state, estadoDaOutra]);
+  // Com um canal só não há o que sincronizar.
+  useEffect(() => {
+    if (outra === null) setSincronizar(false);
+  }, [outra]);
+
   const retomarOutra = useCallback(() => {
     guarda.current.retomou(performance.now());
     setCongelado(null);
@@ -514,6 +548,9 @@ export function Viewer({ canais: canaisDaRota }: Props) {
           if (outra !== null) fechar(outra);
         },
         l: () => setMv(alternarLayout),
+        s: () => {
+          if (outra !== null) setSincronizar((v) => !v);
+        },
         '[': () => setMv((e) => redimensionar(e, -1)),
         ']': () => setMv((e) => redimensionar(e, 1)),
       }),
@@ -657,7 +694,9 @@ export function Viewer({ canais: canaisDaRota }: Props) {
             medida.janela?.origem === 'captura' || medida.origem === 'captura'
               ? 'captura até a tela'
               : 'só a recepção (sem captura)'
-          }${medida.janela === null ? '' : ` · mediana de ${medida.janela.amostras} quadros · p95 ${formatarMs(medida.janela.p95)}`}`,
+          }${medida.janela === null ? '' : ` · mediana de ${medida.janela.amostras} quadros · p95 ${formatarMs(medida.janela.p95)}`}${
+            session.atrasoDeSincronia > 0 ? ` · +${session.atrasoDeSincronia} ms de sincronia` : ''
+          }`,
     // Com os quadros por segundo: "slide" vira um número que quem assiste pode repetir.
     imagem: stats.fps === '—' ? stats.resolution : `${stats.resolution} · ${stats.fps}`,
     travado: stats.travou ? stats.congelado : null,
@@ -692,6 +731,10 @@ export function Viewer({ canais: canaisDaRota }: Props) {
       : null,
     multivisao: {
       aoAdicionar: abrirJunto,
+      sincronia:
+        outra === null
+          ? null
+          : { ativa: sincronizar, aoAlternar: () => setSincronizar((v) => !v), atrasoMs: session.atrasoDeSincronia },
       layout:
         arranjo === 'pip' || arranjo === 'lado-a-lado'
           ? { ladoALado: arranjo === 'lado-a-lado', aoAlternar: () => setMv(alternarLayout) }

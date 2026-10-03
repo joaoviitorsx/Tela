@@ -8,7 +8,7 @@
  *   WebSocket novo — e a cor do centro da principal passa a ser a do outro;
  * - o som segue a principal (a secundária fica muda);
  * - a barra de endereço acompanha (`/b+a`);
- * - fechar, `+ TELA` e lado a lado.
+ * - fechar, `+ TELA`, lado a lado e a sincronia (S).
  *
  * Rodar com `pnpm dev` no ar: `node e2e/multivisao.e2e.mjs`.
  */
@@ -92,6 +92,18 @@ console.log('\n1. Dois anfitriões no ar');
 
 // Conta WebSockets abertos: trocar a principal não pode abrir nenhum.
 const viewer = await novaPagina('viewer', () => {
+  // Registra todo alvo de jitter buffer pedido: é por ele que a sincronia atrasa.
+  window.__jbt = [];
+  const d = Object.getOwnPropertyDescriptor(RTCRtpReceiver.prototype, 'jitterBufferTarget');
+  if (d?.set) {
+    Object.defineProperty(RTCRtpReceiver.prototype, 'jitterBufferTarget', {
+      ...d,
+      set(v) {
+        window.__jbt.push(v);
+        d.set.call(this, v);
+      },
+    });
+  }
   window.__ws = 0;
   const Original = window.WebSocket;
   window.WebSocket = class extends Original {
@@ -190,6 +202,20 @@ ok(depois.mudaA === true, 'quem virou secundária ficou muda');
 ok(depois.caminho === `/${B}+${A}`, `a barra de endereço acompanha (${depois.caminho})`);
 const principalDepois = await caixa('principal');
 ok(principalDepois !== null && principalDepois.w >= 1200, `a nova principal ocupa o palco (${principalDepois?.w}px)`);
+
+console.log('\n3b. Sincronia (S): liga, segue tocando, atraso fica na zona morta em loopback');
+await viewer.mouse.move(400, 300);
+await viewer.keyboard.press('s');
+await viewer.waitForTimeout(4000);
+const sinc = await viewer.evaluate(() => ({
+  ativa: document.querySelector('[aria-label="Sincronizar as duas telas (S)"]')?.getAttribute('aria-pressed'),
+  tocando: [...document.querySelectorAll('video')].every((v) => !v.paused && v.videoWidth > 0),
+  alvos: window.__jbt,
+}));
+ok(sinc.ativa === 'true', 'o SINC ficou ligado');
+ok(sinc.tocando, 'as duas seguem tocando com a sincronia ligada');
+ok(Math.max(0, ...sinc.alvos) <= 60 + 25, `loopback: nenhum atraso fora da zona morta (maior alvo ${Math.max(0, ...sinc.alvos)} ms)`);
+await viewer.keyboard.press('s');
 
 console.log('\n4. Lado a lado (L) e de volta');
 await viewer.keyboard.press('l');

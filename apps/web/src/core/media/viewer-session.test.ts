@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FakeMediaTransport, FakeScheduler, fakeStream, fakeTrack } from '../testing/fakes.js';
-import { ViewerSession } from './viewer-session.js';
+import { ATRASO_EXTRA_MAXIMO_MS, ViewerSession } from './viewer-session.js';
 
 const SLUG = 'joao';
 const settle = async (times = 12) => {
@@ -658,5 +658,37 @@ describe('ViewerSession — aprovação manual (ADR 0025)', () => {
     await settle();
     expect(ctx.criados).toHaveLength(2);
     expect(ctx.session.getState().status).toBe('aguardando-aprovacao');
+  });
+
+  describe('atraso de sincronia (multivisão, ADR 0032)', () => {
+    it('soma ao alvo do governador na hora, e desliga com 0', async () => {
+      const ctx = build();
+      await ctx.session.open(SLUG);
+      ctx.ultimo().deliver();
+      ctx.session.definirAtrasoExtra(120);
+      expect(ctx.ultimo().jitterAlvos.at(-1)).toBe(60 + 120);
+      ctx.session.definirAtrasoExtra(0);
+      expect(ctx.ultimo().jitterAlvos.at(-1)).toBe(60);
+      expect(ctx.session.atrasoDeSincronia).toBe(0);
+    });
+
+    it('tem teto e não manda o mesmo alvo duas vezes', async () => {
+      const ctx = build();
+      await ctx.session.open(SLUG);
+      ctx.ultimo().deliver();
+      ctx.session.definirAtrasoExtra(10_000);
+      ctx.session.definirAtrasoExtra(10_000);
+      expect(ctx.session.atrasoDeSincronia).toBe(ATRASO_EXTRA_MAXIMO_MS);
+      expect(ctx.ultimo().jitterAlvos.filter((v) => v === 60 + ATRASO_EXTRA_MAXIMO_MS)).toHaveLength(1);
+    });
+
+    it('a latência medida é a da rede: o atraso escolhido é descontado', async () => {
+      const ctx = build();
+      await ctx.session.open(SLUG);
+      ctx.ultimo().deliver();
+      ctx.session.definirAtrasoExtra(200);
+      for (let i = 0; i < 40; i += 1) ctx.session.registrarLatencia({ ms: 350, origem: 'recepcao' });
+      expect(ctx.session.latenciaAtual.janela?.mediana).toBe(150);
+    });
   });
 });

@@ -57,8 +57,16 @@ declare class MediaStreamTrackProcessor<T> {
  * (`perfil-h264.ts`) e o encoder deste modo de aceleração diz que faz.
  */
 export const CODEC = codecDoPerfil('baseline');
-/** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */
-const ATRASO_TOLERADO = 2;
+/**
+ * Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular
+ * latência. Era 2. Com a CPU disputada (um jogo), as iscas atrasam o tempo
+ * todo e o 2 segurava 4 a 15 quadros por segundo para TODOS — medido na
+ * bancada `e2e/fluidez.e2e.mjs`, rodadas alternadas: com 4, +4 a 5 fps (+15%)
+ * e desvio do intervalo entre quadros de 21 para 15 ms; sem carga, igual
+ * (60 fps, 4 ms). O espectador que fica para trás de verdade continua com a
+ * válvula de camada (ADR 0034) e o "soltar" (`LIMITE_DE_ARRASTO`).
+ */
+const ATRASO_TOLERADO = 4;
 /**
  * Sem quadro novo da captura por este tempo, o último é codificado de novo —
  * no máximo a cada `REENVIO_MS`, ou já, se alguém pediu quadro-chave.

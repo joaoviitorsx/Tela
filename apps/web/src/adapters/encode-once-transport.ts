@@ -1,3 +1,4 @@
+import { type PerfilH264, perfilDaSala } from '../core/media/perfil-h264.js';
 import { type EncodingPreset, type Prioridade, bitsPorPixel } from '@tela/shared';
 import { alvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import type { MediaStats, MediaTransport } from '../core/ports/media-transport.js';
@@ -89,11 +90,36 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
 
   /** O id de cada transform: a pausa da cascata tira aquele sender da fila. */
   const idDoSender = new WeakMap<RTCRtpSender, string>();
+  /**
+   * Os senders de vídeo vivos, para o piso de perfil da sala. Quem fechou sai
+   * na leitura seguinte (o `close()` da conexão não dispara evento).
+   */
+  const sendersDeVideo = new Set<RTCRtpSender>();
+  let cascataAtiva = false;
+  let perfil: PerfilH264 = 'baseline';
+  /** Relê o perfil que a sala aceita. `true` = mudou (o codificador vai reconfigurar, com IDR). */
+  const atualizarPerfil = (): boolean => {
+    const fmtps: (string | undefined)[] = [];
+    for (const sender of sendersDeVideo) {
+      const estado = sender.transport?.state;
+      if (estado === 'closed' || estado === 'failed') {
+        sendersDeVideo.delete(sender);
+        continue;
+      }
+      if (estado !== 'connected') continue;
+      fmtps.push(sender.getParameters().codecs?.[0]?.sdpFmtpLine);
+    }
+    const daSala = perfilDaSala(fmtps, cascataAtiva);
+    if (daSala === null || daSala === perfil) return false;
+    perfil = daSala;
+    return true;
+  };
   /** Todo sender de vídeo que nascer ganha o transform — o mesh não sabe. */
   const anexar = (sender: RTCRtpSender | undefined): void => {
     if (sender === undefined || sender.transform !== null) return;
     const id = crypto.randomUUID();
     idDoSender.set(sender, id);
+    sendersDeVideo.add(sender);
     sender.transform = new RTCRtpScriptTransform(garantir().worker, { id });
   };
 
@@ -114,6 +140,9 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         recursos?.codificador.pedirChave('entrada', 1);
       },
       aoMudarAtividade: (ativa: boolean) => {
+        // Cascata: o anfitrião não vê o que os filhos negociaram — a sala desce a Baseline.
+        cascataAtiva = ativa;
+        if (atualizarPerfil()) recalcular();
         if (idrPeriodico !== null) clearInterval(idrPeriodico);
         idrPeriodico = ativa ? setInterval(() => recursos?.codificador.pedirChave('repasse', 1), IDR_DO_REPASSE_MS) : null;
       },
@@ -151,7 +180,14 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
 
   const alvo = () => {
     if (preset === null) return null;
-    const a = alvoDoCodificador({ preset, orcamento, prioridade, fonte: recursos?.codificador.fonte() ?? fonte, piorEstimativa });
+    const a = alvoDoCodificador({
+      preset,
+      orcamento,
+      prioridade,
+      fonte: recursos?.codificador.fonte() ?? fonte,
+      piorEstimativa,
+      perfil,
+    });
     limitadoPelaEstimativa = a.limitadoPelaEstimativa;
     return a;
   };
@@ -211,6 +247,8 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       if (s === null || !iniciado) return s;
       // Freio rápido: a estimativa medida agora entra no alvo do codificador.
       piorEstimativa = s.piorAvailableBps;
+      // E o piso de perfil da sala, relido no mesmo tique (O(N), N ≤ 50).
+      atualizarPerfil();
       recalcular();
       if (recursos === null) return s;
       const c = recursos.codificador.estatisticas();
@@ -245,6 +283,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     async disconnect() {
       if (idrPeriodico !== null) clearInterval(idrPeriodico);
       idrPeriodico = null;
+      sendersDeVideo.clear();
       recursos?.codificador.parar();
       recursos?.isca.trilha.stop();
       recursos?.worker.terminate();

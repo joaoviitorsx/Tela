@@ -10,7 +10,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * do `configure`; um encoder vivo entrega cada quadro, a menos que esteja
  * "travado".
  */
-const ALVO: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false };
+const ALVO: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline' };
 
 type Cena = {
   suportaHardware: boolean | 'lanca';

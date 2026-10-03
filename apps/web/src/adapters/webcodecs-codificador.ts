@@ -4,6 +4,7 @@ import {
   type MotivoDaQueda,
 } from '../core/media/aceleracao-do-codificador.js';
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
+import { type PerfilH264, codecDoPerfil, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import { VigiaDoEncoder } from '../core/media/vigia-do-encoder.js';
 import type { CodificadorUnico, EstatisticasDoCodificador } from './codificador-unico.js';
@@ -38,10 +39,11 @@ declare class MediaStreamTrackProcessor<T> {
 }
 
 /**
- * H.264 Constrained Baseline nível 4.2: cobre 1080p60, e é o perfil que o
- * WebRTC do Chromium negocia por padrão — o decoder do espectador já espera.
+ * H.264 Constrained Baseline nível 4.2: cobre 1080p60, e é o piso que todo
+ * receptor decodifica. Main entra quando a SALA inteira aceita
+ * (`perfil-h264.ts`) e o encoder deste modo de aceleração diz que faz.
  */
-export const CODEC = 'avc1.42e02a';
+export const CODEC = codecDoPerfil('baseline');
 /** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */
 const ATRASO_TOLERADO = 2;
 /**
@@ -64,6 +66,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private leitor: ReadableStreamDefaultReader<VideoFrame> | null = null;
   private alvo: AlvoDoCodificador | null = null;
   private configurado: AlvoDoCodificador | null = null;
+  /** O perfil com que o encoder atual foi configurado. */
+  private perfilConfigurado: PerfilH264 | null = null;
+  /**
+   * Main é perguntado POR MODO de aceleração antes de ser usado: um
+   * `configure` recusado viraria "a GPU morreu" para a política de
+   * aceleração, e ela cairia para software à toa.
+   */
+  private readonly suportaMain = new Map<string, boolean>();
+  private readonly perguntandoMain = new Set<string>();
+  /** Saiu quadro fora de ordem (B-frames): Main fica proibido nesta sessão. */
+  private mainProibido = false;
+  private ultimoTimestamp = -Infinity;
+  /** `profile_idc` do último SPS emitido: o perfil de FATO, não o pedido. */
+  private perfilEmitido: number | null = null;
   private seq = 0;
   private pedirChaveAgora = true;
   private ultimaChave = -Infinity;
@@ -193,7 +209,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       fpsDaCaptura,
       idrs: this.idrs,
       pedidosDeChave: { ...this.pedidos },
-      implementacao: this.aceleracao.rotulo(),
+      implementacao: this.rotulo(),
     };
   }
 
@@ -210,9 +226,32 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.descartar();
   }
 
-  private config(alvo: AlvoDoCodificador, aceleracao: Aceleracao): VideoEncoderConfig {
+  /** Main só com a sala pedindo, o modo atual confirmando e nenhum B-frame visto. */
+  private perfilEfetivo(alvo: AlvoDoCodificador): PerfilH264 {
+    if (alvo.perfil !== 'main' || this.mainProibido) return 'baseline';
+    const modo = this.aceleracao.modo;
+    const sabido = this.suportaMain.get(modo);
+    if (sabido === undefined) this.perguntarMain(alvo, modo);
+    return sabido === true ? 'main' : 'baseline';
+  }
+
+  private perguntarMain(alvo: AlvoDoCodificador, modo: Aceleracao): void {
+    if (this.perguntandoMain.has(modo) || typeof VideoEncoder.isConfigSupported !== 'function') return;
+    this.perguntandoMain.add(modo);
+    void VideoEncoder.isConfigSupported(this.config(alvo, modo, 'main'))
+      .then((r) => r.supported === true)
+      .catch(() => false)
+      .then((sim) => {
+        this.suportaMain.set(modo, sim);
+        this.perguntandoMain.delete(modo);
+        // Sim: reconfigura já (com IDR); não: fica em Baseline, nada muda.
+        if (sim) this.aplicar();
+      });
+  }
+
+  private config(alvo: AlvoDoCodificador, aceleracao: Aceleracao, perfil: PerfilH264 = 'baseline'): VideoEncoderConfig {
     return {
-      codec: CODEC,
+      codec: codecDoPerfil(perfil),
       width: alvo.width,
       height: alvo.height,
       bitrate: alvo.bitrate,
@@ -224,11 +263,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     };
   }
 
+  /** O rótulo do console: aceleração e o perfil EMITIDO, quando já se sabe. */
+  private rotulo(): string {
+    const perfil = nomeDoPerfilIdc(this.perfilEmitido);
+    const base = this.aceleracao.rotulo();
+    return perfil === null ? base : `${base} · H.264 ${perfil}`;
+  }
+
   /** Fecha o encoder atual, se houver; o próximo `aplicar` cria outro, com IDR. */
   private descartar(): void {
     const enc = this.encoder;
     this.encoder = null;
     this.configurado = null;
+    this.perfilConfigurado = null;
+    this.ultimoTimestamp = -Infinity;
     try {
       enc?.close();
     } catch {
@@ -277,14 +325,18 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
     const enc = this.encoder;
     const c = this.configurado;
+    const perfil = this.perfilEfetivo(alvo);
     const mudouTamanho = c === null || c.width !== alvo.width || c.height !== alvo.height || c.fps !== alvo.fps;
     const mudouBitrate = c === null || Math.abs(c.bitrate - alvo.bitrate) / Math.max(1, c.bitrate) > 0.05;
-    if (!mudouTamanho && !mudouBitrate) return;
-    enc.configure(this.config(alvo, this.aceleracao.modo));
+    // Trocar de perfil é como trocar de tamanho: SPS novo, e o próximo quadro tem de ser IDR.
+    const mudouPerfil = perfil !== this.perfilConfigurado;
+    if (!mudouTamanho && !mudouBitrate && !mudouPerfil) return;
+    enc.configure(this.config(alvo, this.aceleracao.modo, perfil));
     // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
     if (this.encoder !== enc) return;
     this.configurado = alvo;
-    if (mudouTamanho) this.pedirChaveAgora = true;
+    this.perfilConfigurado = perfil;
+    if (mudouTamanho || mudouPerfil) this.pedirChaveAgora = true;
   }
 
   private guardarUltimo(quadro: VideoFrame): void {
@@ -362,6 +414,18 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     if (chave) this.idrs += 1;
     const dados = new ArrayBuffer(chunk.byteLength);
     chunk.copyTo(dados);
+    // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.
+    if (chave) this.perfilEmitido = perfilDoSps(new Uint8Array(dados)) ?? this.perfilEmitido;
+    /*
+      Timestamp voltando = o encoder reordenou quadros (B-frames). O
+      receptor em tempo real não espera por isso; Main fica proibido e o
+      encoder volta a Baseline — que não tem B-frames — com IDR.
+    */
+    if (chunk.timestamp < this.ultimoTimestamp && this.perfilConfigurado === 'main') {
+      this.mainProibido = true;
+      queueMicrotask(() => this.aplicar());
+    }
+    this.ultimoTimestamp = Math.max(this.ultimoTimestamp, chunk.timestamp);
     const c = this.configurado;
     this.entregar(
       { seq: this.seq++, chave, dados, width: c?.width ?? 0, height: c?.height ?? 0 },

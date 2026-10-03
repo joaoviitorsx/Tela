@@ -84,6 +84,12 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   /** Quadros que saíram desde aquele `configure`: zero = o perfil nunca funcionou. */
   private saidasDoPerfil = 0;
   /**
+   * O último carimbo de entrada antes daquele `configure`. Só conta como
+   * saída DO perfil novo o quadro que entrou depois — saídas atrasadas do
+   * perfil anterior não provam que o novo funciona.
+   */
+  private entradaNoConfigure = -Infinity;
+  /**
    * Carimbos de ENTRADA monotônicos. Cada trilha nova (pausa, retomada, troca
    * de tela) recomeça o `timestamp` do `VideoFrame` em ~0, e o reenvio do
    * último quadro carimba à frente do que ainda está na fila. `desvio`
@@ -253,7 +259,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   }
 
   private perguntarMain(alvo: AlvoDoCodificador, modo: Aceleracao): void {
-    if (this.perguntandoMain.has(modo) || typeof VideoEncoder.isConfigSupported !== 'function') return;
+    // Já sabido (inclusive o `false` de um configure que estourou): não pergunta de novo.
+    if (this.suportaMain.has(modo) || this.perguntandoMain.has(modo) || typeof VideoEncoder.isConfigSupported !== 'function') return;
     this.perguntandoMain.add(modo);
     void VideoEncoder.isConfigSupported(this.config(alvo, modo, 'main'))
       .then((r) => r.supported === true)
@@ -366,6 +373,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     if (mudouPerfil || c === null) {
       this.perfilPedido = perfil;
       this.saidasDoPerfil = 0;
+      this.entradaNoConfigure = this.ultimaEntrada;
     }
     enc.configure(this.config(alvo, this.aceleracao.modo, perfil));
     // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
@@ -477,7 +485,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   }
 
   private saiu(chunk: EncodedVideoChunk): void {
-    this.saidasDoPerfil += 1;
+    if (chunk.timestamp > this.entradaNoConfigure) this.saidasDoPerfil += 1;
     this.vigia.saiu(chunk.timestamp, this.agora());
     this.quadros += 1;
     const chave = chunk.type === 'key';

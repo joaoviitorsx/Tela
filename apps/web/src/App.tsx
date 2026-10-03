@@ -1,5 +1,5 @@
 import { type PresetId, type Prioridade } from '@tela/shared';
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { type FonteDeVisibilidade, useAbaVisivel } from './react/use-aba-visivel.js';
 import { parseRoute, useRoute } from './router.js';
 
@@ -64,6 +64,7 @@ type Props = {
 
 export function App({ visibilidade }: Props = {}) {
   const { route, navigate } = useRoute();
+  const visita = useVisitas();
   // Pausa as animações CSS com a aba escondida: quem transmite deixa a página
   // atrás do jogo durante horas.
   useAbaVisivel(visibilidade);
@@ -104,10 +105,11 @@ export function App({ visibilidade }: Props = {}) {
         );
 
       case 'viewer':
-        // `key`: outro canal (link do app, ASSISTIR, voltar) é outra tela — o
-        // estado da multivisão nasce da rota. A troca interna usa
-        // `replaceState`, que não muda a rota, então não remonta nada.
-        return <Viewer key={route.canais.join('+')} canais={route.canais} />;
+        // `key`: cada navegação (link do app, ASSISTIR, voltar) é outra tela —
+        // o estado da multivisão nasce da rota. `visita` conta as navegações:
+        // ir de `/ana+bia` (só `replaceState`) para `/ana` também remonta. A
+        // troca interna usa `replaceState`, que não navega, então não remonta.
+        return <Viewer key={`${route.canais.join('+')}:${visita}`} canais={route.canais} />;
 
       case 'recover':
         return <Recover onBack={() => navigate('/')} />;
@@ -116,4 +118,15 @@ export function App({ visibilidade }: Props = {}) {
         return <NotFound onHome={() => navigate('/')} />;
     }
   }
+}
+
+/** Conta navegações (`popstate`, que o `navigate` também dispara). */
+function useVisitas(): number {
+  const [visita, setVisita] = useState(0);
+  useEffect(() => {
+    const contar = () => setVisita((v) => v + 1);
+    window.addEventListener('popstate', contar);
+    return () => window.removeEventListener('popstate', contar);
+  }, []);
+  return visita;
 }

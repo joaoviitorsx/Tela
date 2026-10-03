@@ -148,14 +148,19 @@ export class AvisoAoVivo {
    * chama antes de sair: sem isso a edição "encerrada" morria com o processo.
    */
   async aguardar(ms: number): Promise<void> {
-    if (this.emVoo.size === 0) return;
     let relogio: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      Promise.allSettled([...this.emVoo]),
-      new Promise<void>((r) => {
-        relogio = setTimeout(r, ms);
-      }),
-    ]);
+    let estourou = false;
+    const prazo = new Promise<void>((r) => {
+      relogio = setTimeout(() => {
+        estourou = true;
+        r();
+      }, ms);
+    });
+    // Em laço: um pedido pode nascer de outro (o publicar que resolve depois
+    // do fim dispara a edição "encerrada") — espera até esvaziar ou o prazo.
+    while (this.emVoo.size > 0 && !estourou) {
+      await Promise.race([Promise.allSettled([...this.emVoo]), prazo]);
+    }
     if (relogio !== undefined) clearTimeout(relogio);
   }
 
@@ -193,6 +198,8 @@ export class AvisoAoVivo {
         this.confirmar(c, noAr, ultimo.mensagemId);
         return;
       }
+      // Acabou enquanto tentava reaproveitar: não há o que anunciar.
+      if (this.noAr !== noAr) return;
     }
 
     const r = await this.rastrear(this.deps.porta.publicar(c.webhook, corpo));
@@ -206,8 +213,14 @@ export class AvisoAoVivo {
       A transmissão acabou enquanto o Discord respondia: a mensagem acabou de
       nascer dizendo AO VIVO e ninguém mais vai editá-la. Encerra já.
     */
-    if (this.noAr !== noAr) {
+    /*
+      O mesmo vale para REMOVER durante o envio: sem o webhook guardado,
+      ninguém editaria a mensagem depois. Encerra com o webhook com que ela
+      nasceu (o `c` capturado, ainda válido no Discord).
+    */
+    if (this.noAr !== noAr || this.config()?.webhook.id !== c.webhook.id) {
       void this.encerrarMensagem(c, noAr, mensagemId, { aoSair: true });
+      if (this.noAr === noAr) this.mudar(this.estadoEmRepouso());
       return;
     }
     noAr.mensagemId = mensagemId;

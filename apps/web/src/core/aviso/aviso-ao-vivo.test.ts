@@ -168,4 +168,58 @@ describe('AvisoAoVivo', () => {
     await aviso.aguardar(50);
     expect(Date.now() - inicio).toBeLessThan(1_000);
   });
+
+  it('aguardar segue o pedido que nasce de outro (publicar em voo → edição encerrada)', async () => {
+    const editados: string[] = [];
+    const porta: PortaDoAvisoDiscord = {
+      publicar: () => new Promise((r) => setTimeout(() => r(ok({ mensagemId: 'm1' })), 20)),
+      editar: (_w, id) =>
+        new Promise((r) =>
+          setTimeout(() => {
+            editados.push(id);
+            r(ok(undefined));
+          }, 20),
+        ),
+    };
+    const aviso = new AvisoAoVivo({ porta, storage: new FakeStorage(), agora: () => 0 });
+    aviso.salvar(URL_OK);
+    void aviso.aoEntrarNoAr('soumbra', LINK);
+    await aviso.aoSair();
+    await aviso.aguardar(1_000);
+    expect(editados).toEqual(['m1']);
+  });
+
+  it('REMOVER com a publicação em voo: a mensagem nasce e é encerrada (sem órfã)', async () => {
+    let soltar!: () => void;
+    const editados: string[] = [];
+    const porta: PortaDoAvisoDiscord = {
+      publicar: () =>
+        new Promise((r) => {
+          soltar = () => r(ok({ mensagemId: 'm9' }));
+        }),
+      async editar(_w, id) {
+        editados.push(id);
+        return ok(undefined);
+      },
+    };
+    const aviso = new AvisoAoVivo({ porta, storage: new FakeStorage(), agora: () => 0 });
+    aviso.salvar(URL_OK);
+    const publicando = aviso.aoEntrarNoAr('soumbra', LINK);
+    aviso.remover();
+    soltar();
+    await publicando;
+    await aviso.aguardar(100);
+    expect(editados).toEqual(['m9']);
+    expect(aviso.getEstado()).toEqual({ fase: 'sem-webhook' });
+  });
+
+  it('reaproveitar falhou depois do fim: não publica mensagem nova', async () => {
+    const t = montar({ falhaEditar: true });
+    t.aviso.salvar(URL_OK);
+    t.storage.set('tela.discord.ultimo', JSON.stringify({ canal: 'soumbra', webhookId: '123456789012345678', mensagemId: 'velha', encerradoEm: 1_000_000 }));
+    const entrando = t.aviso.aoEntrarNoAr('soumbra', LINK);
+    await t.aviso.aoSair();
+    await entrando;
+    expect(t.chamadas.map((c) => c.tipo)).toEqual(['editar']);
+  });
 });

@@ -1487,6 +1487,9 @@ export class BroadcastSession {
     // Na pausa, a tela nova fica guardada: trocar de fonte não pode vazar
     // imagem para quem está vendo o quadro neutro.
     if (this.pausa === null) await this.deps.transport.replaceVideo(capture.video);
+    // Fonte nova é carga nova (do jogo pesado para a área de trabalho): as quedas
+    // por CPU da anterior não deixam espera longa para trás.
+    this.quedasPorCpu.clear();
 
     await this.trocarAudioJunto(capture.audio, capture.surface);
 

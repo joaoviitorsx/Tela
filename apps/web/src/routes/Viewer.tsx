@@ -19,12 +19,10 @@ import { useAbrirNoApp } from '../react/use-abrir-no-app.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useCopia } from '../react/use-copia.js';
 import { useBarraCompacta, useMediaQuery } from '../react/use-media-query.js';
-import { useMediaStats } from '../react/use-media-stats.js';
 import { useAvisoDeCanal } from '../react/use-aviso-de-canal.js';
 import { useHotkeys } from '../react/use-page-effects.js';
-import { useFrameLatency } from '../react/use-frame-latency.js';
 import { usePictureInPicture } from '../react/use-picture-in-picture.js';
-import { useViewer } from '../react/use-viewer.js';
+import { usePainelDeCanal } from '../react/use-painel-de-canal.js';
 import { PASSO_VOLUME, useVolume } from '../react/use-volume.js';
 import type { CausaDaLentidao } from '../core/media/vigia-de-fluidez.js';
 import { useZoomPan } from '../react/use-zoom-pan.js';
@@ -111,35 +109,39 @@ const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>([
  * sem logo, sem contador de likes. O amigo abriu o link para ver o jogo.
  */
 export function Viewer({ slug }: Props) {
-  const session = useMemo(() => createViewerSession(), []);
-  const state = useViewer(session);
   /*
     Quem tem o app instalado é levado a ele; a sessão da web só abre quando a
     fase é `navegador`. Onde não há o que tentar a fase já nasce assim.
   */
   const app = useAbrirNoApp(slug, abrirNoApp, semAppMarca);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  /**
-   * O elemento também como ESTADO, e não só como ref.
-   *
-   * `videoRef.current` não é reativo: na render em que os efeitos são
-   * declarados ele ainda é `null` — o `<video>` só é montado depois, e atribuir
-   * `.current` não dispara render nenhuma. Um efeito que dependa de
-   * `videoRef.current` roda uma vez com `null` e nunca mais.
-   *
-   * Isso matou a medição de latência por quadro no commit em que ela nasceu:
-   * `useFrameLatency` recebia `null`, saía pelo early return, e o recurso
-   * inteiro era código morto que passava em todos os testes.
-   *
-   * O ref continua para quem precisa dele de forma imperativa (play, volume,
-   * tela cheia); o estado existe para quem precisa REAGIR à montagem.
-   */
-  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
-  const montarVideo = useCallback((el: HTMLVideoElement | null) => {
-    videoRef.current = el;
-    setVideoEl(el);
-  }, []);
   const som = useVolume(volumePreference);
+
+  /**
+   * O apelido do pedido (ADR 0025). `null` = ainda não disse quem é: a sessão
+   * nem abre, porque não há pedido sem nome. Um `#k=` de link antigo
+   * (ADR 0021) é simplesmente ignorado (ADR 0026).
+   */
+  const [nome, setNome] = useState<string | null>(() => espectador.apelido());
+  const [rascunho, setRascunho] = useState(() => espectador.apelido() ?? '');
+  /*
+    Sala aberta (ADR 0028): ninguém pergunta o apelido antes de entrar. O
+    formulário só volta a aparecer se a pessoa pedir para trocá-lo numa sala
+    com aprovação (ADR 0025), que hoje está desligada.
+  */
+  const [editandoNome, setEditandoNome] = useState(false);
+  const precisaNome = editandoNome;
+
+  const painel = usePainelDeCanal(slug, {
+    abrir: !precisaNome && app.fase === 'navegador',
+    quem: { nome: nome ?? '', chave: espectador.chave() },
+    som: { mudo: som.mudo, volume: som.volume, liberado: som.liberado },
+    criarSessao: createViewerSession,
+  });
+  const { session, state, videoRef, videoEl, montarVideo, hasAudio, bloqueado, stats } = painel;
+  // Aqui, e não do hook: o TypeScript só estreita `state` por condições do mesmo escopo.
+  const watching = state.status === 'watching';
+  const reconectando = state.status === 'reconnecting' && state.stream !== null;
+  const comImagem = watching || reconectando;
 
   /**
    * Enquanto o dedo está na barra de volume o HUD não pode sumir. Passar
@@ -169,19 +171,6 @@ export function Viewer({ slug }: Props) {
   const pip = usePictureInPicture(videoEl);
   const [emTelaCheia, setEmTelaCheia] = useState(false);
 
-  const watching = state.status === 'watching';
-  /**
-   * A imagem sobrevive ao soluço de rede.
-   *
-   * `reconnecting` é emitido por `track.onmute` e por
-   * `connectionState === 'disconnected'` — dois eventos que acontecem numa
-   * troca de AP de Wi-Fi COM a mídia continuando a chegar, porque o par de
-   * candidatos é o mesmo. Enquanto houver stream, o `<video>` fica montado e
-   * o aviso vem por cima; trocá-lo por uma tela de espera arrancava um vídeo
-   * que nunca parou e montava um elemento novo, preto até o próximo quadro.
-   */
-  const reconectando = state.status === 'reconnecting' && state.stream !== null;
-  const comImagem = watching || reconectando;
   /*
     Celular: barra compacta de uma linha, e um toque no vídeo mostra ou
     esconde (V-01, V-02). Com mouse o comportamento é o de sempre.
@@ -189,7 +178,6 @@ export function Viewer({ slug }: Props) {
   const compacta = useBarraCompacta();
   const comDedo = useMediaQuery('(pointer: coarse)');
   const controls = useAutoHide(2_000, watching && !somAtivo, compacta && comDedo ? 'alterna' : 'revela');
-  const stats = useMediaStats(watching ? state.stats : null);
   /*
     Lido do estado, que muda uma vez por segundo com as estatísticas — e não a
     60 Hz junto com os quadros. Re-renderizar a página inteira por quadro seria
@@ -197,95 +185,12 @@ export function Viewer({ slug }: Props) {
     evita do outro lado.
   */
   const medida = session.latenciaAtual;
-  /**
-   * A latência ponta a ponta, medida no quadro.
-   *
-   * `getStats()` mede pedaços — RTT é a rede, `totalProcessingDelay` vai do
-   * primeiro pacote até o decode. Faltam captura, encode, o pacer e o render, e
-   * é justamente aí que mora a diferença entre os 58ms que o HUD mostrava e o
-   * segundo que o usuário relatou. `requestVideoFrameCallback` é a única API do
-   * navegador que fecha essa conta.
-   */
-  const registrar = useCallback(
-    (amostra: Parameters<typeof session.registrarLatencia>[0]) =>
-      session.registrarLatencia(amostra),
-    [session],
-  );
-  useFrameLatency(videoEl, comImagem, registrar);
 
   /*
     Título e favicon dizem de relance se o canal já entrou no ar, e a fase
     separa "acabou" de "ainda não começou" (V-03, V-04).
   */
   const canal = useAvisoDeCanal(slug, state.status, comImagem, audioCue.bipe);
-
-  /**
-   * O apelido do pedido (ADR 0025). `null` = ainda não disse quem é: a sessão
-   * nem abre, porque não há pedido sem nome. Um `#k=` de link antigo
-   * (ADR 0021) é simplesmente ignorado (ADR 0026).
-   */
-  const [nome, setNome] = useState<string | null>(() => espectador.apelido());
-  const [rascunho, setRascunho] = useState(() => espectador.apelido() ?? '');
-  /*
-    Sala aberta (ADR 0028): ninguém pergunta o apelido antes de entrar. O
-    formulário só volta a aparecer se a pessoa pedir para trocá-lo numa sala
-    com aprovação (ADR 0025), que hoje está desligada.
-  */
-  const [editandoNome, setEditandoNome] = useState(false);
-  const precisaNome = editandoNome;
-
-  useEffect(() => {
-    if (precisaNome || app.fase !== 'navegador') return;
-    void session.open(slug, { nome: nome ?? '', chave: espectador.chave() });
-    return () => {
-      void session.close();
-    };
-  }, [session, slug, nome, precisaNome, app.fase]);
-
-  /**
-   * `srcObject` não é atributo — precisa ser atribuído na instância.
-   *
-   * A dependência é o STREAM, não o estado inteiro. `state` troca de
-   * identidade a cada amostra de estatística, então depender dele fazia este
-   * efeito rodar — e chamar `play()` — uma vez por segundo durante a
-   * transmissão inteira, num elemento que já estava tocando.
-   */
-  const streamAtual =
-    state.status === 'watching' || state.status === 'reconnecting' ? state.stream : null;
-  useEffect(() => {
-    const element = videoRef.current;
-    if (!element || streamAtual === null) return;
-    if (element.srcObject !== streamAtual) element.srcObject = streamAtual;
-    void element.play().catch(() => undefined);
-  }, [streamAtual]);
-
-  /**
-   * O elemento é a fonte da verdade do áudio; o hook é a fonte da intenção.
-   *
-   * Depende de `videoEl` e não de `videoRef.current`: o ref não é reativo, e um
-   * efeito que dependesse dele rodaria uma vez com `null` e nunca mais. E de
-   * `comImagem`, que é o que o corpo de fato lê — a dependência tinha ficado em
-   * `watching` quando o corpo passou a olhar `comImagem`, então o volume não
-   * era reaplicado ao voltar de um soluço de rede.
-   */
-  useEffect(() => {
-    if (videoEl === null || !comImagem) return;
-    videoEl.muted = som.mudo;
-    videoEl.volume = som.volume;
-  }, [videoEl, comImagem, som.mudo, som.volume]);
-
-  /**
-   * Só a página vê o autoplay recusado e o mudo escolhido. A sessão precisa
-   * dos dois para não chamar de "sem som" o que é bloqueio ou escolha.
-   */
-  // Do STREAM e não do estado: `reconnecting` não carrega `hasAudio`, e sumir
-  // com o controle de volume no meio de um soluço seria a mesma desmontagem
-  // que este bloco existe para evitar, em miniatura.
-  const hasAudio = streamAtual !== null && streamAtual.getAudioTracks().length > 0;
-  const bloqueado = hasAudio && som.mudo && !som.liberado;
-  useEffect(() => {
-    session.informarReproducao({ bloqueada: bloqueado, mudo: som.mudo || som.volume === 0 });
-  }, [session, bloqueado, som.mudo, som.volume]);
 
   const liberarSom = useCallback(() => {
     som.reativar();
@@ -294,7 +199,7 @@ export function Viewer({ slug }: Props) {
     // Direto no elemento, dentro do gesto: é o clique que autoriza o áudio.
     element.muted = false;
     void element.play().catch(() => undefined);
-  }, [som]);
+  }, [som, videoRef]);
 
   /**
    * Tela cheia, incluindo onde a API padrão não existe.
@@ -339,7 +244,7 @@ export function Viewer({ slug }: Props) {
       return;
     }
     void palco.requestFullscreen().catch(nativoDoVideo);
-  }, []);
+  }, [videoRef]);
 
   // O ícone tem que dizer o que o clique FAZ, não onde você está.
   useEffect(() => {

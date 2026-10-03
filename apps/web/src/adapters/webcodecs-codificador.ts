@@ -91,6 +91,14 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   /** O codec do `configure` atual, e o do último pedido (ver `morreu`). */
   private codecConfigurado: CodecDaSala | null = null;
   private codecPedido: CodecDaSala = 'h264';
+  /** O modo de aceleração do último pedido: o AV1 tem o seu (ver `modoDoCodec`). */
+  private modoPedido: Aceleracao = 'no-preference';
+  /**
+   * O codec dos chunks que estão SAINDO. Muda no primeiro chunk que traz
+   * `decoderConfig` — não no `configure`: os quadros já na fila do encoder
+   * saem depois dele, ainda no codec anterior (medido, inclusive um IDR).
+   */
+  private codecDaSaida: CodecDaSala = 'h264';
   /** O `bitrateMode` do `configure` atual. */
   private taxaConfigurada: 'variable' | 'constant' | null = null;
   /**
@@ -100,7 +108,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
    */
   private readonly suportaMain = new Map<string, boolean>();
   private readonly perguntandoMain = new Set<string>();
-  /** L1T2 (ADR 0034), perguntado por modo como o Main. */
+  /** L1T2 (ADR 0034), perguntado por modo, codec e perfil EFETIVOS (`chaveDeCamadas`). */
   private readonly suportaCamadas = new Map<string, boolean>();
   private readonly perguntandoCamadas = new Set<string>();
   /** As camadas do `configure` atual. */
@@ -342,10 +350,19 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
   }
 
+  /**
+   * A sondagem é em `prefer-hardware`, que o Chromium só confirma com encoder
+   * de hardware — e o AV1 sempre configura nesse modo (`modoDoCodec`). Exigir
+   * a classe medida da aceleração deixava o AV1 morto no navegador, onde o
+   * H.264 roda em `no-preference` e a classe nunca é medida.
+   */
   suportaAv1(): boolean {
-    if (this.av1Suportado !== true) return false;
-    // Fora do teste, só com a GPU certa codificando — AV1 por software pesa no jogo.
-    return this.av1 === 'forcado' || this.aceleracao.classe() === 'hardware';
+    return this.av1Suportado === true;
+  }
+
+  /** AV1 só em hardware (fora do teste): `no-preference` cairia calado no libaom. */
+  private modoDoCodec(codec: CodecDaSala): Aceleracao {
+    return codec === 'av1' && this.av1 !== 'forcado' ? 'prefer-hardware' : this.aceleracao.modo;
   }
 
   private codecEfetivo(alvo: AlvoDoCodificador): CodecDaSala {
@@ -353,23 +370,25 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   }
 
   /** L1T2 só com a sala pedindo e o modo de aceleração confirmando. */
-  private camadasEfetivas(alvo: AlvoDoCodificador): 1 | 2 {
+  private camadasEfetivas(alvo: AlvoDoCodificador, modo: Aceleracao, codec: CodecDaSala, perfil: PerfilH264): 1 | 2 {
     if (alvo.camadas !== 2) return 1;
-    const modo = this.aceleracao.modo;
-    const sabido = this.suportaCamadas.get(modo);
-    if (sabido === undefined) this.perguntarCamadas(alvo, modo);
+    const chave = chaveDeCamadas(modo, codec, perfil);
+    const sabido = this.suportaCamadas.get(chave);
+    if (sabido === undefined) this.perguntarCamadas(alvo, modo, codec, perfil);
     return sabido === true ? 2 : 1;
   }
 
-  private perguntarCamadas(alvo: AlvoDoCodificador, modo: Aceleracao): void {
-    if (this.suportaCamadas.has(modo) || this.perguntandoCamadas.has(modo) || typeof VideoEncoder.isConfigSupported !== 'function') return;
-    this.perguntandoCamadas.add(modo);
-    void VideoEncoder.isConfigSupported({ ...this.config(alvo, modo), scalabilityMode: 'L1T2' })
+  /** A combinação que vai rodar: AV1 + L1T2 e Main + L1T2 não se deduzem de Baseline + L1T2. */
+  private perguntarCamadas(alvo: AlvoDoCodificador, modo: Aceleracao, codec: CodecDaSala, perfil: PerfilH264): void {
+    const chave = chaveDeCamadas(modo, codec, perfil);
+    if (this.suportaCamadas.has(chave) || this.perguntandoCamadas.has(chave) || typeof VideoEncoder.isConfigSupported !== 'function') return;
+    this.perguntandoCamadas.add(chave);
+    void VideoEncoder.isConfigSupported(this.config(alvo, modo, perfil, 2, codec))
       .then((r) => r.supported === true)
       .catch(() => false)
       .then((sim) => {
-        this.suportaCamadas.set(modo, sim);
-        this.perguntandoCamadas.delete(modo);
+        this.suportaCamadas.set(chave, sim);
+        this.perguntandoCamadas.delete(chave);
         if (sim && this.encoder !== null) this.aplicar();
       });
   }
@@ -435,8 +454,11 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private novoEncoder(): VideoEncoder {
     const enc: VideoEncoder = new VideoEncoder({
       // `svc` existe no Chromium com `scalabilityMode`; o lib.dom ainda não traz.
-      output: (chunk, meta) =>
-        this.saiu(chunk, (meta as { svc?: { temporalLayerId?: number } } | undefined)?.svc?.temporalLayerId),
+      output: (chunk, meta) => {
+        const codec = meta?.decoderConfig?.codec;
+        if (codec !== undefined) this.codecDaSaida = codec.startsWith('av01') ? 'av1' : 'h264';
+        this.saiu(chunk, (meta as { svc?: { temporalLayerId?: number } } | undefined)?.svc?.temporalLayerId);
+      },
       // Pode vir DENTRO do `configure`: o Chromium chama `error` na hora
       // quando a configuração é recusada (medido). `aplicar` confere depois.
       error: () => this.morreu(enc, 'erro'),
@@ -461,10 +483,29 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     */
     const arriscado = this.perfilPedido === 'main' || this.camadasPedidas === 2 || this.codecPedido === 'av1';
     if (motivo === 'erro' && arriscado && this.saidasDoPerfil === 0) {
-      // O recurso novo é o suspeito: Main, L1T2 e/ou AV1 saem deste modo.
-      if (this.perfilPedido === 'main') this.suportaMain.set(this.aceleracao.modo, false);
-      if (this.camadasPedidas === 2) this.suportaCamadas.set(this.aceleracao.modo, false);
-      if (this.codecPedido === 'av1') this.av1Suportado = false;
+      /*
+        Um recurso por vez, do que vale menos para o que vale mais: AV1 que
+        recusa L1T2 continua AV1 em L1T1, em vez de perder os dois pela
+        sessão inteira. Se ainda falhar, a próxima queda tira o seguinte.
+      */
+      const perfilPedido = this.perfilPedido ?? 'baseline';
+      if (this.camadasPedidas === 2) this.suportaCamadas.set(chaveDeCamadas(this.modoPedido, this.codecPedido, perfilPedido), false);
+      else if (this.perfilPedido === 'main') this.suportaMain.set(this.modoPedido, false);
+      else this.av1Suportado = false;
+      this.descartar();
+      queueMicrotask(() => {
+        if (!this.parado && this.encoder === null) this.aplicar();
+      });
+      return;
+    }
+    /*
+      AV1 que morre depois de já ter saído quadro: é o AV1 (o caminho de
+      hardware dele), não a aceleração do H.264 — a sala volta a H.264 sem
+      cobrar a política. Os senders ficam com isca AV1 e quadro H.264; o
+      descompasso vira aviso de `entrada` no worker, e o transporte realinha.
+    */
+    if (this.codecPedido === 'av1') {
+      this.av1Suportado = false;
       this.descartar();
       queueMicrotask(() => {
         if (!this.parado && this.encoder === null) this.aplicar();
@@ -493,7 +534,10 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
     const enc = this.encoder;
     const c = this.configurado;
-    const perfil = this.perfilEfetivo(alvo);
+    const codec = this.codecEfetivo(alvo);
+    const modo = this.modoDoCodec(codec);
+    // Perfil H.264 só vale com a sala em H.264: com AV1, mudar o piso não reconfigura (nem solta IDR).
+    const perfil: PerfilH264 = codec === 'h264' ? this.perfilEfetivo(alvo) : (this.perfilConfigurado ?? 'baseline');
     const mudouTamanho = c === null || c.width !== alvo.width || c.height !== alvo.height || c.fps !== alvo.fps;
     const mudouBitrate =
       c === null ||
@@ -502,19 +546,19 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     // Trocar de perfil é como trocar de tamanho: SPS novo, e o próximo quadro tem de ser IDR.
     const mudouPerfil = perfil !== this.perfilConfigurado;
     const mudouTaxa = this.modoDeTaxa() !== this.taxaConfigurada;
-    const camadas = this.camadasEfetivas(alvo);
+    const camadas = this.camadasEfetivas(alvo, modo, codec, perfil);
     const mudouCamadas = camadas !== this.camadasConfiguradas;
-    const codec = this.codecEfetivo(alvo);
     const mudouCodec = codec !== this.codecConfigurado;
     if (!mudouTamanho && !mudouBitrate && !mudouPerfil && !mudouTaxa && !mudouCamadas && !mudouCodec) return;
     if (mudouPerfil || mudouCamadas || mudouCodec || c === null) {
       this.perfilPedido = perfil;
       this.camadasPedidas = camadas;
       this.codecPedido = codec;
+      this.modoPedido = modo;
       this.saidasDoPerfil = 0;
       this.entradaNoConfigure = this.ultimaEntrada;
     }
-    enc.configure(this.config(alvo, this.aceleracao.modo, perfil, camadas, codec));
+    enc.configure(this.config(alvo, modo, perfil, camadas, codec));
     // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
     if (this.encoder !== enc) return;
     this.configurado = alvo;
@@ -656,7 +700,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const dados = new ArrayBuffer(chunk.byteLength);
     chunk.copyTo(dados);
     // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.
-    if (chave && this.codecConfigurado !== 'av1') this.perfilEmitido = perfilDoSps(new Uint8Array(dados)) ?? this.perfilEmitido;
+    if (chave && this.codecDaSaida === 'h264') this.perfilEmitido = perfilDoSps(new Uint8Array(dados)) ?? this.perfilEmitido;
     /*
       Timestamp voltando = o encoder reordenou quadros (B-frames). O
       receptor em tempo real não espera por isso; Main fica proibido e o
@@ -677,9 +721,13 @@ export class CodificadorWebCodecs implements CodificadorUnico {
         height: c?.height ?? 0,
         // Só com L1T2 configurado: sem camadas, a válvula não tem o que pular.
         ...(this.camadasConfiguradas === 2 && camada !== undefined ? { camada } : {}),
-        mime: mimeDoCodec(this.codecConfigurado ?? 'h264'),
+        mime: mimeDoCodec(this.codecDaSaida),
       },
       [dados],
     );
   }
+}
+
+function chaveDeCamadas(modo: Aceleracao, codec: CodecDaSala, perfil: PerfilH264): string {
+  return `${modo}|${codec}|${codec === 'av1' ? '-' : perfil}`;
 }

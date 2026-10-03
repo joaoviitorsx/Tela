@@ -498,13 +498,24 @@ describe('codecsAceitos — o espectador recusa AV1 sem decoder eficiente (ADR 0
   const c = (mimeType: string): RTCRtpCodec => ({ mimeType, clockRate: 90_000 });
   const semAv1 = (m: string) => m.toLowerCase() !== 'video/av1';
 
-  it('tira o AV1 e mantém o resto, na ordem', () => {
-    const lista = codecsAceitos([c('video/AV1'), c('video/H264'), c('video/VP8'), c('video/rtx')], semAv1);
-    expect(lista?.map((x) => x.mimeType)).toEqual(['video/H264', 'video/VP8', 'video/rtx']);
+  const h264 = (perfil: string): RTCRtpCodec => ({
+    mimeType: 'video/H264',
+    clockRate: 90_000,
+    sdpFmtpLine: `level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=${perfil}`,
+  });
+
+  it('tira o AV1 e põe H.264 na frente, High/Main antes de Baseline (ordem crua do receptor: VP8 primeiro)', () => {
+    const lista = codecsAceitos(
+      [c('video/VP8'), c('video/VP9'), h264('42001f'), h264('4d001f'), h264('64001f'), c('video/AV1'), c('video/rtx')],
+      semAv1,
+    );
+    expect(lista?.[0]?.sdpFmtpLine).toContain('profile-level-id=64');
+    expect(lista?.[1]?.sdpFmtpLine).toContain('profile-level-id=4d');
+    expect(lista?.slice(3).map((x) => x.mimeType)).toEqual(['video/VP8', 'video/VP9', 'video/rtx']);
   });
 
   it('nada recusado: null, a negociação fica intacta', () => {
-    expect(codecsAceitos([c('video/H264'), c('video/VP8')], semAv1)).toBeNull();
+    expect(codecsAceitos([h264('64001f'), c('video/VP8')], semAv1)).toBeNull();
   });
 
   it('sobraria sem H.264: null, nunca ficar sem o piso', () => {

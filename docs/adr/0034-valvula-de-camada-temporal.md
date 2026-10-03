@@ -23,7 +23,12 @@ bit-exato no Chromium: a camada 1 não é referência de ninguém.
 2. Cada quadro vai à fila com a camada (`metadata.svc.temporalLayerId`).
 3. **A válvula:** um sender mais de 3 quadros atrás da ponta passa a pular a
    camada 1 — alcança andando dois quadros por vaga e assiste a meia taxa,
-   sem congelar e sem pedir IDR. Fecha ao voltar a até 1 quadro.
+   sem congelar e sem pedir IDR. Fecha ao voltar a até 1 quadro. Abre só
+   com o atraso SUSTENTADO por 150 ms (revisão independente): a 60 fps um
+   sender saudável passa de 3 quadros por instantes o tempo todo, e abrir
+   nesses instantes tirava quadros da camada 1 de quem não precisava.
+   L1T2 é sondado na combinação que vai rodar (modo, codec e perfil), e um
+   encoder que recusa L1T2 perde só o L1T2, não o Main ou o AV1 junto.
 4. A contrapressão e o "soltar" contam o atraso em VAGAS (metade, com a
    válvula aberta): um espectador a meia taxa que acompanha não segura o
    codificador de todo mundo.

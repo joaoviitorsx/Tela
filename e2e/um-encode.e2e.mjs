@@ -186,6 +186,10 @@ if (AV1_ESPECTADOR) {
     ok(codec === 'video/H264', `espectador ${i} recusou AV1 e recebe H.264 (${codec})`);
   });
 }
+if (!AV1_ESPECTADOR) {
+  // O piso da sala (ADR 0016): o espectador que recusa AV1 não pode reordenar a resposta para Baseline/VP8.
+  ok(/H\.264 (Main|High)/.test(String(estado.enc)), `sala em H.264 Main/High, não Baseline (${estado.enc})`);
+}
 const chavesIsca = Math.max(...iscas.map((x) => x.chaves));
 ok(iscas.every((x) => x.w <= 32), `os senders codificam só a isca (${iscas.map((x) => x.w).join(', ')} px)`);
 ok(chavesIsca <= 3, `a isca não gera quadro-chave sozinha (${chavesIsca} no total)`);

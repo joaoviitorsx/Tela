@@ -150,6 +150,9 @@ escopo.onmessage = (e) => {
  */
 let seq = 0;
 
+/** Chave guardada mais velha que isto sai como vaga comum (timestamp RTP velho = atraso no jitter buffer). */
+const VALIDADE_DA_CHAVE_GUARDADA_MS = 500;
+
 /**
  * Repassador: cada quadro que chega do anfitrião segue para o decoder daqui
  * intacto, e uma CÓPIA entra na fila dos filhos. Copiar só com filho na fila:
@@ -159,10 +162,17 @@ let seq = 0;
 function repassarRecepcao(transformer: Transformer): void {
   const leitor = transformer.readable.getReader();
   const escritor = transformer.writable.getWriter();
+  // O codec que chega, relido só em quadro-chave (ver `mimeDaIsca`): AV1 em
+  // trânsito na hora em que a cascata liga não entra na isca H.264 do filho.
+  let mime: string | undefined;
   void (async () => {
     for (;;) {
       const { value: quadro, done } = await leitor.read();
       if (done || quadro === undefined) return;
+      if (quadro.type === 'key' || mime === undefined) {
+        const bruto = quadro.getMetadata()['mimeType'];
+        if (typeof bruto === 'string') mime = bruto;
+      }
       if (fila.senders() > 0 && quadro.type !== 'empty') {
         recebidos += 1;
         const chave = quadro.type === 'key';
@@ -170,7 +180,7 @@ function repassarRecepcao(transformer: Transformer): void {
           seq,
           chave,
           // H.264 na recepção traz width/height 0 (E2): o filho lê o SPS.
-          dados: { seq, chave, dados: quadro.data.slice(0), width: 0, height: 0 },
+          dados: { seq, chave, dados: quadro.data.slice(0), width: 0, height: 0, ...(mime === undefined ? {} : { mime }) },
         });
         seq += 1;
       }
@@ -199,9 +209,18 @@ escopo.onrtctransform = ({ transformer }) => {
     espera chave pede outra (PLI), a isca gera chave, e essa chave era
     descartada enquanto o sender esperava o IDR real: um laço de PLI (80
     chaves em 30 s, 12 fps medidos). Por isso a chave da isca que chega
-    enquanto o sender espera fica GUARDADA, e o IDR real sai dentro dela.
+    enquanto o sender espera fica GUARDADA, e o IDR real sai dentro dela —
+    só no MESMO codec e por no máximo `VALIDADE_DA_CHAVE_GUARDADA_MS`: o
+    quadro guardado leva o timestamp RTP de quando nasceu, e um IDR H.264
+    escrito numa chave AV1 sairia empacotado como AV1.
   */
-  let chaveGuardada: QuadroIsca | undefined;
+  let chaveGuardada: { readonly quadro: QuadroIsca; readonly mime: string; readonly em: number } | undefined;
+  /*
+    O codec da isca, relido só no primeiro quadro e nos quadros-chave: a
+    isca só troca de codec recriando o encoder, e todo encoder novo começa
+    com chave. `getMetadata()` aloca um objeto — por quadro, seria N × 60/s.
+  */
+  let mimeDaIsca: string | undefined;
   void (async () => {
     for (;;) {
       const { value: quadro, done } = await leitor.read();
@@ -210,8 +229,20 @@ escopo.onrtctransform = ({ transformer }) => {
         return;
       }
       vistos += 1;
+      let trocouCodec = false;
+      if (vistos === 1 || quadro.type === 'key') {
+        const mimeBruto = quadro.getMetadata()['mimeType'];
+        const mime = typeof mimeBruto === 'string' ? mimeBruto.toLowerCase() : undefined;
+        trocouCodec = vistos > 1 && mime !== mimeDaIsca;
+        if (mime !== mimeDaIsca) chaveGuardada = undefined;
+        mimeDaIsca = mime;
+        const tipoPelaIsca = mime !== undefined && mime !== 'video/h264';
+        if (tipoPelaIsca && quadro.type === 'key' && papel === 'anfitriao') {
+          chaveGuardada = { quadro, mime, em: performance.now() };
+        }
+      }
       /*
-        A isca tem parâmetros FIXOS (o transporte nunca os reconfigura), então
+        A isca tem parâmetros FIXOS (o transporte só troca o codec dela), então
         quadro-chave nela depois do primeiro só nasce de PLI/FIR do espectador:
         é o pedido de quadro-chave dele, chegando por aqui.
       */
@@ -219,14 +250,12 @@ escopo.onrtctransform = ({ transformer }) => {
       // cada reconfiguração gera uma chave que pararia o filho até o próximo
       // IDR periódico — e um filho quebrado de verdade espera esse mesmo IDR,
       // porque ninguém pede chave ao anfitrião por ele (ADR 0031).
+      // A chave que nasce da troca de codec não é PLI: é entrada no codec
+      // novo, com a janela curta de entrada, não a da plateia (40 ms × N).
       if (quadro.type === 'key' && vistos > 1 && papel === 'anfitriao') {
         fila.pediuChave(id);
-        motivo = 'pli';
+        motivo = trocouCodec ? 'entrada' : 'pli';
       }
-      const mimeBruto = quadro.getMetadata()['mimeType'];
-      const mimeDaIsca = typeof mimeBruto === 'string' ? mimeBruto.toLowerCase() : undefined;
-      const tipoPelaIsca = mimeDaIsca !== undefined && mimeDaIsca !== 'video/h264';
-      if (tipoPelaIsca && quadro.type === 'key' && papel === 'anfitriao') chaveGuardada = quadro;
       const decisao = fila.vaga(id);
       if (decisao.tipo === 'descartar') {
         if (decisao.pedirChave) avisar({ tipo: 'chave', motivo, senders: fila.senders() });
@@ -239,15 +268,25 @@ escopo.onrtctransform = ({ transformer }) => {
         contrário). Injetar seria entregar H.264 num fluxo AV1. Este sender
         volta a esperar o quadro-chave do codec certo.
       */
-      if (mimeDaIsca !== undefined && mimeDaIsca !== (real.mime ?? 'video/h264').toLowerCase()) {
+      const mimeReal = (real.mime ?? 'video/h264').toLowerCase();
+      if (mimeDaIsca !== undefined && mimeDaIsca !== mimeReal) {
         fila.pediuChave(id);
         motivo = 'entrada';
+        // A guardada fica: ela é do codec da isca (zerada quando ele muda), e
+        // é nela que o primeiro IDR do codec certo vai sair.
         continue;
       }
       motivo = 'atrasado';
       // O IDR sai na chave guardada (ver `chaveGuardada`); a vaga de agora fica vazia.
-      const alvo = chaveGuardada !== undefined && real.chave ? chaveGuardada : quadro;
+      const guardada = chaveGuardada;
       chaveGuardada = undefined;
+      const alvo =
+        guardada !== undefined &&
+        real.chave &&
+        guardada.mime === mimeReal &&
+        performance.now() - guardada.em <= VALIDADE_DA_CHAVE_GUARDADA_MS
+          ? guardada.quadro
+          : quadro;
       // Cópia por sender: um ArrayBuffer não pode ser de dois quadros.
       alvo.data = real.dados.slice(0);
       if (typeof alvo.setMetadata === 'function' && real.width > 0) {

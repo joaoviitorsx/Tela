@@ -98,6 +98,13 @@ export const ARRASTO_SUSTENTADO_MS = 1_000;
  */
 export const VALVULA_ABRE = 3;
 export const VALVULA_FECHA = 1;
+/**
+ * Além de `ABRE` por este tempo, sem voltar, antes de abrir. A 60 fps um
+ * sender saudável passa de 3 quadros atrás por instantes o tempo todo (ver
+ * `LIMITE_DE_ARRASTO`); abrir nesses instantes tirava quadros da camada 1 de
+ * quem não precisava — engasgo em rajada.
+ */
+export const VALVULA_SUSTENTADA_MS = 150;
 
 /**
  * Por quanto tempo um pedido de quadro-chave fica de molho depois do último IDR.
@@ -122,6 +129,8 @@ type EstadoDoSender = {
   atrasadoDesde: number | null;
   /** Pulando a camada 1 (ver `VALVULA_ABRE`). */
   valvula: boolean;
+  /** Desde quando está além de `VALVULA_ABRE` sem voltar; `null` = não está. */
+  alemDaValvulaDesde: number | null;
 };
 
 export type OpcoesDaFila = {
@@ -168,6 +177,7 @@ export class FilaDeInjecao<D> {
       chaveLiberadaEm: -Infinity,
       atrasadoDesde: null,
       valvula: false,
+      alemDaValvulaDesde: null,
     });
   }
 
@@ -221,8 +231,15 @@ export class FilaDeInjecao<D> {
       const atras = this.ultimoSeq + 1 - p;
       // Só com camadas de verdade: sem o metadado não há o que pular.
       const comCamadas = this.anel[p % QUADROS_GUARDADOS]?.camada !== undefined;
-      if (!comCamadas || atras <= VALVULA_FECHA) s.valvula = false;
-      else if (atras > VALVULA_ABRE) s.valvula = true;
+      if (!comCamadas || atras <= VALVULA_FECHA) {
+        s.valvula = false;
+        s.alemDaValvulaDesde = null;
+      } else if (atras > VALVULA_ABRE) {
+        s.alemDaValvulaDesde ??= agora;
+        if (agora - s.alemDaValvulaDesde >= VALVULA_SUSTENTADA_MS) s.valvula = true;
+      } else {
+        s.alemDaValvulaDesde = null;
+      }
       if (s.valvula) {
         while (p < this.ultimoSeq && this.anel[p % QUADROS_GUARDADOS]?.camada === 1) p += 1;
         s.proximo = p;

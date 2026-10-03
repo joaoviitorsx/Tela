@@ -50,7 +50,39 @@ Medido no Chromium 151 (headless):
    30 s e 12,8 fps**. Agora a chave da isca que chega com o sender esperando
    fica guardada, e o IDR real sai dentro dela. Depois disso o e2e mediu
    **1 chave e 30 fps** nos dois espectadores.
-5. O codificador externo (NVENC nativo do app) não faz AV1
+5. **Sem oscilação, sem IDR perdido** (revisão independente):
+   - Descer a H.264 é imediato. Subir a AV1 exige a sala inteira aceitando
+     AV1 por **10 s** (`HISTERESE_DO_AV1_MS`), porque cada troca é IDR
+     para todos e um celular entrando e saindo não pode fazer a sala
+     oscilar.
+   - O encoder troca de codec só DEPOIS que os `setParameters` dos senders
+     resolvem. O IDR do codec novo, saindo antes da troca da isca, se
+     perdia no descompasso.
+   - O codec de cada chunk é lido na SAÍDA (`decoderConfig.codec`, que vem
+     no primeiro chunk da configuração nova), não no `configure`. Os
+     quadros já na fila do encoder saem depois do `configure`, ainda no
+     codec anterior: um IDR H.264 rotulado AV1 servia a sender errado.
+   - A chave guardada só vale no mesmo codec e por até 500 ms. O quadro
+     guardado leva o timestamp RTP de quando nasceu.
+   - A chave da isca que nasce da troca de codec é tratada como entrada
+     (janela curta), não como PLI (40 ms × N).
+   - A releitura da sala tem teto de 100 ms. Na troca, cada sender em
+     descompasso avisava por vaga, e eram N avisos × N `getParameters` por
+     tique.
+6. **A ordem da resposta.** O espectador que recusa AV1 mantém H.264
+   High/Main na frente (`preferenciasDeVideo`). Na ordem crua de
+   `getCapabilities` (VP8, VP9, H.264 Baseline…), o Chromium responde
+   nessa ordem, e o sender usa o primeiro: o mesh simples transmitia VP8
+   (violação da R5) e o "um encode" lia Baseline como piso. Os dois e2e
+   agora afirmam o codec: `mesh.e2e` exige `video/H264`, e `um-encode` sem
+   AV1 exige "H.264 Main/High". Quem recusou AV1 numa conexão não volta a
+   aceitar na mesma conexão; na próxima, pergunta de novo.
+7. **AV1 sempre em `prefer-hardware`**, o mesmo modo da sondagem, salvo no
+   teste. No navegador o H.264 roda em `no-preference`, e exigir a classe
+   medida da aceleração deixava o AV1 sempre desligado. Um AV1 que morre
+   depois de produzir volta a sala a H.264 sem cobrar a política de
+   aceleração do H.264.
+8. O codificador externo (NVENC nativo do app) não faz AV1
    (`suportaAv1` ausente = não). Só o caminho WebCodecs pode ativar.
 
 ## Medido
@@ -60,7 +92,12 @@ Medido no Chromium 151 (headless):
   rajadas, `video/AV1` na recepção, 1 chave da isca.
 - `AV1=1 AV1_ESPECTADOR=0`: os espectadores recusam AV1, e a sala fica em
   H.264 Baseline, a 30 fps.
-- H.264 sem mudança: `um-encode` com 3 espectadores e `mesh.e2e` passam.
+- H.264 sem mudança: `um-encode` com 3 espectadores (H.264 Main · L1T2) e
+  `mesh.e2e` (`video/H264`) passam. Com a ordem da resposta revertida, o
+  `mesh.e2e` falha em `video/VP8`, e o critério pega a regressão.
+- Depois das correções da revisão: os três modos do `um-encode` (sem AV1,
+  `AV1=1`, `AV1=1 AV1_ESPECTADOR=0`) passam com 3 espectadores e 1 chave
+  da isca.
 
 ## Não medido (humano)
 

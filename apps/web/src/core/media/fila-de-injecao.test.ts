@@ -8,6 +8,7 @@ import {
   LIMITE_DE_ARRASTO,
   QUADROS_GUARDADOS,
   SENDER_MORTO_MS,
+  VALVULA_SUSTENTADA_MS,
   janelaDeChaveMs,
 } from './fila-de-injecao.js';
 
@@ -509,11 +510,15 @@ describe('FilaDeInjecao — válvula de camada temporal (SVC L1T2, ADR 0034)', (
     expect(enviados).toEqual([0, 1, 2, 3, 4, 5]);
   });
 
-  it('atrasado: pula só a camada 1, alcança sem pedir IDR, e fecha a válvula na ponta', () => {
-    const f = new FilaDeInjecao<number>(() => 0);
+  it('atrasado de forma SUSTENTADA: pula só a camada 1, alcança sem pedir IDR, e fecha a válvula na ponta', () => {
+    let t = 0;
+    const f = new FilaDeInjecao<number>(() => t);
     f.chegou(q(0));
     expect(f.vaga('a')).toMatchObject({ tipo: 'enviar', quadro: { seq: 0 } });
-    for (let i = 1; i <= 8; i += 1) f.chegou(q(i));
+    for (let i = 1; i <= 12; i += 1) f.chegou(q(i));
+    // Primeira vaga atrás: ainda não abre (pode ser só um instante).
+    expect(f.vaga('a')).toMatchObject({ tipo: 'enviar', quadro: { seq: 1 } });
+    t = VALVULA_SUSTENTADA_MS;
     const enviados: number[] = [];
     for (let k = 0; k < 6; k += 1) {
       const d = f.vaga('a');
@@ -525,11 +530,29 @@ describe('FilaDeInjecao — válvula de camada temporal (SVC L1T2, ADR 0034)', (
     expect(enviados.every((s) => s >= 2)).toBe(true);
   });
 
-  it('a contrapressão vê o atraso em VAGAS: meia taxa que acompanha não segura o codificador', () => {
-    const f = new FilaDeInjecao<number>(() => 0);
+  it('atraso de um instante (menos que VALVULA_SUSTENTADA_MS) não abre: a camada 1 chega inteira', () => {
+    let t = 0;
+    const f = new FilaDeInjecao<number>(() => t);
     f.chegou(q(0));
     f.vaga('a');
-    for (let i = 1; i <= 8; i += 1) f.chegou(q(i));
+    for (let i = 1; i <= 5; i += 1) f.chegou(q(i));
+    const enviados: number[] = [];
+    for (let k = 0; k < 5; k += 1) {
+      t += 16;
+      const d = f.vaga('a');
+      if (d.tipo === 'enviar') enviados.push(d.quadro.seq);
+    }
+    expect(enviados).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('a contrapressão vê o atraso em VAGAS: meia taxa que acompanha não segura o codificador', () => {
+    let t = 0;
+    const f = new FilaDeInjecao<number>(() => t);
+    f.chegou(q(0));
+    f.vaga('a');
+    for (let i = 1; i <= 10; i += 1) f.chegou(q(i));
+    f.vaga('a'); // atrás: começa a contar
+    t = VALVULA_SUSTENTADA_MS;
     f.vaga('a'); // abre a válvula
     expect(f.atraso()).toBeLessThanOrEqual(4);
   });

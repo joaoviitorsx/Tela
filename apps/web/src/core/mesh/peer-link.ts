@@ -775,8 +775,14 @@ export const JITTER_MAXIMO_MS = 240;
 export const SEM_FEC_NO_VIDEO: ReadonlySet<string> = new Set(['video/red', 'video/ulpfec', 'video/flexfec-03']);
 
 /**
- * Os codecs de recepção sem os recusados. `null` quando nada sai (não mexer
- * na negociação) ou quando sobraria sem H.264 (o piso do produto, R5).
+ * Os codecs de recepção sem os recusados, NA ORDEM DO ANFITRIÃO
+ * (`preferenciasDeVideo`: H.264 High/Main na frente). `null` quando nada sai
+ * (não mexer na negociação) ou quando sobraria sem H.264 (o piso, R5).
+ *
+ * A ordem não é detalhe: o Chromium ordena a resposta pelas preferências de
+ * quem responde, e o sender usa o primeiro codec dela. Na ordem crua de
+ * `getCapabilities` (VP8, VP9, H.264 Baseline…) o mesh simples transmitia
+ * VP8 e o "um encode" lia Baseline como piso da sala.
  */
 export function codecsAceitos(
   codecs: readonly RTCRtpCodec[],
@@ -784,7 +790,7 @@ export function codecsAceitos(
 ): RTCRtpCodec[] | null {
   const aceitos = codecs.filter((c) => aceita(c.mimeType));
   if (aceitos.length === codecs.length) return null;
-  return aceitos.some((c) => c.mimeType.toLowerCase() === 'video/h264') ? aceitos : null;
+  return preferenciasDeVideo(aceitos);
 }
 
 /** A lista do `setCodecPreferences` do vídeo: H.264 ordenado na frente, o resto sem FEC. `null` sem H.264. */

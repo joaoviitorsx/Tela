@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { IconGithub } from '../components/Icon.js';
 import { Marca } from '../components/Marca.js';
 
 type Props = {
@@ -14,6 +15,8 @@ type Props = {
   readonly aoMinimizar: () => void;
   readonly aoAlternarMaximizar: () => void;
   readonly aoFechar: () => void;
+  /** O código-fonte no navegador do sistema. Sem ação, sem ícone. */
+  readonly aoAbrirRepositorio?: (() => void) | undefined;
 };
 
 /** `no-drag` nos botões: a região arrastável engole o clique. */
@@ -43,7 +46,17 @@ function Botao({ rotulo, classe, aoClicar, children }: { rotulo: string; classe?
  * Burra: não sabe de IPC nem de política de fechar. O botão de fechar só
  * avisa; quem decide (perguntar, esconder, sair) é o main.
  */
-export function BarraDaJanela({ plataforma, link, ativa, maximizada, compacto, aoMinimizar, aoAlternarMaximizar, aoFechar }: Props) {
+export function BarraDaJanela({
+  plataforma,
+  link,
+  ativa,
+  maximizada,
+  compacto,
+  aoMinimizar,
+  aoAlternarMaximizar,
+  aoFechar,
+  aoAbrirRepositorio,
+}: Props) {
   const proprios = plataforma === 'linux';
   return (
     <div
@@ -66,6 +79,11 @@ export function BarraDaJanela({ plataforma, link, ativa, maximizada, compacto, a
       <Marca tamanho="pequeno" />
       {link !== null && <span className="rotulo min-w-0 truncate">{link}</span>}
       <span className="flex-1" />
+      {aoAbrirRepositorio !== undefined && (
+        <Botao rotulo="Código no GitHub" aoClicar={aoAbrirRepositorio}>
+          <IconGithub className="h-3.5 w-3.5" />
+        </Botao>
+      )}
       {proprios && (
         <div className="flex shrink-0">
           <Botao rotulo="Minimizar" aoClicar={aoMinimizar}>

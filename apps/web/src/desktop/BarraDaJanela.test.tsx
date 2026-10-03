@@ -40,6 +40,28 @@ describe('BarraDaJanela', () => {
     expect(screen.getByRole('group', { name: 'Barra da janela' })).toBeTruthy();
   });
 
+  it('GitHub: com ação, um botão que abre o repositório — nas duas plataformas', () => {
+    const aoAbrirRepositorio = vi.fn();
+    render(
+      <BarraDaJanela
+        plataforma="win32"
+        link={null}
+        ativa
+        maximizada={false}
+        compacto={false}
+        {...aoes()}
+        aoAbrirRepositorio={aoAbrirRepositorio}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Código no GitHub' }));
+    expect(aoAbrirRepositorio).toHaveBeenCalledTimes(1);
+  });
+
+  it('GitHub: sem ação, sem botão', () => {
+    render(<BarraDaJanela plataforma="linux" link={null} ativa maximizada={false} compacto={false} {...aoes()} />);
+    expect(screen.queryByRole('button', { name: 'Código no GitHub' })).toBeNull();
+  });
+
   it('sem foco a barra marca data-ativa=false', () => {
     render(<BarraDaJanela plataforma="linux" link={null} ativa={false} maximizada={false} compacto={false} {...aoes()} />);
     expect(screen.getByRole('group', { name: 'Barra da janela' }).getAttribute('data-ativa')).toBe('false');

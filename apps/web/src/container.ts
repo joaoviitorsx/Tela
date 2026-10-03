@@ -88,8 +88,11 @@ export const ofereceApp: boolean = true;
  */
 export const dentroDoApp: boolean = false;
 
+/** O código aberto do projeto: o ícone do GitHub no cabeçalho do site e na barra do app. */
+export const urlDoRepositorio = 'https://github.com/joaoviitorsx/Tela';
+
 /** Pré-lançamento não aparece em `/releases/latest`: o link é a página de lançamentos. */
-export const urlDosLancamentos = 'https://github.com/joaoviitorsx/Tela/releases';
+export const urlDosLancamentos = `${urlDoRepositorio}/releases`;
 
 /**
  * Instalar o app do Discord na própria conta (docs/DISCORD.md §2): depois

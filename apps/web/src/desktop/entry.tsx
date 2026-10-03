@@ -4,7 +4,7 @@ import { App } from '../App.js';
 import { DiagnosticoDoApp } from './DiagnosticoDoApp.js';
 import { parseRoute } from '../router.js';
 import '../styles/globals.css';
-import { audioCue, avisoNoDiscord, canaisRecentes, seletorDeFontes } from './container.desktop.js';
+import { audioCue, avisoNoDiscord, canaisRecentes, seletorDeFontes, urlDoRepositorio } from './container.desktop.js';
 import { MolduraDesktop } from './MolduraDesktop.js';
 import { criarModoDaJanela } from './modo-da-janela.js';
 import { motivoDaQueda } from './queda.js';
@@ -60,6 +60,7 @@ function Raiz() {
       sobreposicao={sobreposicao}
       somDeOculto={audioCue.privacidade}
       recentes={canaisRecentes.listar}
+      repositorio={urlDoRepositorio}
       {...(ponte === undefined ? {} : { ponte })}
       {...(modo === undefined ? {} : { modo })}
       {...(visibilidade === undefined ? {} : { visibilidade })}

@@ -195,3 +195,12 @@ export function IconMaisTela({ className }: IconProps) {
     </Pixel>
   );
 }
+
+/** O octocat em pixel: o código-fonte no GitHub. */
+export function IconGithub({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M5 0h6v1H5zM3 1h10v1H3zM2 2h12v1H2zM1 3h3v1H1zM5 3h6v1H5zM12 3h3v1H12zM1 4h3v1H1zM6 4h4v1H6zM12 4h3v1H12zM0 5h3v1H0zM13 5h3v1H13zM0 6h2v3H0zM14 6h2v3H14zM0 9h3v1H0zM13 9h3v1H13zM0 10h4v1H0zM12 10h4v1H12zM1 11h1v1H1zM4 11h2v1H4zM10 11h5v2H10zM1 12h2v1H1zM5 12h1v1H5zM2 13h2v1H2zM10 13h4v1H10zM3 14h3v1H3zM10 14h3v1H10zM5 15h1v1H5zM10 15h1v1H10z" />
+    </Pixel>
+  );
+}

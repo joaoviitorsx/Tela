@@ -36,8 +36,25 @@ export function deveMostrarAbertura(p: {
   readonly modo: ModoDeAtualizacao;
   readonly automatico: boolean;
   readonly oculto: boolean;
+  /** Uma instalação pela abertura já foi tentada e o app voltou na versão antiga (`tentativaDeInstalar`). */
+  readonly tentativaPendente: boolean;
 }): boolean {
-  return p.modo === 'automatica' && p.automatico && !p.oculto;
+  return p.modo === 'automatica' && p.automatico && !p.oculto && !p.tentativaPendente;
+}
+
+/**
+ * A marca gravada antes de instalar: `{ de, para }`. Se o app abre de novo
+ * AINDA em `de`, a instalação falhou depois de o app fechar (NSIS que não
+ * subiu, AppImage que perdeu a trava de instância) — e abrir a abertura de
+ * novo instalaria e fecharia em laço, com a versão já em cache. Então a
+ * abertura fica de fora até a versão mudar; o atualizador de sempre (instala
+ * ao sair) cuida do resto. Versão diferente de `de`: deu certo, apagar.
+ */
+export function tentativaDeInstalar(marca: unknown, versaoAtual: string): { readonly pendente: boolean; readonly apagar: boolean } {
+  if (typeof marca !== 'object' || marca === null) return { pendente: false, apagar: false };
+  const de = (marca as { de?: unknown }).de;
+  if (typeof de !== 'string') return { pendente: false, apagar: true };
+  return de === versaoAtual ? { pendente: true, apagar: false } : { pendente: false, apagar: true };
 }
 
 export type DependenciasDaAbertura = {
@@ -49,6 +66,14 @@ export type DependenciasDaAbertura = {
   readonly pulou: Promise<void>;
   readonly log: { readonly info: (m: string) => void; readonly erro: (m: string, e?: unknown) => void };
   readonly prazoDaVerificacaoMs?: number;
+  /**
+   * Pode instalar AGORA? Fora do ar e com o automático ligado (D5: nunca
+   * mexe numa transmissão). Ausente = sim. Não pode: a versão baixada fica, e
+   * o atualizador de sempre a instala ao sair.
+   */
+  readonly podeInstalar?: () => boolean;
+  /** Chamado logo antes de instalar: o main grava a marca da tentativa. */
+  readonly antesDeInstalar?: (versao: string) => void;
 };
 
 const PULOU: unique symbol = Symbol('pulou');
@@ -99,8 +124,13 @@ export async function executarAbertura(deps: DependenciasDaAbertura): Promise<De
   }
   if (baixada === null) return 'abrir';
 
+  if (deps.podeInstalar !== undefined && !deps.podeInstalar()) {
+    log.info('abertura: baixada, mas não é hora de instalar (ao vivo ou automático desligado)');
+    return 'abrir';
+  }
   deps.aoMudar({ tipo: 'instalando', versao });
   try {
+    deps.antesDeInstalar?.(versao);
     motor.instalarAgora();
   } catch (erro: unknown) {
     log.erro('abertura: não deu para instalar; abrindo sem atualizar', erro);
@@ -126,12 +156,9 @@ export function textoDaFase(fase: FaseDaAbertura): TextoDaFase {
     case 'procurando':
       return { tipo: fase.tipo, linha: 'Procurando atualização…', progresso: null, podePular: false };
     case 'baixando':
-      return {
-        tipo: fase.tipo,
-        linha: `Baixando a versão ${fase.versao} — ${fase.percentual}%`,
-        progresso: fase.percentual,
-        podePular: true,
-      };
+      // O percentual fica fora da linha: a linha é a região viva do leitor de
+      // tela, e anunciar a cada segundo seria barulho — o progresso vai na barra.
+      return { tipo: fase.tipo, linha: `Baixando a versão ${fase.versao}`, progresso: fase.percentual, podePular: true };
     case 'instalando':
       return { tipo: fase.tipo, linha: 'Instalando. O Tela abre de novo sozinho.', progresso: 100, podePular: false };
   }
@@ -154,7 +181,8 @@ const BLOCOS = 20;
  * A página inteira, inline: `data:` sem rede e CSP fechada.
  *
  * O mascote é a própria logo — a TV inclinada que pisca — em SVG, e cada fase
- * tem UM gesto dele, só com `transform` e `opacity` (compositor, sem layout):
+ * tem UM gesto dele, só com `transform` e `opacity` (dentro do SVG ainda
+ * repinta; medido: ~4 ms de main thread em 3 s):
  *  - procurando: as antenas balançam caçando sinal e os olhos varrem a sala;
  *  - baixando: os olhos descem para a barra, o LED pisca rápido, e a barra
  *    acende bloco a bloco;
@@ -176,23 +204,24 @@ body:after{content:"";position:fixed;inset:0;pointer-events:none;background:repe
 #tv{width:176px;height:156px;overflow:visible;animation:flutua 2.6s ease-in-out infinite}
 #corpo{transform-origin:100px 100px;transform:rotate(-7deg)}
 .antena{transform-box:fill-box;transform-origin:50% 100%}
-#a1{animation:caca 1.3s ease-in-out infinite}
-#a2{animation:caca 1.3s ease-in-out infinite reverse}
+.antena{animation:caca 1.3s ease-in-out infinite}
+.antena.inv{animation-direction:reverse}
 .ponta{animation:pisca 1.3s steps(1) infinite}
-#p2{animation-delay:.65s}
+.ponta.atrasada{animation-delay:.65s}
 #olhos{animation:varre 2.2s ease-in-out infinite}
 #led{animation:led 1.6s steps(1) infinite}
 #piscada,#linha{opacity:0}
 #face{transform-box:fill-box;transform-origin:50% 50%}
-#l{min-height:19px;text-align:center;color:var(--texto);letter-spacing:.01em}
+#l{min-height:38px;max-width:272px;text-align:center;color:var(--texto);letter-spacing:.01em;text-wrap:balance}
+#n{min-height:17px;color:var(--suave);font-variant-numeric:tabular-nums;opacity:0;transition:opacity .25s ease-out}
 #b{display:flex;gap:3px;padding:3px;border:2px solid #3a3326;background:#000;opacity:0;transition:opacity .25s ease-out}
 .k{width:8px;height:10px;background:var(--ambar);opacity:.12;transition:opacity .18s ease-out,box-shadow .18s ease-out}
 .k.on{opacity:1;box-shadow:0 0 6px rgba(242,169,59,.75)}
-#s{-webkit-app-region:no-drag;visibility:hidden;min-height:34px;padding:0 14px;border:2px solid #3a3326;border-radius:6px;
+#s{-webkit-app-region:no-drag;visibility:hidden;min-height:34px;padding:0 14px;border:2px solid #8a7a5c;border-radius:6px;
 background:#1b1610;color:var(--suave);font:inherit;cursor:pointer;transition:border-color .15s ease-out,color .15s ease-out}
 #s:hover{border-color:var(--ambar);color:var(--texto)}
 #s:focus-visible{outline:2px solid var(--amarelo);outline-offset:2px;color:var(--texto)}
-body[data-fase="baixando"] #b,body[data-fase="instalando"] #b{opacity:1}
+body[data-fase="baixando"] #b,body[data-fase="instalando"] #b,body[data-fase="baixando"] #n{opacity:1}
 body[data-fase="baixando"] #olhos{animation:none;transform:translate(0,4px)}
 body[data-fase="baixando"] #led{animation-duration:.5s}
 body[data-fase="baixando"] .antena{animation-duration:2.6s}
@@ -215,8 +244,8 @@ body[data-fase="instalando"] #face,body[data-fase="instalando"] #linha{animation
 <body data-fase="procurando">
 <svg id="tv" viewBox="0 0 200 180" aria-hidden="true">
  <g id="corpo">
-  <g id="a1" class="antena"><path d="M78 62 L54 20" stroke="var(--aro)" stroke-width="6" stroke-linecap="round"/><circle id="p1" class="ponta" cx="52" cy="16" r="9" fill="#ef6a57" stroke="var(--aro)" stroke-width="5"/></g>
-  <g id="a2" class="antena"><path d="M122 60 L144 18" stroke="var(--aro)" stroke-width="6" stroke-linecap="round"/><circle id="p2" class="ponta" cx="147" cy="13" r="9" fill="#ef6a57" stroke="var(--aro)" stroke-width="5"/></g>
+  <g class="antena"><path d="M78 62 L54 20" stroke="var(--aro)" stroke-width="6" stroke-linecap="round"/><circle class="ponta" cx="52" cy="16" r="9" fill="#ef6a57" stroke="var(--aro)" stroke-width="5"/></g>
+  <g class="antena inv"><path d="M122 60 L144 18" stroke="var(--aro)" stroke-width="6" stroke-linecap="round"/><circle class="ponta atrasada" cx="147" cy="13" r="9" fill="#ef6a57" stroke="var(--aro)" stroke-width="5"/></g>
   <rect x="18" y="58" width="164" height="108" rx="26" fill="var(--corpo)" stroke="var(--aro)" stroke-width="6"/>
   <rect x="30" y="64" width="60" height="7" rx="3.5" fill="#cfd2da"/>
   <rect x="134" y="70" width="34" height="86" rx="10" fill="#7d818d"/>
@@ -238,16 +267,23 @@ body[data-fase="instalando"] #face,body[data-fase="instalando"] #linha{animation
  </g>
 </svg>
 <div id="l" role="status" aria-live="polite">Procurando atualização…</div>
-<div id="b" aria-hidden="true">${'<i class="k"></i>'.repeat(BLOCOS)}</div>
+<div id="b" role="progressbar" aria-label="Download da atualização" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">${'<i class="k"></i>'.repeat(BLOCOS)}</div>
+<div id="n" aria-hidden="true">0%</div>
 <button id="s" type="button">Abrir sem atualizar</button>
 <script>
 var blocos=document.querySelectorAll('.k');
 function fase(d){
 document.body.setAttribute('data-fase',d.tipo);
-document.getElementById('l').textContent=d.linha;
-var n=d.progresso===null?0:Math.round(d.progresso/(100/blocos.length));
+var l=document.getElementById('l');
+if(l.textContent!==d.linha)l.textContent=d.linha;
+var p=d.progresso===null?0:d.progresso;
+document.getElementById('b').setAttribute('aria-valuenow',String(p));
+document.getElementById('n').textContent=p+'%';
+var n=Math.round(p/(100/blocos.length));
 for(var i=0;i<blocos.length;i++)blocos[i].classList.toggle('on',i<n);
 document.getElementById('s').style.visibility=d.podePular?'visible':'hidden';
 }
-document.getElementById('s').addEventListener('click',function(){document.title=${JSON.stringify(TITULO_DE_PULAR)};});
+function pular(){document.title=${JSON.stringify(TITULO_DE_PULAR)};}
+document.getElementById('s').addEventListener('click',pular);
+document.addEventListener('keydown',function(e){if(e.key==='Escape')pular();});
 </script></body></html>`;

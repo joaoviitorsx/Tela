@@ -3,6 +3,7 @@ import {
   chamadaDaFase,
   deveMostrarAbertura,
   executarAbertura,
+  tentativaDeInstalar,
   type FaseDaAbertura,
   HTML_DA_ABERTURA,
   PRAZO_DA_VERIFICACAO_MS,
@@ -56,11 +57,14 @@ function montar(motor: Partial<MotorDeAtualizacao> = {}) {
 
 describe('deveMostrarAbertura', () => {
   it('só com atualização automática, ligada, e o app aberto por alguém', () => {
-    expect(deveMostrarAbertura({ modo: 'automatica', automatico: true, oculto: false })).toBe(true);
-    expect(deveMostrarAbertura({ modo: 'automatica', automatico: false, oculto: false })).toBe(false);
-    expect(deveMostrarAbertura({ modo: 'automatica', automatico: true, oculto: true })).toBe(false);
-    expect(deveMostrarAbertura({ modo: 'avisar', automatico: true, oculto: false })).toBe(false);
-    expect(deveMostrarAbertura({ modo: 'desligada', automatico: true, oculto: false })).toBe(false);
+    const ok = { modo: 'automatica', automatico: true, oculto: false, tentativaPendente: false } as const;
+    expect(deveMostrarAbertura(ok)).toBe(true);
+    expect(deveMostrarAbertura({ ...ok, automatico: false })).toBe(false);
+    expect(deveMostrarAbertura({ ...ok, oculto: true })).toBe(false);
+    expect(deveMostrarAbertura({ ...ok, modo: 'avisar' })).toBe(false);
+    expect(deveMostrarAbertura({ ...ok, modo: 'desligada' })).toBe(false);
+    // Instalação tentada e o app voltou na versão antiga: sem laço de reinício.
+    expect(deveMostrarAbertura({ ...ok, tentativaPendente: true })).toBe(false);
   });
 });
 
@@ -147,6 +151,8 @@ describe('executarAbertura', () => {
 describe('página da abertura', () => {
   it('texto de cada fase; ABRIR SEM ATUALIZAR só no download', () => {
     expect(textoDaFase({ tipo: 'procurando' })).toEqual({ tipo: 'procurando', linha: 'Procurando atualização…', progresso: null, podePular: false });
+    // O percentual não entra na linha viva (o leitor de tela anunciaria a cada segundo).
+    expect(textoDaFase({ tipo: 'baixando', percentual: 42, versao: '0.2.0' }).linha).toBe('Baixando a versão 0.2.0');
     expect(textoDaFase({ tipo: 'baixando', percentual: 42, versao: '0.2.0' }).podePular).toBe(true);
     expect(textoDaFase({ tipo: 'instalando', versao: '0.2.0' }).podePular).toBe(false);
   });
@@ -162,5 +168,47 @@ describe('página da abertura', () => {
     // O único endereço permitido é o namespace do SVG (não é rede).
     expect(HTML_DA_ABERTURA.replace('http://www.w3.org/2000/svg', '')).not.toMatch(/https?:\/\//);
     expect(HTML_DA_ABERTURA).toContain(JSON.stringify(TITULO_DE_PULAR));
+  });
+});
+
+describe('tentativaDeInstalar', () => {
+  it('voltou na mesma versão de antes: pendente (a instalação falhou); outra versão: apagar a marca', () => {
+    expect(tentativaDeInstalar({ de: '0.1.0', para: '0.2.0' }, '0.1.0')).toEqual({ pendente: true, apagar: false });
+    expect(tentativaDeInstalar({ de: '0.1.0', para: '0.2.0' }, '0.2.0')).toEqual({ pendente: false, apagar: true });
+    expect(tentativaDeInstalar(null, '0.1.0')).toEqual({ pendente: false, apagar: false });
+    expect(tentativaDeInstalar({ lixo: 1 }, '0.1.0')).toEqual({ pendente: false, apagar: true });
+  });
+});
+
+describe('executarAbertura — instalar só quando pode', () => {
+  it('ao vivo (ou automático desligado): baixa e NÃO instala; abre', async () => {
+    const instalarAgora = vi.fn();
+    const antesDeInstalar = vi.fn();
+    const r = await executarAbertura({
+      motor: { verificar: async () => ({ versao: '0.2.0', pagina: 'x' }), baixar: async () => '0.2.0', cancelarDownload: vi.fn(), instalarAoSair: vi.fn(), instalarAgora },
+      aoMudar: () => undefined,
+      agendar: () => () => undefined,
+      pulou: new Promise(() => undefined),
+      log: { info: () => undefined, erro: () => undefined },
+      podeInstalar: () => false,
+      antesDeInstalar,
+    });
+    expect(r).toBe('abrir');
+    expect(instalarAgora).not.toHaveBeenCalled();
+    expect(antesDeInstalar).not.toHaveBeenCalled();
+  });
+
+  it('pode: grava a marca ANTES de instalar', async () => {
+    const ordem: string[] = [];
+    await executarAbertura({
+      motor: { verificar: async () => ({ versao: '0.2.0', pagina: 'x' }), baixar: async () => '0.2.0', cancelarDownload: vi.fn(), instalarAoSair: vi.fn(), instalarAgora: () => ordem.push('instalar') },
+      aoMudar: () => undefined,
+      agendar: () => () => undefined,
+      pulou: new Promise(() => undefined),
+      log: { info: () => undefined, erro: () => undefined },
+      podeInstalar: () => true,
+      antesDeInstalar: (v) => ordem.push(`marca ${v}`),
+    });
+    expect(ordem).toEqual(['marca 0.2.0', 'instalar']);
   });
 });

@@ -1,7 +1,7 @@
 # ADR 0036 — TURN com senha fixa de plano grátis, só com aceite explícito
 
 **Data:** 2026-10-03
-**Estado:** PROPOSTA — o código está pronto e inerte; vale quando o dono gravar `TURN_ESTATICO = "aceito"`
+**Estado:** aceita (o dono escolheu o ExpressTURN grátis com os riscos abaixo, 2026-10-03); vale quando `TURN_ESTATICO = "aceito"` for gravado
 **Altera:** a regra registrada em `apps/signaling/src/ice.ts` ("credencial estática num front público é um relay aberto") · **Mantém:** a credencial efêmera como padrão (Cloudflare, coturn com segredo)
 
 ## Contexto
@@ -16,7 +16,7 @@ cartão, e o dono não tem como pôr. O plano grátis do ExpressTURN não exige
 cartão (1.000 GB por mês), mas só oferece **usuário e senha fixos**; o
 segredo compartilhado, que daria credencial que expira, é do plano pago.
 
-## Decisão (proposta)
+## Decisão
 
 O Worker entrega `TURN_USERNAME`/`TURN_PASSWORD` com `TURN_URLS` só quando
 `TURN_ESTATICO = "aceito"`. Sem o aceite, credencial fixa continua recusada.

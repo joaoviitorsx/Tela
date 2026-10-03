@@ -1235,7 +1235,9 @@ function iniciarAtualizacao(): void {
   const mostrar = deveMostrarAbertura({
     modo: modoDeAtualizar,
     automatico: ajustes.atualizarAutomaticamente,
-    oculto: INICIO_OCULTO,
+    // Aberto por um link `tela://`: a pessoa quer o canal agora, e reabrir
+    // atualizado perderia o link — fica para o "instalar ao sair".
+    oculto: INICIO_OCULTO || canalDoArgv(process.argv) !== null,
     tentativaPendente: marca.pendente,
   });
   if (!mostrar) {

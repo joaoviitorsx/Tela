@@ -90,6 +90,9 @@ export class IceLifecycle {
 
   async beforeRestart(): Promise<void> {
     if (this.lease?.relayStatus === 'not-configured') return;
+    // Senha fixa (ADR 0036): não vence, e o `refresh-ice` devolveria a mesma —
+    // gastando a cota de 6 por socket e, esgotada, 10 s de espera por restart.
+    if (this.lease?.relayStatus === 'available' && this.lease.expiresAt === undefined) return;
     if (this.lease?.expiresAt === undefined || this.scheduler.now() >= this.renewAt()) {
       await this.refresh();
     }

@@ -152,7 +152,7 @@ if (sinal !== 'ok') {
 }
 // A versão vem antes do relay: uma publicação que não pegou não pode sumir
 // atrás de outro alarme. Códigos: 1 = desatualizado ou sinal, 3 = relay.
-console.warn(igual ? 'versão: em dia' : 'versão: DESATUALIZADO — rode `pnpm release`.');
+if (!igual) console.warn('versão: DESATUALIZADO — rode `pnpm release`.');
 
 /**
  * Sinal no ar não prova que todo mundo CONECTA.
@@ -229,7 +229,10 @@ const emissao = await emitirRelay();
 if (emissao !== 'available') {
   relayFalhou(`${modo}, mas o servidor NÃO emitiu relay (${emissao}) — chave errada, revogada ou provedor fora`);
 }
-console.warn(`relay : ${modo} · emissão ok`);
+// Senha fixa: o servidor "emite" sem consultar ninguém — só o Allocate real prova.
+console.warn(ice.cloudflareConfigured !== true && ice.coturnModo === 'estatico'
+  ? `relay : ${modo} · credencial NÃO verificada — rode \`node e2e/relay-prod.mjs\``
+  : `relay : ${modo} · emissão ok`);
 
 console.warn(igual ? '\n  em dia.' : '\n  DESATUALIZADO — rode `pnpm release`.');
 process.exit(igual ? 0 : 1);

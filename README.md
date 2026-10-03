@@ -17,6 +17,7 @@ Sem servidor de mídia no meio, sem conta e sem custo.
 [![ci](https://github.com/joaoviitorsx/Tela/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/joaoviitorsx/Tela/actions/workflows/ci.yml)
 [![desktop](https://github.com/joaoviitorsx/Tela/actions/workflows/desktop.yml/badge.svg)](https://github.com/joaoviitorsx/Tela/actions/workflows/desktop.yml)
 [![release](https://img.shields.io/github/v/release/joaoviitorsx/Tela?include_prereleases&label=app&color=e89c3a)](https://github.com/joaoviitorsx/Tela/releases)
+[![licença](https://img.shields.io/badge/licen%C3%A7a-AGPL--3.0-e89c3a)](LICENSE)
 
 <img src="docs/imagens/inicio.png" alt="Tela inicial do Tela: campo para o nome do canal, botão TRANSMITIR e a TV de tubo ao lado" width="900">
 
@@ -265,3 +266,11 @@ parâmetros de mídia precisam de uma ADR nova.
 Bugs e ideias vão em [Issues](https://github.com/joaoviitorsx/Tela/issues).
 Para problemas de transmissão, anexe o texto do **DIAGNÓSTICO**: ele já traz o
 que importa e nada pessoal.
+
+## Licença
+
+[AGPL-3.0](LICENSE). Use, estude, modifique e hospede o seu próprio Tela à
+vontade. Se você oferecer uma versão modificada para outras pessoas usarem pela
+rede, o código dela também precisa ser aberto. É isso que garante que qualquer
+Tela por aí possa ser conferido: sem rastreamento, e sem mídia passando por
+servidor.

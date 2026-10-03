@@ -115,4 +115,24 @@ describe('SeletorDeFontes', () => {
     );
     expect(screen.getByText('NENHUMA JANELA ABERTA')).toBeTruthy();
   });
+
+  it('o aviso do jogo aparece nas DUAS abas: no LoL em tela cheia, trocar de fonte não resolve', () => {
+    const { rerender } = montar({ avisoDoJogo: 'deixe o LoL em Sem bordas' });
+    expect(screen.getByRole('note').textContent).toContain('Sem bordas');
+    rerender(
+      <SeletorDeFontes
+        dialogRef={createRef<HTMLDialogElement>()}
+        aoClicarNoFundo={() => undefined}
+        aba="janelas"
+        fontes={FONTES}
+        carregando={false}
+        avisoDeJanela={null}
+        avisoDoJogo="deixe o LoL em Sem bordas"
+        aoMudarAba={() => undefined}
+        aoEscolher={() => undefined}
+        aoCancelar={() => undefined}
+      />,
+    );
+    expect(screen.getByRole('note').textContent).toContain('Sem bordas');
+  });
 });

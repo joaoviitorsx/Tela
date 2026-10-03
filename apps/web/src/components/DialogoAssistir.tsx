@@ -11,6 +11,9 @@ type Props = {
   readonly invalido: boolean;
   readonly aoEnviar: () => void;
   readonly aoCancelar: () => void;
+  /** Canais já vistos neste aparelho: uma tecla cada, entra sem digitar. */
+  readonly recentes?: readonly string[];
+  readonly aoEscolher?: (canal: string) => void;
 };
 
 /**
@@ -31,6 +34,8 @@ export function DialogoAssistir({
   invalido,
   aoEnviar,
   aoCancelar,
+  recentes = [],
+  aoEscolher,
 }: Props) {
   const idTitulo = useId();
   const idCampo = useId();
@@ -64,6 +69,25 @@ export function DialogoAssistir({
         </div>
 
         <div className="flex flex-col gap-3 p-4">
+          {recentes.length > 0 && aoEscolher !== undefined && (
+            <div className="flex flex-col gap-2">
+              <span className="rotulo">RECENTES</span>
+              <div className="flex flex-wrap gap-2">
+                {recentes.map((canal) => (
+                  <button
+                    key={canal}
+                    type="button"
+                    onClick={() => aoEscolher(canal)}
+                    aria-label={`Assistir ${canal}`}
+                    className="tecla"
+                  >
+                    {canal}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <label htmlFor={idCampo} className="rotulo">
             LINK OU NOME DO CANAL
           </label>
@@ -90,7 +114,9 @@ export function DialogoAssistir({
           >
             {invalido
               ? '! Não achei um canal aí. Cole o link do convite ou digite só o nome (3 a 25 letras, números e hífen).'
-              : 'Cole o link que mandaram na call, ou digite o nome do canal.'}
+              : recentes.length > 0 && aoEscolher !== undefined
+                ? 'Toque num canal recente, cole o link que mandaram na call, ou digite o nome do canal.'
+                : 'Cole o link que mandaram na call, ou digite o nome do canal.'}
           </p>
           <div className="flex justify-end gap-2 pt-1">
             <Botao onClick={aoCancelar}>CANCELAR</Botao>

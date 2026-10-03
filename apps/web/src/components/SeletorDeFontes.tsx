@@ -19,6 +19,8 @@ type Props = {
   readonly carregando: boolean;
   /** Windows: janela não leva o som do sistema. A interface avisa antes, não depois. */
   readonly avisoDeJanela: string | null;
+  /** Um jogo aberto que esconde o cursor em tela cheia (o LoL): vale para as duas abas. */
+  readonly avisoDoJogo?: string | null;
   readonly aoMudarAba: (aba: AbaDoSeletorDeFontes) => void;
   readonly aoEscolher: (id: string) => void;
   readonly aoCancelar: () => void;
@@ -47,6 +49,7 @@ export function SeletorDeFontes({
   fontes,
   carregando,
   avisoDeJanela,
+  avisoDoJogo = null,
   aoMudarAba,
   aoEscolher,
   aoCancelar,
@@ -116,6 +119,12 @@ export function SeletorDeFontes({
             );
           })}
         </div>
+
+        {avisoDoJogo !== null && (
+          <p role="note" className="m-0 border-b-2 border-warn-edge bg-warn-bg px-3.5 py-2 text-[11.5px] leading-relaxed text-warn">
+            ! {avisoDoJogo}
+          </p>
+        )}
 
         {aba === 'janelas' && avisoDeJanela !== null && (
           <p className="m-0 border-b-2 border-warn-edge bg-warn-bg px-3.5 py-2 text-[11.5px] leading-relaxed text-warn">

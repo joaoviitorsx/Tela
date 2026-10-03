@@ -1,5 +1,6 @@
-import { type ReactNode, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useRef, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
+import { parseRoute } from '../router.js';
 import { DialogoAssistir } from '../components/DialogoAssistir.js';
 import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
 import type { FonteDeVisibilidade } from '../react/use-aba-visivel.js';
@@ -43,6 +44,8 @@ type Props = {
   readonly somDeOculto?: (oculto: boolean) => void;
   /** Ver `useSegundoPlano`: o que tem de terminar antes de o app sair. */
   readonly antesDeSair?: () => Promise<void>;
+  /** Os canais já assistidos neste aparelho, para as teclas RECENTES do ASSISTIR. */
+  readonly recentes?: () => readonly string[];
 };
 
 /**
@@ -69,9 +72,16 @@ export function MolduraDesktop({
   visibilidade,
   somDeOculto,
   antesDeSair,
+  recentes,
 }: Props) {
   const { caminho, travado, irPara } = useNavegacaoDesktop();
-  const assistir = useAssistir(irPara);
+  // O canal que já está na tela não vira tecla: levaria para onde a pessoa já está.
+  const listarRecentes = useCallback(() => {
+    const rota = parseRoute(caminho);
+    const naTela = rota.name === 'viewer' ? rota.canais : [];
+    return (recentes?.() ?? []).filter((canal) => !naTela.includes(canal));
+  }, [recentes, caminho]);
+  const assistir = useAssistir(irPara, listarRecentes);
   const porLink = useCanalPorLink(ponte, irPara);
   const sp = useSegundoPlano({
     sessao,
@@ -194,6 +204,8 @@ export function MolduraDesktop({
         invalido={assistir.invalido}
         aoEnviar={assistir.enviar}
         aoCancelar={assistir.fechar}
+        recentes={assistir.recentes}
+        aoEscolher={assistir.escolher}
       />
       <DialogoConfirmar
         titulo="ENCERRAR A TRANSMISSÃO?"

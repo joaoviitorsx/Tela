@@ -1,5 +1,6 @@
-import { useSyncExternalStore } from 'react';
+import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { type Dialogo, useDialogo } from '../react/use-dialogo.js';
+import { avisoDeCursor } from './aviso-de-cursor.js';
 import type { PlataformaDesktop } from './ponte.js';
 import type { EstadoDoSeletor, SeletorDeFontes } from './seletor-de-fontes.js';
 
@@ -11,10 +12,28 @@ import type { EstadoDoSeletor, SeletorDeFontes } from './seletor-de-fontes.js';
 export function useSeletorDeFontes(
   seletor: SeletorDeFontes,
   plataforma: PlataformaDesktop,
-): { readonly estado: EstadoDoSeletor; readonly dialogo: Dialogo; readonly avisoDeJanela: string | null } {
+): {
+  readonly estado: EstadoDoSeletor;
+  readonly dialogo: Dialogo;
+  readonly avisoDeJanela: string | null;
+  readonly avisoDoJogo: string | null;
+} {
   const estado = useSyncExternalStore(seletor.assinar, seletor.snapshot, seletor.snapshot);
   const dialogo = useDialogo(estado.aberto, seletor.cancelar);
-  return { estado, dialogo, avisoDeJanela: avisoDeJanela(plataforma) };
+  // Só quando a listagem muda (a cada 2 s, com o seletor aberto).
+  const calculado = useMemo(() => avisoDeCursor(estado.fontes, plataforma), [estado.fontes, plataforma]);
+  /*
+    Visto uma vez, fica até fechar: passados 10 s sem clique o main recusa a
+    listagem (portão de gesto) e ela volta vazia — o aviso sumiria no meio da
+    leitura.
+  */
+  const ultimo = useRef<string | null>(null);
+  // `carregando` = abertura nova (a loja zera as fontes ao abrir): o aviso da anterior não vem junto,
+  // mesmo quando um `abrir` por cima de outro pula o render fechado.
+  if (!estado.aberto || estado.carregando) ultimo.current = null;
+  else if (calculado !== null) ultimo.current = calculado;
+  const avisoDoJogo = estado.aberto ? ultimo.current : null;
+  return { estado, dialogo, avisoDeJanela: avisoDeJanela(plataforma), avisoDoJogo };
 }
 
 /**

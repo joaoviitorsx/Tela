@@ -14,7 +14,7 @@ type Props = {
  * pede. A loja decide; o componente desenha.
  */
 export function SeletorDeFontesDesktop({ seletor, plataforma }: Props) {
-  const { estado, dialogo, avisoDeJanela } = useSeletorDeFontes(seletor, plataforma);
+  const { estado, dialogo, avisoDeJanela, avisoDoJogo } = useSeletorDeFontes(seletor, plataforma);
   return (
     <SeletorDeFontes
       dialogRef={dialogo.ref}
@@ -23,6 +23,7 @@ export function SeletorDeFontesDesktop({ seletor, plataforma }: Props) {
       fontes={estado.fontes}
       carregando={estado.carregando}
       avisoDeJanela={avisoDeJanela}
+      avisoDoJogo={avisoDoJogo}
       aoMudarAba={seletor.mudarAba}
       aoEscolher={seletor.escolher}
       aoCancelar={seletor.cancelar}

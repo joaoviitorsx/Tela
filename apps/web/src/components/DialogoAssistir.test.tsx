@@ -53,4 +53,17 @@ describe('DialogoAssistir', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }));
     expect(aoCancelar).toHaveBeenCalledTimes(2);
   });
+
+  it('RECENTES viram teclas; tocar escolhe o canal', () => {
+    const aoEscolher = vi.fn();
+    montar({ recentes: ['amigo', 'joao'], aoEscolher });
+    fireEvent.click(screen.getByRole('button', { name: 'Assistir amigo' }));
+    expect(aoEscolher).toHaveBeenCalledWith('amigo');
+    expect(screen.getByRole('status').textContent).toContain('canal recente');
+  });
+
+  it('sem recentes, nada de seção RECENTES', () => {
+    montar({ recentes: [], aoEscolher: vi.fn() });
+    expect(screen.queryByText('RECENTES')).toBeNull();
+  });
 });

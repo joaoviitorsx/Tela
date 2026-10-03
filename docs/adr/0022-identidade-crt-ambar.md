@@ -163,6 +163,9 @@ havia painel.
   `favicon.png` (64 px), `tela-app-icon.png` (256 px, também na `Marca`) e o
   ícone do desktop (`apps/desktop/build/icon.png`, 1024 px). `favicon.svg`,
   `tela-tv.svg` e `tela-app-icon.svg` saíram. A `og-convite.png` não mudou.
+- **2026-10-03:** a pedido do dono, os três ícones ganharam cantos
+  arredondados (raio de 22,5% do lado, o mesmo do ícone anterior), com os
+  cantos transparentes e a máscara feita em 4× e reduzida, sem serrilhado.
 - A pintura do tubo depende de as fontes já estarem carregadas quando o canvas é
   desenhado. `document.fonts.ready` repinta, como já fazia; num primeiro acesso
   lento o tubo pode aparecer por um instante na fonte de fallback.

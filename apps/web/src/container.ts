@@ -5,6 +5,7 @@ import { makeBrowserScheduler } from './adapters/browser-scheduler.js';
 import { makeCryptoRandom } from './adapters/crypto-random.js';
 import { makeDiscordWebhook } from './adapters/discord-webhook.js';
 import { makeLocalStorage } from './adapters/local-storage.js';
+import { makeAceitaCodec } from './adapters/decodificacao-av1.js';
 import { makeMeshTransport } from './adapters/mesh-transport.js';
 import { makeWebAudioCue } from './adapters/web-audio-cue.js';
 import { suportaWebGL } from './adapters/webgl-probe.js';
@@ -129,18 +130,35 @@ export function repasseForcado(): boolean {
 }
 
 /**
+ * AV1 por SOFTWARE no codificador único (ADR 0035). Só o teste de ponta a
+ * ponta usa: em produção o AV1 exige encoder de hardware, porque por software
+ * a 1080p60 pesaria no jogo.
+ */
+export function av1Forcado(): boolean {
+  try {
+    return localStorage.getItem('tela.av1') === 'forcar';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Cada tentativa recebe um transporte novo: canal reaberto não é canal reusado.
  *
  * `repassar`: perguntado a cada conexão nova. Na multivisão a resposta é não
  * (ADR 0032): a recepção dividida entre dois canais é frágil demais para
  * segurar filhos da cascata.
  */
+/** O que este aparelho recusa receber (ADR 0035): AV1 sem decoder eficiente. */
+export const aceitaCodec = makeAceitaCodec(av1Forcado());
+
 export function createViewerSession({ repassar = () => true }: OpcoesDoEspectador = {}): ViewerSession {
   return new ViewerSession({
     transport: () =>
       makeMeshTransport({
         channel: makeWsSignaling(signalUrl),
         scheduler,
+        aceitaCodec,
         ...(repassar() ? { repasse: { espectador: { criarWorker: criarWorkerDeRepasse } } } : {}),
       }),
     scheduler,

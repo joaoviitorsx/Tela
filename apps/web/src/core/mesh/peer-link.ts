@@ -41,6 +41,12 @@ export type PeerLinkDeps = {
    * Ausente no espectador, que não manda vídeo.
    */
   readonly startBitrateBps?: () => number | null;
+  /**
+   * O espectador recusa um codec na resposta (ADR 0035): `false` para o
+   * `mimeType` que este aparelho não decodifica com eficiência. Ausente =
+   * aceita o que o navegador anuncia.
+   */
+  readonly aceitaCodec?: (mimeType: string) => boolean;
 };
 
 /** O que trafega no `payload` opaco. O servidor nunca olha para isto (R8). */
@@ -107,6 +113,7 @@ export class PeerLink {
   private readonly polite: boolean;
   private readonly send: (payload: unknown) => void;
   private readonly startBitrateBps: (() => number | null) | null;
+  private readonly aceitaCodec: ((mimeType: string) => boolean) | null;
   private readonly onIssue: (code: PeerLinkIssueCode) => void;
   private readonly onFatal: (code: PeerLinkFatalCode) => void;
   private readonly now: () => number;
@@ -132,6 +139,7 @@ export class PeerLink {
     this.polite = deps.polite;
     this.send = deps.send;
     this.startBitrateBps = deps.startBitrateBps ?? null;
+    this.aceitaCodec = deps.aceitaCodec ?? null;
     this.onIssue = deps.onIssue ?? (() => undefined);
     this.onFatal = deps.onFatal ?? (() => undefined);
     this.now = deps.now ?? Date.now;
@@ -506,6 +514,7 @@ export class PeerLink {
    * que mono.
    */
   private async responder(): Promise<void> {
+    this.recusarCodecs();
     const resposta = await this.pc.createAnswer();
     if (typeof resposta.sdp !== 'string') {
       await this.pc.setLocalDescription(resposta);
@@ -517,6 +526,29 @@ export class PeerLink {
     } catch {
       if (comEstereo === resposta.sdp) throw new Error('LOCAL_DESCRIPTION_FAILED');
       await this.pc.setLocalDescription(resposta);
+    }
+  }
+
+  /**
+   * Tira da resposta o que `aceitaCodec` recusa (ADR 0035). A sala só vira
+   * AV1 quando TODOS os senders negociaram AV1; o aparelho que o decodificaria
+   * por software a 1080p60 sai daqui, e a sala inteira fica em H.264.
+   */
+  private recusarCodecs(): void {
+    const aceita = this.aceitaCodec;
+    if (aceita === null) return;
+    if (typeof RTCRtpReceiver === 'undefined' || typeof RTCRtpReceiver.getCapabilities !== 'function') return;
+    const capacidades = RTCRtpReceiver.getCapabilities('video');
+    if (capacidades === null) return;
+    const aceitos = codecsAceitos(capacidades.codecs, aceita);
+    if (aceitos === null) return;
+    for (const t of this.pc.getTransceivers()) {
+      if (t.receiver.track.kind !== 'video' || typeof t.setCodecPreferences !== 'function') continue;
+      try {
+        t.setCodecPreferences(aceitos);
+      } catch {
+        // Sem preferência: o navegador responde com tudo, como antes.
+      }
     }
   }
 
@@ -741,6 +773,19 @@ export const JITTER_MAXIMO_MS = 240;
  * redundância de verdade) não passa por aqui.
  */
 export const SEM_FEC_NO_VIDEO: ReadonlySet<string> = new Set(['video/red', 'video/ulpfec', 'video/flexfec-03']);
+
+/**
+ * Os codecs de recepção sem os recusados. `null` quando nada sai (não mexer
+ * na negociação) ou quando sobraria sem H.264 (o piso do produto, R5).
+ */
+export function codecsAceitos(
+  codecs: readonly RTCRtpCodec[],
+  aceita: (mimeType: string) => boolean,
+): RTCRtpCodec[] | null {
+  const aceitos = codecs.filter((c) => aceita(c.mimeType));
+  if (aceitos.length === codecs.length) return null;
+  return aceitos.some((c) => c.mimeType.toLowerCase() === 'video/h264') ? aceitos : null;
+}
 
 /** A lista do `setCodecPreferences` do vídeo: H.264 ordenado na frente, o resto sem FEC. `null` sem H.264. */
 export function preferenciasDeVideo(codecs: readonly RTCRtpCodec[]): RTCRtpCodec[] | null {

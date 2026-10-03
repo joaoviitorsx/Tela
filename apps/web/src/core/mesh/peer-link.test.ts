@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PeerLink, ordenarH264, preferenciasDeVideo, type SignalPayload } from './peer-link.js';
+import { PeerLink, codecsAceitos, ordenarH264, preferenciasDeVideo, type SignalPayload } from './peer-link.js';
 import { type FakePeerConnection, fakeConnectionFactory } from './testing.js';
 import { fakeStream, fakeTrack } from '../testing/fakes.js';
 
@@ -491,5 +491,23 @@ describe('preferenciasDeVideo — sem FEC no vídeo (estudo 2 · T5)', () => {
 
   it('sem H.264 não mexe (o navegador negocia sozinho)', () => {
     expect(preferenciasDeVideo([k('video/VP8'), k('video/red')])).toBeNull();
+  });
+});
+
+describe('codecsAceitos — o espectador recusa AV1 sem decoder eficiente (ADR 0035)', () => {
+  const c = (mimeType: string): RTCRtpCodec => ({ mimeType, clockRate: 90_000 });
+  const semAv1 = (m: string) => m.toLowerCase() !== 'video/av1';
+
+  it('tira o AV1 e mantém o resto, na ordem', () => {
+    const lista = codecsAceitos([c('video/AV1'), c('video/H264'), c('video/VP8'), c('video/rtx')], semAv1);
+    expect(lista?.map((x) => x.mimeType)).toEqual(['video/H264', 'video/VP8', 'video/rtx']);
+  });
+
+  it('nada recusado: null, a negociação fica intacta', () => {
+    expect(codecsAceitos([c('video/H264'), c('video/VP8')], semAv1)).toBeNull();
+  });
+
+  it('sobraria sem H.264: null, nunca ficar sem o piso', () => {
+    expect(codecsAceitos([c('video/AV1'), c('video/VP8')], semAv1)).toBeNull();
   });
 });

@@ -80,6 +80,10 @@ videoCodec: 'h264';                            // único com HW encode universal
 // parâmetros de encoding IDÊNTICOS para todos os peers
 ```
 
+O H.264 continua o piso. A sala sobe para AV1 só com encoder AV1 de
+hardware de um lado e decoder eficiente em TODOS os espectadores do outro
+(ADR 0035). O quadro continua um só.
+
 As duas primeiras são o PADRÃO, e continuam sendo. O modo `nitidez` troca as
 duas juntas — `detail` mais `maintain-resolution` mais 30fps — porque trocar
 uma sem a outra não faz nada (ADR 0015). É escolha explícita do usuário, ao

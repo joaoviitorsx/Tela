@@ -192,6 +192,16 @@ escopo.onrtctransform = ({ transformer }) => {
   // Por que este sender estaria esperando IDR: começa pela entrada; depois de
   // servido, só por PLI ou por ter ficado para trás.
   let motivo: MotivoDeChave = 'entrada';
+  /*
+    AV1 (ADR 0035): o receptor NÃO lê o tipo do quadro no conteúdo, como faz
+    com o NAL IDR do H.264 — lê o bit N que o pacotizador põe pelo tipo da
+    ISCA. Um IDR real numa vaga de delta chega como delta, o receptor que
+    espera chave pede outra (PLI), a isca gera chave, e essa chave era
+    descartada enquanto o sender esperava o IDR real: um laço de PLI (80
+    chaves em 30 s, 12 fps medidos). Por isso a chave da isca que chega
+    enquanto o sender espera fica GUARDADA, e o IDR real sai dentro dela.
+  */
+  let chaveGuardada: QuadroIsca | undefined;
   void (async () => {
     for (;;) {
       const { value: quadro, done } = await leitor.read();
@@ -213,23 +223,41 @@ escopo.onrtctransform = ({ transformer }) => {
         fila.pediuChave(id);
         motivo = 'pli';
       }
+      const mimeBruto = quadro.getMetadata()['mimeType'];
+      const mimeDaIsca = typeof mimeBruto === 'string' ? mimeBruto.toLowerCase() : undefined;
+      const tipoPelaIsca = mimeDaIsca !== undefined && mimeDaIsca !== 'video/h264';
+      if (tipoPelaIsca && quadro.type === 'key' && papel === 'anfitriao') chaveGuardada = quadro;
       const decisao = fila.vaga(id);
       if (decisao.tipo === 'descartar') {
         if (decisao.pedirChave) avisar({ tipo: 'chave', motivo, senders: fila.senders() });
         continue;
       }
-      motivo = 'atrasado';
       const real = decisao.quadro.dados;
+      /*
+        Codec da isca ≠ codec do quadro (ADR 0035): na troca de codec da sala
+        o sender já trocou e a fila ainda tem quadros do codec anterior (ou o
+        contrário). Injetar seria entregar H.264 num fluxo AV1. Este sender
+        volta a esperar o quadro-chave do codec certo.
+      */
+      if (mimeDaIsca !== undefined && mimeDaIsca !== (real.mime ?? 'video/h264').toLowerCase()) {
+        fila.pediuChave(id);
+        motivo = 'entrada';
+        continue;
+      }
+      motivo = 'atrasado';
+      // O IDR sai na chave guardada (ver `chaveGuardada`); a vaga de agora fica vazia.
+      const alvo = chaveGuardada !== undefined && real.chave ? chaveGuardada : quadro;
+      chaveGuardada = undefined;
       // Cópia por sender: um ArrayBuffer não pode ser de dois quadros.
-      quadro.data = real.dados.slice(0);
-      if (typeof quadro.setMetadata === 'function' && real.width > 0) {
+      alvo.data = real.dados.slice(0);
+      if (typeof alvo.setMetadata === 'function' && real.width > 0) {
         try {
-          quadro.setMetadata({ ...quadro.getMetadata(), width: real.width, height: real.height });
+          alvo.setMetadata({ ...alvo.getMetadata(), width: real.width, height: real.height });
         } catch {
           // Metadado é dica de cabeçalho; o decoder lê o SPS.
         }
       }
-      await escritor.write(quadro);
+      await escritor.write(alvo);
     }
   })();
 };

@@ -1,3 +1,4 @@
+import { type CodecDaSala, codecDaSala, mimeDoCodec } from '../core/media/codec-da-sala.js';
 import { type PerfilH264, perfilDaSala } from '../core/media/perfil-h264.js';
 import { type EncodingPreset, type Prioridade, bitsPorPixel } from '@tela/shared';
 import { alvoDoCodificador } from '../core/media/alvo-do-codificador.js';
@@ -103,9 +104,31 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   let cascataAtiva = false;
   let perfil: PerfilH264 = 'baseline';
   let camadas: 1 | 2 = 1;
+  let codec: CodecDaSala = 'h264';
+  /**
+   * Põe cada sender no codec da sala (ADR 0035): `encodings[0].codec`, sem
+   * renegociar (medido no Chromium 151). Idempotente — quem entra no meio de
+   * uma sala em AV1 é acertado aqui. O(N), N ≤ 50, só quando há o que mudar.
+   */
+  const alinharCodecDosSenders = (): void => {
+    const mime = mimeDoCodec(codec).toLowerCase();
+    for (const sender of sendersDeVideo) {
+      const p = sender.getParameters();
+      // `encodings[].codec` (webrtc-pc, Chromium 126+) ainda não está no lib.dom.
+      const encodings = p.encodings as (RTCRtpEncodingParameters & { codec?: RTCRtpCodec })[];
+      const primeiro = encodings[0];
+      const alvo = p.codecs?.find((c) => c.mimeType.toLowerCase() === mime);
+      const atual = primeiro?.codec?.mimeType.toLowerCase() ?? p.codecs?.[0]?.mimeType.toLowerCase();
+      if (alvo === undefined || atual === mime || primeiro === undefined) continue;
+      encodings[0] = { ...primeiro, codec: alvo };
+      void sender.setParameters(p).catch(() => undefined);
+    }
+  };
+
   /** Relê o perfil que a sala aceita. `true` = mudou (o codificador vai reconfigurar, com IDR). */
   const atualizarPerfil = (): boolean => {
     const fmtps: (string | undefined)[] = [];
+    const tiposPorSender: string[][] = [];
     for (const sender of sendersDeVideo) {
       const estado = sender.transport?.state;
       if (estado === 'closed' || estado === 'failed') {
@@ -114,15 +137,24 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       }
       // Todo sender JÁ NEGOCIADO conta, conectado ou não: quem acabou de
       // entrar tem de puxar o piso antes do primeiro quadro, não depois.
-      const negociado = sender.getParameters().codecs?.[0];
-      if (negociado !== undefined) fmtps.push(negociado.sdpFmtpLine);
+      const codecs = sender.getParameters().codecs ?? [];
+      // O fmtp do H.264 (o piso de perfil) — mesmo com a sala em AV1, ele é o plano B.
+      const h264 = codecs.find((c) => c.mimeType.toLowerCase() === 'video/h264');
+      if (codecs.length > 0) {
+        fmtps.push(h264?.sdpFmtpLine);
+        tiposPorSender.push(codecs.map((c) => c.mimeType));
+      }
     }
     // Válvula de camada (ADR 0034): só com dois ou mais — com um, não há a quem proteger.
     const camadasDaSala: 1 | 2 = fmtps.length >= 2 ? 2 : 1;
     const mudouCamadas = camadasDaSala !== camadas;
     camadas = camadasDaSala;
+    const codecNovo = codecDaSala(tiposPorSender, recursos?.codificador.suportaAv1?.() ?? false, cascataAtiva);
+    const mudouCodec = codecNovo !== null && codecNovo !== codec;
+    if (codecNovo !== null) codec = codecNovo;
+    alinharCodecDosSenders();
     const daSala = perfilDaSala(fmtps, cascataAtiva);
-    if (daSala === null || daSala === perfil) return mudouCamadas;
+    if (daSala === null || daSala === perfil) return mudouCamadas || mudouCodec;
     perfil = daSala;
     return true;
   };
@@ -200,6 +232,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       piorEstimativa,
       perfil,
       camadas,
+      codec,
     });
     limitadoPelaEstimativa = a.limitadoPelaEstimativa;
     return a;

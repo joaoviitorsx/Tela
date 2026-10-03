@@ -9,7 +9,7 @@ import { makeMeshTransport } from '../adapters/mesh-transport.js';
 import { CodificadorWebCodecs } from '../adapters/webcodecs-codificador.js';
 import { taxaDoEncoder } from './taxa-do-encoder.js';
 import { makeWsSignaling } from '../adapters/ws-signaling.js';
-import { appVersion, diagnosticId, repasseForcado, scheduler, storage, type OpcoesDoEspectador } from '../container.js';
+import { aceitaCodec, appVersion, diagnosticId, repasseForcado, scheduler, storage, type OpcoesDoEspectador } from '../container.js';
 import { aprovados, audio as audioDoNavegador, uplinkMemory } from '../container-transmissao.js';
 import { linkDoCanal } from '../core/domain/link.js';
 import { BroadcastSession } from '../core/media/broadcast-session.js';
@@ -265,6 +265,7 @@ export function createViewerSession({ repassar = () => true }: OpcoesDoEspectado
       makeMeshTransport({
         channel: signaling(),
         scheduler,
+        aceitaCodec,
         ...(repassar() ? { repasse: { espectador: { criarWorker } } } : {}),
       }),
     scheduler,

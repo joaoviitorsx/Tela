@@ -9,7 +9,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * `MediaStreamTrackProcessor` são dublês que registram o `keyFrame` de cada
  * `encode`.
  */
-const ALVO: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion' };
+const ALVO: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion', camadas: 1 };
 
 type Codificado = { readonly keyFrame: boolean };
 

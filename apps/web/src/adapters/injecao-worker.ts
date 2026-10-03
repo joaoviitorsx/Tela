@@ -18,6 +18,8 @@ export type ChunkInjetado = {
   readonly dados: ArrayBuffer;
   readonly width: number;
   readonly height: number;
+  /** Camada temporal do SVC L1T2 (ADR 0034), quando o encoder tem camadas. */
+  readonly camada?: number;
 };
 
 /**
@@ -130,7 +132,9 @@ escopo.onmessage = (e) => {
     const c = msg.data;
     ultimoTamanho.width = c.width;
     ultimoTamanho.height = c.height;
-    fila.chegou({ seq: c.seq, chave: c.chave, dados: c });
+    // Só 0 ou 1: qualquer outra coisa é "sem camadas", e a válvula não age.
+    const camada = c.camada === 0 || c.camada === 1 ? c.camada : undefined;
+    fila.chegou({ seq: c.seq, chave: c.chave, dados: c, ...(camada === undefined ? {} : { camada }) });
   };
 };
 

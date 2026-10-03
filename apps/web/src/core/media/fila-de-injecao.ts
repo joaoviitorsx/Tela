@@ -23,6 +23,12 @@ export type QuadroCodificado<D> = {
   readonly seq: number;
   readonly chave: boolean;
   readonly dados: D;
+  /**
+   * Camada temporal (SVC L1T2, ADR 0034): `0` é a base, `1` é a camada que
+   * nenhum quadro usa como referência — pulá-la deixa a cadeia decodificável.
+   * Ausente = sem camadas (NVENC nativo, repassador): sem válvula.
+   */
+  readonly camada?: number;
 };
 
 export type DecisaoDaVaga<D> =
@@ -85,6 +91,15 @@ export const LIMITE_DE_ARRASTO = 12;
 export const ARRASTO_SUSTENTADO_MS = 1_000;
 
 /**
+ * A válvula de camada temporal (ADR 0034): sender mais de `ABRE` quadros atrás
+ * da ponta passa a pular a camada 1 — alcança andando dois quadros por vaga e
+ * assiste a meia taxa, sem congelar nem pedir IDR. Fecha quando volta a até
+ * `FECHA` quadros. Histerese para não abrir e fechar a cada vaga.
+ */
+export const VALVULA_ABRE = 3;
+export const VALVULA_FECHA = 1;
+
+/**
  * Por quanto tempo um pedido de quadro-chave fica de molho depois do último IDR.
  *
  * `entrada` não paga a janela da plateia: quem acabou de entrar vê tela preta
@@ -105,6 +120,8 @@ type EstadoDoSender = {
   chaveLiberadaEm: number;
   /** Desde quando está além de `LIMITE_DE_ARRASTO`, sem voltar; `null` = em dia. */
   atrasadoDesde: number | null;
+  /** Pulando a camada 1 (ver `VALVULA_ABRE`). */
+  valvula: boolean;
 };
 
 export type OpcoesDaFila = {
@@ -150,6 +167,7 @@ export class FilaDeInjecao<D> {
       ultimaVaga: this.agora(),
       chaveLiberadaEm: -Infinity,
       atrasadoDesde: null,
+      valvula: false,
     });
   }
 
@@ -194,8 +212,21 @@ export class FilaDeInjecao<D> {
       return { tipo: 'descartar', pedirChave: agora >= s.chaveLiberadaEm };
     }
 
-    const p = s.proximo;
+    let p = s.proximo;
     if (p >= this.primeiroSeq() && p <= this.ultimoSeq) {
+      /*
+        A válvula: atrás da ponta, a camada 1 fica para trás. O(quadros
+        pulados) por vaga — no máximo um, numa L1T2 bem formada.
+      */
+      const atras = this.ultimoSeq + 1 - p;
+      // Só com camadas de verdade: sem o metadado não há o que pular.
+      const comCamadas = this.anel[p % QUADROS_GUARDADOS]?.camada !== undefined;
+      if (!comCamadas || atras <= VALVULA_FECHA) s.valvula = false;
+      else if (atras > VALVULA_ABRE) s.valvula = true;
+      if (s.valvula) {
+        while (p < this.ultimoSeq && this.anel[p % QUADROS_GUARDADOS]?.camada === 1) p += 1;
+        s.proximo = p;
+      }
       const quadro = this.anel[p % QUADROS_GUARDADOS];
       if (quadro !== undefined && quadro.seq === p) {
         s.proximo += 1;
@@ -233,7 +264,7 @@ export class FilaDeInjecao<D> {
     let emDia = false;
     for (const s of this.estados.values()) {
       if (!vivo(s)) continue;
-      if (this.ultimoSeq + 1 - s.proximo > LIMITE_DE_ARRASTO) s.atrasadoDesde ??= agora;
+      if (this.atrasoDe(s) > LIMITE_DE_ARRASTO) s.atrasadoDesde ??= agora;
       else {
         s.atrasadoDesde = null;
         emDia = true;
@@ -263,9 +294,20 @@ export class FilaDeInjecao<D> {
     for (const s of this.estados.values()) {
       if (agora - s.ultimaVaga > SENDER_MORTO_MS) continue;
       if (s.esperandoChave || s.proximo < 0) continue;
-      pior = Math.max(pior, this.ultimoSeq + 1 - s.proximo);
+      pior = Math.max(pior, this.atrasoDe(s));
     }
     return pior;
+  }
+
+  /**
+   * Quantas VAGAS o sender precisa para alcançar a ponta. Com a válvula aberta
+   * ele anda dois quadros por vaga (pula a camada 1): metade. É o que a
+   * contrapressão deve ver — um espectador a meia taxa que acompanha não
+   * segura o codificador de todo mundo (ADR 0034).
+   */
+  private atrasoDe(s: EstadoDoSender): number {
+    const atras = this.ultimoSeq + 1 - s.proximo;
+    return s.valvula ? Math.ceil(atras / 2) : atras;
   }
 
   /** O IDR mais recente, se estiver a até `tolerancia` quadros da ponta. */

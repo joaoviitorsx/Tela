@@ -11,6 +11,7 @@ describe('alvoDoCodificador — o encoder único segue a regra da topologia', ()
       width: 1920, height: 1080, fps: 60, bitrate: PRESETS.p1080p60.main.maxBitrate, limitadoPelaEstimativa: false,
       perfil: 'baseline',
       conteudo: 'motion',
+      camadas: 1,
     });
   });
 

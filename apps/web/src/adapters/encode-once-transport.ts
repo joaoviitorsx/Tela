@@ -102,6 +102,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   const sendersDeVideo = new Set<RTCRtpSender>();
   let cascataAtiva = false;
   let perfil: PerfilH264 = 'baseline';
+  let camadas: 1 | 2 = 1;
   /** Relê o perfil que a sala aceita. `true` = mudou (o codificador vai reconfigurar, com IDR). */
   const atualizarPerfil = (): boolean => {
     const fmtps: (string | undefined)[] = [];
@@ -116,8 +117,12 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       const negociado = sender.getParameters().codecs?.[0];
       if (negociado !== undefined) fmtps.push(negociado.sdpFmtpLine);
     }
+    // Válvula de camada (ADR 0034): só com dois ou mais — com um, não há a quem proteger.
+    const camadasDaSala: 1 | 2 = fmtps.length >= 2 ? 2 : 1;
+    const mudouCamadas = camadasDaSala !== camadas;
+    camadas = camadasDaSala;
     const daSala = perfilDaSala(fmtps, cascataAtiva);
-    if (daSala === null || daSala === perfil) return false;
+    if (daSala === null || daSala === perfil) return mudouCamadas;
     perfil = daSala;
     return true;
   };
@@ -194,6 +199,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       fonte: recursos?.codificador.fonte() ?? fonte,
       piorEstimativa,
       perfil,
+      camadas,
     });
     limitadoPelaEstimativa = a.limitadoPelaEstimativa;
     return a;

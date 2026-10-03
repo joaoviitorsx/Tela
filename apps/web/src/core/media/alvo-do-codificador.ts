@@ -38,6 +38,11 @@ export type AlvoDoCodificador = {
    * `contentHint` da TRILHA não chega a ele, só este.
    */
   readonly conteudo: 'motion' | 'detail';
+  /**
+   * Camadas temporais: `2` (L1T2) dá a válvula por espectador (ADR 0034) —
+   * quem fica para trás pula a camada 1 e assiste a meia taxa, sem congelar.
+   */
+  readonly camadas: 1 | 2;
 };
 
 export type EntradaDoAlvo = {
@@ -47,6 +52,8 @@ export type EntradaDoAlvo = {
   readonly prioridade: Prioridade;
   /** O piso de perfil da sala; ausente = Baseline, o que todo receptor decodifica. */
   readonly perfil?: PerfilH264;
+  /** Camadas temporais pedidas (ADR 0034); ausente = 1. */
+  readonly camadas?: 1 | 2;
   /** Tamanho que a captura entrega. O codificador só tira pixel, não cria. */
   readonly fonte: { readonly width: number; readonly height: number } | null;
   /**
@@ -102,5 +109,6 @@ export function alvoDoCodificador(e: EntradaDoAlvo): AlvoDoCodificador {
     limitadoPelaEstimativa,
     perfil: e.perfil ?? 'baseline',
     conteudo: CONTENT_HINT_POR_PRIORIDADE[e.prioridade],
+    camadas: e.camadas ?? 1,
   };
 }

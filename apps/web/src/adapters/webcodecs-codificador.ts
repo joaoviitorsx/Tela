@@ -87,6 +87,13 @@ export class CodificadorWebCodecs implements CodificadorUnico {
    */
   private readonly suportaMain = new Map<string, boolean>();
   private readonly perguntandoMain = new Set<string>();
+  /** L1T2 (ADR 0034), perguntado por modo como o Main. */
+  private readonly suportaCamadas = new Map<string, boolean>();
+  private readonly perguntandoCamadas = new Set<string>();
+  /** As camadas do `configure` atual. */
+  private camadasConfiguradas: 1 | 2 | null = null;
+  /** O último `configure` pediu L1T2 (ver `morreu`). */
+  private camadasPedidas: 1 | 2 = 1;
   /** O `contentHint` do `configure` atual. */
   private conteudoConfigurado: 'motion' | 'detail' | null = null;
   /**
@@ -305,6 +312,28 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       });
   }
 
+  /** L1T2 só com a sala pedindo e o modo de aceleração confirmando. */
+  private camadasEfetivas(alvo: AlvoDoCodificador): 1 | 2 {
+    if (alvo.camadas !== 2) return 1;
+    const modo = this.aceleracao.modo;
+    const sabido = this.suportaCamadas.get(modo);
+    if (sabido === undefined) this.perguntarCamadas(alvo, modo);
+    return sabido === true ? 2 : 1;
+  }
+
+  private perguntarCamadas(alvo: AlvoDoCodificador, modo: Aceleracao): void {
+    if (this.suportaCamadas.has(modo) || this.perguntandoCamadas.has(modo) || typeof VideoEncoder.isConfigSupported !== 'function') return;
+    this.perguntandoCamadas.add(modo);
+    void VideoEncoder.isConfigSupported({ ...this.config(alvo, modo), scalabilityMode: 'L1T2' })
+      .then((r) => r.supported === true)
+      .catch(() => false)
+      .then((sim) => {
+        this.suportaCamadas.set(modo, sim);
+        this.perguntandoCamadas.delete(modo);
+        if (sim && this.encoder !== null) this.aplicar();
+      });
+  }
+
   /** `detail` só com a sala pedindo, encoder de hardware certo e o vigia sem queixa. */
   private conteudoEfetivo(alvo: AlvoDoCodificador): 'motion' | 'detail' {
     return alvo.conteudo === 'detail' && !this.detailProibido && this.aceleracao.classe() === 'hardware'
@@ -312,8 +341,14 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       : 'motion';
   }
 
-  private config(alvo: AlvoDoCodificador, aceleracao: Aceleracao, perfil: PerfilH264 = 'baseline'): VideoEncoderConfig {
+  private config(
+    alvo: AlvoDoCodificador,
+    aceleracao: Aceleracao,
+    perfil: PerfilH264 = 'baseline',
+    camadas: 1 | 2 = 1,
+  ): VideoEncoderConfig {
     return {
+      ...(camadas === 2 ? { scalabilityMode: 'L1T2' } : {}),
       codec: codecDoPerfil(perfil),
       width: alvo.width,
       height: alvo.height,
@@ -332,7 +367,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private rotulo(): string {
     const perfil = nomeDoPerfilIdc(this.perfilEmitido);
     const base = this.aceleracao.rotulo();
-    return perfil === null ? base : `${base} · H.264 ${perfil}`;
+    const camadas = this.camadasConfiguradas === 2 ? ' · L1T2' : '';
+    return perfil === null ? `${base}${camadas}` : `${base} · H.264 ${perfil}${camadas}`;
   }
 
   /** Fecha o encoder atual, se houver; o próximo `aplicar` cria outro, com IDR. */
@@ -343,6 +379,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.perfilConfigurado = null;
     this.taxaConfigurada = null;
     this.conteudoConfigurado = null;
+    this.camadasConfiguradas = null;
     this.chavesPedidas = 0;
     this.ultimoTimestamp = -Infinity;
     try {
@@ -354,7 +391,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
 
   private novoEncoder(): VideoEncoder {
     const enc: VideoEncoder = new VideoEncoder({
-      output: (chunk) => this.saiu(chunk),
+      // `svc` existe no Chromium com `scalabilityMode`; o lib.dom ainda não traz.
+      output: (chunk, meta) =>
+        this.saiu(chunk, (meta as { svc?: { temporalLayerId?: number } } | undefined)?.svc?.temporalLayerId),
       // Pode vir DENTRO do `configure`: o Chromium chama `error` na hora
       // quando a configuração é recusada (medido). `aplicar` confere depois.
       error: () => this.morreu(enc, 'erro'),
@@ -377,8 +416,10 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       Main e recria no mesmo modo — contar como queda de GPU levaria a sessão
       para software depois de três tentativas.
     */
-    if (motivo === 'erro' && this.perfilPedido === 'main' && this.saidasDoPerfil === 0) {
-      this.suportaMain.set(this.aceleracao.modo, false);
+    if (motivo === 'erro' && (this.perfilPedido === 'main' || this.camadasPedidas === 2) && this.saidasDoPerfil === 0) {
+      // O recurso novo é o suspeito: Main e/ou L1T2 saem deste modo.
+      if (this.perfilPedido === 'main') this.suportaMain.set(this.aceleracao.modo, false);
+      if (this.camadasPedidas === 2) this.suportaCamadas.set(this.aceleracao.modo, false);
       this.descartar();
       queueMicrotask(() => {
         if (!this.parado && this.encoder === null) this.aplicar();
@@ -416,20 +457,24 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     // Trocar de perfil é como trocar de tamanho: SPS novo, e o próximo quadro tem de ser IDR.
     const mudouPerfil = perfil !== this.perfilConfigurado;
     const mudouTaxa = this.modoDeTaxa() !== this.taxaConfigurada;
-    if (!mudouTamanho && !mudouBitrate && !mudouPerfil && !mudouTaxa) return;
-    if (mudouPerfil || c === null) {
+    const camadas = this.camadasEfetivas(alvo);
+    const mudouCamadas = camadas !== this.camadasConfiguradas;
+    if (!mudouTamanho && !mudouBitrate && !mudouPerfil && !mudouTaxa && !mudouCamadas) return;
+    if (mudouPerfil || mudouCamadas || c === null) {
       this.perfilPedido = perfil;
+      this.camadasPedidas = camadas;
       this.saidasDoPerfil = 0;
       this.entradaNoConfigure = this.ultimaEntrada;
     }
-    enc.configure(this.config(alvo, this.aceleracao.modo, perfil));
+    enc.configure(this.config(alvo, this.aceleracao.modo, perfil, camadas));
     // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
     if (this.encoder !== enc) return;
     this.configurado = alvo;
     this.perfilConfigurado = perfil;
     this.taxaConfigurada = this.modoDeTaxa();
     this.conteudoConfigurado = this.conteudoEfetivo(alvo);
-    if (mudouTamanho || mudouPerfil || mudouTaxa) this.pedirChaveAgora = true;
+    this.camadasConfiguradas = camadas;
+    if (mudouTamanho || mudouPerfil || mudouTaxa || mudouCamadas) this.pedirChaveAgora = true;
   }
 
   private guardarUltimo(quadro: VideoFrame): void {
@@ -548,7 +593,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
   }
 
-  private saiu(chunk: EncodedVideoChunk): void {
+  private saiu(chunk: EncodedVideoChunk, camada?: number): void {
     if (chunk.timestamp > this.entradaNoConfigure) this.saidasDoPerfil += 1;
     this.vigia.saiu(chunk.timestamp, this.agora());
     this.quadros += 1;
@@ -575,7 +620,15 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.ultimoTimestamp = Math.max(this.ultimoTimestamp, chunk.timestamp);
     const c = this.configurado;
     this.entregar(
-      { seq: this.seq++, chave, dados, width: c?.width ?? 0, height: c?.height ?? 0 },
+      {
+        seq: this.seq++,
+        chave,
+        dados,
+        width: c?.width ?? 0,
+        height: c?.height ?? 0,
+        // Só com L1T2 configurado: sem camadas, a válvula não tem o que pular.
+        ...(this.camadasConfiguradas === 2 && camada !== undefined ? { camada } : {}),
+      },
       [dados],
     );
   }

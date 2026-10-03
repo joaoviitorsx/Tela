@@ -8,7 +8,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * `VideoEncoder` é dublê: registra cada `configure` e deixa o teste emitir
  * chunks na saída.
  */
-const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion' };
+const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion', camadas: 1 };
 const MAIN: AlvoDoCodificador = { ...BASE, perfil: 'main' };
 
 let suportaMain = true;
@@ -244,6 +244,21 @@ describe('CodificadorWebCodecs — perfil H.264 da sala', () => {
     const n = EncoderFalso.configs.length;
     cod.configurar(BASE);
     expect(EncoderFalso.configs.length).toBe(n);
+    cod.parar();
+  });
+
+  it('L1T2 com a sala pedindo: scalabilityMode vai ao encoder e a camada vai com o quadro', async () => {
+    const entregues: { camada?: number }[] = [];
+    const cod = new CodificadorWebCodecs((c) => entregues.push(c), () => 0);
+    await cod.iniciar(novaTrilha(), { ...BASE, camadas: 2 });
+    await assentar();
+    expect(EncoderFalso.configs.at(-1)?.scalabilityMode).toBe('L1T2');
+    const saida = EncoderFalso.ultimo!.init.output as unknown as (c: EncodedVideoChunk, m?: unknown) => void;
+    saida(chunk(1, 66), { svc: { temporalLayerId: 0 } });
+    saida(chunk(2, null), { svc: { temporalLayerId: 1 } });
+    expect(entregues.map((e) => e.camada)).toEqual([0, 1]);
+    cod.configurar({ ...BASE, camadas: 1 });
+    expect(EncoderFalso.configs.at(-1)?.scalabilityMode).toBeUndefined();
     cod.parar();
   });
 });

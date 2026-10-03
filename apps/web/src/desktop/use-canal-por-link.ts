@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { MAX_CANAIS, caminhoDosCanais } from '../core/domain/canais-da-rota.js';
 import { canalDaEntrada } from '../core/domain/entrada-de-canal.js';
 import type { PonteDesktop } from './ponte.js';
 import { trilhoTravado } from './use-navegacao-desktop.js';
+
+/** Exatamente um nome de canal, já normalizado — nada de link inteiro aqui. */
+function ehCanal(texto: string): boolean {
+  const r = canalDaEntrada(texto);
+  return r.ok && r.value === texto;
+}
 
 export const AVISO_AO_VIVO = 'Você está ao vivo — abra o canal depois de encerrar a transmissão.';
 
@@ -35,8 +42,10 @@ export function useCanalPorLink(
   useEffect(() => {
     if (ponte === undefined) return;
     const cancelar = ponte.aoAbrirCanal((slug) => {
-      const canal = canalDaEntrada(slug);
-      if (!canal.ok || canal.value !== slug) return;
+      // Um canal, ou os dois da multivisão (`a+b`, ADR 0032): cada pedaço
+      // revalidado aqui — a ponte é a fronteira de confiança.
+      const canais = slug.split('+');
+      if (canais.length > MAX_CANAIS || !canais.every(ehCanal)) return;
       // Lê o caminho vivo: é ele que diz se há transmissão, não o último render.
       if (trilhoTravado(window.location.pathname)) {
         setAviso(AVISO_AO_VIVO);
@@ -47,7 +56,7 @@ export function useCanalPorLink(
         }, DURACAO_DO_AVISO_MS);
         return;
       }
-      irParaRef.current(`/${canal.value}`);
+      irParaRef.current(caminhoDosCanais(canais));
     });
     return () => {
       cancelar();

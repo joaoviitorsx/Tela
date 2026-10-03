@@ -33,15 +33,22 @@ const TAMANHO_MAXIMO = 256;
  */
 const FORMA = /^tela:\/\/assistir\/([^/?#\s]+)\/?(?:[?#][^\s]*)?$/i;
 
-/** O canal de um link `tela://assistir/<slug>`, ou `null` se não for exatamente isso. */
+/** Multivisão (ADR 0032): até dois canais, `tela://assistir/<a>+<b>`. */
+const MAX_CANAIS = 2;
+
+/**
+ * O canal de um link `tela://assistir/<slug>` — ou os dois da multivisão,
+ * `<a>+<b>`, devolvidos juntos como caminho —, ou `null` se não for
+ * exatamente isso. Cada pedaço passa pela mesma regra.
+ */
 export function canalDoLinkProfundo(entrada: unknown): string | null {
   if (typeof entrada !== 'string' || entrada.length > TAMANHO_MAXIMO) return null;
   const achado = FORMA.exec(entrada);
   const bruto = achado?.[1];
   if (bruto === undefined) return null;
-  const slug = bruto.toLowerCase();
-  if (!SLUG_RE.test(slug) || RESERVADOS.has(slug)) return null;
-  return slug;
+  const partes = bruto.toLowerCase().split('+');
+  if (partes.length > MAX_CANAIS || partes.some((p) => !SLUG_RE.test(p) || RESERVADOS.has(p))) return null;
+  return [...new Set(partes)].join('+');
 }
 
 /** Tira as aspas que o Windows deixa em volta do argumento da linha de comando. */

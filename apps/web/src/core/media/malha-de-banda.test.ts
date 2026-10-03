@@ -62,12 +62,15 @@ describe('MalhaDeBanda', () => {
 });
 
 describe('o que prova colapso (ADR 0033)', () => {
-  const freada = (extra: { consumoDoEncoder?: number; avail?: number; rttMs?: number } = {}) => ({
+  const freada = (
+    extra: { consumoDoEncoder?: number; avail?: number; rtts?: Record<string, number>; perdas?: Record<string, number> } = {},
+  ) => ({
     limitation: 'bandwidth' as const,
     bitrateBps: 2_000_000,
     paresMedidos: 1,
     availablePorPeer: { v_1: extra.avail ?? 2_900_000 },
-    rttMs: extra.rttMs ?? 20,
+    rttPorPeer: extra.rtts ?? { v_1: 20 },
+    perdaPorPeer: extra.perdas ?? {},
     ...(extra.consumoDoEncoder === undefined ? {} : { consumoDoEncoder: extra.consumoDoEncoder }),
   });
 
@@ -75,7 +78,7 @@ describe('o que prova colapso (ADR 0033)', () => {
   function aquecida(): MalhaDeBanda {
     const m = new MalhaDeBanda();
     m.semear(20_000_000);
-    for (let i = 1; i <= 10; i += 1) m.observar(leitura(i, { stats: { ...leitura(i).stats, rttMs: 20 } }));
+    for (let i = 1; i <= 10; i += 1) m.observar(leitura(i, { stats: { ...leitura(i).stats, rttPorPeer: { v_1: 20 } } }));
     return m;
   }
 
@@ -108,8 +111,38 @@ describe('o que prova colapso (ADR 0033)', () => {
 
   it('conteúdo leve com congestão (RTT subiu): também derruba', () => {
     const m = aquecida();
-    for (let i = 11; i <= 50; i += 1) m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.6, avail: 2_700_000, rttMs: 140 }) }));
+    for (let i = 11; i <= 50; i += 1) {
+      m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.6, avail: 2_700_000, rtts: { v_1: 140 } }) }));
+    }
     expect(m.orcamento).toBeLessThan(3_000_000);
+  });
+
+  it('policer (perda sem fila, RTT plano) com VBR em movimento: derruba', () => {
+    const m = aquecida();
+    for (let i = 11; i <= 50; i += 1) {
+      m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.9, avail: 2_400_000, perdas: { v_1: 0.08 } }) }));
+    }
+    expect(m.orcamento).toBeLessThan(3_000_000);
+  });
+
+  it('tela parada: um espectador distante entrando NÃO é congestão de ninguém', () => {
+    const m = aquecida();
+    const antes = m.orcamento;
+    for (let i = 11; i <= 70; i += 1) {
+      const rtts = i < 30 ? { v_1: 20 } : { v_1: 20, v_2: 120 };
+      m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.78, rtts }) }));
+    }
+    expect(m.orcamento).toBe(antes);
+  });
+
+  it('tela parada: Wi-Fi oscilando (RTT 20↔55) e picos isolados não somam colapso', () => {
+    const m = aquecida();
+    const antes = m.orcamento;
+    for (let i = 11; i <= 70; i += 1) {
+      const rtt = i % 2 === 0 ? 55 : 20;
+      m.observar(leitura(i, { stats: freada({ consumoDoEncoder: 0.78, rtts: { v_1: rtt } }) }));
+    }
+    expect(m.orcamento).toBe(antes);
   });
 
   it('fora do "um encode" (sem consumo): o comportamento antigo', () => {

@@ -46,9 +46,20 @@ const CONSUMO_CHEIO = 0.95;
  */
 const JANELA_DA_TENDENCIA = 5;
 const SUBINDO = 1.1;
-/** RTT acima de `base × 1,5 + 15 ms`: fila no caminho — o link está cheio. */
+/**
+ * Congestão de UM caminho: RTT acima de `patamar dele × 1,5 + 15 ms`, ou
+ * perda ≥ 2% (o policer que derruba sem fila). Por caminho e não pelo pior RTT
+ * da sala: um espectador distante entrando, ou o Wi-Fi de um oscilando, não
+ * é o link de quem transmite enchendo (revisão de 2026-10-03: o pior RTT
+ * derrubava o orçamento numa tela parada em 7 s). Vale com duas amostras
+ * seguidas.
+ */
 const RTT_CONGESTAO_FATOR = 1.5;
 const RTT_CONGESTAO_FOLGA_MS = 15;
+const PERDA_DE_CONGESTAO = 0.02;
+const AMOSTRAS_DE_CONGESTAO = 2;
+/** Amostras seguidas sem prova que zeram a contagem do colapso. */
+const AMOSTRAS_SEM_PROVA = 3;
 /** Mesmo piso do governador: abaixo disso não há vídeo que preste. */
 const ORCAMENTO_VIDEO_MINIMO = 300_000;
 /** Espera entre sondas de subida, em amostras (1 s). Dobra a cada falha. */
@@ -66,8 +77,8 @@ const SONDA_FOLGA = 1.3;
 export type LeituraDaMalha = {
   readonly stats: Pick<
     MediaStats,
-    'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer' | 'frescosPorPeer' | 'consumoDoEncoder'
-  > & { readonly rttMs?: number };
+    'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer' | 'frescosPorPeer' | 'consumoDoEncoder' | 'rttPorPeer' | 'perdaPorPeer'
+  >;
   /** O degrau que está no ar agora — dele sai o teto de pixel. */
   readonly presetEfetivo: PresetId;
   /** O que o usuário pediu: teto da sonda. */
@@ -108,8 +119,10 @@ export class MalhaDeBanda {
   /** As últimas piores estimativas (anel de `JANELA_DA_TENDENCIA`): rampa ou queda. */
   private readonly estimativas: (number | null)[] = new Array<number | null>(JANELA_DA_TENDENCIA).fill(null);
   private posicaoDaEstimativa = 0;
-  /** O patamar do RTT (mínimo que sobe devagar): congestão é estar acima dele. */
-  private rttBase: number | null = null;
+  /** Por caminho: o patamar do RTT (mínimo que sobe devagar) e amostras seguidas congestionado. */
+  private readonly caminhos = new Map<string, { base: number; congestionado: number }>();
+  /** Amostras seguidas com `bandwidth` mas sem prova. */
+  private semProva = 0;
   /** Amostra da última mudança de orçamento, pela malha ou pela sonda. */
   private ultimaDecisaoEm = 0;
   /** Sonda de subida. Ver `talvezSondar`. */
@@ -139,7 +152,8 @@ export class MalhaDeBanda {
     this.amostrasDeBanda = 0;
     this.estimativas.fill(null);
     this.posicaoDaEstimativa = 0;
-    this.rttBase = null;
+    this.caminhos.clear();
+    this.semProva = 0;
     this.ultimaDecisaoEm = 0;
     this.sondaEspera = SONDA_ESPERA_INICIAL;
     this.sondaDesde = null;
@@ -263,12 +277,18 @@ export class MalhaDeBanda {
     this.estimativas[this.posicaoDaEstimativa] = piorEstimativa;
     this.posicaoDaEstimativa = (this.posicaoDaEstimativa + 1) % JANELA_DA_TENDENCIA;
     const subindo = piorEstimativa !== null && antiga !== null && piorEstimativa > antiga * SUBINDO;
-    const rtt = stats.rttMs ?? 0;
-    const congestionado = rtt > 0 && this.rttBase !== null && rtt > this.rttBase * RTT_CONGESTAO_FATOR + RTT_CONGESTAO_FOLGA_MS;
-    // Patamar: o menor RTT visto, subindo 0,5 ms por amostra (o caminho pode mudar de verdade).
-    if (rtt > 0) this.rttBase = this.rttBase === null ? rtt : Math.min(rtt, this.rttBase + 0.5);
-    const prova = congestionado || (enchendo && !subindo);
-    this.amostrasDeBanda = !freado ? 0 : prova ? this.amostrasDeBanda + 1 : this.amostrasDeBanda;
+    const congestao = this.congestao(stats.rttPorPeer ?? {}, stats.perdaPorPeer ?? {});
+    const prova = congestao || (enchendo && !subindo);
+    if (!freado) {
+      this.amostrasDeBanda = 0;
+      this.semProva = 0;
+    } else if (prova) {
+      this.amostrasDeBanda += 1;
+      this.semProva = 0;
+    } else if (++this.semProva >= AMOSTRAS_SEM_PROVA) {
+      // Ruído segura a contagem por um instante; tela parada a zera.
+      this.amostrasDeBanda = 0;
+    }
     const colapso = this.amostrasDeBanda >= AMOSTRAS_DE_COLAPSO;
 
     const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;
@@ -360,6 +380,28 @@ export class MalhaDeBanda {
    * folga da estimativa sobre o envio, que já é a condição da sonda. Num link
    * pequeno de verdade ela não dispara; onde dispara e falha, a espera dobra.
    */
+  /**
+   * Algum caminho congestionado de verdade (duas amostras seguidas)? O(N)
+   * caminhos. Patamar POR caminho, nascendo na primeira leitura dele — quem
+   * entra de longe traz o próprio patamar, e não vira "congestão" de ninguém.
+   */
+  private congestao(rtts: Readonly<Record<string, number>>, perdas: Readonly<Record<string, number>>): boolean {
+    let algum = false;
+    for (const id of this.caminhos.keys()) if (!(id in rtts)) this.caminhos.delete(id);
+    for (const [id, rtt] of Object.entries(rtts)) {
+      const c = this.caminhos.get(id);
+      if (c === undefined) {
+        this.caminhos.set(id, { base: rtt, congestionado: 0 });
+        continue;
+      }
+      const agora = rtt > c.base * RTT_CONGESTAO_FATOR + RTT_CONGESTAO_FOLGA_MS || (perdas[id] ?? 0) >= PERDA_DE_CONGESTAO;
+      c.congestionado = agora ? c.congestionado + 1 : 0;
+      c.base = Math.min(rtt, c.base + 0.5);
+      if (c.congestionado >= AMOSTRAS_DE_CONGESTAO) algum = true;
+    }
+    return algum;
+  }
+
   private talvezSondar(l: LeituraDaMalha, enviadoPorPeer: number): DecisaoDaMalha | null {
     const estimativa = this.governor.estimativa;
     const porBanda = l.presetPorBanda;

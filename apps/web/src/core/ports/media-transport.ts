@@ -171,6 +171,10 @@ export type MediaStats = {
    * caminho. Ausente = todos frescos.
    */
   readonly frescosPorPeer?: readonly string[];
+  /** RTT (ms) de cada caminho de envio. A congestão é de um caminho (ADR 0033). */
+  readonly rttPorPeer?: Readonly<Record<string, number>>;
+  /** Perda (0–1, `fractionLost`) que cada espectador reporta de volta. */
+  readonly perdaPorPeer?: Readonly<Record<string, number>>;
   /**
    * Bits por pixel do fluxo que está saindo POR ESPECTADOR. `0` sem leitura.
    *

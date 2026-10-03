@@ -39,12 +39,14 @@ o produto (produzido ÷ alvo freado), e a decisão passou a ser:
    - o encoder está **enchendo** o alvo (consumo ≥ 0,95) e a estimativa
      **não está subindo** (tendência de 5 amostras; subir > 10% é rampa) —
      o colapso clássico, igual a antes com conteúdo em movimento; **ou**
-   - há **congestão**: RTT acima de `patamar × 1,5 + 15 ms` (o patamar é o
-     menor RTT visto, subindo 0,5 ms por amostra) — o link está cheio,
-     qualquer que seja o conteúdo.
+   - há **congestão em algum caminho**, medida POR ESPECTADOR: RTT daquele
+     par acima de `patamar × 1,5 + 15 ms` (o patamar é o menor RTT visto
+     NAQUELE par, nascendo na primeira amostra dele e subindo 0,5 ms por
+     amostra), ou perda reportada por ele (`remote-inbound-rtp`
+     `fractionLost`) ≥ 2% — e por **2 amostras seguidas** no mesmo par.
 3. Encoder sem encher o alvo e sem congestão (tela parada, conteúdo leve)
-   não prova nada; uma amostra que não prova não SOMA, mas não zera — ruído
-   não reinicia a contagem de um colapso real.
+   não prova nada; uma amostra que não prova não SOMA, e **3 seguidas sem
+   prova zeram** a contagem.
 4. Sem `consumoDoEncoder` (fora do "um encode") o comportamento é o antigo.
 5. `reiniciar()` zera tudo (a primeira versão deixava o estado da sessão
    anterior desarmando o colapso da seguinte).
@@ -52,13 +54,24 @@ o produto (produzido ÷ alvo freado), e a decisão passou a ser:
    ("Economizar banda com a tela parada"): `taxa vbr|cbr` no helper (por
    nome, `gst_util_set_object_arg`), teto do VBR = orçamento.
 
+### Segunda revisão (NO-SHIP), e o que mudou
+
+A versão anterior media congestão pelo PIOR RTT entre todos os pares, contra
+um patamar único, e a contagem nunca zerava. A revisão mostrou três falsos
+colapsos com a tela parada: um espectador distante entrando (o pior RTT
+salta para o dele, o patamar é de outro), Wi-Fi oscilando 20↔55 ms e picos
+isolados que, sem zerar, somavam até 3 ao longo de minutos. E um colapso não
+visto: o policer, que derruba pacote sem fazer fila — RTT plano, consumo
+abaixo de 0,95 em VBR. Daí patamar e sequência por par, a perda como segunda
+prova e o zerar depois de 3 amostras sem prova. Os quatro casos viraram teste
+de unidade em `malha-de-banda.test.ts`.
+
 ## Medido (simulador com consumo honesto e teto de sonda modelado)
 
 - `--parado`, antes: orçamento derrubado em **12/12**, nenhum voltando.
-- `--parado`, depois: orçamento derrubado em **2/12** (os dois de 10 Mbps
-  com 3 e 5 pessoas, que já operam no limite; voltam em ~25 s); de 50 Mbps
-  para cima o degrau se segura em 1080p depois da pausa (50 Mbps com 5
-  desce a 600p de passagem).
+- `--parado`, primeira versão: orçamento derrubado em **2/12**.
+- `--parado`, com congestão por par: orçamento derrubado em **0/12**, volta
+  ao degrau de antes da pausa em 0 s em todos.
 - Portões: 73/0/0/128/84 (antes 72/0/0/128/83, dentro da margem);
   `--escala` 0/0/0/0; colapsos reais (`--quedas`) seguem reagindo em 2 s.
 

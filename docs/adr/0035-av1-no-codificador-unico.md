@@ -121,4 +121,5 @@ Medido no Chromium 151 (headless):
 | AV1 por hardware ativando de fato | RTX 40 / Arc / RX 7000 no Windows, abrir a transmissão pelo navegador: o console da transmissão mostra "AV1" no encoder |
 | Custo no jogo | MangoHud, comparar FPS do jogo em H.264 e em AV1 com 3 espectadores |
 | Ganho real de qualidade | mesmo link, mesma cena: bpp e nitidez vistos pelo espectador nos dois codecs |
+| Chave guardada com timestamp velho (até ~2–3 s) | sala AV1 com muitos espectadores, forçar PLI: `totalFreezesDuration` e `jitterBufferDelay/jitterBufferEmittedCount` no `inbound-rtp` antes e depois do IDR — o extrapolador do receptor não pode agendar os deltas seguintes para o futuro |
 | Celular recusando | Android de entrada: `chrome://webrtc-internals` mostra H.264 na recepção |

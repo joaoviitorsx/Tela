@@ -119,8 +119,8 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   let reavaliarAv1: ReturnType<typeof setTimeout> | null = null;
   /** `setParameters` em voo: não repetir enquanto o anterior não resolveu. */
   const alinhando = new WeakSet<RTCRtpSender>();
-  /** Trocas de codec que os senders não acompanharam; na segunda, AV1 sai da sessão. */
-  let trocasFalhas = 0;
+  /** Subidas a AV1 seguidas que os senders não acompanharam; na segunda, AV1 sai da sessão. */
+  let subidasFalhas = 0;
   let av1Desligado = false;
   /** O codec que o sender REALMENTE tem (o que `encodings[0].codec` diz, ou o primeiro negociado). */
   const codecDoSender = (p: RTCRtpSendParameters): string | undefined => {
@@ -237,18 +237,19 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         troca que não pega, o AV1 sai da sessão. O(N), só na troca.
       */
       const mime = mimeDoCodec(desejado).toLowerCase();
-      for (const sender of sendersDeVideo) {
+      // Só quem estava na leitura: quem negociou depois ainda não foi alinhado (não é falha).
+      for (const [sender] of lidos) {
         const estado = sender.transport?.state;
         if (estado === 'closed' || estado === 'failed') continue;
         const p = sender.getParameters();
         // Sem negociação, ou sem o codec na lista: não é troca que falhou (a próxima leitura da sala decide).
         if (!(p.codecs ?? []).some((c) => c.mimeType.toLowerCase() === mime)) continue;
         if (codecDoSender(p) === mime) continue;
-        trocasFalhas += 1;
-        if (desejado === 'av1' && trocasFalhas >= 2) av1Desligado = true;
+        if (desejado === 'av1' && ++subidasFalhas >= 2) av1Desligado = true;
         if (atualizarPerfilJa()) recalcular();
         return;
       }
+      if (desejado === 'av1') subidasFalhas = 0;
       codec = desejado;
       recalcular();
     });

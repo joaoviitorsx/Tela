@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { encoderSobrecarregado } from './sobrecarga-do-encoder.js';
 
-const base = { descartes: 0, amostras: 40, fpsAlvo: 60 };
+const base = { descartes: 0, amostras: 40, fpsAlvo: 60, classe: 'hardware' as const };
 
 describe('encoderSobrecarregado', () => {
   it('fila do encoder transbordando: sobrecarregado (o sinal de antes continua)', () => {
@@ -29,5 +29,11 @@ describe('encoderSobrecarregado', () => {
   it('sem amostra ou sem alvo: só a fila decide', () => {
     expect(encoderSobrecarregado({ ...base, msPorQuadro: null, intervaloDeEntradaMs: 16.7 })).toBe(false);
     expect(encoderSobrecarregado({ ...base, fpsAlvo: 0, msPorQuadro: 200, intervaloDeEntradaMs: 16.7 })).toBe(false);
+  });
+
+  it('software não tem pipeline: ~65 ms a 60 fps já é fôlego faltando (oscilava em volta de 2,5×)', () => {
+    expect(encoderSobrecarregado({ ...base, classe: 'software', msPorQuadro: 65, intervaloDeEntradaMs: 16.7 })).toBe(true);
+    expect(encoderSobrecarregado({ ...base, classe: 'hardware', msPorQuadro: 65, intervaloDeEntradaMs: 16.7 })).toBe(true);
+    expect(encoderSobrecarregado({ ...base, classe: 'software', msPorQuadro: 20, intervaloDeEntradaMs: 16.7 })).toBe(false);
   });
 });

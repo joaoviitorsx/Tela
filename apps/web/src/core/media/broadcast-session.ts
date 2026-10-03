@@ -739,7 +739,18 @@ export class BroadcastSession {
     this.diario.registrar(stats, agora);
     this.applyUplinkCeiling(stats);
     this.ajustarPorta(stats);
-    this.trackPressure(stats.limitation);
+    /*
+      A escada de CPU lê o sinal PRÓPRIO do encoder quando existe: sem fôlego
+      é CPU mesmo com a banda freada (e vice-versa — a malha de banda segue
+      lendo `limitation`).
+    */
+    this.trackPressure(
+      stats.encoderSobrecarregado === true
+        ? 'cpu'
+        : stats.encoderSobrecarregado === false && stats.limitation === 'cpu'
+          ? 'none'
+          : stats.limitation,
+    );
     // O que a CAPTURA solta, não o que o encoder produz: o "um encode" reenvia
     // o último quadro quando ela para, e o encoder nunca chega a 0.
     this.trackCapturaMorta(stats.fpsDaCaptura ?? stats.fps);

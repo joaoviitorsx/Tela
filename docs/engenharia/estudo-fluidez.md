@@ -69,8 +69,32 @@ carregada que na primeira rodada, por isso os absolutos caíram para as duas):
 | sem carga, fonte 60 fps | — | 60,1 fps, desvio 4,3 ms |
 
 O ganho consistente é o ritmo — zero congelamentos e −18% de desvio —, e vem
-do atraso drenado. A escada de CPU deixou de descer à toa; se ela deve descer
-MAIS sob um jogo de verdade é a pergunta aberta abaixo.
+do atraso drenado. O fps está no nível do ruído entre rodadas. E a escada de
+CPU deixou de descer à toa, mas TAMBÉM não descia quando devia (segunda
+revisão): o defeito do relato (720p a 20–30 fps sob carga) continuava.
+
+## Segunda revisão: a escada volta a agir
+
+- Fator por quem codifica: software (sem pipeline) 1,5 intervalo; hardware
+  e desconhecido 2,5. Com 2,5 para tudo, a média de ~65 ms do OpenH264
+  oscilava em volta do limiar (35% das leituras, nunca 5 seguidas).
+- Intervalo pela CAPTURA, não pelos quadros entregues ao encoder — esses
+  caem quando ele engasga e o limiar subia junto com a sobrecarga.
+- Sinal de CPU separado do `limitation` (`MediaStats.encoderSobrecarregado`):
+  a escada de CPU o lê sempre; a malha de banda segue com `limitation`.
+
+Produção × nova, 3 rodadas alternadas, carga, fonte 60 fps:
+
+| | Produção | Nova |
+|---|---|---|
+| degrau | 720p (não desce) | 600p / 480p / 600p |
+| fps | 22,4 · 20,4 · 21,2 | 22,4 · 24,9 · 24,6 |
+| desvio do intervalo | 27,6 · 29,4 · 28,5 ms | **22,6 · 21,1 · 20,9 ms** |
+| congelamentos | 1 · 4 · 0 | **0 · 0 · 0** |
+
+Carga, fonte 30 fps: as duas em 720p (sem falso positivo), desvio 22,8 →
+14,5 ms. Sem carga: 60 fps, 4,1 ms. O fps sobe em 2 de 3 pares (~+13% na
+média), ainda perto do ruído; o desvio e os congelamentos melhoram em todos.
 
 ## O que a bancada não pega
 

@@ -14,13 +14,16 @@
  * condição de FPS fica sempre verdadeira, 34–58 ms bastavam, e a escada
  * descia sem ganhar um quadro — e, pela calmaria, não voltava.
  *
- * Agora a latência é comparada com o intervalo REAL de entrada: um encoder
- * que segura 1–2 quadros (pipeline de hardware) tem latência de 1–2
- * intervalos de entrada, qualquer que seja a fonte; só acima de
- * `FATOR_DE_LATENCIA` intervalos é fôlego faltando. E média de poucas
- * amostras (tela parada, 2 por segundo; um IDR no meio) não decide nada.
+ * Agora a latência é comparada com o intervalo REAL da CAPTURA — não com o
+ * dos quadros entregues ao encoder, que caem quando ele engasga e subiam o
+ * limiar junto com a sobrecarga (segunda revisão). O fator depende de quem
+ * codifica: software (OpenH264) não tem pipeline, saudável é menos de um
+ * intervalo, e 2,5 deixava a média de ~65 ms oscilando em volta do limiar
+ * (35% das leituras acesas, nunca 5 seguidas: a escada não descia nem
+ * subia). Hardware segura 1–2 quadros de pipeline: 2,5. Sem saber, 2,5.
+ * Média de poucas amostras (tela parada, 2 por segundo) não decide nada.
  */
-export const FATOR_DE_LATENCIA = 2.5;
+export const FATOR_DE_LATENCIA = { software: 1.5, hardware: 2.5, desconhecido: 2.5 } as const;
 export const AMOSTRAS_MINIMAS = 10;
 
 export function encoderSobrecarregado(m: {
@@ -30,12 +33,13 @@ export function encoderSobrecarregado(m: {
   readonly msPorQuadro: number | null;
   /** Quantas saídas compõem a média. */
   readonly amostras: number;
-  /** Intervalo médio entre quadros ENTREGUES ao encoder; `null` se nenhum. */
+  /** Intervalo médio entre quadros CAPTURADOS; `null` se nenhum. */
   readonly intervaloDeEntradaMs: number | null;
   readonly fpsAlvo: number;
+  readonly classe: keyof typeof FATOR_DE_LATENCIA;
 }): boolean {
   if (m.descartes > 0) return true;
   if (m.msPorQuadro === null || m.amostras < AMOSTRAS_MINIMAS || !(m.fpsAlvo > 0)) return false;
   const intervalo = Math.max(1000 / m.fpsAlvo, m.intervaloDeEntradaMs ?? 0);
-  return m.msPorQuadro > intervalo * FATOR_DE_LATENCIA;
+  return m.msPorQuadro > intervalo * FATOR_DE_LATENCIA[m.classe];
 }

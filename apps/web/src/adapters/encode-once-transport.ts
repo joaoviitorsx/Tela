@@ -451,6 +451,7 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         // banda deixava de ver as 3 leituras seguidas de um colapso real (ADR
         // 0033) e só o freio rápido agia — bitrate cortado sem descer degrau.
         limitation: limitadoPelaEstimativa ? 'bandwidth' : c.sobrecarregado ? 'cpu' : 'none',
+        encoderSobrecarregado: c.sobrecarregado,
       };
     },
 

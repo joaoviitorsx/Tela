@@ -168,8 +168,6 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private idrs = 0;
   private readonly pedidos: Record<string, number> = {};
   private descartesPorSobrecarga = 0;
-  /** Quadros de fato entregues ao `encode()` desde a última leitura (o intervalo de entrada). */
-  private ofertados = 0;
   /** Leituras de sobrecarga a desconsiderar (a primeira depois de trocar de tamanho). */
   private leiturasAIgnorar = 0;
   private segurados = 0;
@@ -282,8 +280,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const bitrateProduzido = (this.bytesProduzidos * 8) / dt;
     this.bytesProduzidos = 0;
     const { media: msPorQuadro, amostras } = this.vigia.lerLatencia();
-    const ofertados = this.ofertados;
-    this.ofertados = 0;
+    const dtDaCaptura = Math.max(0.001, (agora - this.marcaDaCaptura.t) / 1000);
+    const capturadosNaJanela = this.capturados - this.marcaDaCaptura.quadros;
     // A leitura logo depois de trocar de tamanho mede a reinicialização e o IDR, não o fôlego.
     const ignorar = this.leiturasAIgnorar > 0;
     if (ignorar) this.leiturasAIgnorar -= 1;
@@ -293,8 +291,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
         descartes: this.descartesPorSobrecarga,
         msPorQuadro,
         amostras,
-        intervaloDeEntradaMs: ofertados > 0 ? (dt * 1000) / ofertados : null,
+        intervaloDeEntradaMs: capturadosNaJanela > 0 ? (dtDaCaptura * 1000) / capturadosNaJanela : null,
         fpsAlvo: this.configurado?.fps ?? 0,
+        classe: this.aceleracao.classe(),
       });
     this.descartesPorSobrecarga = 0;
     const segurados = this.segurados;
@@ -675,7 +674,6 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     }
     const entrada = this.monotonico(quadro);
     this.vigia.entrou(entrada.timestamp, this.agora());
-    this.ofertados += 1;
     if (chave) this.chavesPedidas += 1;
     enc.encode(entrada, { keyFrame: chave });
     entrada.close();

@@ -9,7 +9,42 @@ import { VidroCrt } from '../components/EfeitosTv.js';
 import { IconOlho } from '../components/Icon.js';
 import type { Motivo } from '../components/OfflineState.js';
 import { OfflineState } from '../components/OfflineState.js';
-import { abrirNoApp, audioCue, createViewerSession, espectador, semAppMarca, volumePreference } from '../container.js';
+import { DialogoAssistirJunto } from '../components/DialogoAssistirJunto.js';
+import {
+  abrirNoApp,
+  audioCue,
+  canaisRecentes,
+  createViewerSession,
+  espectador,
+  preferenciaDaPip,
+  semAppMarca,
+  volumePreference,
+} from '../container.js';
+import { caminhoDosCanais } from '../core/domain/canais-da-rota.js';
+import { canalDaEntrada } from '../core/domain/entrada-de-canal.js';
+import {
+  adicionar,
+  alternarLayout,
+  focar,
+  iniciarMultivisao,
+  moverPip,
+  ordemDoLink,
+  pausar,
+  proximoTamanho,
+  redimensionar,
+  remover,
+  retomar,
+  secundaria,
+} from '../core/multivisao/estado.js';
+import { GuardaDeBanda } from '../core/multivisao/guarda-de-banda.js';
+import { type Arranjo, posicaoDoPainel } from '../react/layout-da-multivisao.js';
+import { congelarQuadro } from '../react/quadro-congelado.js';
+import { useDialogo } from '../react/use-dialogo.js';
+import { useMediaStats } from '../react/use-media-stats.js';
+import type { SomDoPainel } from '../react/use-painel-de-canal.js';
+import { useSessoes, useViewerOpcional } from '../react/use-sessoes.js';
+import { useViewer } from '../react/use-viewer.js';
+import { PainelDoCanal } from './PainelDoCanal.js';
 import { formatarMs } from '../core/domain/formatar-medidas.js';
 import { horaCurta } from '../core/media/aviso-de-canal.js';
 import { apelidoValido } from '../core/identity/espectador.js';
@@ -22,12 +57,24 @@ import { useBarraCompacta, useMediaQuery } from '../react/use-media-query.js';
 import { useAvisoDeCanal } from '../react/use-aviso-de-canal.js';
 import { useHotkeys } from '../react/use-page-effects.js';
 import { usePictureInPicture } from '../react/use-picture-in-picture.js';
-import { usePainelDeCanal } from '../react/use-painel-de-canal.js';
 import { PASSO_VOLUME, useVolume } from '../react/use-volume.js';
 import type { CausaDaLentidao } from '../core/media/vigia-de-fluidez.js';
 import { useZoomPan } from '../react/use-zoom-pan.js';
 
-type Props = { readonly slug: string };
+type Props = {
+  /** Um canal, ou dois na multivisão (`/a+b`, ADR 0032). O primeiro abre como principal. */
+  readonly canais: readonly string[];
+};
+
+/** A secundária nunca toca som (ADR 0032 §5): dois jogos ao mesmo tempo é barulho. */
+const SOM_DA_SECUNDARIA: SomDoPainel = { mudo: true, volume: 1, liberado: true };
+
+const TEXTO_DA_PAUSA = {
+  rede: 'PAUSADA · SUA REDE NÃO SEGURA DUAS',
+  decodificacao: 'PAUSADA · ESTE COMPUTADOR NÃO DÁ CONTA DE DUAS',
+} as const;
+
+
 
 /**
  * Cada status da sessão vira o estado que o espectador precisa ler.
@@ -108,12 +155,12 @@ const PEDE_ACAO: ReadonlySet<Motivo> = new Set<Motivo>([
  * Vídeo em 100% da viewport desde o primeiro frame. Sem header, sem sidebar,
  * sem logo, sem contador de likes. O amigo abriu o link para ver o jogo.
  */
-export function Viewer({ slug }: Props) {
+export function Viewer({ canais: canaisDaRota }: Props) {
   /*
     Quem tem o app instalado é levado a ele; a sessão da web só abre quando a
     fase é `navegador`. Onde não há o que tentar a fase já nasce assim.
   */
-  const app = useAbrirNoApp(slug, abrirNoApp, semAppMarca);
+  const app = useAbrirNoApp(canaisDaRota.join('+'), abrirNoApp, semAppMarca);
   const som = useVolume(volumePreference);
 
   /**
@@ -130,18 +177,47 @@ export function Viewer({ slug }: Props) {
   */
   const [editandoNome, setEditandoNome] = useState(false);
   const precisaNome = editandoNome;
+  const quem = { nome: nome ?? '', chave: espectador.chave() };
 
-  const painel = usePainelDeCanal(slug, {
-    abrir: !precisaNome && app.fase === 'navegador',
-    quem: { nome: nome ?? '', chave: espectador.chave() },
-    som: { mudo: som.mudo, volume: som.volume, liberado: som.liberado },
-    criarSessao: createViewerSession,
-  });
-  const { session, state, videoRef, videoEl, montarVideo, hasAudio, bloqueado, stats } = painel;
-  // Aqui, e não do hook: o TypeScript só estreita `state` por condições do mesmo escopo.
+  /*
+    Multivisão (ADR 0032): um canal é o caso de sempre, com um painel só.
+    Cada canal tem a própria sessão, estável enquanto ele estiver na tela —
+    trocar a principal não abre nem fecha conexão nenhuma.
+  */
+  const [mv, setMv] = useState(() => iniciarMultivisao(canaisDaRota, preferenciaDaPip.ler()));
+  const outra = secundaria(mv);
+  const multiRef = useRef(false);
+  multiRef.current = outra !== null;
+  // Perguntado a cada conexão: na multivisão este espectador não repassa (cascata, ADR 0031).
+  const criarSessao = useCallback(() => createViewerSession({ repassar: () => !multiRef.current }), []);
+  const sessoes = useSessoes(mv.canais, criarSessao);
+  const session = sessoes.get(mv.principal);
+  if (session === undefined) throw new Error('principal sem sessão');
+  const sessaoDaOutra = outra === null ? null : (sessoes.get(outra) ?? null);
+  const state = useViewer(session);
+  const estadoDaOutra = useViewerOpcional(sessaoDaOutra);
+
+  /*
+    Os `<video>` de cada painel. A página age no da principal (tela cheia,
+    picture-in-picture nativo, som liberado pelo clique).
+  */
+  const [videos, setVideos] = useState<Readonly<Record<string, HTMLVideoElement | null>>>({});
+  const aoMontarVideo = useCallback((canal: string, el: HTMLVideoElement | null) => {
+    setVideos((v) => (v[canal] === el ? v : { ...v, [canal]: el }));
+  }, []);
+  const videoEl = videos[mv.principal] ?? null;
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  videoRef.current = videoEl;
+
+  // Aqui, e não num hook: o TypeScript só estreita `state` por condições do mesmo escopo.
   const watching = state.status === 'watching';
   const reconectando = state.status === 'reconnecting' && state.stream !== null;
   const comImagem = watching || reconectando;
+  const stats = useMediaStats(watching ? state.stats : null);
+  // Do STREAM e não do estado: `reconnecting` não carrega `hasAudio`.
+  const streamAtual = state.status === 'watching' || state.status === 'reconnecting' ? state.stream : null;
+  const hasAudio = streamAtual !== null && streamAtual.getAudioTracks().length > 0;
+  const bloqueado = hasAudio && som.mudo && !som.liberado;
 
   /**
    * Enquanto o dedo está na barra de volume o HUD não pode sumir. Passar
@@ -178,6 +254,36 @@ export function Viewer({ slug }: Props) {
   const compacta = useBarraCompacta();
   const comDedo = useMediaQuery('(pointer: coarse)');
   const controls = useAutoHide(2_000, watching && !somAtivo, compacta && comDedo ? 'alterna' : 'revela');
+  const emPe = useMediaQuery('(orientation: portrait)');
+  /*
+    Quanto a barra de baixo ocupa, MEDIDO: ela quebra em duas linhas quando
+    falta largura, e o quadro do canto tem de subir junto. `ResizeObserver`
+    só dispara quando o tamanho muda — nada por quadro.
+  */
+  const [camadaDaBarra, setCamadaDaBarra] = useState<HTMLDivElement | null>(null);
+  const [alturaDaBarra, setAlturaDaBarra] = useState(0);
+  useEffect(() => {
+    const barra = camadaDaBarra?.firstElementChild;
+    if (!(barra instanceof HTMLElement) || typeof ResizeObserver === 'undefined') return;
+    const medir = () => setAlturaDaBarra(Math.round(barra.getBoundingClientRect().height));
+    medir();
+    const observador = new ResizeObserver(medir);
+    observador.observe(barra);
+    return () => observador.disconnect();
+  }, [camadaDaBarra, compacta]);
+  const barraVisivelAgora = !escondida && controls.visible;
+  const somDaPrincipal = useMemo<SomDoPainel>(
+    () => ({ mudo: som.mudo, volume: som.volume, liberado: som.liberado }),
+    [som.mudo, som.volume, som.liberado],
+  );
+  const alternarControles = controls.alternar;
+  // Toque no vídeo mostra/esconde a barra compacta; com zoom o dedo está arrastando.
+  const aoTocarNoVideo = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (compacta && comDedo && e.pointerType === 'touch' && zoom.zoom === 1) alternarControles();
+    },
+    [compacta, comDedo, zoom.zoom, alternarControles],
+  );
   /*
     Lido do estado, que muda uma vez por segundo com as estatísticas — e não a
     60 Hz junto com os quadros. Re-renderizar a página inteira por quadro seria
@@ -190,7 +296,7 @@ export function Viewer({ slug }: Props) {
     Título e favicon dizem de relance se o canal já entrou no ar, e a fase
     separa "acabou" de "ainda não começou" (V-03, V-04).
   */
-  const canal = useAvisoDeCanal(slug, state.status, comImagem, audioCue.bipe);
+  const canal = useAvisoDeCanal(mv.principal, state.status, comImagem, audioCue.bipe);
 
   const liberarSom = useCallback(() => {
     som.reativar();
@@ -289,12 +395,139 @@ export function Viewer({ slug }: Props) {
     comImagem,
   );
 
+  /*
+    ── Multivisão (ADR 0032) ──────────────────────────────────────────────
+  */
+
+  /** O último quadro da secundária pausada, para o quadro não ficar preto. */
+  const [congelado, setCongelado] = useState<string | null>(null);
+
+  /**
+   * Troca a principal. O som muda de dono DENTRO do gesto — direto nos
+   * elementos, antes do render — porque é o clique que autoriza o áudio; o
+   * efeito de cada painel só confirma o mesmo valor depois.
+   */
+  const trocarPara = useCallback(
+    (canal: string) => {
+      const nova = videos[canal];
+      const velha = videos[mv.principal];
+      if (velha) velha.muted = true;
+      if (nova) {
+        nova.muted = som.mudo;
+        nova.volume = som.volume;
+        void nova.play().catch(() => undefined);
+      }
+      zoom.resetar();
+      if (mv.pausada?.canal === canal) setCongelado(null);
+      setMv((e) => focar(e, canal));
+    },
+    [videos, mv.principal, mv.pausada, som.mudo, som.volume, zoom],
+  );
+
+  const fechar = useCallback((canal: string) => {
+    setMv((e) => remover(e, canal));
+    setCongelado(null);
+  }, []);
+
+  /*
+    A guarda de banda: roda quando o estado muda — uma vez por segundo, com
+    as estatísticas —, nunca por quadro. Pausar fecha a sessão da secundária:
+    sem download, sem decodificação.
+  */
+  const guarda = useRef(new GuardaDeBanda());
+  const lentidaoPrincipal = state.status === 'watching' ? (state.lentidao ?? null) : null;
+  const lentidaoDaOutra = estadoDaOutra?.status === 'watching' ? (estadoDaOutra.lentidao ?? null) : null;
+  useEffect(() => {
+    if (outra === null || mv.pausada !== null) return;
+    const motivo = guarda.current.observar(performance.now(), [lentidaoPrincipal, lentidaoDaOutra]);
+    if (motivo === null) return;
+    setCongelado(congelarQuadro(videos[outra] ?? null));
+    setMv((e) => pausar(e, motivo));
+  }, [state, estadoDaOutra, lentidaoPrincipal, lentidaoDaOutra, outra, mv.pausada, videos]);
+
+  const retomarOutra = useCallback(() => {
+    guarda.current.retomou(performance.now());
+    setCongelado(null);
+    setMv(retomar);
+  }, []);
+
+  // O link da barra de endereço acompanha a tela: copiar e mandar abre igual.
+  const caminho = caminhoDosCanais(ordemDoLink(mv));
+  useEffect(() => {
+    if (window.location.pathname === caminho) return;
+    window.history.replaceState(window.history.state, '', `${caminho}${window.location.search}${window.location.hash}`);
+  }, [caminho]);
+
+  // Canto e tamanho do quadro valem para a próxima vez.
+  useEffect(() => {
+    preferenciaDaPip.gravar({ canto: mv.canto, tamanho: mv.tamanho });
+  }, [mv.canto, mv.tamanho]);
+
+  // Os recentes do `+ TELA`: só canal que chegou a passar imagem.
+  const outraNoAr = estadoDaOutra?.status === 'watching';
+  useEffect(() => {
+    if (watching) canaisRecentes.lembrar(mv.principal);
+  }, [watching, mv.principal]);
+  useEffect(() => {
+    if (outraNoAr && outra !== null) canaisRecentes.lembrar(outra);
+  }, [outraNoAr, outra]);
+
+  /* "+ TELA": o diálogo de pôr outro canal. */
+  const [juntoAberto, setJuntoAberto] = useState(false);
+  const [entradaJunto, setEntradaJunto] = useState('');
+  const [erroJunto, setErroJunto] = useState<'invalido' | 'repetido' | null>(null);
+  const campoJuntoRef = useRef<HTMLInputElement>(null);
+  const fecharJunto = useCallback(() => {
+    setJuntoAberto(false);
+    setEntradaJunto('');
+    setErroJunto(null);
+  }, []);
+  const dialogoJunto = useDialogo(juntoAberto, fecharJunto, campoJuntoRef);
+  const abrirJunto = useCallback(() => setJuntoAberto(true), []);
+  const porNaTela = (canal: string) => {
+    const r = adicionar(mv, canal);
+    if (!r.ok) {
+      setErroJunto('repetido');
+      return;
+    }
+    if (mv.pausada !== null) setCongelado(null);
+    setMv(r.value);
+    fecharJunto();
+  };
+  const enviarJunto = () => {
+    const canalDigitado = canalDaEntrada(entradaJunto);
+    if (!canalDigitado.ok) {
+      setErroJunto('invalido');
+      return;
+    }
+    porNaTela(canalDigitado.value);
+  };
+
+  useHotkeys(
+    useMemo(
+      () => ({
+        a: abrirJunto,
+        t: () => {
+          if (outra !== null) trocarPara(outra);
+        },
+        x: () => {
+          if (outra !== null) fechar(outra);
+        },
+        l: () => setMv(alternarLayout),
+        '[': () => setMv((e) => redimensionar(e, -1)),
+        ']': () => setMv((e) => redimensionar(e, 1)),
+      }),
+      [abrirJunto, outra, trocarPara, fechar],
+    ),
+    !juntoAberto,
+  );
+
   if (app.fase !== 'navegador') {
     return (
       <main>
         <VidroCrt />
         <AbertoNoApp
-          slug={slug}
+          slug={canaisDaRota.join(' + ')}
           estado={app.fase === 'no-app' ? 'aberto' : 'tentando'}
           aoContinuarNoNavegador={app.continuarNoNavegador}
         />
@@ -307,7 +540,7 @@ export function Viewer({ slug }: Props) {
       <main>
         <VidroCrt />
         <EntradaDeApelido
-          slug={slug}
+          slug={mv.principal}
           valor={rascunho}
           aoMudar={setRascunho}
           invalido={rascunho.trim() !== '' && apelidoValido(rascunho) === null}
@@ -324,6 +557,11 @@ export function Viewer({ slug }: Props) {
     );
   }
 
+  /*
+    Sem imagem na principal: a tela de espera de sempre, agora POR CIMA do
+    painel — a PiP continua no palco, e um clique nela troca.
+  */
+  let sobreposicao: React.ReactNode = null;
   if (!comImagem) {
     // O relay só explica falha de REDE. Conectou e o quadro não veio: é mídia.
     const motivoDaSessao: Motivo =
@@ -341,12 +579,9 @@ export function Viewer({ slug }: Props) {
         ? 'encerrada'
         : motivoDaSessao;
     const relatorio = session.diagnostico(navigator.userAgent);
-    return (
-      <main>
-        {/* Scanlines só na sala de espera: com imagem, o jogo é o conteúdo. */}
-        <VidroCrt />
+    sobreposicao = (
         <OfflineState
-          slug={slug}
+          slug={mv.principal}
           motivo={motivo}
           {...(canal.terminouEm === null ? {} : { encerradaEm: horaCurta(canal.terminouEm) })}
           // O teto é do TRANSMISSOR, não do produto: 5 em quem codifica por
@@ -389,16 +624,22 @@ export function Viewer({ slug }: Props) {
             ) : null
           }
         />
-      </main>
     );
   }
 
+  /*
+    O arranjo do palco. Celular em pé: as duas empilhadas — o 16:9 de cima é
+    o que já aparecia, e o preto que sobrava embaixo vira a segunda.
+  */
+  const arranjo: Arranjo = outra === null ? 'sozinho' : compacta && emPe ? 'empilhado' : mv.layout;
+  const folgaDaBarra = barraVisivelAgora && comImagem ? alturaDaBarra : 0;
+
   const avisoAudio = watching ? (AVISO_AUDIO[state.audio] ?? null) : null;
   const avisoImagem = watching && state.lentidao != null ? AVISO_IMAGEM[state.lentidao] : null;
-  const barraVisivel = !escondida && controls.visible;
+  const barraVisivel = barraVisivelAgora;
 
   const propsDaBarra: PropsDaBarra = {
-    canal: slug,
+    canal: mv.principal,
     viewers: watching ? state.viewers : null,
     reconectando,
     // Mediana dos últimos quadros (p95 no título); sem janela, a média do vigia.
@@ -449,8 +690,14 @@ export function Viewer({ slug }: Props) {
     abrirNoApp: app.oferece
       ? { aoAbrir: app.abrir, tentando: app.manual === 'tentando', falhou: app.manual === 'falhou' }
       : null,
+    multivisao: {
+      aoAdicionar: abrirJunto,
+      layout:
+        arranjo === 'pip' || arranjo === 'lado-a-lado'
+          ? { ladoALado: arranjo === 'lado-a-lado', aoAlternar: () => setMv(alternarLayout) }
+          : null,
+    },
   };
-
 
   return (
     <main
@@ -469,52 +716,76 @@ export function Viewer({ slug }: Props) {
       className="relative h-[var(--altura-da-tela,100dvh)] w-full overflow-hidden bg-black"
       // No toque o `mousemove` do gesto não pode revelar: quem decide é `alternar`.
       onMouseMove={compacta && comDedo ? undefined : controls.show}
-      onDoubleClick={toggleFullscreen}
+      onDoubleClick={comImagem ? toggleFullscreen : undefined}
     >
-      {/*
-        O palco do vídeo: recebe a roda (zoom) e o arrasto (pan). O vídeo do
-        jogo NUNCA leva scanline — o vidro do CRT nem é montado nesta rota.
+      {/* Scanlines só na sala de espera: com imagem, o jogo é o conteúdo. */}
+      {!comImagem && <VidroCrt />}
 
-        `muted` obrigatório no primeiro play: sem isso o browser bloqueia o
-        autoplay inteiro e o espectador vê tela preta em vez de vídeo.
+      {/*
+        Um painel por canal, SEMPRE na ordem de `mv.canais` (ADR 0032): trocar
+        a principal muda a classe de cada um, nunca a ordem nem o elemento.
       */}
-      <div
-        ref={zoom.palcoRef}
-        onWheel={zoom.aoRodar}
-        onPointerDown={zoom.aoPressionar}
-        onPointerMove={zoom.aoMover}
-        onPointerUp={(e) => {
-          zoom.aoSoltar(e);
-          // Toque no vídeo mostra/esconde a barra compacta; com zoom o dedo está arrastando.
-          if (compacta && comDedo && e.pointerType === 'touch' && zoom.zoom === 1) controls.alternar();
-        }}
-        onPointerCancel={zoom.aoSoltar}
-        className={[
-          'absolute inset-0 overflow-hidden',
-          zoom.zoom > 1 ? (zoom.arrastando ? 'cursor-grabbing' : 'cursor-grab') : '',
-          zoom.zoom > 1 ? 'touch-none' : '',
-        ].join(' ')}
-      >
-        <div
-          className={`h-full w-full origin-center ${zoom.arrastando ? '' : 'transition-transform duration-200 motion-reduce:transition-none'}`}
-          style={{ transform: `translate(${zoom.pan.x}px, ${zoom.pan.y}px) scale(${zoom.zoom})` }}
-        >
-          <video
-            ref={montarVideo}
-            autoPlay
-            playsInline
-            muted={som.mudo}
-            className="h-full w-full bg-black object-contain"
+      {mv.canais.map((c, indice) => {
+        const sessao = sessoes.get(c);
+        if (sessao === undefined) return null;
+        const ehPrincipal = c === mv.principal;
+        const posicao = posicaoDoPainel({
+          arranjo,
+          principal: ehPrincipal,
+          indice,
+          canto: mv.canto,
+          tamanho: mv.tamanho,
+          folgaDaBarra,
+        });
+        return (
+          <PainelDoCanal
+            key={c}
+            session={sessao}
+            canal={c}
+            principal={ehPrincipal}
+            abrir={!precisaNome && app.fase === 'navegador' && mv.pausada?.canal !== c}
+            quem={quem}
+            som={ehPrincipal ? somDaPrincipal : SOM_DA_SECUNDARIA}
+            posicao={posicao}
+            lugar={`${arranjo}:${ehPrincipal ? 'p' : 's'}:${mv.canto}:${mv.tamanho}`}
+            destacado={ehPrincipal && (arranjo === 'lado-a-lado' || arranjo === 'empilhado')}
+            aoMontarVideo={aoMontarVideo}
+            zoom={ehPrincipal ? zoom : null}
+            aoTocarNoVideo={ehPrincipal ? aoTocarNoVideo : undefined}
+            sobreposicao={ehPrincipal ? sobreposicao : null}
+            quadro={
+              ehPrincipal
+                ? null
+                : {
+                    pausa:
+                      mv.pausada?.canal === c
+                        ? { texto: TEXTO_DA_PAUSA[mv.pausada.motivo], aoRetomar: retomarOutra }
+                        : null,
+                    congelado,
+                    comToque: comDedo,
+                    rotuloNoTopo: arranjo !== 'pip',
+                    noCanto:
+                      arranjo === 'pip'
+                        ? {
+                            tamanho: mv.tamanho,
+                            aoMudarTamanho: () => setMv(proximoTamanho),
+                            aoSoltar: (canto) => setMv((e) => moverPip(e, canto)),
+                          }
+                        : null,
+                    aoTrocar: () => trocarPara(c),
+                    aoFechar: () => fechar(c),
+                  }
+            }
           />
-        </div>
-      </div>
+        );
+      })}
 
       {/*
         `!som.liberado` é o que separa "o browser bloqueou" de "eu silenciei".
         Sem essa condição, silenciar de propósito — pelo botão ou pela barra de
         espaço — cobriria o jogo inteiro com o overlay pedindo um clique.
       */}
-      {bloqueado && <AudioUnlock onUnlock={liberarSom} />}
+      {bloqueado && comImagem && <AudioUnlock onUnlock={liberarSom} />}
 
       {/*
         A barra é a última coisa a sumir e a primeira a voltar (movimento do
@@ -522,34 +793,59 @@ export function Viewer({ slug }: Props) {
         reflow no meio do jogo. Escondida ela continua focável de propósito —
         é o `focusin` que a traz de volta para quem navega por teclado.
       */}
-      <div
-        className={[
-          'transition-opacity duration-300',
-          barraVisivel ? 'opacity-100' : 'pointer-events-none opacity-0',
-        ].join(' ')}
-      >
-        {compacta ? <BarraEspectadorCompacta {...propsDaBarra} /> : <BarraEspectador {...propsDaBarra} />}
-      </div>
+      {comImagem && (
+        <div
+          ref={setCamadaDaBarra}
+          /*
+            Camada própria acima dos painéis (z 42): a secundária é imagem e
+            fica acima do vidro do CRT (z 41); a barra tem de ficar acima dela,
+            senão o lado a lado a cobre pela metade.
+          */
+          className={[
+            'pointer-events-none absolute inset-0 z-[42] transition-opacity duration-300',
+            barraVisivel ? 'opacity-100' : 'opacity-0',
+          ].join(' ')}
+        >
+          {compacta ? <BarraEspectadorCompacta {...propsDaBarra} /> : <BarraEspectador {...propsDaBarra} />}
+        </div>
+      )}
 
       {/*
         Controles escondidos (H ou o botão): sobra um fantasma no canto, quase
         apagado, que volta ao mover o mouse. Sem ele quem escondeu por engano
         no celular não teria como trazer a barra de volta.
       */}
-      {escondida && (
+      {escondida && comImagem && (
         <button
           type="button"
           onClick={() => setEscondida(false)}
           title="Mostrar controles (H)"
           aria-label="Mostrar controles (H)"
           className={[
-            'absolute bottom-5 right-5 z-40 flex h-11 w-11 items-center justify-center border-2 border-edge bg-[rgb(10_10_12_/_0.85)] transition-opacity duration-300 hover:opacity-100 focus-visible:opacity-100',
+            'absolute bottom-5 right-5 z-[42] flex h-11 w-11 items-center justify-center border-2 border-edge bg-[rgb(10_10_12_/_0.85)] transition-opacity duration-300 hover:opacity-100 focus-visible:opacity-100',
             controls.visible ? 'opacity-100' : 'opacity-20',
           ].join(' ')}
         >
           <IconOlho className="h-[18px] w-[18px] text-accent" />
         </button>
       )}
+
+      <DialogoAssistirJunto
+        dialogRef={dialogoJunto.ref}
+        aoClicarNoFundo={dialogoJunto.aoClicar}
+        inputRef={campoJuntoRef}
+        valor={entradaJunto}
+        aoMudar={(v) => {
+          setEntradaJunto(v);
+          setErroJunto(null);
+        }}
+        erro={erroJunto}
+        recentes={juntoAberto ? canaisRecentes.listar().filter((c) => !mv.canais.includes(c)) : []}
+        aoEscolher={porNaTela}
+        substitui={outra}
+        aoEnviar={enviarJunto}
+        aoCancelar={fecharJunto}
+      />
     </main>
   );
 }

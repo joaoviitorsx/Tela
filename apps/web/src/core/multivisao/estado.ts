@@ -109,6 +109,12 @@ export function redimensionar(e: EstadoMultivisao, passo: 1 | -1): EstadoMultivi
   return { ...e, tamanho };
 }
 
+/** O botão de tamanho do quadro: P → M → G → P. */
+export function proximoTamanho(e: EstadoMultivisao): EstadoMultivisao {
+  const i = TAMANHOS.indexOf(e.tamanho);
+  return { ...e, tamanho: TAMANHOS[(i + 1) % TAMANHOS.length] ?? e.tamanho };
+}
+
 /** A guarda de banda fecha a secundária. A principal nunca é pausada. */
 export function pausar(e: EstadoMultivisao, motivo: MotivoDaPausa): EstadoMultivisao {
   const outra = secundaria(e);

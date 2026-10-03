@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ViewerSession, ViewerState } from '../core/media/viewer-session.js';
 import { useFrameLatency } from './use-frame-latency.js';
 import { useMediaStats } from './use-media-stats.js';
@@ -17,8 +17,12 @@ export type OpcoesDoPainel = {
   readonly abrir: boolean;
   readonly quem: { readonly nome: string; readonly chave: string };
   readonly som: SomDoPainel;
-  /** A fábrica da sessão: chamada UMA vez por painel. */
-  readonly criarSessao: () => ViewerSession;
+  /**
+   * Medir a latência quadro a quadro (`requestVideoFrameCallback`). Só quem a
+   * barra mostra precisa: na multivisão a secundária não paga um callback por
+   * quadro para um número que ninguém lê.
+   */
+  readonly medirLatencia?: boolean;
 };
 
 export type PainelDeCanal = {
@@ -47,10 +51,11 @@ export type PainelDeCanal = {
  * ligar o stream ao elemento, medir a latência por quadro, aplicar o som. O
  * que é da página (tela cheia, atalhos, barra, zoom) continua na rota.
  */
-export function usePainelDeCanal(slug: string, { abrir, quem, som, criarSessao }: OpcoesDoPainel): PainelDeCanal {
-  // A fábrica é chamada uma vez: a sessão é do painel, não do render.
-  const criarRef = useRef(criarSessao);
-  const session = useMemo(() => criarRef.current(), []);
+export function usePainelDeCanal(
+  session: ViewerSession,
+  slug: string,
+  { abrir, quem, som, medirLatencia = true }: OpcoesDoPainel,
+): PainelDeCanal {
   const state = useViewer(session);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -100,7 +105,7 @@ export function usePainelDeCanal(slug: string, { abrir, quem, som, criarSessao }
     (amostra: Parameters<typeof session.registrarLatencia>[0]) => session.registrarLatencia(amostra),
     [session],
   );
-  useFrameLatency(videoEl, comImagem, registrar);
+  useFrameLatency(videoEl, comImagem && medirLatencia, registrar);
 
   useEffect(() => {
     if (!abrir) return;

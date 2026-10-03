@@ -158,3 +158,40 @@ export function IconEngrenagem({ className }: IconProps) {
     </Pixel>
   );
 }
+
+/** Duas setas opostas: trocar a principal pela secundária (multivisão). */
+export function IconTrocar({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M10 1h2v2h2v2h2v2h-2v2h-2v2h-2V8H1V6h9z M4 9h2v3h9v2H6v3H4v-2H2v-2H0v-2h2v-2h2z" />
+    </Pixel>
+  );
+}
+
+/** Dois quadros lado a lado. */
+export function IconLadoALado({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M0 3h7v10H0z M2 5v6h3V5z M9 3h7v10H9z M11 5v6h3V5z" fillRule="evenodd" />
+    </Pixel>
+  );
+}
+
+/** Um X de pixel. */
+export function IconFechar({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M2 2h3v2h2v2h2V4h2V2h3v3h-2v2h-2v2h2v2h2v3h-3v-2H9v-2H7v2H5v2H2v-3h2V9h2V7H4V5H2z" />
+    </Pixel>
+  );
+}
+
+/** Quadro com um sinal de mais: pôr outra tela (multivisão). */
+export function IconMaisTela({ className }: IconProps) {
+  return (
+    <Pixel {...(className ? { className } : {})}>
+      <path d="M0 2h11v2H2v8h9v2H0z" />
+      <path d="M12 4h2v3h2v2h-2v3h-2V9h-2V7h2z" fill="var(--color-accent)" />
+    </Pixel>
+  );
+}

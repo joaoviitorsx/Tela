@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { canaisDoSegmento } from './core/domain/canais-da-rota.js';
 
 /**
  * Roteador de 40 linhas.
@@ -12,17 +13,21 @@ export type Route =
   | { readonly name: 'home' }
   | { readonly name: 'recover' }
   | { readonly name: 'broadcast' }
-  | { readonly name: 'viewer'; readonly slug: string }
+  /**
+   * `canais`: um, ou dois na multivisão (`/a+b`, ADR 0032). `slug` é o
+   * primeiro — a principal quando a página abre.
+   */
+  | { readonly name: 'viewer'; readonly slug: string; readonly canais: readonly string[] }
   | { readonly name: 'not-found' };
-
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,23}[a-z0-9]$/;
 
 export function parseRoute(pathname: string): Route {
   const segment = pathname.replace(/^\/+|\/+$/g, '');
   if (segment === '') return { name: 'home' };
   if (segment === 'recuperar') return { name: 'recover' };
   if (segment === 'transmitir') return { name: 'broadcast' };
-  if (SLUG_RE.test(segment)) return { name: 'viewer', slug: segment };
+  const canais = canaisDoSegmento(segment);
+  const slug = canais?.[0];
+  if (canais !== null && slug !== undefined) return { name: 'viewer', slug, canais };
   return { name: 'not-found' };
 }
 

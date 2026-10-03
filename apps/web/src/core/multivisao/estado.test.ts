@@ -8,6 +8,7 @@ import {
   moverPip,
   ordemDoLink,
   pausar,
+  proximoTamanho,
   redimensionar,
   remover,
   retomar,
@@ -79,6 +80,8 @@ describe('multivisão', () => {
     expect(redimensionar(dois(), 1).tamanho).toBe('g');
     expect(redimensionar(redimensionar(dois(), 1), 1).tamanho).toBe('g');
     expect(redimensionar(redimensionar(dois(), -1), -1).tamanho).toBe('p');
+    expect(proximoTamanho(dois()).tamanho).toBe('g');
+    expect(proximoTamanho(proximoTamanho(dois())).tamanho).toBe('p');
   });
 
   it('o canto mais perto de onde a PiP foi solta', () => {

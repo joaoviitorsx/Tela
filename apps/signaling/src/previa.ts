@@ -169,7 +169,13 @@ export async function servirComPrevia(request: Request, deps: DepsDaPrevia): Pro
   const original = await deps.assets(new Request(request.url, { method: metodo, headers }));
   if (!original.ok || !(original.headers.get('content-type') ?? '').includes('text/html')) return original;
 
-  // Os canais em paralelo: a prévia de dois não pode custar o dobro de espera.
+  /*
+    Os canais em paralelo: a prévia de dois não pode custar o dobro de espera.
+    Custo aceito (revisão de 2026-10-03): um robô de prévia com nomes
+    aleatórios em `/x+y` acorda até DOIS objetos de canal por pedido, contra
+    um em `/x`. O fator é fixo (≤ 2), o caminho só abre para User-Agent de
+    robô de prévia e a consulta tem prazo de 1,5 s.
+  */
   let estados: readonly (EstadoPublico | null)[];
   try {
     estados = await Promise.all(canais.map((canal) => deps.consultar(canal)));

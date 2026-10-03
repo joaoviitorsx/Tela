@@ -56,6 +56,8 @@ export class AvisoAoVivo {
   private readonly emitter = new Emitter<{ estado: EstadoDoAviso }>();
   private noAr: NoAr | null = null;
   private estado: EstadoDoAviso;
+  /** Pedidos ao Discord em voo — quem vai fechar o app espera por eles (`aguardar`). */
+  private readonly emVoo = new Set<Promise<unknown>>();
 
   constructor(private readonly deps: DepsDoAviso) {
     this.estado = this.estadoEmRepouso();
@@ -92,6 +94,13 @@ export class AvisoAoVivo {
   }
 
   remover(): void {
+    // Mensagem no ar: vira "encerrada" ANTES de o webhook sumir — depois não há como editá-la.
+    const c = this.config();
+    const noAr = this.noAr;
+    if (c !== null && noAr?.mensagemId != null) {
+      this.encerrarMensagem(c, noAr, noAr.mensagemId, { aoSair: false });
+      noAr.mensagemId = null;
+    }
     this.deps.storage.remove(CONFIG_KEY);
     this.deps.storage.remove(ULTIMO_KEY);
     this.mudar(this.estadoEmRepouso());
@@ -130,16 +139,40 @@ export class AvisoAoVivo {
       this.mudar(this.estadoEmRepouso());
       return;
     }
-    const agora = this.deps.agora();
-    const ultimo: Ultimo = { canal: noAr.canal, webhookId: c.webhook.id, mensagemId: noAr.mensagemId, encerradoEm: agora };
-    this.deps.storage.set(ULTIMO_KEY, JSON.stringify(ultimo));
     this.mudar(this.estadoEmRepouso());
-    await this.deps.porta.editar(
-      c.webhook,
-      noAr.mensagemId,
-      mensagemEncerrada(noAr.canal, noAr.link, agora - noAr.inicio),
-      { aoSair: true },
+    await this.encerrarMensagem(c, noAr, noAr.mensagemId, { aoSair: true });
+  }
+
+  /**
+   * Espera os pedidos ao Discord em voo, no máximo `ms`. Quem fecha o app
+   * chama antes de sair: sem isso a edição "encerrada" morria com o processo.
+   */
+  async aguardar(ms: number): Promise<void> {
+    if (this.emVoo.size === 0) return;
+    let relogio: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.allSettled([...this.emVoo]),
+      new Promise<void>((r) => {
+        relogio = setTimeout(r, ms);
+      }),
+    ]);
+    if (relogio !== undefined) clearTimeout(relogio);
+  }
+
+  /** "Encerrada": edita a mensagem e a guarda para reaproveitar se voltar logo. */
+  private encerrarMensagem(c: ConfigDoAviso, noAr: NoAr, mensagemId: string, o: { readonly aoSair: boolean }): Promise<unknown> {
+    const agora = this.deps.agora();
+    const ultimo: Ultimo = { canal: noAr.canal, webhookId: c.webhook.id, mensagemId, encerradoEm: agora };
+    this.deps.storage.set(ULTIMO_KEY, JSON.stringify(ultimo));
+    return this.rastrear(
+      this.deps.porta.editar(c.webhook, mensagemId, mensagemEncerrada(noAr.canal, noAr.link, agora - noAr.inicio), o),
     );
+  }
+
+  private rastrear<T>(p: Promise<T>): Promise<T> {
+    this.emVoo.add(p);
+    void p.finally(() => this.emVoo.delete(p));
+    return p;
   }
 
   private async avisar(c: ConfigDoAviso): Promise<void> {
@@ -155,21 +188,28 @@ export class AvisoAoVivo {
       ultimo.webhookId === c.webhook.id &&
       this.deps.agora() - ultimo.encerradoEm < REAPROVEITAR_MS
     ) {
-      const editado = await this.deps.porta.editar(c.webhook, ultimo.mensagemId, corpo);
+      const editado = await this.rastrear(this.deps.porta.editar(c.webhook, ultimo.mensagemId, corpo));
       if (editado.ok) {
-        this.confirmar(noAr, ultimo.mensagemId);
+        this.confirmar(c, noAr, ultimo.mensagemId);
         return;
       }
     }
 
-    const r = await this.deps.porta.publicar(c.webhook, corpo);
-    if (r.ok) this.confirmar(noAr, r.value.mensagemId);
-    else this.mudar({ fase: 'falhou', erro: r.error });
+    const r = await this.rastrear(this.deps.porta.publicar(c.webhook, corpo));
+    if (r.ok) this.confirmar(c, noAr, r.value.mensagemId);
+    // Acabou enquanto o Discord respondia: a falha não é mais notícia.
+    else if (this.noAr === noAr) this.mudar({ fase: 'falhou', erro: r.error });
   }
 
-  private confirmar(noAr: NoAr, mensagemId: string): void {
-    // A transmissão pode ter acabado enquanto o Discord respondia.
-    if (this.noAr !== noAr) return;
+  private confirmar(c: ConfigDoAviso, noAr: NoAr, mensagemId: string): void {
+    /*
+      A transmissão acabou enquanto o Discord respondia: a mensagem acabou de
+      nascer dizendo AO VIVO e ninguém mais vai editá-la. Encerra já.
+    */
+    if (this.noAr !== noAr) {
+      void this.encerrarMensagem(c, noAr, mensagemId, { aoSair: true });
+      return;
+    }
     noAr.mensagemId = mensagemId;
     this.deps.storage.remove(ULTIMO_KEY);
     this.mudar({ fase: 'avisado', canal: noAr.canal });

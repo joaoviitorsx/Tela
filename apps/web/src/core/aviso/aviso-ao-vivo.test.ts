@@ -121,4 +121,51 @@ describe('AvisoAoVivo', () => {
     expect(t.aviso.config()).toBeNull();
     expect(t.storage.rows.size).toBe(0);
   });
+
+  it('acabou com a publicação em voo: a mensagem nasce e é encerrada na hora (sem AO VIVO órfão)', async () => {
+    const chamadas: string[] = [];
+    let soltar!: () => void;
+    const porta: PortaDoAvisoDiscord = {
+      publicar: () =>
+        new Promise((r) => {
+          soltar = () => r(ok({ mensagemId: 'm1' }));
+        }),
+      async editar(_w, id, corpo) {
+        chamadas.push(`${id}:${corpo.embeds[0]?.title}`);
+        return ok(undefined);
+      },
+    };
+    const aviso = new AvisoAoVivo({ porta, storage: new FakeStorage(), agora: () => 0 });
+    aviso.salvar(URL_OK);
+    const publicando = aviso.aoEntrarNoAr('soumbra', LINK);
+    await aviso.aoSair();
+    soltar();
+    await publicando;
+    await aviso.aguardar(100);
+    expect(chamadas).toEqual(['m1:soumbra · transmissão encerrada']);
+    expect(aviso.getEstado().fase).not.toBe('falhou');
+  });
+
+  it('REMOVER com a mensagem no ar: encerra antes de apagar o webhook', async () => {
+    const t = montar();
+    t.aviso.salvar(URL_OK);
+    await t.aviso.aoEntrarNoAr('soumbra', LINK);
+    t.aviso.remover();
+    await t.aviso.aguardar(100);
+    expect(t.chamadas.at(-1)).toEqual({ tipo: 'editar', id: 'm1', titulo: 'soumbra · transmissão encerrada', aoSair: false });
+    expect(t.aviso.config()).toBeNull();
+  });
+
+  it('aguardar não passa do teto', async () => {
+    const porta: PortaDoAvisoDiscord = {
+      publicar: () => new Promise(() => undefined),
+      editar: async () => ok(undefined),
+    };
+    const aviso = new AvisoAoVivo({ porta, storage: new FakeStorage(), agora: () => 0 });
+    aviso.salvar(URL_OK);
+    void aviso.aoEntrarNoAr('soumbra', LINK);
+    const inicio = Date.now();
+    await aviso.aguardar(50);
+    expect(Date.now() - inicio).toBeLessThan(1_000);
+  });
 });

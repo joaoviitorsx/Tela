@@ -104,7 +104,10 @@ export function App({ visibilidade }: Props = {}) {
         );
 
       case 'viewer':
-        return <Viewer canais={route.canais} />;
+        // `key`: outro canal (link do app, ASSISTIR, voltar) é outra tela — o
+        // estado da multivisão nasce da rota. A troca interna usa
+        // `replaceState`, que não muda a rota, então não remonta nada.
+        return <Viewer key={route.canais.join('+')} canais={route.canais} />;
 
       case 'recover':
         return <Recover onBack={() => navigate('/')} />;

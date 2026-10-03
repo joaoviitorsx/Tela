@@ -403,6 +403,7 @@ export function Viewer({ canais: canaisDaRota }: Props) {
 
   /** O último quadro da secundária pausada, para o quadro não ficar preto. */
   const [congelado, setCongelado] = useState<string | null>(null);
+  const guarda = useRef(new GuardaDeBanda());
 
   /**
    * Troca a principal. O som muda de dono DENTRO do gesto — direto nos
@@ -421,12 +422,15 @@ export function Viewer({ canais: canaisDaRota }: Props) {
       }
       zoom.resetar();
       if (mv.pausada?.canal === canal) setCongelado(null);
+      // Troca é recomeço para a guarda: carência, e nada de um "desde" velho.
+      guarda.current.retomou(performance.now());
       setMv((e) => focar(e, canal));
     },
     [videos, mv.principal, mv.pausada, som.mudo, som.volume, zoom],
   );
 
   const fechar = useCallback((canal: string) => {
+    guarda.current.retomou(performance.now());
     setMv((e) => remover(e, canal));
     setCongelado(null);
   }, []);
@@ -436,7 +440,6 @@ export function Viewer({ canais: canaisDaRota }: Props) {
     as estatísticas —, nunca por quadro. Pausar fecha a sessão da secundária:
     sem download, sem decodificação.
   */
-  const guarda = useRef(new GuardaDeBanda());
   const lentidaoPrincipal = state.status === 'watching' ? (state.lentidao ?? null) : null;
   const lentidaoDaOutra = estadoDaOutra?.status === 'watching' ? (estadoDaOutra.lentidao ?? null) : null;
   useEffect(() => {
@@ -464,8 +467,10 @@ export function Viewer({ canais: canaisDaRota }: Props) {
       const l = s.latenciaAtual;
       return l.janela?.mediana ?? l.ms;
     };
-    const mesmaOrigem = session.latenciaAtual.janela?.origem === sessaoDaOutra.latenciaAtual.janela?.origem;
-    if (!mesmaOrigem) return;
+    // Só compara medidas da mesma natureza (captura com captura); sem medida ainda, espera.
+    const origemP = session.latenciaAtual.janela?.origem;
+    const origemO = sessaoDaOutra.latenciaAtual.janela?.origem;
+    if (origemP === undefined || origemO === undefined || origemP !== origemO) return;
     const [p, o] = proximosAtrasos(
       [natural(session), natural(sessaoDaOutra)],
       [session.atrasoDeSincronia, sessaoDaOutra.atrasoDeSincronia],
@@ -786,6 +791,7 @@ export function Viewer({ canais: canaisDaRota }: Props) {
             session={sessao}
             canal={c}
             principal={ehPrincipal}
+            medirLatencia={ehPrincipal || sincronizar}
             abrir={!precisaNome && app.fase === 'navegador' && mv.pausada?.canal !== c}
             quem={quem}
             som={ehPrincipal ? somDaPrincipal : SOM_DA_SECUNDARIA}

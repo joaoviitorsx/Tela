@@ -4,7 +4,7 @@ import { App } from '../App.js';
 import { DiagnosticoDoApp } from './DiagnosticoDoApp.js';
 import { parseRoute } from '../router.js';
 import '../styles/globals.css';
-import { audioCue, seletorDeFontes } from './container.desktop.js';
+import { audioCue, avisoNoDiscord, seletorDeFontes } from './container.desktop.js';
 import { MolduraDesktop } from './MolduraDesktop.js';
 import { criarModoDaJanela } from './modo-da-janela.js';
 import { motivoDaQueda } from './queda.js';
@@ -55,6 +55,8 @@ function Raiz() {
   if (queda !== null) return <TelaDeQueda motivo={queda} aoVoltar={() => setQueda(null)} />;
   return (
     <MolduraDesktop
+      // A edição "encerrada" do aviso no Discord não morre com o processo (até 1,5 s).
+      antesDeSair={() => avisoNoDiscord.aguardar(1_500)}
       sobreposicao={sobreposicao}
       somDeOculto={audioCue.privacidade}
       {...(ponte === undefined ? {} : { ponte })}

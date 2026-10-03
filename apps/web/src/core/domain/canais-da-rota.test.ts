@@ -23,6 +23,7 @@ describe('canais da rota', () => {
     expect(canaisDoSegmento('+ana')).toBeNull();
     expect(canaisDoSegmento('ana+B')).toBeNull();
     expect(canaisDoSegmento('ana+jv')).toBeNull();
+    expect(canaisDoSegmento('ana+transmitir')).toBeNull();
   });
 
   it('o caminho volta na mesma ordem', () => {

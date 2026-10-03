@@ -112,8 +112,13 @@ function AvisoAutomatico(p: PropsDoAvisoAutomatico) {
             p.aoSalvar();
           }}
         >
+          {/*
+            Texto mascarado, e não `password`: quem cola isto está AO VIVO (a
+            captura da tela inteira mostraria o token), e um campo de senha
+            faria o Chrome oferecer guardar o token no gerenciador de senhas.
+          */}
           <input
-            type="password"
+            type="text"
             value={p.entrada}
             onChange={(e) => p.aoMudar(e.target.value)}
             placeholder="https://discord.com/api/webhooks/…"
@@ -122,7 +127,7 @@ function AvisoAutomatico(p: PropsDoAvisoAutomatico) {
             aria-label="URL do webhook do canal"
             aria-invalid={p.erroEntrada}
             className={[
-              'min-h-11 min-w-0 flex-1 border-2 bg-deep px-3 font-[family-name:var(--font-mono)] text-[12px] text-accent-hi outline-none placeholder:text-faint focus:border-accent',
+              'min-h-11 min-w-0 flex-1 border-2 bg-deep px-3 font-[family-name:var(--font-mono)] text-[12px] text-accent-hi outline-none [-webkit-text-security:disc] placeholder:text-faint focus:border-accent',
               p.erroEntrada ? 'border-danger-edge' : 'border-edge',
             ].join(' ')}
           />

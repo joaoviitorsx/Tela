@@ -390,6 +390,8 @@ function criarJanela(): BrowserWindow {
     if (estado.noAr) {
       estado = FORA_DO_AR;
       atualizarBandeja();
+      // O painel sobre o jogo também: senão fica um "AO VIVO" congelado por cima de tudo.
+      sincronizarPainel();
       if (modo === 'compacto') definirModo('normal');
     }
     paginaPronta = true;
@@ -405,6 +407,9 @@ function criarJanela(): BrowserWindow {
 
   j.on('closed', () => {
     janela = null;
+    // Sem a janela principal não há transmissão a descrever — e uma janela
+    // de painel viva seguraria o `window-all-closed`, deixando o app aberto.
+    fecharPainel();
   });
 
   void j.loadURL(URL_INICIAL);
@@ -564,7 +569,9 @@ function abrirPainel(): void {
   // Atravessável: o clique passa direto para o jogo.
   p.setIgnoreMouseEvents(true);
   p.setAlwaysOnTop(true, 'screen-saver');
-  p.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // `skipTransformProcessType`: no macOS, sem ele o processo troca de tipo e
+  // o dock e a janela piscam a cada abertura do painel.
+  p.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
   // Fora da própria transmissão quando a captura é da tela inteira (Windows 10
   // 2004+ e macOS; no Linux o sistema não oferece isso).
   p.setContentProtection(true);
@@ -835,6 +842,7 @@ function aoCairORenderer(j: BrowserWindow, razao: string, codigo: number): void 
   void somDoApp.parar();
   const estavaNoAr = estado.noAr;
   estado = FORA_DO_AR;
+  sincronizarPainel();
   atualizador?.aoVivo(false);
   perguntando = false;
   portaoDeParada?.confirmar();
@@ -1226,7 +1234,12 @@ function registrarIpc(): void {
     // A política de atualização para (ou retoma) o que fazia conforme o ar.
     atualizador?.aoVivo(novo.noAr);
     if (eraNoAr && !novo.noAr) {
-      portaoDeParada?.confirmar();
+      /*
+        Saindo do app, o "fora do ar" NÃO libera a saída: quem libera é o
+        `paradaConcluida`, que a página manda depois de terminar o que ainda
+        tinha de sair (a edição "encerrada" do aviso no Discord). O prazo do
+        portão (4 s) continua cobrindo um renderer travado.
+      */
       // Acabou a transmissão: o compacto não tem mais o que mostrar.
       if (modo === 'compacto') definirModo('normal');
     }

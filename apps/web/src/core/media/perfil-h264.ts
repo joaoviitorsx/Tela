@@ -32,8 +32,9 @@ export function perfilDoFmtp(fmtp: string | null | undefined): 'baseline' | 'mai
  * chama mantém o que tinha (sem trocar de perfil — e soltar IDR — à toa).
  */
 export function perfilDaSala(fmtps: readonly (string | null | undefined)[], cascataAtiva: boolean): PerfilH264 | null {
-  if (fmtps.length === 0) return null;
+  // A cascata vem primeiro: ligada, é Baseline mesmo sem ninguém negociado ainda.
   if (cascataAtiva) return 'baseline';
+  if (fmtps.length === 0) return null;
   return fmtps.every((f) => {
     const p = perfilDoFmtp(f);
     return p === 'main' || p === 'high';

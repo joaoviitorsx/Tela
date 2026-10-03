@@ -252,6 +252,11 @@ export class CapturaNativa {
         if (sessao.estado === 'capturando') saidas.captura();
       },
       evento: (e) => this.aoEvento(sessao, e),
+      corrompido: () => {
+        // Sem como confiar no que vem depois: encerra, e a política de queda segue.
+        sessao.ultimoErro = 'PIPELINE';
+        processo.kill('SIGKILL');
+      },
     });
     processo.stdout.on('data', (pedaco) => leitor.receber(pedaco));
     processo.on('exit', (codigo) => this.aoSair(sessao, codigo));
@@ -404,6 +409,10 @@ export function sondarNvenc(deps: DepsDaCapturaNativa, prazoMs = PRAZO_DA_SONDA_
         } else if (e['evento'] === 'erro' && typeof e['codigo'] === 'string') {
           detalhe = e['codigo'];
         }
+      },
+      corrompido: () => {
+        detalhe = 'PROTOCOLO';
+        processo.kill('SIGKILL');
       },
     });
     processo.stdout.on('data', (pedaco) => leitor.receber(pedaco));

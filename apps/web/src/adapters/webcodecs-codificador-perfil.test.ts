@@ -12,6 +12,8 @@ const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 1
 const MAIN: AlvoDoCodificador = { ...BASE, perfil: 'main' };
 
 let suportaMain = true;
+/** O `configure` em Main estoura (driver que mente no `isConfigSupported`). */
+let mainQuebraNoConfigure = false;
 
 class EncoderFalso {
   static ultimo: EncoderFalso | null = null;
@@ -25,16 +27,47 @@ class EncoderFalso {
   static isConfigSupported(c: VideoEncoderConfig): Promise<{ supported: boolean }> {
     return Promise.resolve({ supported: c.codec.startsWith('avc1.4d') ? suportaMain : true });
   }
+  static carimbos: number[] = [];
   configure(c: VideoEncoderConfig): void {
     EncoderFalso.configs.push(c);
+    if (mainQuebraNoConfigure && c.codec.startsWith('avc1.4d')) {
+      this.init.error(new Error('Encoder creation error.'));
+      return;
+    }
     this.state = 'configured';
   }
-  encode(_q: unknown, o?: { keyFrame?: boolean }): void {
+  encode(q: { timestamp: number }, o?: { keyFrame?: boolean }): void {
+    EncoderFalso.carimbos.push(q.timestamp);
     if (o?.keyFrame === true) EncoderFalso.keyFrames += 1;
   }
   close(): void {
     this.state = 'closed';
   }
+}
+
+/** `VideoFrame` mínimo: recarimbar (`new VideoFrame(q, {timestamp})`) e fechar. */
+class QuadroFalso {
+  readonly timestamp: number;
+  constructor(base: { timestamp: number }, init?: { timestamp?: number }) {
+    this.timestamp = init?.timestamp ?? base.timestamp;
+  }
+  clone(): QuadroFalso {
+    return new QuadroFalso(this);
+  }
+  close(): void {}
+}
+
+/** Uma trilha que solta quadros com os carimbos dados. */
+function trilhaCom(): { trilha: MediaStreamTrack; soltar: (ts: number) => Promise<void> } {
+  let c!: ReadableStreamDefaultController<QuadroFalso>;
+  const readable = new ReadableStream<QuadroFalso>({ start: (x) => { c = x; } });
+  return {
+    trilha: { readable } as unknown as MediaStreamTrack,
+    soltar: async (ts) => {
+      c.enqueue(new QuadroFalso({ timestamp: ts }));
+      for (let i = 0; i < 4; i += 1) await Promise.resolve();
+    },
+  };
 }
 
 /** Um chunk Annex B: SPS com o `profile_idc` dado, ou um P sem SPS. */
@@ -55,13 +88,20 @@ const assentar = async () => {
 
 describe('CodificadorWebCodecs — perfil H.264 da sala', () => {
   const g = globalThis as unknown as Record<string, unknown>;
-  const originais = { VideoEncoder: g['VideoEncoder'], MediaStreamTrackProcessor: g['MediaStreamTrackProcessor'] };
+  const originais = {
+    VideoEncoder: g['VideoEncoder'],
+    MediaStreamTrackProcessor: g['MediaStreamTrackProcessor'],
+    VideoFrame: g['VideoFrame'],
+  };
   /** Uma trilha por caso: o leitor do codificador trava o stream. */
   const novaTrilha = () => ({ readable: new ReadableStream() }) as unknown as MediaStreamTrack;
 
   beforeEach(() => {
     suportaMain = true;
+    mainQuebraNoConfigure = false;
     EncoderFalso.configs = [];
+    EncoderFalso.carimbos = [];
+    g['VideoFrame'] = QuadroFalso;
     EncoderFalso.keyFrames = 0;
     g['VideoEncoder'] = EncoderFalso;
     g['MediaStreamTrackProcessor'] = class {
@@ -74,6 +114,7 @@ describe('CodificadorWebCodecs — perfil H.264 da sala', () => {
   afterEach(() => {
     g['VideoEncoder'] = originais.VideoEncoder;
     g['MediaStreamTrackProcessor'] = originais.MediaStreamTrackProcessor;
+    g['VideoFrame'] = originais.VideoFrame;
   });
 
   const codecs = () => EncoderFalso.configs.map((c) => c.codec);
@@ -127,6 +168,39 @@ describe('CodificadorWebCodecs — perfil H.264 da sala', () => {
     expect(cod.estatisticas().implementacao).toContain('H.264 Baseline');
     EncoderFalso.ultimo!.init.output(chunk(2, 77));
     expect(cod.estatisticas().implementacao).toContain('H.264 Main');
+    cod.parar();
+  });
+
+  it('trilha nova recomeça o carimbo em 0: a entrada segue monotônica e Main NÃO é proibido', async () => {
+    const cod = new CodificadorWebCodecs(() => undefined, () => 0);
+    const a = trilhaCom();
+    await cod.iniciar(a.trilha, MAIN);
+    await assentar();
+    await a.soltar(1_000_000);
+    await a.soltar(1_016_667);
+    const b = trilhaCom();
+    cod.trocarFonte(b.trilha);
+    await b.soltar(0);
+    await b.soltar(16_667);
+    const c = EncoderFalso.carimbos;
+    for (let i = 1; i < c.length; i += 1) expect(c[i]).toBeGreaterThan(c[i - 1]!);
+    // O espaçamento da trilha nova se preserva (é o que o controle de taxa lê).
+    expect(c.at(-1)! - c.at(-2)!).toBe(16_667);
+    // Saídas na ordem da entrada: nenhum B-frame visto, Main continua.
+    for (const [i, ts] of c.entries()) EncoderFalso.ultimo!.init.output(chunk(ts, i === 0 ? 77 : null));
+    await assentar();
+    expect(codecs().at(-1)).toBe('avc1.4d002a');
+    cod.parar();
+  });
+
+  it('Main estoura no configure: volta a Baseline no MESMO modo, sem acusar a GPU', async () => {
+    mainQuebraNoConfigure = true;
+    const cod = new CodificadorWebCodecs(() => undefined, () => 0, () => undefined, { preferirHardware: true });
+    await cod.iniciar(trilhaCom().trilha, MAIN);
+    await assentar();
+    const modos = EncoderFalso.configs.map((c) => c.hardwareAcceleration);
+    expect(codecs().at(-1)).toBe('avc1.42e02a');
+    expect(new Set(modos)).toEqual(new Set(['prefer-hardware']));
     cod.parar();
   });
 });

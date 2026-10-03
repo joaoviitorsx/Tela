@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LeitorDoProtocolo, type EventoDoNativo, type QuadroDoNativo } from './protocolo-captura.js';
+import { LeitorDoProtocolo, TAMANHO_MAXIMO_DA_MENSAGEM, type EventoDoNativo, type QuadroDoNativo } from './protocolo-captura.js';
 
 /**
  * `LeitorDoProtocolo` contra uma decodificação de referência, com o mesmo
@@ -200,5 +200,18 @@ describe('LeitorDoProtocolo', () => {
     leitor.receber(bytes);
     expect(saida).toHaveLength(1);
     expect(saida[0]).toMatchObject({ tipo: 'quadro', seq: 1 });
+  });
+
+  it('comprimento acima do teto: avisa corrompido e para de ler (sem acumular memória)', () => {
+    let corrompido = 0;
+    const quadros: unknown[] = [];
+    const leitor = new LeitorDoProtocolo({ quadro: (q) => quadros.push(q), evento: () => undefined, corrompido: () => (corrompido += 1) });
+    const cabecalho = Buffer.alloc(4);
+    cabecalho.writeUInt32LE(TAMANHO_MAXIMO_DA_MENSAGEM + 1, 0);
+    leitor.receber(cabecalho);
+    leitor.receber(Buffer.alloc(1024));
+    expect(corrompido).toBe(1);
+    expect(leitor.pendente).toBe(0);
+    expect(quadros).toEqual([]);
   });
 });

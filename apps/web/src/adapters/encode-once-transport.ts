@@ -76,7 +76,12 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       aoMudarFonte: () => recalcular(),
     });
     canal.port1.onmessage = (m: MessageEvent<AvisoDoWorker>) => {
-      if (m.data.tipo === 'chave') codificador.pedirChave(m.data.motivo, m.data.senders);
+      if (m.data.tipo === 'chave') {
+        // Alguém entrou: o piso da sala é relido ANTES do IDR de entrada, que
+        // já sai no perfil que o recém-chegado decodifica.
+        if (m.data.motivo === 'entrada' && atualizarPerfil()) recalcular();
+        codificador.pedirChave(m.data.motivo, m.data.senders);
+      }
       else if (m.data.tipo === 'atraso') {
         codificador.definirAtraso(m.data.quadros);
         // O relógio do worker (~10 Hz) não para com a aba escondida.
@@ -106,8 +111,10 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         sendersDeVideo.delete(sender);
         continue;
       }
-      if (estado !== 'connected') continue;
-      fmtps.push(sender.getParameters().codecs?.[0]?.sdpFmtpLine);
+      // Todo sender JÁ NEGOCIADO conta, conectado ou não: quem acabou de
+      // entrar tem de puxar o piso antes do primeiro quadro, não depois.
+      const negociado = sender.getParameters().codecs?.[0];
+      if (negociado !== undefined) fmtps.push(negociado.sdpFmtpLine);
     }
     const daSala = perfilDaSala(fmtps, cascataAtiva);
     if (daSala === null || daSala === perfil) return false;

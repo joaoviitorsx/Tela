@@ -59,6 +59,7 @@ const ATRASO_TOLERADO = 2;
  * viva). Reenviar o último quadro custa um P quase vazio a 2 fps.
  */
 export const SEM_CAPTURA_MS = 500;
+const MODOS: readonly Aceleracao[] = ['prefer-hardware', 'no-preference', 'prefer-software'];
 export const REENVIO_MS = 500;
 
 export class CodificadorWebCodecs implements CodificadorUnico {
@@ -78,6 +79,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   /** Saiu quadro fora de ordem (B-frames): Main fica proibido nesta sessão. */
   private mainProibido = false;
   private ultimoTimestamp = -Infinity;
+  /** O perfil do ÚLTIMO `configure` — gravado antes dele, porque o erro pode vir de dentro. */
+  private perfilPedido: PerfilH264 | null = null;
+  /** Quadros que saíram desde aquele `configure`: zero = o perfil nunca funcionou. */
+  private saidasDoPerfil = 0;
+  /**
+   * Carimbos de ENTRADA monotônicos. Cada trilha nova (pausa, retomada, troca
+   * de tela) recomeça o `timestamp` do `VideoFrame` em ~0, e o reenvio do
+   * último quadro carimba à frente do que ainda está na fila. `desvio`
+   * desloca a entrada para nunca voltar — mantendo o espaçamento real, que é
+   * o que o controle de taxa do encoder lê. Assim, timestamp voltando na
+   * SAÍDA só pode ser reordenação de verdade (B-frames).
+   */
+  private ultimaEntrada = -Infinity;
+  private desvio = 0;
   /** `profile_idc` do último SPS emitido: o perfil de FATO, não o pedido. */
   private perfilEmitido: number | null = null;
   private seq = 0;
@@ -121,6 +136,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       suportaHardware = null;
     }
     this.aceleracao.comecar(suportaHardware);
+    // Main perguntado para os três modos já: uma queda de GPU não vira IDR duplo (Baseline, depois Main).
+    for (const modo of MODOS) this.perguntarMain(alvo, modo);
     // `iniciar` de novo (o comutável voltou a este caminho): nada do anterior fica aberto.
     void this.leitor?.cancel();
     this.descartar();
@@ -244,8 +261,9 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       .then((sim) => {
         this.suportaMain.set(modo, sim);
         this.perguntandoMain.delete(modo);
-        // Sim: reconfigura já (com IDR); não: fica em Baseline, nada muda.
-        if (sim) this.aplicar();
+        // Sim: reconfigura já (com IDR); não: fica em Baseline, nada muda. Sem
+        // encoder vivo (caiu e a política mandou esperar) quem recria é ela.
+        if (sim && this.encoder !== null) this.aplicar();
       });
   }
 
@@ -303,6 +321,20 @@ export class CodificadorWebCodecs implements CodificadorUnico {
    */
   private morreu(enc: VideoEncoder, motivo: MotivoDaQueda): void {
     if (enc !== this.encoder) return; // um antigo, já substituído
+    /*
+      Main recusado (o `isConfigSupported` disse sim e o `configure` ou o
+      primeiro `encode` falhou): é o PERFIL, não a GPU. Marca o modo como sem
+      Main e recria no mesmo modo — contar como queda de GPU levaria a sessão
+      para software depois de três tentativas.
+    */
+    if (motivo === 'erro' && this.perfilPedido === 'main' && this.saidasDoPerfil === 0) {
+      this.suportaMain.set(this.aceleracao.modo, false);
+      this.descartar();
+      queueMicrotask(() => {
+        if (!this.parado && this.encoder === null) this.aplicar();
+      });
+      return;
+    }
     this.descartar();
     const { recriarJa } = this.aceleracao.falhou(motivo, this.agora());
     if (!recriarJa) return;
@@ -331,6 +363,10 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     // Trocar de perfil é como trocar de tamanho: SPS novo, e o próximo quadro tem de ser IDR.
     const mudouPerfil = perfil !== this.perfilConfigurado;
     if (!mudouTamanho && !mudouBitrate && !mudouPerfil) return;
+    if (mudouPerfil || c === null) {
+      this.perfilPedido = perfil;
+      this.saidasDoPerfil = 0;
+    }
     enc.configure(this.config(alvo, this.aceleracao.modo, perfil));
     // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
     if (this.encoder !== enc) return;
@@ -363,6 +399,12 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       for (;;) {
         const { value: quadro, done } = await leitor.read();
         if (done || quadro === undefined) return;
+        // Um `read` já resolvido quando a fonte trocou: o quadro é da captura
+        // ANTIGA (na pausa de privacidade, a tela real). Não sai.
+        if (this.leitor !== leitor) {
+          quadro.close();
+          return;
+        }
         this.capturados += 1;
         this.ultimaCaptura = this.agora();
         this.guardarUltimo(quadro);
@@ -402,12 +444,40 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       this.pedirChaveAgora = false;
       this.ultimaChave = this.agora();
     }
-    this.vigia.entrou(quadro.timestamp, this.agora());
-    enc.encode(quadro, { keyFrame: chave });
-    quadro.close();
+    const entrada = this.monotonico(quadro);
+    this.vigia.entrou(entrada.timestamp, this.agora());
+    enc.encode(entrada, { keyFrame: chave });
+    entrada.close();
+    if (entrada !== quadro) quadro.close();
+  }
+
+  /**
+   * O quadro com carimbo que nunca volta (ver `desvio`). Só embrulha quando
+   * houve descontinuidade — o embrulho não copia pixel (mesmo recurso).
+   */
+  private monotonico(quadro: VideoFrame): VideoFrame {
+    let ts = quadro.timestamp + this.desvio;
+    if (ts > this.ultimaEntrada) {
+      this.ultimaEntrada = ts;
+      return ts === quadro.timestamp || typeof VideoFrame !== 'function' ? quadro : this.recarimbar(quadro, ts);
+    }
+    const passo = Math.round(1_000_000 / Math.max(1, this.configurado?.fps ?? 60));
+    this.desvio += this.ultimaEntrada + passo - ts;
+    ts = this.ultimaEntrada + passo;
+    this.ultimaEntrada = ts;
+    return typeof VideoFrame === 'function' ? this.recarimbar(quadro, ts) : quadro;
+  }
+
+  private recarimbar(quadro: VideoFrame, timestamp: number): VideoFrame {
+    try {
+      return new VideoFrame(quadro, { timestamp });
+    } catch {
+      return quadro;
+    }
   }
 
   private saiu(chunk: EncodedVideoChunk): void {
+    this.saidasDoPerfil += 1;
     this.vigia.saiu(chunk.timestamp, this.agora());
     this.quadros += 1;
     const chave = chunk.type === 'key';

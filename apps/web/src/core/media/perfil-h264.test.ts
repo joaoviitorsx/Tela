@@ -23,6 +23,7 @@ describe('perfil H.264 da sala', () => {
   it('ninguém assistindo: sem decisão; cascata: Baseline', () => {
     expect(perfilDaSala([], false)).toBeNull();
     expect(perfilDaSala([MAIN, MAIN], true)).toBe('baseline');
+    expect(perfilDaSala([], true)).toBe('baseline');
   });
 
   it('a string do WebCodecs', () => {

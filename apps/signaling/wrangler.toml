@@ -98,6 +98,12 @@ ALLOWED_ORIGINS = "app://tela"
 # espectador em relay cairia a cada 10 min. A Cloudflare manda dimensionar
 # pela sessão mais longa (máximo 48 h).
 TURN_TTL_SECONDS = "43200"
+# Relay em uso: ExpressTURN grátis (ADR 0036, aceita pelo dono). Usuário e
+# senha FIXOS em secrets (`TURN_USERNAME`, `TURN_PASSWORD`); o plano grátis só
+# tem a 3478. Quando houver Cloudflare ou coturn com segredo, eles vencem
+# sozinhos — aí apague estas duas linhas e os dois secrets.
+TURN_URLS = "turn:free.expressturn.com:3478?transport=udp,turn:free.expressturn.com:3478?transport=tcp"
+TURN_ESTATICO = "aceito"
 
 # TURN — necessário para a cauda de conexões que não fecham direto.
 #

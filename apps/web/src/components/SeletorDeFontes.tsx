@@ -19,10 +19,8 @@ type Props = {
   readonly carregando: boolean;
   /** Windows: janela não leva o som do sistema. A interface avisa antes, não depois. */
   readonly avisoDeJanela: string | null;
-  /** Fonte escolhida que pede confirmação (o cursor do LoL): a grade dá lugar à pergunta. */
-  readonly confirmacao?: { readonly nome: string; readonly aviso: string } | null;
-  readonly aoConfirmar?: () => void;
-  readonly aoTrocarPorTela?: () => void;
+  /** Um jogo aberto que esconde o cursor em tela cheia (o LoL): vale para as duas abas. */
+  readonly avisoDoJogo?: string | null;
   readonly aoMudarAba: (aba: AbaDoSeletorDeFontes) => void;
   readonly aoEscolher: (id: string) => void;
   readonly aoCancelar: () => void;
@@ -51,9 +49,7 @@ export function SeletorDeFontes({
   fontes,
   carregando,
   avisoDeJanela,
-  confirmacao = null,
-  aoConfirmar,
-  aoTrocarPorTela,
+  avisoDoJogo = null,
   aoMudarAba,
   aoEscolher,
   aoCancelar,
@@ -124,30 +120,19 @@ export function SeletorDeFontes({
           })}
         </div>
 
+        {avisoDoJogo !== null && (
+          <p role="note" className="m-0 border-b-2 border-warn-edge bg-warn-bg px-3.5 py-2 text-[11.5px] leading-relaxed text-warn">
+            ! {avisoDoJogo}
+          </p>
+        )}
+
         {aba === 'janelas' && avisoDeJanela !== null && (
           <p className="m-0 border-b-2 border-warn-edge bg-warn-bg px-3.5 py-2 text-[11.5px] leading-relaxed text-warn">
             ! {avisoDeJanela}
           </p>
         )}
 
-        {confirmacao !== null && (
-          <div role="alertdialog" aria-labelledby={`${idTitulo}-aviso`} className="flex flex-col gap-3 p-4">
-            <p id={`${idTitulo}-aviso`} className="m-0 border-2 border-warn-edge bg-warn-bg px-3.5 py-2.5 text-[12.5px] leading-relaxed text-warn">
-              ! <span className="font-bold">{confirmacao.nome}</span> — {confirmacao.aviso}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <button type="button" className="tecla tecla-primaria" onClick={aoTrocarPorTela} autoFocus>
-                TRANSMITIR A TELA
-              </button>
-              <button type="button" className="tecla" onClick={aoConfirmar}>
-                USAR A JANELA MESMO ASSIM
-              </button>
-            </div>
-          </div>
-        )}
-
         <div
-          hidden={confirmacao !== null}
           id={`${idTitulo}-grade`}
           role="tabpanel"
           aria-busy={carregando}

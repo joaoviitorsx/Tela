@@ -1,5 +1,6 @@
-import { useSyncExternalStore } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { type Dialogo, useDialogo } from '../react/use-dialogo.js';
+import { avisoDeCursor } from './aviso-de-cursor.js';
 import type { PlataformaDesktop } from './ponte.js';
 import type { EstadoDoSeletor, SeletorDeFontes } from './seletor-de-fontes.js';
 
@@ -11,10 +12,17 @@ import type { EstadoDoSeletor, SeletorDeFontes } from './seletor-de-fontes.js';
 export function useSeletorDeFontes(
   seletor: SeletorDeFontes,
   plataforma: PlataformaDesktop,
-): { readonly estado: EstadoDoSeletor; readonly dialogo: Dialogo; readonly avisoDeJanela: string | null } {
+): {
+  readonly estado: EstadoDoSeletor;
+  readonly dialogo: Dialogo;
+  readonly avisoDeJanela: string | null;
+  readonly avisoDoJogo: string | null;
+} {
   const estado = useSyncExternalStore(seletor.assinar, seletor.snapshot, seletor.snapshot);
   const dialogo = useDialogo(estado.aberto, seletor.cancelar);
-  return { estado, dialogo, avisoDeJanela: avisoDeJanela(plataforma) };
+  // Só quando a listagem muda (a cada 2 s, com o seletor aberto).
+  const avisoDoJogo = useMemo(() => avisoDeCursor(estado.fontes, plataforma), [estado.fontes, plataforma]);
+  return { estado, dialogo, avisoDeJanela: avisoDeJanela(plataforma), avisoDoJogo };
 }
 
 /**

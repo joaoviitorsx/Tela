@@ -24,7 +24,6 @@ import { CodificadorComutavel } from './codificador-comutavel.js';
 import urlDoWorklet from './pcm-worklet.ts?worker&url';
 import { makeLigacaoNativa } from './porta-nativa.js';
 import { makePortasDeSom } from './porta-som.js';
-import { avisoDeCursor } from './aviso-de-cursor.js';
 import { makeSeletorDeFontes } from './seletor-de-fontes.js';
 import { sessaoAoVivo } from './sessao-ao-vivo.js';
 import { makeSomDesktop } from './som-desktop.js';
@@ -125,7 +124,6 @@ const agendar = (fn: () => void, ms: number): (() => void) => {
 export const seletorDeFontes = makeSeletorDeFontes({
   listar: () => ponte?.listarFontes() ?? Promise.resolve([]),
   agendar,
-  avisoAntesDeEscolher: (fonte) => (ponte === undefined ? null : avisoDeCursor(fonte, ponte.plataforma)),
 });
 
 const ligacaoNativa = makeLigacaoNativa(window);

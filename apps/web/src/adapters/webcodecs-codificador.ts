@@ -5,6 +5,7 @@ import {
 } from '../core/media/aceleracao-do-codificador.js';
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import { type PerfilH264, codecDoPerfil, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
+import { encoderSobrecarregado } from '../core/media/sobrecarga-do-encoder.js';
 import { CODEC_AV1, type CodecDaSala, codecDoEncoder, mimeDoCodec } from '../core/media/codec-da-sala.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import { VigiaDoEncoder } from '../core/media/vigia-do-encoder.js';
@@ -271,7 +272,12 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const bitrateProduzido = (this.bytesProduzidos * 8) / dt;
     this.bytesProduzidos = 0;
     const msPorQuadro = this.vigia.lerMsPorQuadro();
-    const sobrecarregado = this.descartesPorSobrecarga > 0;
+    const sobrecarregado = encoderSobrecarregado({
+      descartes: this.descartesPorSobrecarga,
+      msPorQuadro,
+      fps,
+      fpsAlvo: this.configurado?.fps ?? 0,
+    });
     this.descartesPorSobrecarga = 0;
     const segurados = this.segurados;
     this.segurados = 0;

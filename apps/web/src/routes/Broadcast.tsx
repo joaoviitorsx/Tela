@@ -17,7 +17,7 @@ import { AbasDeResolucao } from '../components/AbasDeResolucao.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
 import { PainelOsd } from '../components/PainelOsd.js';
 import type { Vaga } from '../components/SalaVagas.js';
-import { audioCue, identity, ofereceApp } from '../container.js';
+import { audioCue, identity, instalarNoDiscord, ofereceApp } from '../container.js';
 import { createBroadcastSession, sondaDeRede, volumeTransmissaoPreference } from '../container-transmissao.js';
 import { registrarNomeRecusado } from '../core/identity/nome-recusado.js';
 import { APRESENTACAO_DA_FALHA } from '../core/media/apresentacao-da-falha.js';
@@ -36,6 +36,7 @@ import { FimDeTransmissao } from '../components/FimDeTransmissao.js';
 import { isPresetId } from '../core/media/presets.js';
 import { CabecalhoDaRota } from './CabecalhoDaRota.js';
 import { ModalApp } from './ModalApp.js';
+import { ModalDiscord } from './ModalDiscord.js';
 import { useMediaStats } from '../react/use-media-stats.js';
 import { useMenuOsd } from '../react/use-menu-osd.js';
 import { useBeforeUnload, useTabTitle, useWakeLock } from '../react/use-page-effects.js';
@@ -152,6 +153,8 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
   const resumo = useResumoDaTransmissao(state, rotuloDoPresetId);
   const [appAberto, setAppAberto] = useState(false);
   const fecharApp = useCallback(() => setAppAberto(false), []);
+  const [discordAberto, setDiscordAberto] = useState(false);
+  const fecharDiscord = useCallback(() => setDiscordAberto(false), []);
 
   /*
     Pedidos para assistir (ADR 0025): quem transmite está no jogo, com esta aba
@@ -520,6 +523,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
               vagas={vagas}
               total={vivo.maxPeers}
               aoRemover={removerEspectador}
+              aoDiscord={instalarNoDiscord === null ? undefined : () => setDiscordAberto(true)}
             />
 
             <FilaDePedidos pedidos={pedidos} aoAceitar={aceitarPedido} aoRecusar={recusarPedido} />
@@ -750,6 +754,9 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
         {encerrar.texto}
       </DialogoConfirmar>
       <ModalApp aberto={appAberto} aoFechar={fecharApp} />
+      {instalarNoDiscord !== null && (
+        <ModalDiscord aberto={discordAberto} aoFechar={fecharDiscord} urlInstalar={instalarNoDiscord} canal={slug} />
+      )}
     </div>
   );
 }

@@ -87,6 +87,16 @@ export const dentroDoApp: boolean = false;
 /** Pré-lançamento não aparece em `/releases/latest`: o link é a página de lançamentos. */
 export const urlDosLancamentos = 'https://github.com/joaoviitorsx/Tela/releases';
 
+/**
+ * Instalar o app do Discord na própria conta (docs/DISCORD.md §2): depois
+ * disso, `/tela canal:<nome>` em qualquer conversa. O Application ID é
+ * público. Quem hospeda o próprio Tela registra o próprio app e troca o ID —
+ * ou põe `null`, e o botão DISCORD some do console.
+ */
+const DISCORD_APPLICATION_ID: string | null = '1545598563994701824';
+export const instalarNoDiscord: string | null =
+  DISCORD_APPLICATION_ID === null ? null : `https://discord.com/oauth2/authorize?client_id=${DISCORD_APPLICATION_ID}`;
+
 export const shareUrlFor = (slug: string): string => linkDoCanal(window.location.origin, slug);
 
 /**

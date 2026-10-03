@@ -15,6 +15,7 @@ const AJUSTES: AjustesDesktop = {
   painelSobreOJogo: false,
   cantoDoPainel: 'sup-dir',
   taxaConstante: false,
+  economiaParada: false,
 };
 const resposta = (sobre: Partial<RespostaDeAjustes> = {}): RespostaDeAjustes => ({
   ajustes: AJUSTES,

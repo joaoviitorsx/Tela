@@ -144,6 +144,13 @@ export type MediaStats = {
    */
   readonly fila?: { readonly seguradosPorSegundo: number; readonly soltos: number };
   /**
+   * O que o codificador único PRODUZIU dividido pelo alvo que recebeu. É o
+   * sinal que separa "o link caiu" de "a tela parou" sem depender da rede:
+   * num colapso o encoder continua produzindo o alvo (quem segura é o pacer);
+   * numa cena parada em VBR ele produz uma fração. Ausente fora do "um encode".
+   */
+  readonly consumoDoEncoder?: number;
+  /**
    * Quadros por segundo que a CAPTURA solta, quando difere do que sai do
    * encoder ("um encode" reenvia o último quadro com a captura parada).
    */

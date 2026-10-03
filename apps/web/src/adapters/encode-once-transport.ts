@@ -276,6 +276,9 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
         msPorQuadro: c.msPorQuadro,
         encoderImplementation: c.implementacao,
         fila,
+        ...(c.bitrateProduzido !== undefined && c.bitrateAlvo > 0
+          ? { consumoDoEncoder: c.bitrateProduzido / c.bitrateAlvo }
+          : {}),
         ...(c.fpsDaCaptura === undefined ? {} : { fpsDaCaptura: c.fpsDaCaptura }),
         /*
           Os motivos que as malhas leem, com a mesma semântica do Chromium:

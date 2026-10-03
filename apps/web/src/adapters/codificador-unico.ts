@@ -21,6 +21,8 @@ export type EstatisticasDoCodificador = {
   /** O encoder não está dando conta: é CPU/GPU, não rede. */
   readonly sobrecarregado: boolean;
   readonly idrs: number;
+  /** Bits por segundo que o encoder produziu desde a última leitura. */
+  readonly bitrateProduzido?: number;
   /** Quadros de captura deixados de lado por fila dos senders, desde a última leitura. */
   readonly segurados: number;
   /**

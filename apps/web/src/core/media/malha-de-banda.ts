@@ -31,6 +31,19 @@ import { UplinkGovernor } from './uplink-governor.js';
 
 /** Quantas leituras seguidas de `bandwidth` provam colapso, e não soluço. */
 const AMOSTRAS_DE_COLAPSO = 3;
+/**
+ * Abaixo disto o encoder está produzindo uma fração do alvo: tela parada em
+ * VBR (menu, loading). `bandwidth` aí fala da estimativa que decaiu atrás do
+ * envio pequeno, não do link — não conta como colapso.
+ */
+const CONSUMO_DE_CENA_PARADA = 0.5;
+/**
+ * Carência depois da tela parada: o movimento volta com a estimativa ainda
+ * baixa (ela decaiu a 1,5 × o envio pequeno) e precisa de alguns segundos
+ * para reabrir. Nesse tempo `bandwidth` também não prova colapso — é a
+ * catraca da ADR 0018 que derrubaria o degrau e nunca mais o devolveria.
+ */
+const CARENCIA_DEPOIS_DA_PAUSA = 20;
 /** Mesmo piso do governador: abaixo disso não há vídeo que preste. */
 const ORCAMENTO_VIDEO_MINIMO = 300_000;
 /** Espera entre sondas de subida, em amostras (1 s). Dobra a cada falha. */
@@ -46,7 +59,10 @@ const SONDA_FOLGA = 1.3;
 
 /** O que a malha precisa saber a cada segundo. Tudo vem da sessão. */
 export type LeituraDaMalha = {
-  readonly stats: Pick<MediaStats, 'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer' | 'frescosPorPeer'>;
+  readonly stats: Pick<
+    MediaStats,
+    'limitation' | 'bitrateBps' | 'paresMedidos' | 'availablePorPeer' | 'frescosPorPeer' | 'consumoDoEncoder'
+  >;
   /** O degrau que está no ar agora — dele sai o teto de pixel. */
   readonly presetEfetivo: PresetId;
   /** O que o usuário pediu: teto da sonda. */
@@ -84,6 +100,8 @@ export class MalhaDeBanda {
   private readonly governor = new UplinkGovernor();
   /** Amostras seguidas com a banda amarrando o encoder. Ver `observar`. */
   private amostrasDeBanda = 0;
+  /** Até que amostra a tela parada (e sua carência) desarma o colapso. */
+  private paradaAte = -1;
   /** Amostra da última mudança de orçamento, pela malha ou pela sonda. */
   private ultimaDecisaoEm = 0;
   /** Sonda de subida. Ver `talvezSondar`. */
@@ -210,7 +228,16 @@ export class MalhaDeBanda {
      * desempate pela leitura crua ou suavizada) mexiam nas guardas; esta não
      * mexe — acrescenta a evidência que elas não tinham.
      */
-    this.amostrasDeBanda = stats.limitation === 'bandwidth' ? this.amostrasDeBanda + 1 : 0;
+    /*
+      Tela parada (o encoder produz uma fração do alvo): a estimativa decai
+      atrás do envio pequeno e o motivo vira `bandwidth` sem o link ter mudado.
+      Medido no simulador (`--parado`): sem isto, 12 de 12 cenários perdiam o
+      orçamento na pausa e 11 nunca voltavam do 360p — nem num link de 800 Mbps.
+    */
+    const parada = stats.consumoDoEncoder !== undefined && stats.consumoDoEncoder < CONSUMO_DE_CENA_PARADA;
+    if (parada) this.paradaAte = l.amostra + CARENCIA_DEPOIS_DA_PAUSA;
+    const naCarencia = l.amostra <= this.paradaAte;
+    this.amostrasDeBanda = stats.limitation === 'bandwidth' && !naCarencia ? this.amostrasDeBanda + 1 : 0;
     const colapso = this.amostrasDeBanda >= AMOSTRAS_DE_COLAPSO;
 
     const limitadosPorPixel = orcamento !== null && tetoDePixel < orcamento;

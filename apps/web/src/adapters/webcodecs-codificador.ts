@@ -139,6 +139,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private parado = false;
   private marca = { t: 0, quadros: 0 };
   private quadros = 0;
+  /** Bytes produzidos desde a última leitura de estatísticas. */
+  private bytesProduzidos = 0;
   /** O último quadro capturado (um clone: mesmo buffer, sem cópia), para reenviar. */
   private ultimo: VideoFrame | null = null;
   private ultimaCaptura = -Infinity;
@@ -236,6 +238,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const dt = Math.max(0.001, (agora - this.marca.t) / 1000);
     const fps = (this.quadros - this.marca.quadros) / dt;
     this.marca = { t: agora, quadros: this.quadros };
+    const bitrateProduzido = (this.bytesProduzidos * 8) / dt;
+    this.bytesProduzidos = 0;
     const msPorQuadro = this.vigia.lerMsPorQuadro();
     const sobrecarregado = this.descartesPorSobrecarga > 0;
     this.descartesPorSobrecarga = 0;
@@ -257,6 +261,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       segurados,
       fpsDaCaptura,
       idrs: this.idrs,
+      bitrateProduzido,
       pedidosDeChave: { ...this.pedidos },
       implementacao: this.rotulo(),
     };
@@ -553,6 +558,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       if (this.chavesPedidas > 0) this.chavesPedidas -= 1;
       else this.chaveEspontanea();
     }
+    this.bytesProduzidos += chunk.byteLength;
     const dados = new ArrayBuffer(chunk.byteLength);
     chunk.copyTo(dados);
     // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.

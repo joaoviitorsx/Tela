@@ -26,6 +26,7 @@ export function useAjustes(ponte: Pick<PonteDesktop, 'ajustes' | 'salvarAjustes'
     if (r === null) return;
     setResposta(r);
     taxaDoEncoder.definir(r.ajustes.taxaConstante);
+    taxaDoEncoder.definirEconomia(r.ajustes.economiaParada);
   }, []);
 
   const recarregar = useCallback(() => {

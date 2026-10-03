@@ -68,6 +68,7 @@ type AjustesDesktop = {
   readonly painelSobreOJogo: boolean;
   readonly cantoDoPainel: 'sup-dir' | 'sup-esq' | 'inf-dir' | 'inf-esq';
   readonly taxaConstante: boolean;
+  readonly economiaParada: boolean;
 };
 type EstadoDaAtualizacao = {
   readonly modo: 'automatica' | 'avisar' | 'desligada';

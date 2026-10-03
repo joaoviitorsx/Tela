@@ -64,11 +64,18 @@ export class CodificadorExterno implements CodificadorUnico {
   private falhou: string | null = null;
   /** `profile_idc` do último SPS que o helper mandou: o perfil de FATO. */
   private perfilEmitido: number | null = null;
+  /** Bytes que o helper mandou desde a última leitura de estatísticas. */
+  private bytesProduzidos = 0;
+
+  /** O `rc-mode` enviado ao helper por último. */
+  private taxaEnviada: 'vbr' | 'cbr' | null = null;
 
   constructor(
     private readonly porta: PortaDoNativo,
     private readonly deps: DepsDoCodificador,
     private readonly agora: () => number = () => performance.now(),
+    /** Experimental: VBR economiza com a tela parada. Ausente = CBR, como sempre. */
+    private readonly modoDeTaxa: () => 'vbr' | 'cbr' = () => 'cbr',
   ) {
     porta.onmessage = (e) => this.chegou(e.data);
   }
@@ -87,6 +94,10 @@ export class CodificadorExterno implements CodificadorUnico {
     // O piso de perfil da sala (adendo à ADR 0016). O helper recicla a
     // codificação e recomeça num IDR; um helper antigo ignora a ordem.
     if (e === null || e.perfil !== alvo.perfil) this.ordem(`perfil ${alvo.perfil}`);
+    // O padrão do helper é CBR: só manda quando o ajuste pede outra coisa (ou volta).
+    const taxa = this.modoDeTaxa();
+    if (taxa !== (this.taxaEnviada ?? 'cbr')) this.ordem(`taxa ${taxa}`);
+    this.taxaEnviada = taxa;
     if (!mudouTamanho && !mudouBitrate) {
       this.enviado = { ...(e ?? alvo), perfil: alvo.perfil };
       return;
@@ -120,6 +131,8 @@ export class CodificadorExterno implements CodificadorUnico {
     const dt = Math.max(0.001, (agora - this.marca.t) / 1000);
     const fps = (this.quadros - this.marca.quadros) / dt;
     this.marca = { t: agora, quadros: this.quadros };
+    const bitrateProduzido = (this.bytesProduzidos * 8) / dt;
+    this.bytesProduzidos = 0;
     const alvo = this.enviado;
     return {
       width: this.ultimo.width,
@@ -133,6 +146,7 @@ export class CodificadorExterno implements CodificadorUnico {
       // O helper aplica o `atraso` lá dentro e não conta o que pulou.
       segurados: 0,
       idrs: this.idrs,
+      bitrateProduzido,
       pedidosDeChave: { ...this.pedidos },
       implementacao:
         this.falhou !== null
@@ -177,6 +191,7 @@ export class CodificadorExterno implements CodificadorUnico {
       return;
     }
     this.quadros += 1;
+    this.bytesProduzidos += m.dados.byteLength;
     if (m.chave) {
       this.idrs += 1;
       // Antes de transferir: depois o buffer é do worker.

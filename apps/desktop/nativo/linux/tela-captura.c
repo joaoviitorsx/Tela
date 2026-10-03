@@ -30,6 +30,7 @@
  *   stdin: uma ordem por linha, texto
  *     alvo <largura> <altura> <fps> <bitrate bps>
  *     perfil main|baseline   (piso de perfil H.264 da sala)
+ *     taxa vbr|cbr           (experimental: VBR economiza com a tela parada)
  *     chave
  *     atraso <quadros>
  *     teto <fps>   teto de fps da CAPTURA, independente do `alvo` (que é o do
@@ -249,6 +250,15 @@ static gboolean com_teto(void) {
   return teto > 0 && teto < g_atomic_int_get(&alvo_fps);
 }
 
+/*
+ * Experimental (AJUSTES → "Economizar banda com a tela parada"): VBR com o
+ * teto no orçamento. Em CBR o NVENC enche a banda até com a tela parada
+ * (12 Mbps contra 1,4 em VBR, mesmo PSNR — estudo 1-codec §5). A malha só
+ * aguenta isso desde a guarda de consumo do encoder (`malha-de-banda.ts`,
+ * simulador `--parado`). Desligado por padrão até medir em rede real.
+ */
+static gboolean taxa_vbr = FALSE;
+
 static void aplicar_bitrate(void) {
   /*
    * Com teto de captura o fps que entra no NVENC é o do teto, de propósito, e
@@ -261,6 +271,8 @@ static void aplicar_bitrate(void) {
   if (kbps == kbps_aplicado) return;
   kbps_aplicado = kbps;
   g_object_set(codificador, "bitrate", kbps, NULL);
+  /* Em VBR o teto É o orçamento: nunca passa dele; com a tela parada, gasta menos. */
+  if (taxa_vbr) g_object_set(codificador, "max-bitrate", kbps, NULL);
 }
 
 /*
@@ -539,6 +551,13 @@ static void ordem(const char *linha) {
     /* Caps de saída novas renegociam o NVENC: o mesmo reciclo da troca de
        tamanho, que recomeça num IDR. Troca de perfil é rara (gente entrando
        ou saindo da sala muda o piso, não cada quadro). */
+    agendar_reciclo();
+  } else if (strcmp(linha, "taxa vbr") == 0 || strcmp(linha, "taxa cbr") == 0) {
+    gboolean quer_vbr = strcmp(linha, "taxa vbr") == 0;
+    if (quer_vbr == taxa_vbr) return;
+    taxa_vbr = quer_vbr;
+    /* O modo de controle de taxa só vale no reinício do NVENC: reciclo (IDR). */
+    g_object_set(codificador, "rc-mode", quer_vbr ? 3 : 2, NULL);
     agendar_reciclo();
   } else if (strcmp(linha, "chave") == 0) {
     pedir_chave();

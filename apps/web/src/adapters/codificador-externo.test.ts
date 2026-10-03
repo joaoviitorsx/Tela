@@ -177,4 +177,18 @@ describe('CodificadorExterno — o processo nativo como codificador único', () 
     cod.configurar({ ...ALVO, perfil: 'baseline' });
     expect(ordens).toEqual(['perfil main', 'perfil baseline']);
   });
+
+  it('taxa: CBR é o padrão do helper (nada a mandar); VBR experimental manda e volta', async () => {
+    let modo: 'vbr' | 'cbr' = 'cbr';
+    const ordens: string[] = [];
+    const porta = { postMessage: (m: { linha: string }) => ordens.push(m.linha), onmessage: null };
+    const cod = new CodificadorExterno(porta as never, { entregar: () => undefined, aoCapturar: () => undefined, aoMudarFonte: () => undefined }, () => 0, () => modo);
+    await cod.iniciar({} as MediaStreamTrack, ALVO);
+    expect(ordens.some((o) => o.startsWith('taxa'))).toBe(false);
+    modo = 'vbr';
+    cod.configurar(ALVO);
+    modo = 'cbr';
+    cod.configurar(ALVO);
+    expect(ordens.filter((o) => o.startsWith('taxa'))).toEqual(['taxa vbr', 'taxa cbr']);
+  });
 });

@@ -101,6 +101,8 @@ export type AjustesDesktop = {
   readonly cantoDoPainel: CantoDoPainel;
   /** Experimental: taxa constante no encoder do app (medir no Windows). */
   readonly taxaConstante: boolean;
+  /** Experimental: NVENC nativo em VBR (economiza com a tela parada). */
+  readonly economiaParada: boolean;
 };
 
 export type CantoDoPainel = 'sup-dir' | 'sup-esq' | 'inf-dir' | 'inf-esq';

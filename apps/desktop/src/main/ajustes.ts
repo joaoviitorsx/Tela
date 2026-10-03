@@ -30,6 +30,8 @@ export type Ajustes = {
    * — rajadas que podem virar perda. Desligado até medir (estudo 1-codec).
    */
   readonly taxaConstante: boolean;
+  /** Experimental: NVENC nativo (Linux) em VBR, que economiza banda com a tela parada. */
+  readonly economiaParada: boolean;
 };
 
 export const AJUSTES_PADRAO: Ajustes = {
@@ -41,6 +43,7 @@ export const AJUSTES_PADRAO: Ajustes = {
   painelSobreOJogo: false,
   cantoDoPainel: 'sup-dir',
   taxaConstante: false,
+  economiaParada: false,
 };
 
 const ESCOLHAS: ReadonlySet<string> = new Set<AoFecharAoVivo>(['perguntar', 'segundo-plano', 'encerrar']);
@@ -52,6 +55,7 @@ const CAMPOS_BOOLEANOS = [
   'atualizarAutomaticamente',
   'painelSobreOJogo',
   'taxaConstante',
+  'economiaParada',
 ] as const;
 
 const CANTOS: ReadonlySet<string> = new Set(CANTOS_DO_PAINEL);
@@ -99,6 +103,7 @@ export function mesmosAjustes(a: Ajustes, b: Ajustes): boolean {
     a.atualizarAutomaticamente === b.atualizarAutomaticamente &&
     a.painelSobreOJogo === b.painelSobreOJogo &&
     a.cantoDoPainel === b.cantoDoPainel &&
-    a.taxaConstante === b.taxaConstante
+    a.taxaConstante === b.taxaConstante &&
+    a.economiaParada === b.economiaParada
   );
 }

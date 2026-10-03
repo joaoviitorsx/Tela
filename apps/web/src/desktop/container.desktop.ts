@@ -190,7 +190,7 @@ function criarCodificador(d: DepsDoCodificador): CodificadorUnico {
     return new CodificadorWebCodecs(d.entregar, () => performance.now(), d.aoCapturar);
   }
   return new CodificadorComutavel<CodificadorUnico>({
-    nativo: () => new CodificadorExterno(ligacaoNativa.porta, d),
+    nativo: () => new CodificadorExterno(ligacaoNativa.porta, d, undefined, taxaDoEncoder.nativo),
     // No app, a GPU explicitamente quando a sonda diz que há (D9): no Windows
     // é o Media Foundation (NVENC/AMF/Quick Sync), e o rótulo deixa de chutar.
     webcodecs: () =>

@@ -1,4 +1,4 @@
-import { type ReactNode, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useRef, useState } from 'react';
 import { Aviso } from '../components/Aviso.js';
 import { DialogoAssistir } from '../components/DialogoAssistir.js';
 import { DialogoConfirmar } from '../components/DialogoConfirmar.js';
@@ -74,7 +74,12 @@ export function MolduraDesktop({
   recentes,
 }: Props) {
   const { caminho, travado, irPara } = useNavegacaoDesktop();
-  const assistir = useAssistir(irPara, recentes);
+  // O canal que já está na tela não vira tecla: levaria para onde a pessoa já está.
+  const listarRecentes = useCallback(
+    () => (recentes?.() ?? []).filter((canal) => `/${canal}` !== caminho),
+    [recentes, caminho],
+  );
+  const assistir = useAssistir(irPara, listarRecentes);
   const porLink = useCanalPorLink(ponte, irPara);
   const sp = useSegundoPlano({
     sessao,

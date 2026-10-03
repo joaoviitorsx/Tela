@@ -67,4 +67,10 @@ describe('useAssistir', () => {
     expect(irPara).not.toHaveBeenCalled();
     expect(result.current.aberto).toBe(true);
   });
+
+  it('RECENTES: só os que a tecla abre, sem repetir', () => {
+    const { result } = renderHook(() => useAssistir(vi.fn(), () => ['amigo', 'transmitir', 'amigo', 'x']));
+    act(() => result.current.abrir());
+    expect(result.current.recentes).toEqual(['amigo']);
+  });
 });

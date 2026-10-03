@@ -28,7 +28,9 @@ export function useSeletorDeFontes(
     leitura.
   */
   const ultimo = useRef<string | null>(null);
-  if (!estado.aberto) ultimo.current = null;
+  // `carregando` = abertura nova (a loja zera as fontes ao abrir): o aviso da anterior não vem junto,
+  // mesmo quando um `abrir` por cima de outro pula o render fechado.
+  if (!estado.aberto || estado.carregando) ultimo.current = null;
   else if (calculado !== null) ultimo.current = calculado;
   const avisoDoJogo = estado.aberto ? ultimo.current : null;
   return { estado, dialogo, avisoDeJanela: avisoDeJanela(plataforma), avisoDoJogo };

@@ -49,7 +49,7 @@ export function useAssistir(
   const abrir = useCallback(() => {
     setValor('');
     setInvalido(false);
-    setRecentes(listarRecentes());
+    setRecentes(recentesValidos(listarRecentes()));
     setAberto(true);
   }, [listarRecentes]);
 
@@ -83,3 +83,17 @@ export function useAssistir(
 }
 
 const semRecentes = (): readonly string[] => [];
+
+/**
+ * Só o que a tecla consegue abrir, uma vez cada: o armazenamento é do
+ * aparelho, e um nome reservado (`transmitir`) ou repetido viraria uma tecla
+ * que não faz nada. O(n), n ≤ 6.
+ */
+function recentesValidos(lista: readonly string[]): readonly string[] {
+  const vistos = new Set<string>();
+  for (const item of lista) {
+    const canal = canalDaEntrada(item);
+    if (canal.ok) vistos.add(canal.value);
+  }
+  return [...vistos];
+}

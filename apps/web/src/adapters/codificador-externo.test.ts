@@ -135,13 +135,13 @@ describe('CodificadorExterno — o processo nativo como codificador único', () 
     expect(ordens).toEqual(['chave']);
   });
 
-  it('atraso só vira ordem quando muda', () => {
+  it('todo aviso de atraso vira ordem — o helper drena sozinho, e o repetido o devolve à contrapressão', () => {
     const { cod, ordens } = montar();
     cod.definirAtraso(0);
     cod.definirAtraso(3);
     cod.definirAtraso(3);
     cod.definirAtraso(0);
-    expect(ordens).toEqual(['atraso 3', 'atraso 0']);
+    expect(ordens).toEqual(['atraso 0', 'atraso 3', 'atraso 3', 'atraso 0']);
   });
 
   it('estatísticas: tamanho do último quadro, fps medido, carga do NVENC e falha visível', async () => {

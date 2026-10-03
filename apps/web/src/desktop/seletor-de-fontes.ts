@@ -20,6 +20,11 @@ export type EstadoDoSeletor = {
   readonly fontes: readonly FonteDeCaptura[];
   /** Ainda sem a primeira listagem desta abertura. */
   readonly carregando: boolean;
+  /**
+   * Uma fonte escolhida que pede confirmação antes de valer (ver
+   * `avisoAntesDeEscolher`). `null` = nada pendente.
+   */
+  readonly confirmacao: { readonly fonte: FonteDeCaptura; readonly aviso: string } | null;
 };
 
 export type SeletorDeFontes = {
@@ -29,6 +34,10 @@ export type SeletorDeFontes = {
   abrir(): Promise<FonteDeCaptura | null>;
   mudarAba(aba: AbaDoSeletor): void;
   escolher(id: string): void;
+  /** Vale a fonte pendente de confirmação, apesar do aviso. */
+  confirmar(): void;
+  /** Desiste da fonte pendente e vai para a aba TELAS (o caminho que o aviso recomenda). */
+  trocarPorTela(): void;
   cancelar(): void;
 };
 
@@ -37,9 +46,15 @@ export type DepsDoSeletor = {
   readonly agendar: (fn: () => void, ms: number) => () => void;
   /** Entre uma listagem e a próxima, com o seletor aberto. */
   readonly intervaloMs?: number;
+  /**
+   * Um aviso que a pessoa precisa ler ANTES de a fonte valer — por exemplo o
+   * cursor que some no LoL em tela cheia com captura de janela
+   * (`aviso-de-cursor.ts`). `null` = escolhe direto.
+   */
+  readonly avisoAntesDeEscolher?: (fonte: FonteDeCaptura) => string | null;
 };
 
-const FECHADO: EstadoDoSeletor = { aberto: false, aba: 'telas', fontes: [], carregando: false };
+const FECHADO: EstadoDoSeletor = { aberto: false, aba: 'telas', fontes: [], carregando: false, confirmacao: null };
 
 /** Duas por segundo seria custo; uma a cada dois segundos acompanha janelas abrindo. */
 const INTERVALO_PADRAO_MS = 2000;
@@ -97,7 +112,7 @@ export function makeSeletorDeFontes(deps: DepsDoSeletor): SeletorDeFontes {
       const promessa = new Promise<FonteDeCaptura | null>((r) => {
         resolver = r;
       });
-      definir({ aberto: true, aba: estado.aba, fontes: [], carregando: true });
+      definir({ aberto: true, aba: estado.aba, fontes: [], carregando: true, confirmacao: null });
       void atualizar(g);
       return promessa;
     },
@@ -108,7 +123,17 @@ export function makeSeletorDeFontes(deps: DepsDoSeletor): SeletorDeFontes {
       if (!estado.aberto) return;
       const fonte = estado.fontes.find((f) => f.id === id);
       // Só o que está na tela pode ser escolhido: o main confere a mesma lista.
-      if (fonte !== undefined) fechar(fonte);
+      if (fonte === undefined) return;
+      const aviso = deps.avisoAntesDeEscolher?.(fonte) ?? null;
+      if (aviso === null) fechar(fonte);
+      else definir({ ...estado, confirmacao: { fonte, aviso } });
+    },
+    confirmar: () => {
+      const pendente = estado.confirmacao;
+      if (estado.aberto && pendente !== null) fechar(pendente.fonte);
+    },
+    trocarPorTela: () => {
+      if (estado.aberto) definir({ ...estado, aba: 'telas', confirmacao: null });
     },
     cancelar: () => {
       if (estado.aberto) fechar(null);

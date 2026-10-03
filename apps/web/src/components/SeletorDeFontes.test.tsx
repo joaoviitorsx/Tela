@@ -115,4 +115,21 @@ describe('SeletorDeFontes', () => {
     );
     expect(screen.getByText('NENHUMA JANELA ABERTA')).toBeTruthy();
   });
+
+  it('com confirmação pendente, a grade some e os dois caminhos aparecem', () => {
+    const aoConfirmar = vi.fn();
+    const aoTrocarPorTela = vi.fn();
+    montar({
+      aba: 'janelas',
+      confirmacao: { nome: 'League of Legends (TM) Client', aviso: 'o Windows esconde o seu cursor' },
+      aoConfirmar,
+      aoTrocarPorTela,
+    });
+    expect(screen.getByRole('alertdialog').textContent).toContain('esconde o seu cursor');
+    expect(screen.queryByRole('button', { name: 'Hades II' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'TRANSMITIR A TELA' }));
+    fireEvent.click(screen.getByRole('button', { name: 'USAR A JANELA MESMO ASSIM' }));
+    expect(aoTrocarPorTela).toHaveBeenCalledOnce();
+    expect(aoConfirmar).toHaveBeenCalledOnce();
+  });
 });

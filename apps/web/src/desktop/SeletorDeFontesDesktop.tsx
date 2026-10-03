@@ -23,6 +23,11 @@ export function SeletorDeFontesDesktop({ seletor, plataforma }: Props) {
       fontes={estado.fontes}
       carregando={estado.carregando}
       avisoDeJanela={avisoDeJanela}
+      confirmacao={
+        estado.confirmacao === null ? null : { nome: estado.confirmacao.fonte.nome, aviso: estado.confirmacao.aviso }
+      }
+      aoConfirmar={seletor.confirmar}
+      aoTrocarPorTela={seletor.trocarPorTela}
       aoMudarAba={seletor.mudarAba}
       aoEscolher={seletor.escolher}
       aoCancelar={seletor.cancelar}

@@ -1,6 +1,6 @@
 # Tela no Discord
 
-Duas coisas, nenhuma delas é bot:
+Três coisas, nenhuma delas é bot:
 
 1. **Prévia do link com o estado.** Colar `https://tela.transmissao.workers.dev/joao`
    no Discord ou no WhatsApp mostra `joao · AO VIVO agora · 3 assistindo` ou
@@ -165,6 +165,26 @@ Discord: assinatura válida, inválida, sem timestamp, PING, e o comando com
 canal no ar, fora do ar e nome inválido.
 
 ---
+
+## 3. Aviso automático no canal (webhook)
+
+Código: `apps/web/src/core/aviso/aviso-ao-vivo.ts` (quando avisar),
+`core/domain/webhook-discord.ts` (URL e mensagens) e
+`adapters/discord-webhook.ts` (`fetch`). Configurado no console de quem
+transmite: **DISCORD → 3 · AVISO AUTOMÁTICO**.
+
+- Ao entrar no ar, posta "**fulano está AO VIVO**" com o link num canal do
+  servidor. Ao sair (encerrar, captura parou, aba fechada), **edita a mesma
+  mensagem** para "transmissão encerrada · durou 1h 12min".
+- Caiu e voltou em menos de 10 minutos: a mensagem antiga volta a dizer AO
+  VIVO em vez de nascer outra.
+- **Sem servidor no meio.** O Discord libera CORS para a origem do site e
+  para `app://tela`; o pedido sai do navegador de quem transmite direto para
+  `discord.com`. O token do webhook fica no `localStorage` dele e nunca passa
+  pelo Worker. A CSP do app libera `https://discord.com` no `connect-src`.
+- Nunca marca ninguém (`allowed_mentions` vazio).
+- Webhook: **Editar canal → Integrações → Webhooks → Novo webhook → Copiar
+  URL**. TESTAR posta uma mensagem de teste; REMOVER apaga o que foi guardado.
 
 ## O que NÃO foi feito: Discord Activity
 

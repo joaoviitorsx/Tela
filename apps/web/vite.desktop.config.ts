@@ -77,7 +77,8 @@ function cspDoApp(origemDoSignaling: string | null): Plugin {
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: blob:",
     "media-src 'self' blob: mediastream:",
-    `connect-src 'self' ${conectar} data: blob:`,
+    // `discord.com`: o aviso AO VIVO por webhook sai direto do app (o token do canal não passa pelo servidor).
+    `connect-src 'self' ${conectar} https://discord.com data: blob:`,
     "object-src 'none'",
     "base-uri 'self'",
     "frame-src 'none'",

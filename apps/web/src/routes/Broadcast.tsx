@@ -17,13 +17,14 @@ import { AbasDeResolucao } from '../components/AbasDeResolucao.js';
 import { MenuOsd, type LinhaMenu } from '../components/MenuOsd.js';
 import { PainelOsd } from '../components/PainelOsd.js';
 import type { Vaga } from '../components/SalaVagas.js';
-import { audioCue, identity, instalarNoDiscord, ofereceApp } from '../container.js';
+import { audioCue, avisoNoDiscord, identity, instalarNoDiscord, ofereceApp } from '../container.js';
 import { createBroadcastSession, sondaDeRede, volumeTransmissaoPreference } from '../container-transmissao.js';
 import { registrarNomeRecusado } from '../core/identity/nome-recusado.js';
 import { APRESENTACAO_DA_FALHA } from '../core/media/apresentacao-da-falha.js';
 import { useAutoHide } from '../react/use-auto-hide.js';
 import { useAvisosAoVivo } from '../react/use-avisos-ao-vivo.js';
 import { useBipeDePedido } from '../react/use-bipe-de-pedido.js';
+import { useAvisoNoDiscord } from '../react/use-aviso-no-discord.js';
 import { useBroadcast } from '../react/use-broadcast.js';
 import { useCopia } from '../react/use-copia.js';
 import { useDiagnostico } from '../react/use-diagnostico.js';
@@ -94,6 +95,8 @@ const SEM_TECLADO = { onKeyDown: () => undefined };
  */
 export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridadeInicial, onExit }: Props) {
   const session = useMemo(() => createBroadcastSession(), []);
+  // O aviso no Discord vive fora da rota (container) e só assina a sessão.
+  useAvisoNoDiscord(avisoNoDiscord, session);
   const {
     state,
     start,
@@ -755,7 +758,13 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
       </DialogoConfirmar>
       <ModalApp aberto={appAberto} aoFechar={fecharApp} />
       {instalarNoDiscord !== null && (
-        <ModalDiscord aberto={discordAberto} aoFechar={fecharDiscord} urlInstalar={instalarNoDiscord} canal={slug} />
+        <ModalDiscord
+          aberto={discordAberto}
+          aoFechar={fecharDiscord}
+          urlInstalar={instalarNoDiscord}
+          canal={slug}
+          link={vivo.shareUrl}
+        />
       )}
     </div>
   );

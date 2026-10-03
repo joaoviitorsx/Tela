@@ -986,6 +986,41 @@ describe('BroadcastSession — o pior caminho é quem manda', () => {
     const id = depois.status === 'live' ? depois.presetId : 'p360p60';
     expect(PRESET_IDS.indexOf(id)).toBeLessThan(PRESET_IDS.indexOf(antes));
   });
+
+  it('espera crescente: a primeira volta leva 60 amostras; depois de cair de novo do mesmo degrau, 120', async () => {
+    const ctx = build();
+    await ctx.session.start(SLUG, TOKEN);
+    const degrau = () => {
+      const s = ctx.session.getState();
+      return s.status === 'live' ? s.presetId : null;
+    };
+    ctx.transport.stats = amostra({ limitation: 'cpu' });
+    await tique(ctx, 14);
+    const baixo = degrau();
+    // Desce até ficar um degrau só abaixo do topo — o que importa é voltar e cair de novo.
+    ctx.transport.stats = amostra({ limitation: 'none' });
+    let subiuEm = 0;
+    for (let i = 1; i <= 200 && degrau() === baixo; i += 1) {
+      await tique(ctx, 1);
+      subiuEm = i;
+    }
+    const acima = degrau();
+    expect(acima).not.toBe(baixo);
+    expect(subiuEm).toBeLessThanOrEqual(62);
+
+    // A CPU derruba de novo, do MESMO degrau.
+    ctx.transport.stats = amostra({ limitation: 'cpu' });
+    for (let i = 0; i < 20 && degrau() === acima; i += 1) await tique(ctx, 1);
+    expect(degrau()).not.toBe(acima);
+    const deNovoBaixo = degrau();
+
+    ctx.transport.stats = amostra({ limitation: 'none' });
+    await tique(ctx, 70);
+    // 60 já não bastam: esse degrau caiu duas vezes.
+    expect(degrau()).toBe(deNovoBaixo);
+    await tique(ctx, 60);
+    expect(degrau()).not.toBe(deNovoBaixo);
+  });
 });
 
 describe('BroadcastSession — trocar a fonte não deixa lixo', () => {

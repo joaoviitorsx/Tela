@@ -5,6 +5,7 @@ import {
 } from '../core/media/aceleracao-do-codificador.js';
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import { type PerfilH264, codecDoPerfil, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
+import { encoderSobrecarregado } from '../core/media/sobrecarga-do-encoder.js';
 import { CODEC_AV1, type CodecDaSala, codecDoEncoder, mimeDoCodec } from '../core/media/codec-da-sala.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import { VigiaDoEncoder } from '../core/media/vigia-do-encoder.js';
@@ -56,7 +57,13 @@ declare class MediaStreamTrackProcessor<T> {
  * (`perfil-h264.ts`) e o encoder deste modo de aceleração diz que faz.
  */
 export const CODEC = codecDoPerfil('baseline');
-/** Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular latência. */
+/**
+ * Fila de N senders acima disto: pula quadro de conteúdo em vez de acumular
+ * latência. Cada quadro pulado desconta uma vaga (ver `codificar`): sem isso o
+ * atraso ficava velho por até 100 ms e o pulo virava rajada. Subir para 4
+ * foi tentado e revertido — o ganho medido era menor que a variação entre
+ * rodadas, e cada quadro a mais é latência para a sala inteira.
+ */
 const ATRASO_TOLERADO = 2;
 /**
  * Sem quadro novo da captura por este tempo, o último é codificado de novo —
@@ -161,6 +168,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   private idrs = 0;
   private readonly pedidos: Record<string, number> = {};
   private descartesPorSobrecarga = 0;
+  /** Leituras de sobrecarga a desconsiderar (a primeira depois de trocar de tamanho). */
+  private leiturasAIgnorar = 0;
   private segurados = 0;
   private readonly vigia = new VigiaDoEncoder();
   private readonly aceleracao: AceleracaoDoCodificador;
@@ -270,8 +279,22 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.marca = { t: agora, quadros: this.quadros };
     const bitrateProduzido = (this.bytesProduzidos * 8) / dt;
     this.bytesProduzidos = 0;
-    const msPorQuadro = this.vigia.lerMsPorQuadro();
-    const sobrecarregado = this.descartesPorSobrecarga > 0;
+    const { media: msPorQuadro, amostras } = this.vigia.lerLatencia();
+    const dtDaCaptura = Math.max(0.001, (agora - this.marcaDaCaptura.t) / 1000);
+    const capturadosNaJanela = this.capturados - this.marcaDaCaptura.quadros;
+    // A leitura logo depois de trocar de tamanho mede a reinicialização e o IDR, não o fôlego.
+    const ignorar = this.leiturasAIgnorar > 0;
+    if (ignorar) this.leiturasAIgnorar -= 1;
+    const sobrecarregado =
+      !ignorar &&
+      encoderSobrecarregado({
+        descartes: this.descartesPorSobrecarga,
+        msPorQuadro,
+        amostras,
+        intervaloDeEntradaMs: capturadosNaJanela > 0 ? (dtDaCaptura * 1000) / capturadosNaJanela : null,
+        fpsAlvo: this.configurado?.fps ?? 0,
+        classe: this.aceleracao.classe(),
+      });
     this.descartesPorSobrecarga = 0;
     const segurados = this.segurados;
     this.segurados = 0;
@@ -569,6 +592,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.camadasConfiguradas = camadas;
     this.codecConfigurado = codec;
     if (mudouTamanho || mudouPerfil || mudouTaxa || mudouCamadas || mudouCodec) this.pedirChaveAgora = true;
+    if (mudouTamanho) this.leiturasAIgnorar = 1;
   }
 
   private guardarUltimo(quadro: VideoFrame): void {
@@ -632,6 +656,14 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     // Contrapressão dos senders — exceto quando um IDR foi pedido.
     if (this.atraso >= ATRASO_TOLERADO && !this.pedirChaveAgora) {
       this.segurados += 1;
+      /*
+        Cada quadro segurado drena UMA vaga de cada sender (a isca é gerada
+        mesmo assim, em `aoCapturar`). Sem descontar, o atraso ficava velho
+        até o próximo aviso do worker (até 100 ms) e TODOS os quadros desse
+        intervalo eram pulados — buracos de até 6 quadros para a sala inteira
+        (revisão independente).
+      */
+      this.atraso = Math.max(0, this.atraso - 1);
       quadro.close();
       return;
     }

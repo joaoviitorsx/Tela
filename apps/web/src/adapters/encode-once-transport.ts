@@ -447,7 +447,11 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
           está segurando o bitrate abaixo do orçamento — é esse sinal que faz a
           malha descer o DEGRAU em vez de deixar 1080p com bits de menos.
         */
-        limitation: c.sobrecarregado ? 'cpu' : limitadoPelaEstimativa ? 'bandwidth' : 'none',
+        // Banda antes de CPU: com `cpu` intermitente durante o jogo, a malha de
+        // banda deixava de ver as 3 leituras seguidas de um colapso real (ADR
+        // 0033) e só o freio rápido agia — bitrate cortado sem descer degrau.
+        limitation: limitadoPelaEstimativa ? 'bandwidth' : c.sobrecarregado ? 'cpu' : 'none',
+        encoderSobrecarregado: c.sobrecarregado,
       };
     },
 

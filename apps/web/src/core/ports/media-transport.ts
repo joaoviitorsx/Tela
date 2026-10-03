@@ -96,6 +96,13 @@ export type MediaStats = {
    * (provavelmente encode em software); `bandwidth`, que a rede não dá.
    */
   readonly limitation: QualityLimitation;
+  /**
+   * O codificador único está sem fôlego (`sobrecarga-do-encoder.ts`). Separado
+   * do `limitation` de propósito: lá banda e CPU disputam um enum só, e um
+   * escondia o outro — `cpu` intermitente cegava a malha de banda, e
+   * `bandwidth` cegava a escada de CPU. Ausente fora do "um encode".
+   */
+  readonly encoderSobrecarregado?: boolean;
   readonly width: number;
   readonly height: number;
   /**

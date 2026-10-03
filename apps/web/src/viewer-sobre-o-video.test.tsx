@@ -199,7 +199,7 @@ afterEach(() => {
 });
 
 async function assistindo(comAudio: boolean) {
-  const resultado = render(<Viewer slug="joao" />);
+  const resultado = render(<Viewer canais={["joao"]} />);
   await act(async () => {
     for (let i = 0; i < 12; i += 1) await Promise.resolve();
   });

@@ -145,6 +145,11 @@ resolução gasta até `BPP_TETO` (ADR 0017).
 
 **Não implemente, mesmo que pareça útil:** chat, voz, contas/login/senha/e-mail, gravação, clipes, emotes, reações, seguidores, diretório público, busca, múltiplos transmissores por sala, analytics de terceiros.
 
+Exceção registrada (ADR 0032): o ESPECTADOR pode assistir até dois canais na
+mesma tela (multivisão, `/a+b`). Cada canal continua sendo uma sala com um
+transmissor; a composição é do cliente e o servidor não sabe dela. O dono
+abriu a cerca do MVP para recursos assim — mas cada um entra por ADR.
+
 Se achar que algo disso é necessário, pare e pergunte. Não implemente "por precaução".
 
 ### R7 — Sem barrel files

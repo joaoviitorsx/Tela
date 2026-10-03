@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { BotaoBarra, type PropsDaBarra } from './BarraEspectador.js';
 import { VolumeBlocos } from './VolumeBlocos.js';
-import { IconMudo, IconOlho, IconOlhoRisco, IconPip, IconSairTelaCheia, IconSom, IconTelaCheia } from './Icon.js';
+import { IconMaisTela, IconMudo, IconOlho, IconOlhoRisco, IconPip, IconSairTelaCheia, IconSom, IconTelaCheia } from './Icon.js';
 import { Led } from './Led.js';
 
 /**
@@ -140,6 +140,11 @@ export function BarraEspectadorCompacta(p: PropsDaBarra) {
               pressionado={p.volume.mudo}
             >
               {p.volume.mudo ? <IconMudo className="h-[18px] w-[18px]" /> : <IconSom className="h-[18px] w-[18px]" />}
+            </BotaoBarra>
+          )}
+          {p.multivisao != null && (
+            <BotaoBarra rotulo="Assistir outro canal junto (A)" aoClicar={p.multivisao.aoAdicionar}>
+              <IconMaisTela className="h-[18px] w-[18px]" />
             </BotaoBarra>
           )}
           <BotaoBarra

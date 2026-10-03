@@ -104,7 +104,7 @@ export function App({ visibilidade }: Props = {}) {
         );
 
       case 'viewer':
-        return <Viewer slug={route.slug} />;
+        return <Viewer canais={route.canais} />;
 
       case 'recover':
         return <Recover onBack={() => navigate('/')} />;

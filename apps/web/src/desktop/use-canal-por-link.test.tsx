@@ -36,6 +36,16 @@ describe('useCanalPorLink', () => {
     expect(irPara).toHaveBeenCalledWith('/joao');
   });
 
+  it('multivisão: a+b vira /a+b; pedaço ruim recusa tudo (ADR 0032)', () => {
+    const f = ponteFalsa();
+    const irPara = vi.fn();
+    renderHook(() => useCanalPorLink(f.ponte, irPara));
+    act(() => f.emitir('ana+bia'));
+    expect(irPara).toHaveBeenCalledWith('/ana+bia');
+    for (const ruim of ['ana+', 'ana+jv', 'ana+bia+caio', 'ana+transmitir']) act(() => f.emitir(ruim));
+    expect(irPara).toHaveBeenCalledTimes(1);
+  });
+
   it('revalida: o que o main mandou não vira rota se não for canal', () => {
     const f = ponteFalsa();
     const irPara = vi.fn();

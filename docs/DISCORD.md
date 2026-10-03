@@ -67,7 +67,7 @@ configurada o endpoint responde 404: ele vem **desligado**.
 ### Passo a passo (uma vez)
 
 1. **Criar o app.** <https://discord.com/developers/applications> → **New
-   Application** → nome `Tela`. Ícone: `apps/web/public/tela-app-icon.svg`
+   Application** → nome `Tela`. Ícone: `apps/web/public/tela-app-icon.png`
    exportado em PNG 512×512.
 
 2. **Copiar dois valores** em **General Information**:

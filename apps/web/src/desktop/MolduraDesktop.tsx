@@ -45,8 +45,9 @@ type Props = {
 
 /**
  * A moldura do app em volta das telas do site: trilho à esquerda, a tela à
- * direita, rolando sozinha, e — ao vivo — o painel NO AR no pé. As rotas
- * continuam `min-h-dvh`; aqui elas são a altura da coluna, e a coluna é a janela.
+ * direita, rolando sozinha, e — ao vivo — o painel NO AR no pé. As rotas de
+ * tela inteira medem `var(--altura-da-tela, 100dvh)`; aqui a variável é a
+ * altura da coluna.
  *
  * Também é daqui que entram os canais (D8): o painel ASSISTIR e o link
  * `tela://assistir/<canal>` terminam na mesma navegação para `/<canal>`.
@@ -158,7 +159,12 @@ export function MolduraDesktop({
                 },
               })}
         />
-        <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
+        {/*
+          `--altura-da-tela`: as rotas de tela inteira (espectador, console)
+          medem `100dvh` na web; aqui a coluna é menor que a janela (barra de
+          título, painel NO AR), e é ela a altura delas.
+        */}
+        <div className="min-w-0 flex-1 overflow-y-auto [--altura-da-tela:100%]">{children}</div>
       </div>
       {sp.noAr && !compactoNoAr && (
         <PainelNoAr

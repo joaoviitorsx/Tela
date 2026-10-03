@@ -14,6 +14,8 @@ type Props = {
   readonly total: number;
   /** Tira uma pessoa só da sala (C-08). Sem ele, a lista não tem o botão. */
   readonly aoRemover?: ((id: string) => void) | undefined;
+  /** Abre o "TELA NO DISCORD". Sem ele (app do Discord não configurado), sem botão. */
+  readonly aoDiscord?: (() => void) | undefined;
 };
 
 /**
@@ -31,6 +33,7 @@ export function FaixaLink({
   vagas,
   total,
   aoRemover,
+  aoDiscord,
 }: Props) {
   const endereco = link.replace(/^https?:\/\//, '');
 
@@ -59,6 +62,7 @@ export function FaixaLink({
         <Botao tom="primaria" onClick={aoCopiar}>
           {copiado ? 'LINK COPIADO' : 'COPIAR LINK'}
         </Botao>
+        {aoDiscord !== undefined && <Botao onClick={aoDiscord}>DISCORD</Botao>}
       </div>
 
       <div className="flex items-center border-l-2 border-line">

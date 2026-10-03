@@ -23,22 +23,3 @@ describe('bandeja', () => {
     expect(plataformaTemBandeja('linux')).toBe('sondar');
   });
 });
-
-import { monocromaAmbar } from './bandeja.js';
-
-describe('monocromaAmbar', () => {
-  it('mantém o alfa e só deixa tons de âmbar (vermelho >= verde >= azul)', () => {
-    // BGRA: azul puro, branco, preto transparente
-    const saida = monocromaAmbar(new Uint8Array([255, 0, 0, 200, 255, 255, 255, 255, 0, 0, 0, 0]));
-    expect([saida[3], saida[7], saida[11]]).toEqual([200, 255, 0]);
-    for (const i of [0, 4, 8]) {
-      expect(saida[i + 2]).toBeGreaterThanOrEqual(saida[i + 1] ?? 0);
-      expect(saida[i + 1]).toBeGreaterThanOrEqual(saida[i] ?? 0);
-    }
-    // branco = âmbar cheio
-    expect([saida[6], saida[5], saida[4]]).toEqual([255, 176, 0]);
-  });
-  it('ignora bytes sobrando no fim', () => {
-    expect(monocromaAmbar(new Uint8Array([1, 2, 3])).length).toBe(3);
-  });
-});

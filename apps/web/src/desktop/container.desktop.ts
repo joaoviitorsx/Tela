@@ -8,7 +8,7 @@ import { makeEncodeOnceTransport } from '../adapters/encode-once-transport.js';
 import { makeMeshTransport } from '../adapters/mesh-transport.js';
 import { CodificadorWebCodecs } from '../adapters/webcodecs-codificador.js';
 import { makeWsSignaling } from '../adapters/ws-signaling.js';
-import { appVersion, diagnosticId, repasseForcado, scheduler, storage } from '../container.js';
+import { appVersion, diagnosticId, repasseForcado, scheduler, storage, type OpcoesDoEspectador } from '../container.js';
 import { aprovados, audio as audioDoNavegador, uplinkMemory } from '../container-transmissao.js';
 import { linkDoCanal } from '../core/domain/link.js';
 import { BroadcastSession } from '../core/media/broadcast-session.js';
@@ -253,10 +253,16 @@ export function createBroadcastSession(): BroadcastSession {
   return sessao;
 }
 
-export function createViewerSession(): ViewerSession {
+export function createViewerSession({ repassar = () => true }: OpcoesDoEspectador = {}): ViewerSession {
   return new ViewerSession({
-    // O app repassa como o navegador (resposta 2 do dono, ADR 0031).
-    transport: () => makeMeshTransport({ channel: signaling(), scheduler, repasse: { espectador: { criarWorker } } }),
+    // O app repassa como o navegador (resposta 2 do dono, ADR 0031) — menos na
+    // multivisão (ADR 0032), igual ao navegador.
+    transport: () =>
+      makeMeshTransport({
+        channel: signaling(),
+        scheduler,
+        ...(repassar() ? { repasse: { espectador: { criarWorker } } } : {}),
+      }),
     scheduler,
     diagnosticId,
     appVersion,

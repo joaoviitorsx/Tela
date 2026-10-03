@@ -56,6 +56,20 @@ describe('canalDoLinkProfundo', () => {
   });
 });
 
+describe('multivisão (ADR 0032)', () => {
+  it('dois canais passam juntos; repetido conta uma vez', () => {
+    expect(canalDoLinkProfundo('tela://assistir/ana+bia')).toBe('ana+bia');
+    expect(canalDoLinkProfundo('tela://assistir/Ana+Ana/')).toBe('ana');
+  });
+
+  it('três, pedaço vazio, inválido ou reservado: recusado inteiro', () => {
+    expect(canalDoLinkProfundo('tela://assistir/ana+bia+caio')).toBeNull();
+    expect(canalDoLinkProfundo('tela://assistir/ana+')).toBeNull();
+    expect(canalDoLinkProfundo('tela://assistir/ana+jv')).toBeNull();
+    expect(canalDoLinkProfundo('tela://assistir/ana+transmitir')).toBeNull();
+  });
+});
+
 describe('canalDoArgv', () => {
   it('Linux: o link é um argumento solto', () => {
     expect(canalDoArgv(['/opt/Tela/tela', 'tela://assistir/joao'])).toBe('joao');

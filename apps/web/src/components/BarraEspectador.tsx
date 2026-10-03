@@ -1,4 +1,4 @@
-import { IconOlho, IconOlhoRisco, IconPip, IconSairTelaCheia, IconTelaCheia } from './Icon.js';
+import { IconLadoALado, IconMaisTela, IconOlho, IconOlhoRisco, IconPip, IconSairTelaCheia, IconTelaCheia } from './Icon.js';
 import { Led } from './Led.js';
 import { VolumeBlocos } from './VolumeBlocos.js';
 
@@ -55,6 +55,14 @@ export type PropsDaBarra = {
     readonly aoAbrir: () => void;
     readonly tentando: boolean;
     readonly falhou: boolean;
+  } | null;
+  /**
+   * Multivisão (ADR 0032): `+ TELA` sempre; a troca PiP ↔ lado a lado só
+   * com dois canais e onde ela existe (no celular em pé o arranjo é fixo).
+   */
+  readonly multivisao?: {
+    readonly aoAdicionar: () => void;
+    readonly layout: { readonly ladoALado: boolean; readonly aoAlternar: () => void } | null;
   } | null;
 };
 
@@ -196,6 +204,30 @@ export function BarraEspectador(p: PropsDaBarra) {
         )}
 
         <div className="ml-auto flex items-center border-l-2 border-edge">
+          {p.multivisao != null && (
+            <>
+              <button
+                type="button"
+                onClick={p.multivisao.aoAdicionar}
+                title="Assistir outro canal junto (A)"
+                aria-label="Assistir outro canal junto (A)"
+                className="flex h-11 items-center gap-1.5 border-0 border-r-2 border-line bg-transparent px-3 font-[family-name:var(--font-pixel)] text-[11px] text-text hover:bg-key hover:text-accent-hi"
+              >
+                <IconMaisTela className="h-4 w-4" />
+                TELA
+              </button>
+              {p.multivisao.layout !== null && (
+                <BotaoBarra
+                  rotulo={p.multivisao.layout.ladoALado ? 'Quadro no canto (L)' : 'Lado a lado (L)'}
+                  aoClicar={p.multivisao.layout.aoAlternar}
+                  largo
+                  pressionado={p.multivisao.layout.ladoALado}
+                >
+                  <IconLadoALado className="h-[18px] w-[18px] text-text" />
+                </BotaoBarra>
+              )}
+            </>
+          )}
           <BotaoBarra rotulo="Esconder controles (H)" aoClicar={p.aoEsconder} largo>
             <IconOlhoRisco className="h-5 w-5 text-text" />
           </BotaoBarra>

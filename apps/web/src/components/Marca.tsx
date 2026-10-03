@@ -32,7 +32,7 @@ export function Marca({ href, tamanho = 'normal' }: Props) {
   const conteudo =
     tamanho === 'normal' ? (
       <span className="inline-flex items-center gap-2">
-        <img src="/tela-tv.svg" alt="" width={32} height={32} className="h-8 w-8" />
+        <img src="/tela-app-icon.png" alt="" width={32} height={32} className="h-8 w-8" />
         {placa}
       </span>
     ) : (

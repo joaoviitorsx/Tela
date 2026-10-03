@@ -13,10 +13,11 @@ import type { SlugPolicy } from './core/domain/slug.js';
 import { linkDoCanal } from './core/domain/link.js';
 import { makeIdentity } from './core/identity/owner-token.js';
 import { makeEspectador } from './core/identity/espectador.js';
+import { makeCanaisRecentes } from './core/identity/canais-recentes.js';
+import { makePreferenciaDaPip } from './core/multivisao/preferencia-da-pip.js';
 import { ViewerSession } from './core/media/viewer-session.js';
 import type { AbreVitrine } from './core/ports/crt-vitrine.js';
 import type { AbrePalco } from './core/ports/intro-stage.js';
-import type { MediaTransport } from './core/ports/media-transport.js';
 
 /**
  * Raiz de composição do front — único lugar que conhece adapters concretos.
@@ -87,6 +88,16 @@ export const dentroDoApp: boolean = false;
 /** Pré-lançamento não aparece em `/releases/latest`: o link é a página de lançamentos. */
 export const urlDosLancamentos = 'https://github.com/joaoviitorsx/Tela/releases';
 
+/**
+ * Instalar o app do Discord na própria conta (docs/DISCORD.md §2): depois
+ * disso, `/tela canal:<nome>` em qualquer conversa. O Application ID é
+ * público. Quem hospeda o próprio Tela registra o próprio app e troca o ID —
+ * ou põe `null`, e o botão DISCORD some do console.
+ */
+const DISCORD_APPLICATION_ID: string | null = '1545598563994701824';
+export const instalarNoDiscord: string | null =
+  DISCORD_APPLICATION_ID === null ? null : `https://discord.com/oauth2/authorize?client_id=${DISCORD_APPLICATION_ID}`;
+
 export const shareUrlFor = (slug: string): string => linkDoCanal(window.location.origin, slug);
 
 /**
@@ -108,18 +119,34 @@ export function repasseForcado(): boolean {
   }
 }
 
-/** Cada sessão recebe um transporte novo: canal reaberto não é canal reusado. */
-function createTransport(): MediaTransport {
-  return makeMeshTransport({
-    channel: makeWsSignaling(signalUrl),
+/**
+ * Cada tentativa recebe um transporte novo: canal reaberto não é canal reusado.
+ *
+ * `repassar`: perguntado a cada conexão nova. Na multivisão a resposta é não
+ * (ADR 0032): a recepção dividida entre dois canais é frágil demais para
+ * segurar filhos da cascata.
+ */
+export function createViewerSession({ repassar = () => true }: OpcoesDoEspectador = {}): ViewerSession {
+  return new ViewerSession({
+    transport: () =>
+      makeMeshTransport({
+        channel: makeWsSignaling(signalUrl),
+        scheduler,
+        ...(repassar() ? { repasse: { espectador: { criarWorker: criarWorkerDeRepasse } } } : {}),
+      }),
     scheduler,
-    repasse: { espectador: { criarWorker: criarWorkerDeRepasse } },
+    diagnosticId,
+    appVersion,
   });
 }
 
-export function createViewerSession(): ViewerSession {
-  return new ViewerSession({ transport: createTransport, scheduler, diagnosticId, appVersion });
-}
+export type OpcoesDoEspectador = { readonly repassar?: () => boolean };
+
+/** Os canais que este aparelho assistiu, para o `+ TELA` (ADR 0032). */
+export const canaisRecentes = makeCanaisRecentes(storage);
+
+/** Canto e tamanho do quadro da multivisão, lembrados no aparelho. */
+export const preferenciaDaPip = makePreferenciaDaPip(storage);
 
 /**
  * Volume do espectador.

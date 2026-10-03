@@ -119,8 +119,8 @@ ALLOWED_ORIGINS = "app://tela"
 # App do Discord (docs/DISCORD.md): o `/tela canal:<slug>` no "+" → "Usar apps".
 # A chave pública é SECRET (`wrangler secret put DISCORD_PUBLIC_KEY`); sem ela,
 # `/discord/interactions` responde 404. O Application ID é público e opcional:
-# com ele, interação de outro app é recusada. Descomente com o seu.
-# DISCORD_APPLICATION_ID = "000000000000000000"
+# com ele, interação de outro app é recusada.
+DISCORD_APPLICATION_ID = "1545598563994701824"
 
 [observability]
 enabled = true

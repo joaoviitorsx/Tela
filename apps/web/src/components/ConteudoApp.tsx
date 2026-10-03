@@ -25,7 +25,7 @@ export function ConteudoApp({ urlDosLancamentos, menu, posicao }: Props) {
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-4">
-            <img src="/tela-app-icon.svg" alt="" width={64} height={64} className="h-16 w-16" />
+            <img src="/tela-app-icon.png" alt="" width={64} height={64} className="h-16 w-16" />
             <p className="numeral m-0 text-[44px] leading-none text-accent-hi">
               Tela para desktop
             </p>
@@ -73,7 +73,7 @@ export function ConteudoApp({ urlDosLancamentos, menu, posicao }: Props) {
         <span className="rotulo">SEGUNDO PLANO · JANELA COMPACTA</span>
         <div className="flex w-full max-w-[380px] flex-col border-2 border-edge bg-surface shadow-[0_0_0_2px_#000,0_24px_60px_rgb(0_0_0_/_0.6)]">
           <div className="flex h-8 items-center gap-2 border-b-2 border-line bg-void pl-2.5">
-            <img src="/tela-app-icon.svg" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
+            <img src="/tela-app-icon.png" alt="" width={18} height={18} className="h-[18px] w-[18px]" />
             <Marca tamanho="pequeno" />
             <span className="rotulo">tela.gg/seucanal</span>
             <span className="flex-1" />

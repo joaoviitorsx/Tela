@@ -70,7 +70,6 @@ import {
 import {
   bandejaForcada,
   COMANDO_DA_SONDA,
-  monocromaAmbar,
   plataformaTemBandeja,
   watcherPresenteNaSaida,
 } from './bandeja.js';
@@ -510,9 +509,9 @@ function iconeDaBandeja(): NativeImage {
   const lado = process.platform === 'win32' ? 32 : 24;
   const original = nativeImage.createFromPath(ARQUIVO_DO_ICONE);
   if (original.isEmpty()) return original;
-  const pequeno = original.resize({ width: lado, height: lado, quality: 'best' });
-  const { width, height } = pequeno.getSize();
-  return nativeImage.createFromBitmap(Buffer.from(monocromaAmbar(pequeno.toBitmap())), { width, height });
+  // Colorido: a arte tem fundo âmbar cheio, e pintada de uma cor só a TV
+  // some no fundo a 24 px.
+  return original.resize({ width: lado, height: lado, quality: 'best' });
 }
 
 function janelaVisivelAgora(): boolean {

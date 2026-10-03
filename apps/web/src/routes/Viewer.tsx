@@ -556,8 +556,12 @@ export function Viewer({ slug }: Props) {
         mais alto que a tela e a barra, ancorada em `bottom-0`, caía inteira
         fora da dobra: sem contagem, sem latência, sem volume, sem botão de
         tela cheia.
+
+        No app desktop a moldura põe `--altura-da-tela: 100%`: a coluna
+        fica abaixo da barra de título, e `100dvh` passava dela pela altura
+        da barra, com o pé da imagem atrás de um scroll.
       */
-      className="relative h-dvh w-full overflow-hidden bg-black"
+      className="relative h-[var(--altura-da-tela,100dvh)] w-full overflow-hidden bg-black"
       // No toque o `mousemove` do gesto não pode revelar: quem decide é `alternar`.
       onMouseMove={compacta && comDedo ? undefined : controls.show}
       onDoubleClick={toggleFullscreen}

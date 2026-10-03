@@ -287,7 +287,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
             ? () => window.location.reload()
             : null;
     return (
-      <div className="flex min-h-dvh flex-col bg-void">
+      <div className="flex min-h-[var(--altura-da-tela,100dvh)] flex-col bg-void">
         <VidroCrt />
         <CabecalhoDaRota marcaHref="/" />
         <main className="flex flex-1 items-center justify-center p-4 sm:p-8">
@@ -441,7 +441,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
 
   return (
     <div
-      className="relative flex min-h-dvh flex-col bg-void lg:h-dvh lg:overflow-hidden"
+      className="relative flex min-h-[var(--altura-da-tela,100dvh)] flex-col bg-void lg:h-[var(--altura-da-tela,100dvh)] lg:overflow-hidden"
       onMouseMove={hud.show}
       onFocusCapture={(event) => {
         /**
@@ -768,7 +768,7 @@ export function Broadcast({ slug, presetId, audioDeviceId, prioridade: prioridad
  */
 function Moldura({ children }: { readonly children: React.ReactNode }) {
   return (
-    <div className="flex min-h-dvh flex-col bg-void">
+    <div className="flex min-h-[var(--altura-da-tela,100dvh)] flex-col bg-void">
       <VidroCrt />
       <CabecalhoDaRota />
       <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">

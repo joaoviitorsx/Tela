@@ -202,7 +202,8 @@ describe('AvisoAoVivo', () => {
         return ok(undefined);
       },
     };
-    const aviso = new AvisoAoVivo({ porta, storage: new FakeStorage(), agora: () => 0 });
+    const storage = new FakeStorage();
+    const aviso = new AvisoAoVivo({ porta, storage, agora: () => 0 });
     aviso.salvar(URL_OK);
     const publicando = aviso.aoEntrarNoAr('soumbra', LINK);
     aviso.remover();
@@ -211,6 +212,8 @@ describe('AvisoAoVivo', () => {
     await aviso.aguardar(100);
     expect(editados).toEqual(['m9']);
     expect(aviso.getEstado()).toEqual({ fase: 'sem-webhook' });
+    // "Remover" apaga tudo: nem o webhook nem a mensagem ficam guardados.
+    expect(storage.rows.size).toBe(0);
   });
 
   it('reaproveitar falhou depois do fim: não publica mensagem nova', async () => {

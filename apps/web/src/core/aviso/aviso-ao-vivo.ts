@@ -98,7 +98,7 @@ export class AvisoAoVivo {
     const c = this.config();
     const noAr = this.noAr;
     if (c !== null && noAr?.mensagemId != null) {
-      this.encerrarMensagem(c, noAr, noAr.mensagemId, { aoSair: false });
+      void this.encerrarMensagem(c, noAr, noAr.mensagemId, { aoSair: false }, false);
       noAr.mensagemId = null;
     }
     this.deps.storage.remove(CONFIG_KEY);
@@ -165,10 +165,18 @@ export class AvisoAoVivo {
   }
 
   /** "Encerrada": edita a mensagem e a guarda para reaproveitar se voltar logo. */
-  private encerrarMensagem(c: ConfigDoAviso, noAr: NoAr, mensagemId: string, o: { readonly aoSair: boolean }): Promise<unknown> {
+  private encerrarMensagem(
+    c: ConfigDoAviso,
+    noAr: NoAr,
+    mensagemId: string,
+    o: { readonly aoSair: boolean },
+    guardar = true,
+  ): Promise<unknown> {
     const agora = this.deps.agora();
-    const ultimo: Ultimo = { canal: noAr.canal, webhookId: c.webhook.id, mensagemId, encerradoEm: agora };
-    this.deps.storage.set(ULTIMO_KEY, JSON.stringify(ultimo));
+    if (guardar) {
+      const ultimo: Ultimo = { canal: noAr.canal, webhookId: c.webhook.id, mensagemId, encerradoEm: agora };
+      this.deps.storage.set(ULTIMO_KEY, JSON.stringify(ultimo));
+    }
     return this.rastrear(
       this.deps.porta.editar(c.webhook, mensagemId, mensagemEncerrada(noAr.canal, noAr.link, agora - noAr.inicio), o),
     );
@@ -198,8 +206,8 @@ export class AvisoAoVivo {
         this.confirmar(c, noAr, ultimo.mensagemId);
         return;
       }
-      // Acabou enquanto tentava reaproveitar: não há o que anunciar.
-      if (this.noAr !== noAr) return;
+      // Acabou, ou o webhook foi removido, enquanto tentava reaproveitar: não há o que anunciar.
+      if (this.noAr !== noAr || this.config()?.webhook.id !== c.webhook.id) return;
     }
 
     const r = await this.rastrear(this.deps.porta.publicar(c.webhook, corpo));
@@ -218,8 +226,10 @@ export class AvisoAoVivo {
       ninguém editaria a mensagem depois. Encerra com o webhook com que ela
       nasceu (o `c` capturado, ainda válido no Discord).
     */
-    if (this.noAr !== noAr || this.config()?.webhook.id !== c.webhook.id) {
-      void this.encerrarMensagem(c, noAr, mensagemId, { aoSair: true });
+    const removido = this.config()?.webhook.id !== c.webhook.id;
+    if (this.noAr !== noAr || removido) {
+      // Removido: encerra sem guardar nada para reaproveitar — "remover" apaga tudo.
+      void this.encerrarMensagem(c, noAr, mensagemId, { aoSair: true }, !removido);
       if (this.noAr === noAr) this.mudar(this.estadoEmRepouso());
       return;
     }

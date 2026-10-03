@@ -8,7 +8,7 @@ import { CodificadorWebCodecs } from './webcodecs-codificador.js';
  * `VideoEncoder` é dublê: registra cada `configure` e deixa o teste emitir
  * chunks na saída.
  */
-const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion', camadas: 1 };
+const BASE: AlvoDoCodificador = { width: 1920, height: 1080, fps: 60, bitrate: 12_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion', camadas: 1, codec: 'h264' };
 const MAIN: AlvoDoCodificador = { ...BASE, perfil: 'main' };
 
 let suportaMain = true;

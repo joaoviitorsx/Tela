@@ -1,3 +1,4 @@
+import type { CodecDaSala } from './codec-da-sala.js';
 import type { PerfilH264 } from './perfil-h264.js';
 import {
   CONTENT_HINT_POR_PRIORIDADE,
@@ -43,6 +44,8 @@ export type AlvoDoCodificador = {
    * quem fica para trás pula a camada 1 e assiste a meia taxa, sem congelar.
    */
   readonly camadas: 1 | 2;
+  /** O codec da sala (ADR 0035): H.264, ou AV1 com a sala inteira decodificando. */
+  readonly codec: CodecDaSala;
 };
 
 export type EntradaDoAlvo = {
@@ -54,6 +57,8 @@ export type EntradaDoAlvo = {
   readonly perfil?: PerfilH264;
   /** Camadas temporais pedidas (ADR 0034); ausente = 1. */
   readonly camadas?: 1 | 2;
+  /** Codec da sala (ADR 0035); ausente = H.264. */
+  readonly codec?: CodecDaSala;
   /** Tamanho que a captura entrega. O codificador só tira pixel, não cria. */
   readonly fonte: { readonly width: number; readonly height: number } | null;
   /**
@@ -110,5 +115,6 @@ export function alvoDoCodificador(e: EntradaDoAlvo): AlvoDoCodificador {
     perfil: e.perfil ?? 'baseline',
     conteudo: CONTENT_HINT_POR_PRIORIDADE[e.prioridade],
     camadas: e.camadas ?? 1,
+    codec: e.codec ?? 'h264',
   };
 }

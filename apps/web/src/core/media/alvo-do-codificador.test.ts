@@ -12,6 +12,7 @@ describe('alvoDoCodificador — o encoder único segue a regra da topologia', ()
       perfil: 'baseline',
       conteudo: 'motion',
       camadas: 1,
+      codec: 'h264',
     });
   });
 

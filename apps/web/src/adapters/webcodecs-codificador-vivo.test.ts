@@ -7,7 +7,7 @@ import { CodificadorWebCodecs, REENVIO_MS, SEM_CAPTURA_MS } from './webcodecs-co
  * é codificado de novo, para quem assiste não ficar sem pacote e quem entra
  * receber o quadro-chave.
  */
-const ALVO: AlvoDoCodificador = { width: 1280, height: 720, fps: 60, bitrate: 6_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion', camadas: 1 };
+const ALVO: AlvoDoCodificador = { width: 1280, height: 720, fps: 60, bitrate: 6_000_000, limitadoPelaEstimativa: false, perfil: 'baseline', conteudo: 'motion', camadas: 1, codec: 'h264' };
 
 const encodados: Array<{ timestamp: number; chave: boolean }> = [];
 let fechados = 0;

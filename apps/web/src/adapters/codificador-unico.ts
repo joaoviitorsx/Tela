@@ -54,6 +54,11 @@ export interface CodificadorUnico {
    * não é a imagem. `null` = use a trilha.
    */
   fonte(): { readonly width: number; readonly height: number } | null;
+  /**
+   * Codifica AV1 por hardware (ADR 0035)? `false` ou ausente = só H.264. É
+   * uma das condições do codec da sala; a outra é todo espectador decodificar.
+   */
+  suportaAv1?(): boolean;
   parar(): void;
 }
 

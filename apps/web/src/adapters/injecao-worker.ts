@@ -20,6 +20,11 @@ export type ChunkInjetado = {
   readonly height: number;
   /** Camada temporal do SVC L1T2 (ADR 0034), quando o encoder tem camadas. */
   readonly camada?: number;
+  /**
+   * O `mimeType` RTP do quadro (ADR 0035): só entra num sender cuja isca é do
+   * MESMO codec. Ausente = H.264 (o codificador externo, versões antigas).
+   */
+  readonly mime?: string;
 };
 
 /**

@@ -5,6 +5,7 @@ import {
 } from '../core/media/aceleracao-do-codificador.js';
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
 import { type PerfilH264, codecDoPerfil, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
+import { CODEC_AV1, type CodecDaSala, codecDoEncoder, mimeDoCodec } from '../core/media/codec-da-sala.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import { VigiaDoEncoder } from '../core/media/vigia-do-encoder.js';
 import type { CodificadorUnico, EstatisticasDoCodificador } from './codificador-unico.js';
@@ -35,6 +36,12 @@ export type OpcoesDoWebCodecs = {
    * sempre. O app passa o ajuste experimental "Taxa constante".
    */
   readonly modoDeTaxa?: () => 'variable' | 'constant';
+  /**
+   * AV1 (ADR 0035). `hardware` (padrão): só se o encoder AV1 de hardware
+   * existir e o modo for `prefer-hardware`. `forcado`: aceita software — só
+   * para o teste de ponta a ponta (AV1 por software a 1080p60 pesa no jogo).
+   */
+  readonly av1?: 'hardware' | 'forcado';
 };
 
 /** Não-padrão (Chromium): o TypeScript não traz. */
@@ -78,6 +85,12 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   /** O perfil com que o encoder atual foi configurado. */
   private perfilConfigurado: PerfilH264 | null = null;
   private readonly modoDeTaxa: () => 'variable' | 'constant';
+  private readonly av1: 'hardware' | 'forcado';
+  /** O encoder deste modo faz AV1 (`isConfigSupported`); `undefined` = não perguntado. */
+  private av1Suportado: boolean | undefined = undefined;
+  /** O codec do `configure` atual, e o do último pedido (ver `morreu`). */
+  private codecConfigurado: CodecDaSala | null = null;
+  private codecPedido: CodecDaSala = 'h264';
   /** O `bitrateMode` do `configure` atual. */
   private taxaConfigurada: 'variable' | 'constant' | null = null;
   /**
@@ -164,6 +177,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
   ) {
     this.aceleracao = new AceleracaoDoCodificador(opcoes.preferirHardware === true);
     this.modoDeTaxa = opcoes.modoDeTaxa ?? (() => 'variable');
+    this.av1 = opcoes.av1 ?? 'hardware';
   }
 
   async iniciar(track: MediaStreamTrack, alvo: AlvoDoCodificador): Promise<void> {
@@ -179,6 +193,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.aceleracao.comecar(suportaHardware);
     // Main perguntado para os três modos já: uma queda de GPU não vira IDR duplo (Baseline, depois Main).
     for (const modo of MODOS) this.perguntarMain(alvo, modo);
+    void this.perguntarAv1(alvo);
     // `iniciar` de novo (o comutável voltou a este caminho): nada do anterior fica aberto.
     void this.leitor?.cancel();
     this.descartar();
@@ -312,6 +327,31 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       });
   }
 
+  /**
+   * AV1 por hardware nesta máquina? Pergunta uma vez, em `prefer-hardware`
+   * (ou em qualquer modo, se forçado para teste).
+   */
+  private async perguntarAv1(alvo: AlvoDoCodificador): Promise<void> {
+    if (this.av1Suportado !== undefined || typeof VideoEncoder.isConfigSupported !== 'function') return;
+    const modo: Aceleracao = this.av1 === 'forcado' ? 'no-preference' : 'prefer-hardware';
+    try {
+      const r = await VideoEncoder.isConfigSupported({ ...this.config(alvo, modo), codec: CODEC_AV1 });
+      this.av1Suportado = r.supported === true;
+    } catch {
+      this.av1Suportado = false;
+    }
+  }
+
+  suportaAv1(): boolean {
+    if (this.av1Suportado !== true) return false;
+    // Fora do teste, só com a GPU certa codificando — AV1 por software pesa no jogo.
+    return this.av1 === 'forcado' || this.aceleracao.classe() === 'hardware';
+  }
+
+  private codecEfetivo(alvo: AlvoDoCodificador): CodecDaSala {
+    return alvo.codec === 'av1' && this.suportaAv1() ? 'av1' : 'h264';
+  }
+
   /** L1T2 só com a sala pedindo e o modo de aceleração confirmando. */
   private camadasEfetivas(alvo: AlvoDoCodificador): 1 | 2 {
     if (alvo.camadas !== 2) return 1;
@@ -346,10 +386,11 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     aceleracao: Aceleracao,
     perfil: PerfilH264 = 'baseline',
     camadas: 1 | 2 = 1,
+    codec: CodecDaSala = 'h264',
   ): VideoEncoderConfig {
     return {
       ...(camadas === 2 ? { scalabilityMode: 'L1T2' } : {}),
-      codec: codecDoPerfil(perfil),
+      codec: codecDoEncoder(codec, perfil),
       width: alvo.width,
       height: alvo.height,
       bitrate: alvo.bitrate,
@@ -358,16 +399,17 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       bitrateMode: this.modoDeTaxa(),
       // A metade da R5 que não chegava aqui: `detail` no modo nitidez.
       contentHint: this.conteudoEfetivo(alvo),
-      avc: { format: 'annexb' },
+      ...(codec === 'h264' ? { avc: { format: 'annexb' as const } } : {}),
       hardwareAcceleration: aceleracao,
     };
   }
 
   /** O rótulo do console: aceleração e o perfil EMITIDO, quando já se sabe. */
   private rotulo(): string {
-    const perfil = nomeDoPerfilIdc(this.perfilEmitido);
     const base = this.aceleracao.rotulo();
     const camadas = this.camadasConfiguradas === 2 ? ' · L1T2' : '';
+    if (this.codecConfigurado === 'av1') return `${base} · AV1${camadas}`;
+    const perfil = nomeDoPerfilIdc(this.perfilEmitido);
     return perfil === null ? `${base}${camadas}` : `${base} · H.264 ${perfil}${camadas}`;
   }
 
@@ -380,6 +422,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.taxaConfigurada = null;
     this.conteudoConfigurado = null;
     this.camadasConfiguradas = null;
+    this.codecConfigurado = null;
     this.chavesPedidas = 0;
     this.ultimoTimestamp = -Infinity;
     try {
@@ -416,10 +459,12 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       Main e recria no mesmo modo — contar como queda de GPU levaria a sessão
       para software depois de três tentativas.
     */
-    if (motivo === 'erro' && (this.perfilPedido === 'main' || this.camadasPedidas === 2) && this.saidasDoPerfil === 0) {
-      // O recurso novo é o suspeito: Main e/ou L1T2 saem deste modo.
+    const arriscado = this.perfilPedido === 'main' || this.camadasPedidas === 2 || this.codecPedido === 'av1';
+    if (motivo === 'erro' && arriscado && this.saidasDoPerfil === 0) {
+      // O recurso novo é o suspeito: Main, L1T2 e/ou AV1 saem deste modo.
       if (this.perfilPedido === 'main') this.suportaMain.set(this.aceleracao.modo, false);
       if (this.camadasPedidas === 2) this.suportaCamadas.set(this.aceleracao.modo, false);
+      if (this.codecPedido === 'av1') this.av1Suportado = false;
       this.descartar();
       queueMicrotask(() => {
         if (!this.parado && this.encoder === null) this.aplicar();
@@ -459,14 +504,17 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const mudouTaxa = this.modoDeTaxa() !== this.taxaConfigurada;
     const camadas = this.camadasEfetivas(alvo);
     const mudouCamadas = camadas !== this.camadasConfiguradas;
-    if (!mudouTamanho && !mudouBitrate && !mudouPerfil && !mudouTaxa && !mudouCamadas) return;
-    if (mudouPerfil || mudouCamadas || c === null) {
+    const codec = this.codecEfetivo(alvo);
+    const mudouCodec = codec !== this.codecConfigurado;
+    if (!mudouTamanho && !mudouBitrate && !mudouPerfil && !mudouTaxa && !mudouCamadas && !mudouCodec) return;
+    if (mudouPerfil || mudouCamadas || mudouCodec || c === null) {
       this.perfilPedido = perfil;
       this.camadasPedidas = camadas;
+      this.codecPedido = codec;
       this.saidasDoPerfil = 0;
       this.entradaNoConfigure = this.ultimaEntrada;
     }
-    enc.configure(this.config(alvo, this.aceleracao.modo, perfil, camadas));
+    enc.configure(this.config(alvo, this.aceleracao.modo, perfil, camadas, codec));
     // Recusado dentro do `configure`: `morreu` já cuidou, e este não é mais o encoder.
     if (this.encoder !== enc) return;
     this.configurado = alvo;
@@ -474,7 +522,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     this.taxaConfigurada = this.modoDeTaxa();
     this.conteudoConfigurado = this.conteudoEfetivo(alvo);
     this.camadasConfiguradas = camadas;
-    if (mudouTamanho || mudouPerfil || mudouTaxa || mudouCamadas) this.pedirChaveAgora = true;
+    this.codecConfigurado = codec;
+    if (mudouTamanho || mudouPerfil || mudouTaxa || mudouCamadas || mudouCodec) this.pedirChaveAgora = true;
   }
 
   private guardarUltimo(quadro: VideoFrame): void {
@@ -607,13 +656,13 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const dados = new ArrayBuffer(chunk.byteLength);
     chunk.copyTo(dados);
     // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.
-    if (chave) this.perfilEmitido = perfilDoSps(new Uint8Array(dados)) ?? this.perfilEmitido;
+    if (chave && this.codecConfigurado !== 'av1') this.perfilEmitido = perfilDoSps(new Uint8Array(dados)) ?? this.perfilEmitido;
     /*
       Timestamp voltando = o encoder reordenou quadros (B-frames). O
       receptor em tempo real não espera por isso; Main fica proibido e o
       encoder volta a Baseline — que não tem B-frames — com IDR.
     */
-    if (chunk.timestamp < this.ultimoTimestamp && this.perfilConfigurado === 'main') {
+    if (chunk.timestamp < this.ultimoTimestamp && this.perfilConfigurado === 'main' && this.codecConfigurado === 'h264') {
       this.mainProibido = true;
       queueMicrotask(() => this.aplicar());
     }
@@ -628,6 +677,7 @@ export class CodificadorWebCodecs implements CodificadorUnico {
         height: c?.height ?? 0,
         // Só com L1T2 configurado: sem camadas, a válvula não tem o que pular.
         ...(this.camadasConfiguradas === 2 && camada !== undefined ? { camada } : {}),
+        mime: mimeDoCodec(this.codecConfigurado ?? 'h264'),
       },
       [dados],
     );

@@ -55,6 +55,17 @@ export function slugDaPrevia(pathname: string): string | null {
   return segmento;
 }
 
+/**
+ * Os canais do caminho, para o link da multivisão (`/<a>+<b>`, ADR 0032)
+ * também ganhar prévia. A mesma regra de `slugDaPrevia` para cada pedaço;
+ * mais de dois não ganha prévia de canal (o front abre os dois primeiros).
+ */
+export function canaisDaPrevia(pathname: string): readonly string[] | null {
+  const partes = pathname.replace(/^\/+|\/+$/g, '').split('+');
+  if (partes.length > 2 || partes.some((p) => slugDaPrevia(p) === null)) return null;
+  return [...new Set(partes)];
+}
+
 export type TextosDaPrevia = { readonly titulo: string; readonly descricao: string };
 
 export function textosDaPrevia(slug: string, estado: EstadoPublico): TextosDaPrevia {
@@ -68,6 +79,28 @@ export function textosDaPrevia(slug: string, estado: EstadoPublico): TextosDaPre
   return {
     titulo: `${slug} · AO VIVO agora${plateia}`,
     descricao: 'Clica e assiste no navegador, sem cadastro nem instalar nada. Gameplay em 1080p com menos de 200ms de atraso.',
+  };
+}
+
+/** A prévia de `/<a>+<b>`: quem está no ar, numa linha. */
+export function textosDaPreviaConjunta(
+  [a, b]: readonly [string, string],
+  [ea, eb]: readonly [EstadoPublico, EstadoPublico],
+): TextosDaPrevia {
+  const titulo =
+    ea.noAr && eb.noAr
+      ? `${a} + ${b} · os dois AO VIVO`
+      : ea.noAr
+        ? `${a} AO VIVO · ${b} fora do ar`
+        : eb.noAr
+          ? `${b} AO VIVO · ${a} fora do ar`
+          : `${a} + ${b} · fora do ar`;
+  return {
+    titulo,
+    descricao:
+      ea.noAr || eb.noAr
+        ? 'As duas telas juntas no navegador, sem cadastro nem instalar nada. Clica no quadro do canto para trocar qual fica grande.'
+        : 'Quando as transmissões começarem, é por este link. Abre no navegador, sem cadastro nem instalar nada.',
   };
 }
 
@@ -122,11 +155,11 @@ const CONDICIONAIS = ['if-none-match', 'if-modified-since'];
  * canal, troca os metadados pelo estado do canal.
  */
 export async function servirComPrevia(request: Request, deps: DepsDaPrevia): Promise<Response> {
-  const slug = slugDaPrevia(new URL(request.url).pathname);
+  const canais = canaisDaPrevia(new URL(request.url).pathname);
   const metodo = request.method.toUpperCase();
   const aceita = request.headers.get('Accept');
   const querHtml = aceita === null || aceita === '' || /text\/html|\*\/\*/i.test(aceita);
-  if (slug === null || (metodo !== 'GET' && metodo !== 'HEAD') || !querHtml ||
+  if (canais === null || (metodo !== 'GET' && metodo !== 'HEAD') || !querHtml ||
     !ehRoboDePrevia(request.headers.get('User-Agent'))) {
     return await deps.assets(request);
   }
@@ -136,15 +169,19 @@ export async function servirComPrevia(request: Request, deps: DepsDaPrevia): Pro
   const original = await deps.assets(new Request(request.url, { method: metodo, headers }));
   if (!original.ok || !(original.headers.get('content-type') ?? '').includes('text/html')) return original;
 
-  let estado: EstadoPublico | null;
+  // Os canais em paralelo: a prévia de dois não pode custar o dobro de espera.
+  let estados: readonly (EstadoPublico | null)[];
   try {
-    estado = await deps.consultar(slug);
+    estados = await Promise.all(canais.map((canal) => deps.consultar(canal)));
   } catch {
-    estado = null;
+    return original;
   }
-  if (estado === null) return original;
+  const [a, b] = canais;
+  const [ea, eb] = estados;
+  if (a === undefined || ea == null || (b !== undefined && eb == null)) return original;
+  const textos = b === undefined || eb == null ? textosDaPrevia(a, ea) : textosDaPreviaConjunta([a, b], [ea, eb]);
 
-  const reescrita = reescreverPrevia(deps.reescritor(), textosDaPrevia(slug, estado), original);
+  const reescrita = reescreverPrevia(deps.reescritor(), textos, original);
   const resposta = new Response(reescrita.body, reescrita);
   resposta.headers.set('Cache-Control', CACHE_DA_PREVIA);
   // O mesmo caminho serve HTML diferente para robô e para gente.

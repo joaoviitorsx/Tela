@@ -2,8 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { EstadoPublico } from './worker.js';
 import {
-  CACHE_DA_PREVIA, type ElementoReescrevivel, type Reescritor, ehRoboDePrevia, servirComPrevia, slugDaPrevia,
-  textosDaPrevia,
+  CACHE_DA_PREVIA, type ElementoReescrevivel, type Reescritor, canaisDaPrevia, ehRoboDePrevia, servirComPrevia,
+  slugDaPrevia, textosDaPrevia, textosDaPreviaConjunta,
 } from './previa.js';
 
 /**
@@ -201,5 +201,32 @@ describe('servirComPrevia', () => {
     const json = cenario({ noAr: true, espectadores: 3 }, { tipo: 'application/json' });
     expect(await (await json.pedir('/joao')).text()).toBe(INDEX);
     expect(json.consultas).toEqual([]);
+  });
+});
+
+describe('multivisão: /<a>+<b> (ADR 0032)', () => {
+  it('os canais do caminho', () => {
+    expect(canaisDaPrevia('/ana+bia')).toEqual(['ana', 'bia']);
+    expect(canaisDaPrevia('/ana')).toEqual(['ana']);
+    expect(canaisDaPrevia('/ana+ana')).toEqual(['ana']);
+    expect(canaisDaPrevia('/ana+bia+caio')).toBeNull();
+    expect(canaisDaPrevia('/ana+transmitir')).toBeNull();
+    expect(canaisDaPrevia('/ana+')).toBeNull();
+  });
+
+  it('o título diz quem está no ar', () => {
+    const no = { noAr: true, espectadores: 2 };
+    const fora = { noAr: false, espectadores: 0 };
+    expect(textosDaPreviaConjunta(['ana', 'bia'], [no, no]).titulo).toBe('ana + bia · os dois AO VIVO');
+    expect(textosDaPreviaConjunta(['ana', 'bia'], [no, fora]).titulo).toBe('ana AO VIVO · bia fora do ar');
+    expect(textosDaPreviaConjunta(['ana', 'bia'], [fora, no]).titulo).toBe('bia AO VIVO · ana fora do ar');
+    expect(textosDaPreviaConjunta(['ana', 'bia'], [fora, fora]).titulo).toBe('ana + bia · fora do ar');
+  });
+
+  it('o robô pede /a+b: os dois canais consultados, a prévia conjunta', async () => {
+    const c = cenario({ noAr: true, espectadores: 1 });
+    const html = await (await c.pedir('/ana+bia')).text();
+    expect(meta(html, 'property', 'og:title')).toBe('ana + bia · os dois AO VIVO');
+    expect(c.consultas).toEqual(['ana', 'bia']);
   });
 });

@@ -150,8 +150,19 @@ escopo.onmessage = (e) => {
  */
 let seq = 0;
 
-/** Chave guardada mais velha que isto sai como vaga comum (timestamp RTP velho = atraso no jitter buffer). */
-const VALIDADE_DA_CHAVE_GUARDADA_MS = 500;
+/**
+ * Por quanto tempo a chave guardada da isca serve ao IDR real: a pior espera
+ * de IDR (janela da plateia, 40 ms × 50 = 2 s, mais o encode). Vencida, o IDR
+ * sai numa vaga de delta — que o receptor AV1 lê como delta.
+ *
+ * O preço é o timestamp RTP de quando a chave nasceu (o Chromium 151 não tem
+ * `setMetadata` no worker para reescrevê-lo, medido): o espectador vê o IDR
+ * "atrasado" e o jitter buffer alarga por um instante. A ORDEM não quebra:
+ * enquanto o sender espera nada é escrito, e a guardada zera a cada quadro
+ * servido — ela sai sempre como o quadro mais novo (escrever um quadro mais
+ * velho que outro já escrito para a decodificação, medido).
+ */
+const VALIDADE_DA_CHAVE_GUARDADA_MS = 3_000;
 
 /**
  * Repassador: cada quadro que chega do anfitrião segue para o decoder daqui

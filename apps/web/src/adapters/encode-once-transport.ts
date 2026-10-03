@@ -119,6 +119,14 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
   let reavaliarAv1: ReturnType<typeof setTimeout> | null = null;
   /** `setParameters` em voo: não repetir enquanto o anterior não resolveu. */
   const alinhando = new WeakSet<RTCRtpSender>();
+  /** Trocas de codec que os senders não acompanharam; na segunda, AV1 sai da sessão. */
+  let trocasFalhas = 0;
+  let av1Desligado = false;
+  /** O codec que o sender REALMENTE tem (o que `encodings[0].codec` diz, ou o primeiro negociado). */
+  const codecDoSender = (p: RTCRtpSendParameters): string | undefined => {
+    const primeiro = (p.encodings as (RTCRtpEncodingParameters & { codec?: RTCRtpCodec })[])[0];
+    return primeiro?.codec?.mimeType.toLowerCase() ?? p.codecs?.[0]?.mimeType.toLowerCase();
+  };
   /**
    * Põe cada sender no codec da sala (ADR 0035): `encodings[0].codec`, sem
    * renegociar (medido no Chromium 151). Idempotente — quem entra no meio de
@@ -134,15 +142,18 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
       const encodings = p.encodings as (RTCRtpEncodingParameters & { codec?: RTCRtpCodec })[];
       const primeiro = encodings[0];
       const alvo = p.codecs?.find((c) => c.mimeType.toLowerCase() === mime);
-      const atual = primeiro?.codec?.mimeType.toLowerCase() ?? p.codecs?.[0]?.mimeType.toLowerCase();
-      if (alvo === undefined || atual === mime || primeiro === undefined) continue;
+      if (alvo === undefined || codecDoSender(p) === mime || primeiro === undefined) continue;
       encodings[0] = { ...primeiro, codec: alvo };
       alinhando.add(sender);
       pendentes.push(
         sender
           .setParameters(p)
           .catch(() => undefined)
-          .finally(() => alinhando.delete(sender)),
+          .finally(() => {
+            alinhando.delete(sender);
+            // A sala mudou de ideia enquanto este estava em voo: ele foi pulado no realinhamento.
+            if (mimeDoCodec(codecDosSenders).toLowerCase() !== mime && atualizarPerfilJa()) recalcular();
+          }),
       );
     }
     return Promise.all(pendentes);
@@ -155,12 +166,12 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
    * entrando e saindo não pode fazer a sala oscilar.
    */
   const decidirCodec = (daSala: CodecDaSala | null): void => {
-    if (daSala === null) return;
-    if (daSala === 'h264') {
+    if (daSala === null || daSala === 'h264' || av1Desligado) {
       av1Desde = null;
       if (reavaliarAv1 !== null) clearTimeout(reavaliarAv1);
       reavaliarAv1 = null;
-      codecDosSenders = 'h264';
+      // Sala vazia: sem decisão de codec, mas a contagem da histerese recomeça.
+      if (daSala !== null) codecDosSenders = 'h264';
       return;
     }
     if (codecDosSenders === 'av1') return;
@@ -219,6 +230,25 @@ export function makeEncodeOnceTransport(deps: EncodeOnceDeps): MediaTransport {
     */
     void alinhar(lidos).then(() => {
       if (codecDosSenders !== desejado || codec === desejado || recursos === null) return;
+      /*
+        `setParameters` que resolve sem efeito (motor que ignora
+        `encodings[].codec`) ou que falhou: trocar o encoder assim deixaria a
+        sala inteira em descompasso, tela preta. Confere antes; na segunda
+        troca que não pega, o AV1 sai da sessão. O(N), só na troca.
+      */
+      const mime = mimeDoCodec(desejado).toLowerCase();
+      for (const sender of sendersDeVideo) {
+        const estado = sender.transport?.state;
+        if (estado === 'closed' || estado === 'failed') continue;
+        const p = sender.getParameters();
+        // Sem negociação, ou sem o codec na lista: não é troca que falhou (a próxima leitura da sala decide).
+        if (!(p.codecs ?? []).some((c) => c.mimeType.toLowerCase() === mime)) continue;
+        if (codecDoSender(p) === mime) continue;
+        trocasFalhas += 1;
+        if (desejado === 'av1' && trocasFalhas >= 2) av1Desligado = true;
+        if (atualizarPerfilJa()) recalcular();
+        return;
+      }
       codec = desejado;
       recalcular();
     });

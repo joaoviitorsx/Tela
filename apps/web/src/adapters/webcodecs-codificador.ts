@@ -551,7 +551,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
     const mudouCodec = codec !== this.codecConfigurado;
     if (!mudouTamanho && !mudouBitrate && !mudouPerfil && !mudouTaxa && !mudouCamadas && !mudouCodec) return;
     if (mudouPerfil || mudouCamadas || mudouCodec || c === null) {
-      this.perfilPedido = perfil;
+      // Com AV1 o perfil H.264 não está em jogo: um AV1 recusado não pode condenar o Main.
+      this.perfilPedido = codec === 'h264' ? perfil : 'baseline';
       this.camadasPedidas = camadas;
       this.codecPedido = codec;
       this.modoPedido = modo;

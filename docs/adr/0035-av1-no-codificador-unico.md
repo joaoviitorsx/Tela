@@ -62,8 +62,23 @@ Medido no Chromium 151 (headless):
      no primeiro chunk da configuração nova), não no `configure`. Os
      quadros já na fila do encoder saem depois do `configure`, ainda no
      codec anterior: um IDR H.264 rotulado AV1 servia a sender errado.
-   - A chave guardada só vale no mesmo codec e por até 500 ms. O quadro
-     guardado leva o timestamp RTP de quando nasceu.
+   - A chave guardada só vale no mesmo codec e por até 3 s, o tempo da
+     pior espera de IDR (40 ms × 50 mais o encode). Vencida, o IDR cairia
+     numa vaga de delta, e o receptor AV1 o leria como delta. O quadro
+     guardado leva o timestamp RTP de quando nasceu: o Chromium 151 não tem
+     `setMetadata` no worker (medido), e o espectador vê o IDR atrasado.
+     A ordem não quebra, porque nada é escrito enquanto o sender espera; se
+     um quadro mais velho saísse depois de um mais novo, a decodificação
+     pararia (medido).
+   - Depois dos `setParameters`, o transporte confere o codec de cada
+     sender negociado antes de trocar o encoder. Um motor que ignora
+     `encodings[].codec` deixaria a sala inteira em descompasso. Na segunda
+     troca que não pega, o AV1 sai da sessão.
+   - Sala vazia reinicia a histerese. Um sender que estava com
+     `setParameters` em voo quando a sala mudou de ideia é realinhado ao
+     terminar.
+   - Um AV1 recusado não condena o Main: com AV1, o perfil pedido conta
+     como Baseline.
    - A chave da isca que nasce da troca de codec é tratada como entrada
      (janela curta), não como PLI (40 ms × N).
    - A releitura da sala tem teto de 100 ms. Na troca, cada sender em

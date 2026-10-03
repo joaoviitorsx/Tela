@@ -42,7 +42,7 @@ import {
   webContents as todosOsConteudos,
 } from 'electron';
 import { ambienteEfetivo } from './ambiente.js';
-import { type Atualizador, criarAtualizador } from './atualizador.js';
+import { type Atualizador, criarAtualizador, type MotorDeAtualizacao } from './atualizador.js';
 import { type EstadoDaAtualizacao } from './atualizacao-politica.js';
 import {
   modoDeAtualizacao,
@@ -50,6 +50,16 @@ import {
   URL_DA_LISTA_DE_RELEASES,
 } from './atualizacao-release.js';
 import { criarMotorDoUpdater } from './motor-electron-updater.js';
+import {
+  chamadaDaFase,
+  type DesfechoDaAbertura,
+  deveMostrarAbertura,
+  executarAbertura,
+  type FaseDaAbertura,
+  HTML_DA_ABERTURA,
+  tentativaDeInstalar,
+  TITULO_DE_PULAR,
+} from './abertura-atualizacao.js';
 import {
   HTML_DO_PAINEL,
   TAMANHO_DO_PAINEL,
@@ -354,7 +364,8 @@ function criarJanela(): BrowserWindow {
   });
 
   j.once('ready-to-show', () => {
-    void bandejaPronta.then(() => {
+    // A abertura com atualização vem antes: a janela carrega por trás e só aparece quando ela libera.
+    void Promise.all([bandejaPronta, aberturaPronta]).then(() => {
       if (!j.isDestroyed() && !(INICIO_OCULTO && temBandeja)) j.show();
     });
   });
@@ -418,6 +429,12 @@ function criarJanela(): BrowserWindow {
 
 /** Trazer a janela de volta, de onde quer que esteja — segunda instância, bandeja (D4). */
 function mostrarJanela(): void {
+  // Durante a abertura com atualização, é ELA que vem para frente: a principal só aparece quando ela libera.
+  if (janelaDaAbertura !== null && !janelaDaAbertura.isDestroyed()) {
+    janelaDaAbertura.show();
+    janelaDaAbertura.focus();
+    return;
+  }
   if (janela === null || janela.isDestroyed()) {
     janela = criarJanela();
     return;
@@ -729,6 +746,12 @@ function iniciarBandeja(): Promise<void> {
 }
 
 /** A bandeja existe? Resolve depois da sonda; a janela espera por ela para decidir se nasce oculta. */
+/** A abertura com atualização liberou a janela principal (ou nem apareceu). */
+let resolverAbertura: () => void = () => undefined;
+const aberturaPronta: Promise<void> = new Promise((resolver) => {
+  resolverAbertura = resolver;
+});
+
 let resolverBandeja: () => void = () => undefined;
 const bandejaPronta: Promise<void> = new Promise((resolver) => {
   resolverBandeja = resolver;
@@ -1206,7 +1229,175 @@ function iniciarAtualizacao(): void {
     log,
   });
   atualizador.aoVivo(estado.noAr);
-  atualizador.iniciar();
+  const relogio = atualizador;
+  const marca = tentativaDeInstalar(lerTentativaDoDisco(), app.getVersion());
+  if (marca.apagar) apagarTentativaDoDisco();
+  const mostrar = deveMostrarAbertura({
+    modo: modoDeAtualizar,
+    automatico: ajustes.atualizarAutomaticamente,
+    // Aberto por um link `tela://`: a pessoa quer o canal agora, e reabrir
+    // atualizado perderia o link — fica para o "instalar ao sair".
+    oculto: INICIO_OCULTO || canalDoArgv(process.argv) !== null,
+    tentativaPendente: marca.pendente,
+  });
+  if (!mostrar) {
+    resolverAbertura();
+    relogio.iniciar();
+    return;
+  }
+  // Abrir o Tela como sempre: libera a principal, fecha a janelinha quando ela já aparece, e o relógio segue.
+  const seguirSemAtualizar = (abertura: Abertura): void => {
+    resolverAbertura();
+    abertura.fecharQuandoAPrincipalAparecer();
+    relogio.iniciar();
+  };
+  const abertura = abrirComAtualizacao(motor, log);
+  void abertura.desfecho
+    .catch((erro: unknown) => {
+      log.erro('abertura falhou; abrindo sem atualizar', erro);
+      return 'abrir' as const;
+    })
+    .then((desfecho) => {
+      if (desfecho === 'abrir') {
+        seguirSemAtualizar(abertura);
+        return;
+      }
+      /*
+        Instalando: o app deveria fechar. `quitAndInstall` NÃO lança quando
+        falha (o electron-updater captura e só devolve) — AppImage numa
+        pasta sem escrita ficaria em "Instalando…" para sempre, sem janela.
+        Vivo depois do prazo: desfaz o "saindo" e abre o Tela como sempre.
+      */
+      setTimeout(() => {
+        log.erro('a instalação não fechou o app; abrindo sem atualizar');
+        saindo = false;
+        seguirSemAtualizar(abertura);
+      }, PRAZO_DA_INSTALACAO_MS).unref();
+    });
+}
+
+/** Tempo mínimo da abertura na tela, contado de quando ela APARECE. */
+const MINIMO_DA_ABERTURA_MS = 900;
+/** O app ainda vivo tanto tempo depois de mandar instalar: a instalação falhou. */
+const PRAZO_DA_INSTALACAO_MS = 15_000;
+const ARQUIVO_DA_TENTATIVA = join(app.getPath('userData'), 'atualizacao-tentativa.json');
+
+function lerTentativaDoDisco(): unknown {
+  try {
+    return JSON.parse(readFileSync(ARQUIVO_DA_TENTATIVA, 'utf8')) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function apagarTentativaDoDisco(): void {
+  try {
+    rmSync(ARQUIVO_DA_TENTATIVA, { force: true });
+  } catch {
+    // sem a marca, no pior caso a abertura tenta de novo
+  }
+}
+
+/** A janelinha da abertura enquanto existe: clicar no ícone de novo a traz para frente. */
+let janelaDaAbertura: BrowserWindow | null = null;
+
+type Abertura = {
+  readonly desfecho: Promise<DesfechoDaAbertura>;
+  /** Fecha a janelinha quando a principal já estiver à vista (sem buraco sem janela), ou em 3 s. */
+  readonly fecharQuandoAPrincipalAparecer: () => void;
+};
+
+/**
+ * A janelinha da abertura (estilo Discord): procura versão nova, baixa e
+ * instala — ou sai do caminho. A página é `data:` sem preload, e o único sinal
+ * de volta ("Abrir sem atualizar", ou Esc) chega pelo título
+ * (`TITULO_DE_PULAR`). Fechar a janelinha também conta como pular.
+ */
+function abrirComAtualizacao(motor: MotorDeAtualizacao, log: { info: (m: string) => void; erro: (m: string, e?: unknown) => void }): Abertura {
+  const j = new BrowserWindow({
+    title: 'Tela',
+    width: 320,
+    height: 380,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: true,
+    fullscreenable: false,
+    center: true,
+    show: false,
+    backgroundColor: '#100d09',
+    icon: ARQUIVO_DO_ICONE,
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, spellcheck: false },
+  });
+  janelaDaAbertura = j;
+  let ultima: FaseDaAbertura = { tipo: 'procurando' };
+  let carregada = false;
+  let mostradaEm: number | null = null;
+  const aplicar = (): void => {
+    if (!carregada || j.isDestroyed()) return;
+    void j.webContents.executeJavaScript(chamadaDaFase(ultima), false).catch(() => undefined);
+  };
+  let pular: () => void = () => undefined;
+  const pulou = new Promise<void>((r) => {
+    pular = r;
+  });
+  j.on('page-title-updated', (evento, titulo) => {
+    evento.preventDefault();
+    if (titulo === TITULO_DE_PULAR) pular();
+  });
+  j.on('closed', () => {
+    if (janelaDaAbertura === j) janelaDaAbertura = null;
+    pular();
+  });
+  j.webContents.once('did-finish-load', () => {
+    carregada = true;
+    aplicar();
+  });
+  j.once('ready-to-show', () => {
+    mostradaEm = Date.now();
+    j.show();
+  });
+  void j.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(HTML_DA_ABERTURA)}`);
+
+  const desfecho = executarAbertura({
+    motor,
+    aoMudar: (fase) => {
+      ultima = fase;
+      aplicar();
+    },
+    agendar,
+    pulou,
+    log,
+    // D5: nunca instala com a transmissão no ar, nem com o automático desligado.
+    podeInstalar: () => !estado.noAr && ajustes.atualizarAutomaticamente,
+    antesDeInstalar: (versao) => {
+      try {
+        gravarArquivoPrivado(ARQUIVO_DA_TENTATIVA, JSON.stringify({ de: app.getVersion(), para: versao }));
+      } catch {
+        // sem a marca, um laço de reinício ficaria possível; o vigia de 15 s ainda cobre a falha síncrona
+      }
+    },
+  });
+
+  let fechada = false;
+  const fechar = (): void => {
+    if (fechada) return;
+    fechada = true;
+    if (!j.isDestroyed()) j.destroy();
+  };
+  return {
+    desfecho,
+    fecharQuandoAPrincipalAparecer: () => {
+      // O mínimo conta de quando a janelinha APARECEU; nunca apareceu: não há o que segurar.
+      const falta = mostradaEm === null ? 0 : MINIMO_DA_ABERTURA_MS - (Date.now() - mostradaEm);
+      setTimeout(() => {
+        const principal = janela;
+        if (principal !== null && !principal.isDestroyed() && principal.isVisible()) fechar();
+        else principal?.once('show', fechar);
+        setTimeout(fechar, 3_000);
+      }, Math.max(0, falta));
+    },
+  };
 }
 
 /* ---------------------------------------------------------------- IPC */

@@ -397,6 +397,18 @@ static GstFlowReturn ao_capturar(GstAppSink *sink, gpointer _) {
   gboolean chave = g_atomic_int_get(&chave_pendente);
   if (!chave && g_atomic_int_get(&atraso) >= ATRASO_TOLERADO) {
     g_atomic_int_inc(&descartados);
+    /*
+     * Cada quadro pulado drena UMA vaga de cada sender (o MSG_CAPTURA abaixo
+     * faz o app gerar a isca mesmo assim). Sem descontar, o atraso ficava
+     * velho até a próxima ordem (~100 ms) e TODOS os quadros desse intervalo
+     * eram pulados — a rajada que a bancada de fluidez mediu no caminho
+     * WebCodecs (docs/engenharia/estudo-fluidez.md). CAS: a ordem `atraso`
+     * chega pela thread do stdin.
+     */
+    for (;;) {
+      gint a = g_atomic_int_get(&atraso);
+      if (a <= 0 || g_atomic_int_compare_and_exchange(&atraso, a, a - 1)) break;
+    }
     enviar(MSG_CAPTURA, NULL, 0, NULL, 0);
     gst_sample_unref(amostra);
     return GST_FLOW_OK;

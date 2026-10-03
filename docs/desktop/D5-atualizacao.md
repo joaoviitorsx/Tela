@@ -47,6 +47,37 @@ bandeja (`EstadoAoVivo`, D4); a queda do renderer o zera.
 Detecção de plataforma (`modoDeAtualizacao`): Windows empacotado → automática;
 Linux com `APPIMAGE` no ambiente → automática; Linux sem → só avisa.
 
+## 1b. Abertura com atualização (estilo Discord, desde a beta.22)
+
+Ao abrir o app (não pelo autostart escondido), com atualização automática
+disponível (Windows, AppImage) e ligada, uma janelinha de 320×380 aparece
+ANTES da janela principal (`abertura-atualizacao.ts`, pura e testada):
+
+| Fase | O que a pessoa vê |
+|---|---|
+| Procurando (prazo de 5 s) | a TV da logo com as antenas caçando sinal; "Procurando atualização…" |
+| Em dia, sem rede, erro ou prazo estourado | some (no mínimo 0,9 s depois de aparecer) e o Tela abre |
+| Baixando | a barra de 20 blocos acende como fósforo de CRT; "Abrir sem atualizar" aparece |
+| Instalando | a piscadinha da logo e o tubo desligando; o app fecha e volta atualizado. Só fora do ar e com o automático ligado — senão a versão baixada espera o "instalar ao sair" |
+
+- A janela principal carrega por trás e só aparece quando a abertura libera.
+  Custo: toda abertura manual espera a verificação (API do GitHub,
+  `latest.yml`) — de 0,9 s a 5 s. Atrás de CGNAT o limite anônimo da API do
+  GitHub (60/h por IP) pode responder 403; a abertura então some na hora.
+- "Abrir sem atualizar", Esc ou fechar a janelinha cancelam o download (o
+  parcial não é retomado); o relógio de sempre (30 s, 6 h) recomeça depois. O
+  blockmap é diferencial contra a versão INSTALADA, não contra o parcial.
+- Clicar no ícone de novo durante a abertura traz a janelinha para frente.
+- **Instalação que não fecha o app** (o `quitAndInstall` do electron-updater
+  não lança — AppImage numa pasta sem escrita): 15 s depois o Tela abre como
+  sempre. **Instalação que falha depois de fechar** (NSIS que não sobe): a
+  marca `atualizacao-tentativa.json` (`{ de, para }`, gravada antes de
+  instalar) faz a próxima abertura, ainda na versão antiga, pular a janelinha
+  — sem laço de reinício; o "instalar ao sair" cuida do resto.
+- A página é `data:` sem rede, CSP fechada e sem preload: o único sinal de
+  volta é o título (`TITULO_DE_PULAR`). Animação só com `transform`/`opacity`;
+  com `prefers-reduced-motion`, a TV fica parada.
+
 ## 2. Por que o provider `generic`, e não o `github`
 
 Verificado no código do `electron-updater` 6.8.9 (`out/providers/GitHubProvider.js`):

@@ -53,7 +53,6 @@ export class CodificadorExterno implements CodificadorUnico {
   private seq = 0;
   private enviado: AlvoDoCodificador | null = null;
   private tamanhoDaFonte: { width: number; height: number } | null = null;
-  private atraso = 0;
   private ultimaChave = -Infinity;
   private idrs = 0;
   private readonly pedidos: Record<string, number> = {};
@@ -120,9 +119,13 @@ export class CodificadorExterno implements CodificadorUnico {
     this.ordem('chave');
   }
 
+  /**
+   * Todo aviso vira ordem, repetido ou não: o helper DRENA o próprio atraso a
+   * cada quadro pulado (`tela-captura.c`, `ao_capturar`), então o valor dele
+   * diverge do último que mandamos — um "2" repetido é o que o devolve à
+   * contrapressão. ~10 linhas curtas por segundo no stdin.
+   */
   definirAtraso(quadros: number): void {
-    if (quadros === this.atraso) return;
-    this.atraso = quadros;
     this.ordem(`atraso ${quadros}`);
   }
 

@@ -43,6 +43,8 @@ type Props = {
   readonly somDeOculto?: (oculto: boolean) => void;
   /** Ver `useSegundoPlano`: o que tem de terminar antes de o app sair. */
   readonly antesDeSair?: () => Promise<void>;
+  /** Os canais já assistidos neste aparelho, para as teclas RECENTES do ASSISTIR. */
+  readonly recentes?: () => readonly string[];
 };
 
 /**
@@ -69,9 +71,10 @@ export function MolduraDesktop({
   visibilidade,
   somDeOculto,
   antesDeSair,
+  recentes,
 }: Props) {
   const { caminho, travado, irPara } = useNavegacaoDesktop();
-  const assistir = useAssistir(irPara);
+  const assistir = useAssistir(irPara, recentes);
   const porLink = useCanalPorLink(ponte, irPara);
   const sp = useSegundoPlano({
     sessao,
@@ -194,6 +197,8 @@ export function MolduraDesktop({
         invalido={assistir.invalido}
         aoEnviar={assistir.enviar}
         aoCancelar={assistir.fechar}
+        recentes={assistir.recentes}
+        aoEscolher={assistir.escolher}
       />
       <DialogoConfirmar
         titulo="ENCERRAR A TRANSMISSÃO?"

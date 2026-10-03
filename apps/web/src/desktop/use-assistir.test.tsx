@@ -45,4 +45,26 @@ describe('useAssistir', () => {
     expect(result.current.valor).toBe('');
     expect(result.current.invalido).toBe(false);
   });
+
+  it('RECENTES: lidos ao abrir; um toque entra no canal e fecha', () => {
+    const irPara = vi.fn();
+    const listar = vi.fn(() => ['amigo', 'outra-pessoa']);
+    const { result } = renderHook(() => useAssistir(irPara, listar));
+    expect(result.current.recentes).toEqual([]);
+    act(() => result.current.abrir());
+    expect(listar).toHaveBeenCalledOnce();
+    expect(result.current.recentes).toEqual(['amigo', 'outra-pessoa']);
+    act(() => result.current.escolher('amigo'));
+    expect(irPara).toHaveBeenCalledWith('/amigo');
+    expect(result.current.aberto).toBe(false);
+  });
+
+  it('RECENTES: um nome adulterado no armazenamento não navega', () => {
+    const irPara = vi.fn();
+    const { result } = renderHook(() => useAssistir(irPara, () => ['../../x']));
+    act(() => result.current.abrir());
+    act(() => result.current.escolher('../../x'));
+    expect(irPara).not.toHaveBeenCalled();
+    expect(result.current.aberto).toBe(true);
+  });
 });

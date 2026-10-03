@@ -4,6 +4,7 @@ import { App } from '../App.js';
 import { DiagnosticoDoApp } from './DiagnosticoDoApp.js';
 import { parseRoute } from '../router.js';
 import '../styles/globals.css';
+import { canaisRecentes } from '../container.js';
 import { audioCue, avisoNoDiscord, seletorDeFontes } from './container.desktop.js';
 import { MolduraDesktop } from './MolduraDesktop.js';
 import { criarModoDaJanela } from './modo-da-janela.js';
@@ -59,6 +60,7 @@ function Raiz() {
       antesDeSair={() => avisoNoDiscord.aguardar(1_500)}
       sobreposicao={sobreposicao}
       somDeOculto={audioCue.privacidade}
+      recentes={canaisRecentes.listar}
       {...(ponte === undefined ? {} : { ponte })}
       {...(modo === undefined ? {} : { modo })}
       {...(visibilidade === undefined ? {} : { visibilidade })}

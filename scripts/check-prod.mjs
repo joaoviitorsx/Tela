@@ -150,5 +150,33 @@ if (sinal !== 'ok') {
   console.warn('\n  SINALIZAÇÃO FORA — ninguém consegue transmitir nem assistir.');
   process.exit(1);
 }
+/**
+ * Sinal no ar não prova que todo mundo CONECTA.
+ *
+ * De 2026-09-28 a 2026-10-03 a produção ficou só com STUN — os dois secrets
+ * do TURN existiam e estavam VAZIOS, e o Worker degradava calado — e esta
+ * checagem dizia "em dia". Quem estava atrás de CGNAT, NAT simétrico ou
+ * firewall via "sem conexão" (`ice: NO_ROUTE`, `turn: RELAY_NOT_CONFIGURED`).
+ * Agora o relay ausente reprova a publicação.
+ */
+const relay = await fetch(`${url}/health`, { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : null))
+  .catch(() => null);
+const ice = relay?.iceConfig;
+if (ice === undefined || ice === null) {
+  console.warn('relay : /health não respondeu');
+  process.exit(1);
+}
+if (ice.valid !== true) {
+  console.warn(`relay : CONFIGURAÇÃO INVÁLIDA (${(ice.problems ?? []).join(', ')}) — produção só com STUN`);
+  console.warn('        docs/DEPLOY.md: `wrangler secret put TURN_KEY_ID` e `TURN_KEY_API_TOKEN`.');
+  process.exit(1);
+}
+if (ice.cloudflareConfigured !== true && ice.coturnConfigured !== true) {
+  console.warn('relay : NÃO CONFIGURADO — quem está atrás de CGNAT ou NAT simétrico não conecta');
+  process.exit(1);
+}
+console.warn(`relay : ${ice.cloudflareConfigured ? 'Cloudflare' : 'coturn'} · credencial de ${Math.round(ice.ttlSeconds / 3600)} h`);
+
 console.warn(igual ? '\n  em dia.' : '\n  DESATUALIZADO — rode `pnpm release`.');
 process.exit(igual ? 0 : 1);

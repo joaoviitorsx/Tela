@@ -142,9 +142,20 @@ comum de falha entre máquinas em redes diferentes.
    pnpm release
    ```
 
-O servidor passa a emitir credencial efêmera por espectador. O HUD mostra
-quantos estão passando por relay — relay funciona, mas custa latência e cota,
-então é bom saber.
+O servidor passa a emitir credencial efêmera por espectador (12 h,
+`TURN_TTL_SECONDS` no `wrangler.toml`). O HUD mostra quantos estão passando por
+relay — relay funciona, mas custa latência e cota, então é bom saber.
+
+Conferir depois de gravar os secrets (e a cada publicação):
+
+```bash
+node scripts/check-prod.mjs     # reprova se o relay não estiver configurado
+node e2e/relay-prod.mjs         # prova que a Cloudflare ALOCA: candidatos relay UDP/TCP/TLS
+```
+
+Secret gravado VAZIO conta como "não configurado": de 2026-09-28 a 2026-10-03
+a produção ficou só com STUN por isso, e quem estava atrás de CGNAT via "sem
+conexão" (`ice: NO_ROUTE`, `turn: RELAY_NOT_CONFIGURED`).
 
 Alternativa com coturn próprio: `wrangler secret put TURN_SECRET` e
 configure `TURN_URLS` no `wrangler.toml` com URLs UDP, TCP e TLS realmente

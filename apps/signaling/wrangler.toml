@@ -92,6 +92,12 @@ STUN_URLS = "stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478"
 # Desktop (PLANO-desktop §3.5): a interface vem do protocolo próprio do app, e
 # sem esta linha o upgrade dele leva 403.
 ALLOWED_ORIGINS = "app://tela"
+# Validade da credencial TURN, em segundos: 12 h. Uma partida transmitida dura
+# horas, e a Cloudflare recomenda que a credencial cubra a sessão inteira; a
+# renovação do `IceLifecycle` (TELA-005) continua por cima, mas trocar a
+# credencial de um relay JÁ alocado no meio da partida não tem medição. O
+# padrão do código (600) existia para coturn de teste.
+TURN_TTL_SECONDS = "43200"
 
 # TURN — necessário para a cauda de conexões que não fecham direto.
 #
@@ -113,7 +119,6 @@ ALLOWED_ORIGINS = "app://tela"
 # ICE_PROVIDER = "auto" # Cloudflare primeiro; coturn configurado vira fallback
 # TURN_URLS = "turn:turn.seudominio.com:3478?transport=udp,turn:turn.seudominio.com:3478?transport=tcp,turns:turn.seudominio.com:443?transport=tcp"
 # TURN_URL singular continua aceito apenas durante a migração; não combine os dois.
-# TURN_TTL_SECONDS = "600"
 # TURN_FETCH_TIMEOUT_MS = "2500"
 
 # App do Discord (docs/DISCORD.md): o `/tela canal:<slug>` no "+" → "Usar apps".

@@ -84,6 +84,13 @@ export type ConformanceDriver = {
    * cobrir um caminho que não existe ali.
    */
   hibernar?(): void;
+  /**
+   * Avança o relógio da CARÊNCIA de posse (ADR 0037): o tempo que o canal
+   * guarda o dono depois que o transmissor sai. É o único jeito de exercitar
+   * a TOMADA do slug por outra pessoa DEPOIS dos cinco minutos sem esperar o
+   * tempo real passar. As duas implementações o oferecem.
+   */
+  avancar?(ms: number): void;
 };
 
 export const OWNER = 'o'.repeat(43);

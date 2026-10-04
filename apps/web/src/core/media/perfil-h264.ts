@@ -81,3 +81,80 @@ export function nomeDoPerfilIdc(idc: number | null): string | null {
   if (idc === 100) return 'High';
   return `perfil ${idc}`;
 }
+
+/** Tipos de NAL que importam aqui (H.264 §7.4.1.2.3). */
+const NAL_SPS = 7;
+const NAL_PPS = 8;
+const NAL_AUD = 9;
+
+/** Onde começa cada NAL de um quadro Annex B, até o primeiro de imagem (1–5). */
+function cabecalhosAnnexB(bytes: Uint8Array): Array<{ inicio: number; dados: number; tipo: number }> {
+  const nals: Array<{ inicio: number; dados: number; tipo: number }> = [];
+  for (let i = 0; i + 3 < bytes.length; i += 1) {
+    if (bytes[i] !== 0 || bytes[i + 1] !== 0) continue;
+    const tres = bytes[i + 2] === 1;
+    const quatro = bytes[i + 2] === 0 && bytes[i + 3] === 1;
+    if (!tres && !quatro) continue;
+    const dados = i + (tres ? 3 : 4);
+    const cabecalho = bytes[dados];
+    if (cabecalho === undefined) break;
+    const tipo = cabecalho & 0x1f;
+    nals.push({ inicio: i, dados, tipo });
+    // A fatia de imagem vai até o fim do quadro: depois dela não há cabeçalho a ler.
+    if (tipo >= 1 && tipo <= 5) break;
+    i = dados;
+  }
+  return nals;
+}
+
+/**
+ * Todo quadro-chave H.264 sai com SPS e PPS — mesmo que o encoder não os mande.
+ *
+ * O encoder de hardware (Media Foundation no Windows, e outros) manda SPS/PPS
+ * só no primeiro IDR depois de abrir ou de mudar de tamanho; os quadros-chave
+ * pedidos depois vêm sem eles. Quem já assistia guardou os parâmetros e segue
+ * decodificando; quem entra ou reconecta depois NUNCA decodifica nada: recebe
+ * bytes, pede quadro-chave sem parar e fica com a tela preta e o som tocando
+ * (relato de 04/10). No caminho normal do WebRTC o próprio encoder do sender
+ * cuida disso; no "um encode" (ADR 0029) o quadro é injetado, e cuidar é nosso.
+ *
+ * Guarda o SPS/PPS do último quadro-chave que os trouxe e os põe na frente de
+ * quem chegou sem — depois do AUD, se houver, que tem de abrir a unidade.
+ * Lê só os cabeçalhos antes da primeira fatia: O(cabeçalho), e só em quadro-chave.
+ */
+export class ParametrosH264 {
+  private guardados: Uint8Array | null = null;
+
+  /** O quadro-chave, com SPS/PPS garantidos quando já houve algum. */
+  completar(quadro: Uint8Array): Uint8Array {
+    const nals = cabecalhosAnnexB(quadro);
+    const parametros = nals.filter((n) => n.tipo === NAL_SPS || n.tipo === NAL_PPS);
+    if (parametros.some((n) => n.tipo === NAL_SPS)) {
+      const partes = parametros.map((n) => {
+        const proximo = nals[nals.indexOf(n) + 1];
+        return quadro.subarray(n.inicio, proximo?.inicio ?? quadro.length);
+      });
+      const juntos = new Uint8Array(partes.reduce((total, p) => total + p.length, 0));
+      let pos = 0;
+      for (const p of partes) {
+        juntos.set(p, pos);
+        pos += p.length;
+      }
+      this.guardados = juntos;
+      return quadro;
+    }
+    if (this.guardados === null) return quadro;
+    const aud = nals[0]?.tipo === NAL_AUD ? nals[0] : undefined;
+    const corte = aud === undefined ? 0 : (nals[1]?.inicio ?? quadro.length);
+    const saida = new Uint8Array(quadro.length + this.guardados.length);
+    saida.set(quadro.subarray(0, corte), 0);
+    saida.set(this.guardados, corte);
+    saida.set(quadro.subarray(corte), corte + this.guardados.length);
+    return saida;
+  }
+
+  /** Troca de codec: parâmetros de H.264 não servem a AV1, nem o contrário. */
+  esquecer(): void {
+    this.guardados = null;
+  }
+}

@@ -4,7 +4,7 @@ import {
   type MotivoDaQueda,
 } from '../core/media/aceleracao-do-codificador.js';
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
-import { type PerfilH264, codecDoPerfil, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
+import { ParametrosH264, type PerfilH264, codecDoPerfil, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
 import { encoderSobrecarregado } from '../core/media/sobrecarga-do-encoder.js';
 import { CODEC_AV1, type CodecDaSala, codecDoEncoder, mimeDoCodec } from '../core/media/codec-da-sala.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
@@ -159,6 +159,8 @@ export class CodificadorWebCodecs implements CodificadorUnico {
    */
   private ultimaEntrada = -Infinity;
   private desvio = 0;
+  /** SPS/PPS em todo quadro-chave: o hardware só os manda no primeiro (ver `ParametrosH264`). */
+  private readonly parametros = new ParametrosH264();
   /** `profile_idc` do último SPS emitido: o perfil de FATO, não o pedido. */
   private perfilEmitido: number | null = null;
   private seq = 0;
@@ -479,7 +481,11 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       // `svc` existe no Chromium com `scalabilityMode`; o lib.dom ainda não traz.
       output: (chunk, meta) => {
         const codec = meta?.decoderConfig?.codec;
-        if (codec !== undefined) this.codecDaSaida = codec.startsWith('av01') ? 'av1' : 'h264';
+        if (codec !== undefined) {
+          const saida = codec.startsWith('av01') ? 'av1' : 'h264';
+          if (saida !== this.codecDaSaida) this.parametros.esquecer();
+          this.codecDaSaida = saida;
+        }
         this.saiu(chunk, (meta as { svc?: { temporalLayerId?: number } } | undefined)?.svc?.temporalLayerId);
       },
       // Pode vir DENTRO do `configure`: o Chromium chama `error` na hora
@@ -730,10 +736,15 @@ export class CodificadorWebCodecs implements CodificadorUnico {
       else this.chaveEspontanea();
     }
     this.bytesProduzidos += chunk.byteLength;
-    const dados = new ArrayBuffer(chunk.byteLength);
+    let dados = new ArrayBuffer(chunk.byteLength);
     chunk.copyTo(dados);
-    // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.
-    if (chave && this.codecDaSaida === 'h264') this.perfilEmitido = perfilDoSps(new Uint8Array(dados)) ?? this.perfilEmitido;
+    if (chave && this.codecDaSaida === 'h264') {
+      // Quem entra depois só decodifica com SPS/PPS no quadro-chave que recebe.
+      const completo = this.parametros.completar(new Uint8Array(dados));
+      if (completo.byteLength !== dados.byteLength) dados = completo.buffer as ArrayBuffer;
+      // O perfil de fato sai do SPS, que só vem em quadro-chave: custo zero no resto.
+      this.perfilEmitido = perfilDoSps(completo) ?? this.perfilEmitido;
+    }
     /*
       Timestamp voltando = o encoder reordenou quadros (B-frames). O
       receptor em tempo real não espera por isso; Main fica proibido e o

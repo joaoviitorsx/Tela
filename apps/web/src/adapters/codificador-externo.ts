@@ -1,5 +1,5 @@
 import type { AlvoDoCodificador } from '../core/media/alvo-do-codificador.js';
-import { nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
+import { ParametrosH264, nomeDoPerfilIdc, perfilDoSps } from '../core/media/perfil-h264.js';
 import { janelaDeChaveMs } from '../core/media/fila-de-injecao.js';
 import type { CodificadorUnico, DepsDoCodificador, EstatisticasDoCodificador } from './codificador-unico.js';
 
@@ -61,6 +61,8 @@ export class CodificadorExterno implements CodificadorUnico {
   private ultimo = { width: 0, height: 0 };
   private msPorQuadro: number | null = null;
   private falhou: string | null = null;
+  /** SPS/PPS em todo quadro-chave: o hardware só os manda no primeiro (ver `ParametrosH264`). */
+  private readonly parametros = new ParametrosH264();
   /** `profile_idc` do último SPS que o helper mandou: o perfil de FATO. */
   private perfilEmitido: number | null = null;
   /** Bytes que o helper mandou desde a última leitura de estatísticas. */
@@ -195,16 +197,20 @@ export class CodificadorExterno implements CodificadorUnico {
     }
     this.quadros += 1;
     this.bytesProduzidos += m.dados.byteLength;
+    let dados = m.dados;
     if (m.chave) {
       this.idrs += 1;
-      // Antes de transferir: depois o buffer é do worker.
-      this.perfilEmitido = perfilDoSps(new Uint8Array(m.dados)) ?? this.perfilEmitido;
+      // Antes de transferir: depois o buffer é do worker. Quem entra depois só
+      // decodifica com SPS/PPS no quadro-chave que recebe (`ParametrosH264`).
+      const completo = this.parametros.completar(new Uint8Array(m.dados));
+      if (completo.byteLength !== m.dados.byteLength) dados = completo.buffer as ArrayBuffer;
+      this.perfilEmitido = perfilDoSps(completo) ?? this.perfilEmitido;
     }
     this.ultimo = { width: m.width, height: m.height };
     this.deps.aoCapturar();
     this.deps.entregar(
-      { seq: this.seq++, chave: m.chave, dados: m.dados, width: m.width, height: m.height },
-      [m.dados],
+      { seq: this.seq++, chave: m.chave, dados, width: m.width, height: m.height },
+      [dados],
     );
   }
 }

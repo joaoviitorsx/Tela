@@ -146,9 +146,15 @@ export function modoDeAtualizacao(entrada: {
   if (!entrada.empacotado || entrada.env['TELA_ATUALIZACAO'] === '0') return 'desligada';
   if (entrada.plataforma === 'win32') return 'automatica';
   if (entrada.plataforma === 'linux') {
-    // `APPIMAGE` é o caminho do arquivo, posto pelo runtime do AppImage; deb e rpm não o têm.
+    // Só AppImage atualiza sozinho. O runtime do AppImage põe DOIS env: `APPIMAGE`
+    // (caminho do arquivo) e `APPDIR` (o squashfs montado). deb e rpm não têm
+    // nenhum. Exigir os dois: uma única var `APPIMAGE` vazada no ambiente de um
+    // deb/rpm não deve ligar a atualização automática (que no Linux pode cair
+    // num install privilegiado) — U-2 da auditoria.
     const appimage = entrada.env['APPIMAGE'];
-    return appimage !== undefined && appimage !== '' ? 'automatica' : 'avisar';
+    const appdir = entrada.env['APPDIR'];
+    const ehAppImage = appimage !== undefined && appimage !== '' && appdir !== undefined && appdir !== '';
+    return ehAppImage ? 'automatica' : 'avisar';
   }
   return 'desligada';
 }

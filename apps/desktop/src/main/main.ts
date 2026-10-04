@@ -14,6 +14,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -1219,6 +1220,19 @@ async function buscarListaDeReleases(): Promise<string> {
   return texto;
 }
 
+/** Baixa a assinatura `.sig` do update (ADR 0038): binário pequeno, com prazo. `null` se falhar. */
+async function baixarAssinaturaDoUpdate(url: string): Promise<Uint8Array | null> {
+  try {
+    const resposta = await net.fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!resposta.ok) return null;
+    const bytes = new Uint8Array(await resposta.arrayBuffer());
+    // Uma assinatura Ed25519 tem 64 bytes; teto generoso contra um `.sig` gigante.
+    return bytes.length > 0 && bytes.length <= 4096 ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
 function iniciarAtualizacao(): void {
   const log = {
     info: (msg: string) => console.warn(`[tela] atualização: ${msg}`),
@@ -1229,6 +1243,15 @@ function iniciarAtualizacao(): void {
     modo: modoDeAtualizar,
     versaoAtual: app.getVersion(),
     buscarLista: buscarListaDeReleases,
+    // A assinatura `.sig` do release (ADR 0038) e o instalador do disco.
+    baixarBinario: baixarAssinaturaDoUpdate,
+    lerArquivo: async (caminho) => {
+      try {
+        return new Uint8Array(await readFile(caminho));
+      } catch {
+        return null;
+      }
+    },
     // `electron-updater` é CommonJS: o import dinâmico entrega o `module.exports` em `default`.
     carregarUpdater: async () => {
       const modulo = (await import('electron-updater')).default;

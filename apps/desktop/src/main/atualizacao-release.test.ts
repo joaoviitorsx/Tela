@@ -84,7 +84,9 @@ describe('modoDeAtualizacao (detecção de plataforma e empacotamento)', () => {
     expect(modoDeAtualizacao({ plataforma: 'win32', empacotado: true, env: env() })).toBe('automatica');
   });
   it('Linux com APPIMAGE: automática; sem (deb/rpm): só avisa', () => {
-    expect(modoDeAtualizacao({ plataforma: 'linux', empacotado: true, env: env({ APPIMAGE: '/h/Tela.AppImage' }) })).toBe('automatica');
+    expect(modoDeAtualizacao({ plataforma: 'linux', empacotado: true, env: env({ APPIMAGE: '/h/Tela.AppImage', APPDIR: '/tmp/.mount_Tela' }) })).toBe('automatica');
+    // U-2: APPIMAGE sozinho (vazado no ambiente de um deb/rpm) não liga auto-update.
+    expect(modoDeAtualizacao({ plataforma: 'linux', empacotado: true, env: env({ APPIMAGE: '/h/Tela.AppImage' }) })).toBe('avisar');
     expect(modoDeAtualizacao({ plataforma: 'linux', empacotado: true, env: env() })).toBe('avisar');
     expect(modoDeAtualizacao({ plataforma: 'linux', empacotado: true, env: env({ APPIMAGE: '' }) })).toBe('avisar');
   });

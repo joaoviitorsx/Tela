@@ -24,6 +24,7 @@ import {
   urlDaPaginaDoRelease,
   urlDoFeed,
 } from './atualizacao-release.js';
+import { assinaturaConfere as assinaturaConfereNativa, urlDaAssinatura } from './verificacao-de-assinatura.js';
 
 /** O recorte do módulo `electron-updater` que se usa (e que o teste substitui). */
 export type ModuloDoUpdater = {
@@ -36,6 +37,12 @@ export type DependenciasDoMotor = {
   readonly versaoAtual: string;
   /** GET da lista de releases (HTTPS, com prazo). Devolve o texto. */
   readonly buscarLista: () => Promise<string>;
+  /** GET de um arquivo binário pequeno (a assinatura `.sig`), com prazo. `null` se falhar. */
+  readonly baixarBinario: (url: string) => Promise<Uint8Array | null>;
+  /** Lê do disco o instalador que o updater baixou. `null` se falhar. */
+  readonly lerArquivo: (caminho: string) => Promise<Uint8Array | null>;
+  /** Verifica a assinatura Ed25519 do instalador (ADR 0038). Injetável para teste. */
+  readonly verificarAssinatura?: (conteudo: Uint8Array, assinatura: Uint8Array) => boolean;
   /** Carregamento preguiçoso: deb/rpm e o desenvolvimento nunca o carregam. */
   readonly carregarUpdater: () => Promise<ModuloDoUpdater>;
   /** Chamado ANTES de fechar para instalar: o main tem de deixar a janela sair (`saindo`). */
@@ -47,6 +54,14 @@ export function criarMotorDoUpdater(deps: DependenciasDoMotor): MotorDeAtualizac
   let modulo: ModuloDoUpdater | null = null;
   let token: CancellationToken | null = null;
   let versaoAchada: string | null = null;
+  /** O feed da release escolhida em `verificar()` — base das URLs de `.sig`. */
+  let feedAtual: string | null = null;
+  /**
+   * A assinatura do instalador baixado foi conferida (ADR 0038). Começa `false`
+   * e só vira `true` depois de `baixar()` verificar — é o que destrava o install.
+   */
+  let assinaturaVerificada = false;
+  const verificarAssinatura = deps.verificarAssinatura ?? assinaturaConfereNativa;
 
   async function updater(): Promise<ModuloDoUpdater> {
     if (modulo !== null) return modulo;
@@ -54,10 +69,14 @@ export function criarMotorDoUpdater(deps: DependenciasDoMotor): MotorDeAtualizac
     const u = m.autoUpdater;
     // Quem decide quando baixar é a política (nunca ao vivo).
     u.autoDownload = false;
-    // Ligado desde já: o updater só registra o gancho de "instalar ao sair" ao
-    // terminar um download E se a flag estiver ligada naquele instante. O gancho
-    // reconsulta a flag ao sair — é por ela (`instalarAoSair`) que a política
-    // liga e desliga. Sem download concluído, não há gancho nem o que instalar.
+    // Precisa ser `true` AQUI: o electron-updater só registra o gancho de
+    // "instalar ao sair" no fim do download, e só se a flag estiver ligada
+    // naquele instante (`BaseUpdater.addQuitHandler`). Deixá-la `false` no setup
+    // matava o gancho para sempre. A trava da assinatura (ADR 0038) não é esta
+    // flag: `conferirAssinatura` a RELIGA para `false` assim que o download
+    // termina e só `instalarAoSair`/`instalarAgora` a reativam DEPOIS de a
+    // assinatura conferir — o gancho, ao sair, relê a flag e não instala nada
+    // não verificado.
     u.autoInstallOnAppQuit = true;
     // Sem downgrade, e a versão atual é beta: pré-release é permitido por padrão.
     u.allowDowngrade = false;
@@ -72,6 +91,32 @@ export function criarMotorDoUpdater(deps: DependenciasDoMotor): MotorDeAtualizac
     return m;
   }
 
+  /**
+   * Confere a assinatura Ed25519 do instalador baixado (ADR 0038). Falhou,
+   * faltou `.sig`, ou não deu para ler o arquivo: LANÇA — a atualização não se
+   * aplica, e `autoInstallOnAppQuit` fica desligado. Fail-closed: sem prova de
+   * que o binário é o do dono, ele não roda.
+   */
+  async function conferirAssinatura(m: ModuloDoUpdater, caminho: string | undefined): Promise<void> {
+    assinaturaVerificada = false;
+    m.autoUpdater.autoInstallOnAppQuit = false;
+    if (caminho === undefined || caminho === '' || feedAtual === null) {
+      throw new Error('update sem caminho do instalador para verificar a assinatura');
+    }
+    const nome = caminho.split(/[/\\]/).pop() ?? '';
+    const [instalador, assinatura] = await Promise.all([
+      deps.lerArquivo(caminho),
+      deps.baixarBinario(urlDaAssinatura(feedAtual + nome)),
+    ]);
+    if (instalador === null) throw new Error('não consegui ler o instalador baixado');
+    if (assinatura === null) throw new Error('assinatura do update ausente no release (.sig)');
+    if (!verificarAssinatura(instalador, assinatura)) {
+      deps.log.erro('assinatura do update NÃO confere — instalação recusada (ADR 0038)');
+      throw new Error('assinatura do update não confere');
+    }
+    assinaturaVerificada = true;
+  }
+
   return {
     async verificar() {
       const release = releaseMaisNovaDoTexto(await deps.buscarLista());
@@ -83,7 +128,9 @@ export function criarMotorDoUpdater(deps: DependenciasDoMotor): MotorDeAtualizac
       const { autoUpdater } = await updater();
       // O provider `github` não acha tag com prefixo (ver `atualizacao-release.ts`):
       // aponta o `generic` para a pasta de downloads da release escolhida.
-      autoUpdater.setFeedURL({ provider: 'generic', url: urlDoFeed(release) });
+      feedAtual = urlDoFeed(release);
+      assinaturaVerificada = false;
+      autoUpdater.setFeedURL({ provider: 'generic', url: feedAtual });
       const resultado = await autoUpdater.checkForUpdates();
       // O updater tem a palavra final: compara a versão do `latest.yml` com a instalada.
       if (resultado === null || !resultado.isUpdateAvailable) return null;
@@ -98,7 +145,10 @@ export function criarMotorDoUpdater(deps: DependenciasDoMotor): MotorDeAtualizac
       const ouvinte = (info: { readonly percent: number }): void => aoProgresso(info.percent);
       m.autoUpdater.on('download-progress', ouvinte);
       try {
-        await m.autoUpdater.downloadUpdate(atual);
+        // `downloadUpdate` resolve com os caminhos dos arquivos baixados.
+        const arquivos = await m.autoUpdater.downloadUpdate(atual);
+        const caminho = Array.isArray(arquivos) ? arquivos[0] : undefined;
+        await conferirAssinatura(m, caminho);
         return versaoAchada;
       } catch (erro: unknown) {
         // Cancelar o token rejeita a promessa: não é falha, é a política mandando parar.
@@ -115,11 +165,16 @@ export function criarMotorDoUpdater(deps: DependenciasDoMotor): MotorDeAtualizac
     },
 
     instalarAoSair(ligado) {
-      if (modulo !== null) modulo.autoUpdater.autoInstallOnAppQuit = ligado;
+      // Só instala ao sair o que teve a assinatura conferida (ADR 0038).
+      if (modulo !== null) modulo.autoUpdater.autoInstallOnAppQuit = ligado && assinaturaVerificada;
     },
 
     instalarAgora() {
       if (modulo === null) return;
+      if (!assinaturaVerificada) {
+        deps.log.erro('instalação recusada: assinatura do update não verificada (ADR 0038)');
+        return;
+      }
       deps.aoReiniciar();
       // Silencioso (o assistente do NSIS não aparece) e reabre o app.
       modulo.autoUpdater.quitAndInstall(true, true);

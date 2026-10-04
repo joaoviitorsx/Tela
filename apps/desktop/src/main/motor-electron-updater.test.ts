@@ -30,7 +30,7 @@ function updaterFalso(sobre: { disponivel?: boolean; falhaNoDownload?: Error } =
       ouvintes.get('download-progress')?.({ percent: 50 });
       if (sobre.falhaNoDownload !== undefined) throw sobre.falhaNoDownload;
       if (token.cancelled) throw new Error('cancelled');
-      return ['x'];
+      return ['/tmp/Tela-0.1.0-beta.7-linux-x86_64.AppImage'];
     }),
     on: vi.fn((nome: string, fn: (i: { percent: number }) => void) => ouvintes.set(nome, fn)),
     removeListener: vi.fn((nome: string) => ouvintes.delete(nome)),
@@ -39,18 +39,29 @@ function updaterFalso(sobre: { disponivel?: boolean; falhaNoDownload?: Error } =
   return { autoUpdater, Token, modulo: { autoUpdater, CancellationToken: Token } as unknown as ModuloDoUpdater };
 }
 
-function montar(modo: 'automatica' | 'avisar', versaoAtual = '0.1.0-beta.6', f = updaterFalso()) {
+function montar(
+  modo: 'automatica' | 'avisar',
+  versaoAtual = '0.1.0-beta.6',
+  f = updaterFalso(),
+  assinatura: { confere?: boolean; sig?: Uint8Array | null; arquivo?: Uint8Array | null } = {},
+) {
   const carregarUpdater = vi.fn(async () => f.modulo);
   const aoReiniciar = vi.fn();
+  const baixarBinario = vi.fn(async () => (assinatura.sig === undefined ? new Uint8Array([1]) : assinatura.sig));
+  const lerArquivo = vi.fn(async () => (assinatura.arquivo === undefined ? new Uint8Array([2]) : assinatura.arquivo));
+  const verificarAssinatura = vi.fn(() => assinatura.confere ?? true);
   const motor = criarMotorDoUpdater({
     modo,
     versaoAtual,
     buscarLista: async () => LISTA,
+    baixarBinario,
+    lerArquivo,
+    verificarAssinatura,
     carregarUpdater,
     aoReiniciar,
     log: { info: () => undefined, erro: () => undefined },
   });
-  return { motor, f, carregarUpdater, aoReiniciar };
+  return { motor, f, carregarUpdater, aoReiniciar, baixarBinario, lerArquivo, verificarAssinatura };
 }
 
 describe('motor sobre o electron-updater (mockado)', () => {
@@ -66,7 +77,10 @@ describe('motor sobre o electron-updater (mockado)', () => {
     });
     expect(f.autoUpdater).toMatchObject({
       autoDownload: false,
-      autoInstallOnAppQuit: true, // o gancho de sair só nasce com um download concluído
+      // `true` no setup para o electron-updater registrar o gancho de sair no fim
+      // do download; a assinatura (ADR 0038) religa p/ false até verificar. A
+      // trava real está em `conferirAssinatura`/`instalarAoSair`, testada abaixo.
+      autoInstallOnAppQuit: true,
       allowDowngrade: false,
       allowPrerelease: true,
     });
@@ -116,6 +130,7 @@ describe('motor sobre o electron-updater (mockado)', () => {
   it('reiniciar avisa o main (para a janela deixar sair) e instala em silêncio, reabrindo o app', async () => {
     const { motor, f, aoReiniciar } = montar('automatica');
     await motor.verificar();
+    await motor.baixar(() => undefined); // só depois de baixar+verificar o install destrava
     motor.instalarAoSair(true);
     expect(f.autoUpdater.autoInstallOnAppQuit).toBe(true);
     motor.instalarAoSair(false);
@@ -123,5 +138,38 @@ describe('motor sobre o electron-updater (mockado)', () => {
     motor.instalarAgora();
     expect(aoReiniciar).toHaveBeenCalledTimes(1);
     expect(f.autoUpdater.quitAndInstall).toHaveBeenCalledWith(true, true);
+  });
+
+  describe('assinatura do update (ADR 0038)', () => {
+    it('confere: baixa, verifica o .sig do instalador e libera a instalação', async () => {
+      const { motor, f, baixarBinario, verificarAssinatura } = montar('automatica');
+      await motor.verificar();
+      expect(await motor.baixar(() => undefined)).toBe('0.1.0-beta.7');
+      // o .sig foi buscado na URL do instalador + ".sig", na pasta da release
+      expect(baixarBinario).toHaveBeenCalledWith(
+        'https://github.com/joaoviitorsx/Tela/releases/download/desktop-v0.1.0-beta.7/Tela-0.1.0-beta.7-linux-x86_64.AppImage.sig',
+      );
+      expect(verificarAssinatura).toHaveBeenCalled();
+      motor.instalarAoSair(true);
+      expect(f.autoUpdater.autoInstallOnAppQuit).toBe(true);
+    });
+
+    it('NÃO confere: baixar rejeita, nada instala ao sair, e instalarAgora é recusado', async () => {
+      const { motor, f, aoReiniciar } = montar('automatica', '0.1.0-beta.6', updaterFalso(), { confere: false });
+      await motor.verificar();
+      await expect(motor.baixar(() => undefined)).rejects.toThrow('assinatura');
+      expect(f.autoUpdater.autoInstallOnAppQuit).toBe(false);
+      motor.instalarAoSair(true);
+      expect(f.autoUpdater.autoInstallOnAppQuit).toBe(false); // nem a política liga sem assinatura
+      motor.instalarAgora();
+      expect(aoReiniciar).not.toHaveBeenCalled();
+      expect(f.autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    });
+
+    it('.sig ausente no release: baixar rejeita (fail-closed)', async () => {
+      const { motor } = montar('automatica', '0.1.0-beta.6', updaterFalso(), { sig: null });
+      await motor.verificar();
+      await expect(motor.baixar(() => undefined)).rejects.toThrow(/assinatura.*ausente|ausente/);
+    });
   });
 });

@@ -1,5 +1,7 @@
 import { P2P_LIMITS, PROTOCOL_VERSION } from '@tela/shared';
 import { describe, expect, it } from 'vitest';
+import { OWNERSHIP_GRACE_MS as GRACE_NODE } from './channel-registry.js';
+import { OWNERSHIP_GRACE_MS as GRACE_WORKER } from './worker.js';
 import { DEFAULT_LIMITS } from './limits.js';
 import { makeNodeDriver } from './testing-node-driver.js';
 import { makeWorkerDriver } from './testing-worker-driver.js';
@@ -424,6 +426,62 @@ describe.each(implementacoes)('conformidade — %s', (_nome, criar) => {
     expect(errorOf(host)).toBe('BAD_MESSAGE');
     expect(host.closed()).toBe(true);
   });
+});
+
+
+/**
+ * N-1 (revisão de segurança): a TOMADA de posse não pode herdar a sala.
+ *
+ * A carência de cinco minutos (ADR 0028) guarda o slug para o dono reconectar.
+ * Vencida, o slug fica livre — mas quem assume é OUTRA pessoa, e não pode
+ * receber a plateia nem os pedidos que eram do transmissor anterior: isso seria
+ * se passar pelo streamer diante dos amigos dele (ADR 0037).
+ *
+ * Reconexão do MESMO token continua herdando — é o recurso de reconexão, e o
+ * primeiro teste existe para garantir que a correção não o atropele.
+ */
+describe.each(implementacoes)('N-1: a tomada de posse não herda a sala (ADR 0037) — %s', (_nome, criar) => {
+  it('reconexão do MESMO dono, dentro da carência, herda plateia e pedidos', async () => {
+    const d = criar();
+    const h1 = await d.host('h1', SLUG, OWNER, { approval: true });
+    const v = await d.watch('v', SLUG); // admitido: entra na plateia
+    await d.watch('ana', SLUG, undefined, { aprovar: false }); // fica pedindo
+    expect(ofType(h1, 'peer-joined')).toHaveLength(1);
+
+    d.disconnect('h1'); // F5/queda: o socket cai, a posse fica guardada
+    d.hibernar?.();
+
+    const h2 = await d.host('h2', SLUG, OWNER, { approval: true }); // mesmo token, na carência
+    expect(ofType(h2, 'peer-joined').map((m) => m.peerId)).toEqual([peerIdOf(v)]);
+    expect(ofType(h2, 'join-request').map((m) => m.name)).toEqual(['ana']);
+  });
+
+  it('token DIFERENTE depois da carência começa com a sala vazia', async () => {
+    const d = criar();
+    const h1 = await d.host('h1', SLUG, OWNER, { approval: true });
+    const v = await d.watch('v', SLUG); // plateia do dono ORIGINAL
+    await d.watch('ana', SLUG, undefined, { aprovar: false }); // pedido ao dono ORIGINAL
+    expect(ofType(h1, 'peer-joined')).toHaveLength(1);
+
+    d.disconnect('h1'); // o dono some sem `leave`
+    d.hibernar?.();
+    d.avancar?.(Math.max(GRACE_NODE, GRACE_WORKER) + 1); // a carência vence
+
+    const intruso = await d.host('intruso', SLUG, OUTRO, { approval: true });
+
+    // O que as duas implementações precisam concordar: NÃO há herança. O
+    // recém-chegado nunca é apresentado à audiência de outra pessoa — nem à
+    // plateia que já assistia, nem aos pedidos pendentes (que carregam nome e
+    // impressão de quem pediu). No Node o canal persiste e `intruso` nem chega
+    // a assumir (SLUG_TAKEN); no Worker ele assume, mas a sala começa vazia.
+    expect(ofType(intruso, 'peer-joined')).toEqual([]);
+    expect(ofType(intruso, 'join-request')).toEqual([]);
+    expect(JSON.stringify(intruso.received())).not.toContain(peerIdOf(v));
+  });
+});
+
+it('a carência de posse é a MESMA nas duas implementações', () => {
+  expect(GRACE_WORKER).toBe(GRACE_NODE);
 });
 
 

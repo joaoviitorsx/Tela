@@ -257,6 +257,12 @@ export type ChannelDeps = {
    * não pode virar a causa de indisponibilidade.
    */
   readonly ipGate?: (ip: string, chave: string, limite: number, janelaMs: number) => Promise<boolean>;
+  /**
+   * Relógio da carência de posse. Ausente em produção (`Date.now`); injetado
+   * para o teste poder vencer os cinco minutos sem esperar o tempo real — é o
+   * único jeito de exercitar a TOMADA depois da carência (ADR 0037).
+   */
+  readonly now?: () => number;
 };
 
 /**
@@ -442,13 +448,18 @@ export class ChannelRoom {
    * conectado, o armazenamento — que guarda a posse pela carência, para um
    * refresh de página não entregar o slug a um estranho.
    */
+  /** Relógio da carência: injetado no teste, `Date.now` em produção. */
+  private agora(): number {
+    return this.deps.now?.() ?? Date.now();
+  }
+
   private async donoAtual(): Promise<string | null> {
     const host = this.host();
     if (host !== null && typeof host.at.ownerHash === 'string') return host.at.ownerHash;
 
     const guardada = await this.ctx.storage?.get<PosseGuardada>(CHAVE_POSSE);
     if (guardada === undefined) return null;
-    if (guardada.ate <= Date.now()) {
+    if (guardada.ate <= this.agora()) {
       await this.ctx.storage?.delete(CHAVE_POSSE);
       return null;
     }
@@ -796,7 +807,10 @@ export class ChannelRoom {
         janelaInicio: Date.now(),
         janelaContagem: 0,
       } satisfies Attachment);
-      return { anterior };
+      // `dono !== null` aqui já passou pelo `equals` acima: é o MESMO dono
+      // reconectando. `dono === null` é slug livre — ninguém dono dentro da
+      // carência —, então quem assume é outra pessoa (ADR 0037).
+      return { anterior, reconexao: dono !== null };
     });
 
     if (!this.ctx.getWebSockets().includes(socket)) return;
@@ -806,6 +820,18 @@ export class ChannelRoom {
     // Se voltou com teto menor, ninguém é expulso: só não entra mais.
     if (assumido.anterior !== null) this.esquecer(assumido.anterior.socket);
     assumido.anterior?.socket.close(1000, 'substituido');
+
+    /**
+     * N-1 (ADR 0037): posse tomada por um token DIFERENTE depois que a
+     * carência do dono anterior venceu. O recém-chegado é outra pessoa; não
+     * pode herdar a plateia nem os pedidos do transmissor antigo — isso seria
+     * se passar pelo streamer diante dos amigos dele. Começa com a sala vazia.
+     *
+     * A reconexão do MESMO dono (`reconexao`) segue reapresentando quem já
+     * estava assistindo e os pedidos em espera — é o recurso de reconexão de
+     * cinco minutos (ADR 0028), e não pode regredir.
+     */
+    if (!assumido.reconexao) this.reiniciarCanal();
 
     this.send(socket, {
       type: 'hosting',
@@ -842,6 +868,27 @@ export class ChannelRoom {
           p.socket, p.at.peerId, p.at.name, p.at.fingerprint, p.at.participantId, p.at.attemptId, null, p.at.ip,
         );
       }
+    }
+  }
+
+  /**
+   * N-1 (ADR 0037): um token DIFERENTE assumiu o slug com a carência do dono
+   * anterior já vencida. Fecha a plateia e recusa os pedidos que sobraram do
+   * transmissor antigo, para o recém-chegado começar com a sala vazia — ele
+   * não herda nem oferece mídia para a audiência de outra pessoa.
+   *
+   * `removido` antes de fechar: o `webSocketClose` que vem depois não pode
+   * mandar `peer-left`/`join-cancelled` ao novo host por quem já saiu.
+   */
+  private reiniciarCanal(): void {
+    for (const viewer of this.viewers()) {
+      this.gravar(viewer.socket, { ...viewer.at, removido: true } satisfies Attachment);
+      this.esquecer(viewer.socket);
+      viewer.socket.close(1000, 'canal reiniciado');
+    }
+    for (const p of this.pedidos()) {
+      this.gravar(p.socket, { ...p.at, removido: true } satisfies Attachment);
+      this.fail(p.socket, 'NOT_HOSTING');
     }
   }
 
@@ -1163,7 +1210,7 @@ export class ChannelRoom {
        */
       void this.ctx.storage?.put<PosseGuardada>(CHAVE_POSSE, {
         ownerHash: at.ownerHash,
-        ate: Date.now() + OWNERSHIP_GRACE_MS,
+        ate: this.agora() + OWNERSHIP_GRACE_MS,
       });
     }
 

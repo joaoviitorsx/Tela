@@ -121,7 +121,13 @@ export function makeWorkerDriver(
     return await l.take(chave, limite, janelaMs);
   };
   const base = makeChannelDeps(env, webcrypto as unknown as WebCryptoLike);
-  const deps = { ...base, ipGate,
+  /*
+    Relógio da carência de posse (ADR 0037): começa no tempo real e só anda
+    quando `avancar` o empurra. É o que deixa o teste vencer os cinco minutos
+    sem esperar, para exercitar a TOMADA do slug depois da carência.
+  */
+  let agora = Date.now();
+  const deps = { ...base, ipGate, now: () => agora,
     limits: { ...base.limits, ...opcoes.limites },
     ...(iceServersFor === undefined ? {} : { iceServersFor }) };
 
@@ -215,5 +221,8 @@ export function makeWorkerDriver(
       socket.close();
     },
     hibernar,
+    avancar(ms) {
+      agora += ms;
+    },
   };
 }

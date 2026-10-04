@@ -52,6 +52,9 @@ export function makeNodeDriver(opcoes: OpcoesDoDriver = {}): ConformanceDriver {
     disconnect(id) {
       conns.get(id)?.disconnect();
     },
+    avancar(ms) {
+      clock.advance(ms);
+    },
   };
 }
 

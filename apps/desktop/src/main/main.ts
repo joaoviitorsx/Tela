@@ -1065,12 +1065,19 @@ function configurarPermissoes(): void {
       const escolha = escolhaPendente;
       escolhaPendente = null;
       const resposta = respostaDeCaptura(escolha);
+      // Escolher a tela é ação do usuário: renova o gesto para a captura de ÁUDIO
+      // que a sessão abre logo depois (A-1). Senão, demorar aqui deixaria o som
+      // cair no gesto vencido e a transmissão iria muda.
+      if (resposta !== null) gestos.registrar(dono.id);
       responder(resposta === null ? {} : resposta);
       return;
     }
     void desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } }).then(
       (fontes) => {
         const [fonte] = fontes;
+        // Confirmar o portal do Wayland é ação do usuário, mas não emite
+        // input-event: renova o gesto na mão para o áudio que vem a seguir (A-1).
+        if (fonte !== undefined) gestos.registrar(dono.id);
         responder(fonte === undefined ? {} : { video: fonte });
       },
       (erro: unknown) => {

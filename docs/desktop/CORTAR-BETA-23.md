@@ -48,23 +48,24 @@ workflow para no primeiro passo.
 ## 2. Esperar o CI
 
 Em *Actions → desktop*. Ele compila Windows e Linux, cria o release como
-**pré-release** e sobe os instaladores, os `latest*.yml`, os `.blockmap` e os
-`SHA256SUMS`. Hoje o CI **publica sozinho** (tira o draft) no fim.
+**pré-release em RASCUNHO** e sobe os instaladores, os `latest*.yml`, os
+`.blockmap` e os `SHA256SUMS`. **O CI NÃO publica** — o release fica rascunho,
+invisível para o auto-update, até você assinar e publicar (passos 3 e 4). Assim
+nenhum usuário vê um release sem os `.sig`.
 
 Confira que o passo **"addon WASAPI"** (Windows) ficou verde — senão o "Só o
 jogo"/"Sistema" do Windows sai desabilitado (ver `BETA.md`).
 
 ## 3. Assinar os dois instaladores e subir os `.sig`
 
-Assim que o release aparecer em
-<https://github.com/joaoviitorsx/Tela/releases>, baixe os dois instaladores que
-auto-atualizam, assine com a privada offline e suba os `.sig`:
+Com o release ainda em rascunho, baixe os dois instaladores que auto-atualizam,
+assine com a privada offline e suba os `.sig`:
 
 ```bash
 TAG=desktop-v0.1.0-beta.23
 cd $(mktemp -d)
 
-# baixa só o .exe e o .AppImage do release
+# baixa só o .exe e o .AppImage do release (rascunho é acessível a você)
 gh release download "$TAG" --repo joaoviitorsx/Tela --pattern '*-win-x64.exe' --pattern '*-linux-x86_64.AppImage'
 
 # assina cada um (Ed25519 cru — o formato que o app verifica)
@@ -72,16 +73,19 @@ for f in *.exe *.AppImage; do
   openssl pkeyutl -sign -rawin -inkey ~/caminho/tela-update-private.pem -in "$f" -out "$f.sig"
 done
 
-# sobe as assinaturas para o mesmo release
+# sobe as assinaturas para o mesmo release (ainda rascunho)
 gh release upload "$TAG" --repo joaoviitorsx/Tela *.sig
 ```
 
 > **deb e rpm não precisam de `.sig`**: eles não auto-atualizam (modo "avisar").
 > Só o `.exe` (NSIS) e o `.AppImage` instalam sozinhos e são verificados.
 
-## 4. Conferir
+## 4. Publicar (tirar o rascunho)
+
+Só agora o release vai ao ar — já com as assinaturas:
 
 ```bash
+gh release edit desktop-v0.1.0-beta.23 --repo joaoviitorsx/Tela --draft=false --prerelease
 gh release view desktop-v0.1.0-beta.23 --repo joaoviitorsx/Tela
 ```
 
@@ -89,28 +93,18 @@ Na lista de assets devem estar, lado a lado:
 `Tela-0.1.0-beta.23-win-x64.exe` **e** `Tela-0.1.0-beta.23-win-x64.exe.sig`;
 `Tela-0.1.0-beta.23-linux-x86_64.AppImage` **e** o `.AppImage.sig`.
 
-Pronto. Quem está na beta.22 recebe a beta.23 normalmente (ver abaixo); e a
-partir daqui, quem estiver na beta.23 só aceitará a beta.24 se ela tiver os
-`.sig`.
+Pronto. Quem está na beta.22 recebe a beta.23 (ver abaixo); e a partir daqui,
+quem estiver na beta.23 só aceitará a beta.24 se ela tiver os `.sig`.
+
+> **Ensaiar sem publicar nada:** rode o workflow por *Run workflow*
+> (`workflow_dispatch`) — ele sai como artefato do run, não como release.
 
 ---
 
-## Importante sobre a ordem (janela sem assinatura)
+## Se você publicar sem assinar, ou esquecer um `.sig`
 
-O CI publica o release antes de você assinar. Entre a publicação e o upload dos
-`.sig` existe uma janela curta em que o release está no ar sem assinatura.
-
-- Para a **beta.23** isso é inofensivo: quem instala a beta.23 é a **beta.22**,
-  que ainda não verifica assinatura.
-- Da **beta.24** em diante importa: um app beta.23+ que verificar nesse intervalo
-  simplesmente **não atualiza** (falha segura) e tenta de novo depois — nada
-  quebra, só atrasa. Para fechar essa janela de vez, dá para o CI deixar o
-  release como **rascunho** e você publicar só depois de assinar (uma linha em
-  `.github/workflows/desktop.yml`: tirar o `gh release edit --draft=false`).
-  Me avise se quiser que eu faça essa mudança.
-
-## Se você esquecer de assinar
-
-Da beta.24 em diante, um release sem `.sig` deixa os usuários presos na versão
-anterior (sem instalar nada errado). O conserto é só subir os `.sig` que
-faltaram — o app verifica na próxima checagem (até 6 h, ou ao reabrir).
+Como o release agora só vai ao ar quando VOCÊ publica (passo 4), o normal é nunca
+haver release público sem `.sig`. Se mesmo assim faltar alguma assinatura da
+beta.24 em diante, os usuários ficam presos na versão anterior (sem instalar nada
+errado) — o conserto é subir o `.sig` que faltou; o app verifica na próxima
+checagem (até 6 h, ou ao reabrir).

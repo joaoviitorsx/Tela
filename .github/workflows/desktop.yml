@@ -340,7 +340,12 @@ jobs:
             instaladores/*.blockmap
             instaladores/latest*.yml
 
-      - name: anexar ao release e publicar
+      # O release fica RASCUNHO de propósito (ADR 0038): nada chega ao auto-update
+      # antes de o dono assinar os instaladores e publicar. O auto-update só
+      # enxerga releases publicados, então o rascunho é invisível até o passo
+      # manual de assinar + publicar (docs/desktop/CORTAR-BETA-23.md). Isto fecha
+      # a janela em que um release ficaria no ar sem os `.sig`.
+      - name: anexar ao release (RASCUNHO — publicar só depois de assinar)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -348,5 +353,4 @@ jobs:
         run: |
           shopt -s nullglob
           gh release upload "$TAG" instaladores/*.exe instaladores/*.AppImage instaladores/*.deb instaladores/*.rpm instaladores/*.blockmap instaladores/latest*.yml instaladores/SHA256SUMS-*.txt --clobber
-          gh release edit "$TAG" --draft=false --prerelease
           gh release view "$TAG"

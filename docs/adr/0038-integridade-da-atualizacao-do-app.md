@@ -1,7 +1,7 @@
 # ADR 0038 — Integridade da atualização do app: assinatura do manifesto
 
 **Data:** 2026-10-04
-**Estado:** proposta (a parte que depende do dono — chave, immutable releases, Authenticode — precisa de decisão; a parte mecânica U-2 já foi aplicada)
+**Estado:** aceita e implementada — o dono escolheu chave OFFLINE e entregou a pública (2026-10-04). A verificação está no app; falta o dono ASSINAR cada release a partir da próxima e, opcionalmente, ligar immutable releases e Authenticode.
 **Altera:** o modelo de confiança do auto-update descrito em `D5-atualizacao.md` e em `motor-electron-updater.ts` ("o `verifySignature` do NsisUpdater é pulado porque o instalador não é assinado") · **Mantém:** o electron-updater, o feed `generic` no GitHub, o "nunca atualizar durante uma transmissão"
 
 ## Contexto
@@ -39,20 +39,40 @@ runtime do AppImage põe). Uma única variável `APPIMAGE` vazada no ambiente de
 deb/rpm não liga mais a atualização automática — que no Linux pode terminar num
 install privilegiado (`pkexec`/`dpkg`/`rpm`). `apps/desktop/src/main/atualizacao-release.ts`.
 
-### 2. Assinar o manifesto com uma chave do projeto, e verificar antes de instalar — PROPOSTO
+### 2. Assinar o INSTALADOR com uma chave offline, e verificar antes de instalar — FEITO (app)
 
 O hash não basta porque viaja junto do instalador. A trava é uma **assinatura
-Ed25519 do `latest*.yml` e de cada instalador**, com uma chave cuja privada o
-atacante do canal do GitHub não tem, e cuja pública é **embutida no app**.
+Ed25519 do próprio instalador** (`.exe` e `.AppImage` — os únicos que
+auto-atualizam; deb/rpm só avisam), com uma chave cuja privada o atacante do
+canal do GitHub não tem, e cuja pública é **embutida no app**.
 
-- **CI** assina cada instalador e os `latest*.yml` (minisign/Ed25519) e sobe os
-  `.minisig` junto.
-- **App**: no `update-downloaded`, antes de `quitAndInstall`, verifica a
-  assinatura destacada do arquivo baixado contra a pública embutida. Assinatura
-  ausente ou inválida ⇒ **não instala**, registra e avisa.
+Assina-se o instalador em si, não o `latest.yml`: Ed25519 puro sobre os bytes do
+arquivo dispensa parser de YAML e recomputar hash, e amarra os bytes que vão
+rodar diretamente à chave do dono.
 
-Enquanto não houver pública embutida, o app se comporta como hoje (não trava o
-update), para a transição não deixar ninguém preso numa versão.
+- **App** (`verificacao-de-assinatura.ts`, `motor-electron-updater.ts`): depois
+  de baixar, antes de liberar o install, busca o `.sig` ao lado do instalador no
+  release, lê o instalador do disco e confere a assinatura contra a pública
+  embutida. Assinatura ausente, malformada, de outra chave, ou um byte trocado ⇒
+  **não instala** (`autoInstallOnAppQuit` fica desligado e `instalarAgora` é
+  recusado), e o download falha com erro claro. Fail-closed.
+- **Dono**, por release, com a privada OFFLINE, depois que o CI publica:
+  ```sh
+  openssl pkeyutl -sign -rawin -inkey tela-update-private.pem \
+    -in  Tela-<versão>-win-x64.exe        -out Tela-<versão>-win-x64.exe.sig
+  openssl pkeyutl -sign -rawin -inkey tela-update-private.pem \
+    -in  Tela-<versão>-linux-x86_64.AppImage -out Tela-<versão>-linux-x86_64.AppImage.sig
+  ```
+  e sobe os dois `.sig` no release (ao lado dos instaladores).
+
+A pública embutida é a de `tela-update-public.pem`:
+`MCowBQYDK2VwAyEA5DTYBhZYyTuY1k10/lFaN+OhQb6s5s3Q7gVmNuNduRo=`.
+
+**Transição:** a verificação vale a partir do primeiro app que a traz (a próxima
+beta). Esse app, ao buscar a beta seguinte, VAI exigir `.sig` — então **toda
+release a partir da próxima precisa ser assinada**, senão quem está nessa beta
+não recebe auto-update (falha segura: não instala, não quebra; dá para baixar à
+mão). As betas já publicadas (sem a verificação) não são afetadas.
 
 ### 3. `immutable releases` + tirar `--clobber` — DEPENDE DO DONO
 

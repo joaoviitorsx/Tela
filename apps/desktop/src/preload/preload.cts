@@ -348,7 +348,9 @@ const ponte: PonteDesktop = {
 ipcRenderer.on(CANAIS.capturaNativaPorta, (evento, dados: unknown) => {
   const id = typeof dados === 'object' && dados !== null ? (dados as { id?: unknown }).id : undefined;
   if (typeof id !== 'number' || evento.ports.length === 0) return;
-  window.postMessage({ tipo: MARCA_DA_PORTA, id }, '*', evento.ports);
+  // Origem da própria página (app://tela em prod, localhost em dev): não '*',
+  // para a porta nativa só chegar ao frame confiável a que este preload está preso.
+  window.postMessage({ tipo: MARCA_DA_PORTA, id }, window.location.origin, evento.ports);
 });
 
 /*
@@ -359,7 +361,7 @@ ipcRenderer.on(CANAIS.capturaNativaPorta, (evento, dados: unknown) => {
 ipcRenderer.on(CANAIS.somJogoPorta, (evento, dados: unknown) => {
   const id = typeof dados === 'object' && dados !== null ? (dados as { id?: unknown }).id : undefined;
   if (typeof id !== 'number' || evento.ports.length === 0) return;
-  window.postMessage({ tipo: MARCA_DA_PORTA_SOM, id }, '*', evento.ports);
+  window.postMessage({ tipo: MARCA_DA_PORTA_SOM, id }, window.location.origin, evento.ports);
 });
 
 contextBridge.exposeInMainWorld('telaDesktop', ponte);

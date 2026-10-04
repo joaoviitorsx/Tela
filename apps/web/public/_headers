@@ -14,6 +14,18 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Strict-Transport-Security: max-age=31536000; includeSubDomains
+  # O token do canal mora no localStorage: a CSP é a rede contra XSS roubá-lo.
+  # script-src 'self' + hash do único <script> inline (preload do .glb em index.html);
+  # mudou aquele script => recalcule o hash (node -e sha256 base64) ou a home quebra.
+  # style-src 'unsafe-inline': React escreve style= inline e o Tailwind injeta <style>.
+  # Google Fonts: CSS em googleapis, arquivos em gstatic. connect-src 'self' cobre o
+  # wss://<host>/signal (mesma origem); blob: é o carregador 3D buscando o .glb por
+  # object URL. discord.com: o aviso AO VIVO faz fetch do webhook direto do
+  # navegador (core/domain/webhook-discord normaliza sempre p/ discord.com).
+  # worker-src 'self' blob:: o injecao-worker é bundle local.
+  # frame-ancestors 'none' + X-Frame-Options: ninguém embute a tela (clickjack no token).
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-+YxjQwL084m7PgKhATRhZgqCojtOYVxkwSQucMN1Hg8='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' blob: https://discord.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'
+  X-Frame-Options: DENY
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

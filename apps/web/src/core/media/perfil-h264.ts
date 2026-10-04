@@ -129,7 +129,9 @@ export class ParametrosH264 {
   completar(quadro: Uint8Array): Uint8Array {
     const nals = cabecalhosAnnexB(quadro);
     const parametros = nals.filter((n) => n.tipo === NAL_SPS || n.tipo === NAL_PPS);
-    if (parametros.some((n) => n.tipo === NAL_SPS)) {
+    // Só guarda o par COMPLETO: SPS sem PPS injetado adiante seria indecodificável.
+    // O hardware emite os dois juntos no IDR; guardar meio par é pior que nada.
+    if (parametros.some((n) => n.tipo === NAL_SPS) && parametros.some((n) => n.tipo === NAL_PPS)) {
       const partes = parametros.map((n) => {
         const proximo = nals[nals.indexOf(n) + 1];
         return quadro.subarray(n.inicio, proximo?.inicio ?? quadro.length);

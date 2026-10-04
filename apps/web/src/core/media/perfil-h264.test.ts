@@ -88,6 +88,13 @@ describe('ParametrosH264 — todo quadro-chave sai com SPS/PPS', () => {
     expect([...p.completar(q(IDR))]).toEqual([...SPS2, ...PPS, ...IDR]);
   });
 
+  it('SPS sem PPS não vira guardado: injetar meio par seria indecodificável', () => {
+    const p = new ParametrosH264();
+    p.completar(q(SPS, IDR)); // só SPS, sem PPS: não guarda
+    const quadro = q(IDR);
+    expect(p.completar(quadro)).toBe(quadro); // nada a injetar
+  });
+
   it('esquecer: troca de codec não carrega parâmetros velhos', () => {
     const p = new ParametrosH264();
     p.completar(q(SPS, PPS, IDR));

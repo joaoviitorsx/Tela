@@ -131,6 +131,13 @@ describe('permissaoConcedida', () => {
       expect(permissaoConcedida(p, undefined, SO_APP), p).toBe(false);
     }
   });
+  it('media: só áudio; vídeo (câmera) é negado mesmo da interface (A-1)', () => {
+    expect(permissaoConcedida('media', 'app://tela/transmitir', SO_APP, ['audio'])).toBe(true);
+    expect(permissaoConcedida('media', 'app://tela/transmitir', SO_APP, undefined)).toBe(true);
+    expect(permissaoConcedida('media', 'app://tela/transmitir', SO_APP, ['audio', 'video'])).toBe(false);
+    expect(permissaoConcedida('media', 'app://tela/transmitir', SO_APP, ['video'])).toBe(false);
+  });
+
   it('qualquer outra permissão: negada, mesmo da interface', () => {
     for (const p of [
       'notifications',

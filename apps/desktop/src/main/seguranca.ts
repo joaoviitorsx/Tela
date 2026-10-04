@@ -109,6 +109,14 @@ export function permissaoConcedida(
   permissao: string,
   urlDoPedido: string | undefined,
   permitidas: ReadonlySet<string>,
+  /**
+   * Para `media`: o que o renderer pede (`['audio']`, `['audio','video']`…).
+   * O Tela nunca usa câmera; pedir vídeo é bug ou renderer comprometido, então
+   * `media` com `video` é sempre negado — mesmo da origem certa (A-1).
+   */
+  mediaTypes?: readonly string[],
 ): boolean {
-  return PERMISSOES_DA_INTERFACE.has(permissao) && origemPermitida(urlDoPedido, permitidas);
+  if (!PERMISSOES_DA_INTERFACE.has(permissao) || !origemPermitida(urlDoPedido, permitidas)) return false;
+  if (permissao === 'media' && mediaTypes !== undefined && mediaTypes.includes('video')) return false;
+  return true;
 }

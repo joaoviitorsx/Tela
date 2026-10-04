@@ -1016,11 +1016,29 @@ async function listarFontes(): Promise<readonly FonteDeCaptura[]> {
 
 function configurarPermissoes(): void {
   const sessao = session.defaultSession;
-  sessao.setPermissionRequestHandler((_conteudo, permissao, responder, detalhes) => {
-    responder(permissaoConcedida(permissao, detalhes.requestingUrl, ORIGENS));
+  sessao.setPermissionRequestHandler((conteudo, permissao, responder, detalhes) => {
+    // A-1: microfone (o som do jogo no Linux) só com gesto real recente, como a
+    // captura de tela (S-05). Sem isto, um renderer comprometido abriria o
+    // microfone calado e exfiltraria por WebRTC/webhook.
+    if (permissao === 'media' && (conteudo === null || !gestos.recente(conteudo.id))) {
+      console.warn('[tela] media negada: sem gesto recente do usuário');
+      responder(false);
+      return;
+    }
+    // `mediaTypes` só existe no pedido de `media` (união de tipos do Electron).
+    const tipos = 'mediaTypes' in detalhes ? detalhes.mediaTypes : undefined;
+    responder(permissaoConcedida(permissao, detalhes.requestingUrl, ORIGENS, tipos));
   });
   sessao.setPermissionCheckHandler((_conteudo, permissao, _origem, detalhes) =>
-    permissaoConcedida(permissao, detalhes.requestingUrl, ORIGENS),
+    // O check é síncrono, sem contexto de gesto: aqui só a origem e o veto a vídeo.
+    // O gesto é exigido no request handler acima, no getUserMedia de fato.
+    // Aqui o Electron dá `mediaType` no singular (não `mediaTypes`).
+    permissaoConcedida(
+      permissao,
+      detalhes.requestingUrl,
+      ORIGENS,
+      detalhes.mediaType === undefined || detalhes.mediaType === 'unknown' ? undefined : [detalhes.mediaType],
+    ),
   );
 
   /*
@@ -1596,6 +1614,8 @@ function registrarIpc(): void {
 
   ipcMain.handle(CANAIS.somIniciarJogo, async (evento, payload: unknown) => {
     if (!daInterface(evento) || pedidoDeJogoValido(payload) === null) return { ok: false, erro: 'APP_NAO_ENCONTRADO' };
+    // A-1: abrir a captura de som do jogo é ação do usuário, não automática.
+    if (!comGesto(evento, 'som do jogo')) return { ok: false, erro: 'FALHOU' };
     try {
       return await somDoApp.iniciarJogo(evento.sender, payload);
     } catch (erro: unknown) {
@@ -1611,6 +1631,8 @@ function registrarIpc(): void {
 
   ipcMain.handle(CANAIS.somIniciarSistema, async (evento) => {
     if (!daInterface(evento)) return { ok: false, erro: 'INDISPONIVEL' };
+    // A-1: o som do sistema (e o MessagePort do PCM) só com gesto real recente.
+    if (!comGesto(evento, 'som do sistema')) return { ok: false, erro: 'FALHOU' };
     try {
       return await somDoApp.iniciarSistema(evento.sender);
     } catch (erro: unknown) {

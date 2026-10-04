@@ -77,7 +77,10 @@ describe('motor sobre o electron-updater (mockado)', () => {
     });
     expect(f.autoUpdater).toMatchObject({
       autoDownload: false,
-      autoInstallOnAppQuit: false, // nada instala antes de a assinatura ser conferida (ADR 0038)
+      // `true` no setup para o electron-updater registrar o gancho de sair no fim
+      // do download; a assinatura (ADR 0038) religa p/ false até verificar. A
+      // trava real está em `conferirAssinatura`/`instalarAoSair`, testada abaixo.
+      autoInstallOnAppQuit: true,
       allowDowngrade: false,
       allowPrerelease: true,
     });

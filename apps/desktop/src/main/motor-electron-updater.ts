@@ -69,10 +69,15 @@ export function criarMotorDoUpdater(deps: DependenciasDoMotor): MotorDeAtualizac
     const u = m.autoUpdater;
     // Quem decide quando baixar é a política (nunca ao vivo).
     u.autoDownload = false;
-    // Começa DESLIGADO: nada se instala antes de `baixar()` conferir a assinatura
-    // (ADR 0038). `instalarAoSair`/`instalarAgora` só ligam depois de verificada —
-    // um instalador sem assinatura da chave do Tela nunca vira "instalar ao sair".
-    u.autoInstallOnAppQuit = false;
+    // Precisa ser `true` AQUI: o electron-updater só registra o gancho de
+    // "instalar ao sair" no fim do download, e só se a flag estiver ligada
+    // naquele instante (`BaseUpdater.addQuitHandler`). Deixá-la `false` no setup
+    // matava o gancho para sempre. A trava da assinatura (ADR 0038) não é esta
+    // flag: `conferirAssinatura` a RELIGA para `false` assim que o download
+    // termina e só `instalarAoSair`/`instalarAgora` a reativam DEPOIS de a
+    // assinatura conferir — o gancho, ao sair, relê a flag e não instala nada
+    // não verificado.
+    u.autoInstallOnAppQuit = true;
     // Sem downgrade, e a versão atual é beta: pré-release é permitido por padrão.
     u.allowDowngrade = false;
     u.allowPrerelease = true;
